@@ -18,6 +18,22 @@ concurrency:
 permissions:
   contents: read
 
+# AS VERSOES DAS ACOES: majors, e todas em Node 24.
+#
+# O runner do GitHub aposentou o Node 20 (setembro de 2025) e passou a executar
+# em Node 24 as ações que ainda declaram `node20`, emitindo aviso. Estas quatro
+# majors declaram `node24` e exigem runner >= v2.327.1 — o `ubuntu-latest`
+# hospedado passou disso.
+#
+# `setup-python` fica no v6, e não no v7: o v7 migrou para ESM e ainda é
+# recente. O v6 já é Node 24, que é o que o aviso pedia. Subir para v7 é
+# seguro quando o time quiser — a única remoção do v7 foi a entrada
+# `pip-install`, que não usamos.
+#
+# Ao subir qualquer uma: `cache: pip` (setup-python) e `cache-from/cache-to:
+# type=gha` (build-push) são o que este workflow depende. Confira se a major
+# nova ainda os aceita antes de trocar.
+
 env:
   # A versão que a imagem de produção usa. Ver o `Dockerfile`.
   PYTHON_PRODUCAO: "3.13"
@@ -28,9 +44,9 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_PRODUCAO }}
           cache: pip
@@ -80,9 +96,9 @@ jobs:
       BANCO_URL_TESTE: postgresql+psycopg2://postgres:postgres@localhost:5432/painel_reputacional
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
           cache: pip
@@ -128,7 +144,7 @@ jobs:
           --health-retries 10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # O modo `conta-comum` é o que importa para o deploy: no Postgres
       # gerenciado do Azure a conta administrativa NÃO é superusuário, e as
@@ -201,14 +217,14 @@ jobs:
     needs: [qualidade]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # Não publica: só prova que constrói. A publicação é decisão de quem
       # implanta, e vai exigir credencial de registro.
       - name: Build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: false
