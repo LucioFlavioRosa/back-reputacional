@@ -75,8 +75,19 @@ class Recorte:
                 f"UF inválida: {self.uf!r}. Use uma das 27 siglas, "
                 f"{NACIONAL!r} (nacional) ou {INTERNACIONAL!r} (internacional)."
             )
-        if self.tier is not None and self.tier not in (1, 2, 3):
-            raise RegraViolada(f"Tier inválido: {self.tier!r}. Use 1, 2 ou 3.")
+        if self.tier is not None and self.tier < 1:
+            raise RegraViolada(f"Tier inválido: {self.tier!r}. Use um número positivo.")
+        # QUAIS níveis existem é decisão do banco — são linhas em `relevancia`.
+        #
+        # Filtrar por um nível inexistente devolve zero registros, e está certo:
+        # é a mesma resposta de filtrar por um que existe e ninguém usou. Recusar
+        # o pedido exigiria consultar o banco DAQUI, e este módulo não tem acesso
+        # a ele de propósito — o `Recorte` é objeto de valor puro.
+        #
+        # Esta era a QUARTA cópia da lista de níveis: havia esta, uma em
+        # `dominio/interacao.py`, um `check between 1 and 3` no schema e as
+        # opções escritas à mão no filtro do front. Nada obrigava as quatro a
+        # concordar, e nenhuma delas dizia por que o Tier 4 não entrava.
         if self.grupo_status and self.grupo_status not in GRUPOS_DE_STATUS:
             validos = ", ".join(sorted(GRUPOS_DE_STATUS))
             raise RegraViolada(

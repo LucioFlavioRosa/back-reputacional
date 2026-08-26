@@ -43,8 +43,14 @@ create table interacao (
   -- uma interação que ninguém encontra.
   uf                 abrangencia not null,
 
-  -- 1 a 3, quanto mais baixo mais relevante a contraparte.
-  tier               smallint    check (tier between 1 and 3),
+  -- Quanto mais baixo, mais relevante a contraparte.
+  --
+  -- Guarda o NÚMERO do tier, e a chave estrangeira aponta para `relevancia`,
+  -- onde os níveis são linhas. Era `check (tier between 1 and 3)`, escrito na
+  -- coluna: acrescentar um nível exigia migration e deploy, e o filtro do
+  -- painel tinha as opções fixas no código do front, em outro repositório.
+  -- Duas fontes da verdade para a mesma lista, e nada as obrigava a concordar.
+  tier               smallint    references relevancia(id),
   stakeholder_id     smallint    references stakeholder(id),
 
   status_id          smallint    not null references status(id),

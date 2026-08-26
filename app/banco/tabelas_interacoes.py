@@ -48,7 +48,14 @@ class InteracaoRegistro(Tabela):
     )
     #: Obrigatória: o mapa do painel depende dela.
     uf: Mapped[str] = mapped_column(String(2))
-    tier: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    #: O NÚMERO do tier, e a chave estrangeira aponta para `relevancia`, onde
+    #: os níveis são linhas. Sem declarar a FK aqui, o banco continuaria
+    #: barrando um nível inexistente, mas o metadata do SQLAlchemy diria que
+    #: a coluna é um inteiro solto — e é o metadata que o teste de deriva do
+    #: schema compara com as migrations.
+    tier: Mapped[int | None] = mapped_column(
+        SmallInteger, ForeignKey("relevancia.id"), nullable=True
+    )
     stakeholder_id: Mapped[int | None] = mapped_column(
         SmallInteger, ForeignKey("stakeholder.id"), nullable=True
     )

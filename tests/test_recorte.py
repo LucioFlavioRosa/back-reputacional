@@ -60,9 +60,23 @@ def test_uf_invalida_e_recusada():
         Recorte(uf="XX")
 
 
-def test_tier_fora_da_faixa_e_recusado():
+def test_tier_nao_positivo_e_recusado():
+    """O `Recorte` só barra o que é absurdo em qualquer configuração.
+
+    Filtrar por um nível que não existe devolve zero registros, e está certo: é
+    a mesma resposta de filtrar por um que existe e ninguém usou. Recusar
+    exigiria consultar o banco daqui, e o `Recorte` é objeto de valor puro.
+    """
     with pytest.raises(RegraViolada, match="Tier inválido"):
-        Recorte(tier=4)
+        Recorte(tier=0)
+    with pytest.raises(RegraViolada, match="Tier inválido"):
+        Recorte(tier=-2)
+
+
+def test_tier_4_e_aceito_pelo_recorte():
+    """Este teste afirmava o contrário até hoje, e por isso `Recorte(tier=4)`
+    devolvia 400 mesmo com o Tier 4 já existindo no banco."""
+    assert Recorte(tier=4).tier == 4
 
 
 def test_periodo_invertido_e_recusado():

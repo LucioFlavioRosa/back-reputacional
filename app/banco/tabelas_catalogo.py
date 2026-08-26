@@ -37,6 +37,25 @@ class Frente(_Dicionario, Tabela):
     cor_hex: Mapped[str] = mapped_column(String(7))
 
 
+class Relevancia(Tabela):
+    """Os níveis de relevância — o que o painel chama de "tier".
+
+    NÃO herda `_Dicionario`: aqui a chave primária é o PRÓPRIO número do tier,
+    e não uma sequência. `interacao.tier` guarda 1, 2, 3… e é esse número que
+    aparece na tela, nos KPIs e na exportação, então uma segunda numeração
+    interna só criaria tradução sem serventia.
+
+    Também não tem `codigo`: o número já é o código estável.
+    """
+
+    __tablename__ = "relevancia"
+
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, autoincrement=False)
+    nome: Mapped[str] = mapped_column(Text)
+    ordem: Mapped[int] = mapped_column(SmallInteger)
+    ativo: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
 class Status(_Dicionario, Tabela):
     __tablename__ = "status"
     #: resolvido | aberto | declinado — sustenta a taxa de resolutividade.
@@ -113,6 +132,7 @@ class Tema(Tabela):
 #: Ordem em que os dicionários aparecem em `GET /api/dicionarios`.
 DICIONARIOS: dict[str, type[Tabela]] = {
     "frentes": Frente,
+    "relevancias": Relevancia,
     "status": Status,
     "esferas": Esfera,
     "climas": Clima,

@@ -55,9 +55,27 @@ def test_uf_aceita_nacional_e_internacional():
     assert nova(uf="IN").uf == "IN"
 
 
-def test_tier_fora_da_faixa_e_recusado():
+def test_tier_nao_positivo_e_recusado():
+    """O domínio só barra o que é absurdo em qualquer configuração.
+
+    QUAIS níveis existem passou a ser decisão do banco: são linhas em
+    `relevancia`, e `interacao.tier` tem chave estrangeira para lá. Antes havia
+    QUATRO cópias da mesma lista: `not in (1, 2, 3)` aqui, outra em
+    `dominio/recorte.py`, `check between 1 and 3` no schema e as opções escritas
+    à mão no filtro do front. Nada obrigava as quatro a concordar.
+
+    Um nível INEXISTENTE é recusado pelo banco, e isso está coberto em
+    `tests/test_dicionarios_sao_a_fonte.py`.
+    """
     with pytest.raises(RegraViolada, match="Tier inválido"):
-        nova(tier=9)
+        nova(tier=0)
+    with pytest.raises(RegraViolada, match="Tier inválido"):
+        nova(tier=-1)
+
+
+def test_tier_alem_dos_tres_primeiros_e_aceito_pelo_dominio():
+    """Tier 4 existe no banco, e o domínio não pode ser quem o recusa."""
+    assert nova(tier=4).tier == 4
 
 
 def test_extensao_precisa_corresponder_a_frente():

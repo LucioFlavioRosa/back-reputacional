@@ -40,6 +40,70 @@ ALTERA_COLUNA = re.compile(
 )
 
 
+def _definicoes_por_tabela(sql: str) -> list[tuple[str, list[str]]]:
+    """Quebra o corpo de cada `create table` nas suas definições.
+
+    Separado para servir a dois leitores — colunas e chaves estrangeiras — sem
+    que a contagem de parênteses exista em duas cópias. Uma delas envelheceria,
+    e as duas leituras passariam a discordar sobre o mesmo SQL.
+
+    A contagem de profundidade é o ponto: `check (tier between 1 and 3)` tem
+    vírgulas nenhuma, mas `numeric(10, 2)` tem, e quebrar em toda vírgula
+    partiria a definição no meio.
+    """
+    saida: list[tuple[str, list[str]]] = []
+    for nome, corpo in BLOCO_CREATE_TABLE.findall(sql):
+        definicoes: list[str] = []
+        profundidade = 0
+        atual = ""
+        for caractere in corpo:
+            if caractere == "(":
+                profundidade += 1
+            elif caractere == ")":
+                profundidade -= 1
+            if caractere == "," and profundidade == 0:
+                definicoes.append(atual)
+                atual = ""
+                continue
+            atual += caractere
+        definicoes.append(atual)
+        saida.append((nome.lower(), definicoes))
+    return saida
+
+
+#: `coluna tipo references outra_tabela(id)` — a forma usada em todo o schema.
+REFERENCIA = re.compile(r"^\s*(\w+).*?references\s+(\w+)\s*\(", re.I | re.S)
+
+
+def chaves_estrangeiras_do_ddl(sql: str | None = None) -> dict[str, set[tuple[str, str]]]:
+    """Cada tabela e os pares (coluna, tabela apontada) declarados no DDL.
+
+    Existe porque o retrato só de COLUNAS deixava passar uma regressão real: o
+    ORM perdeu a `ForeignKey` de `interacao.tier` e nada acusou — o banco
+    continuava barrando, mas o metadata do SQLAlchemy dizia que a coluna era um
+    inteiro solto, e é o metadata que gera schema em qualquer ferramenta que o
+    leia.
+    """
+    if sql is None:
+        sql = "\n".join(
+            arquivo.read_text(encoding="utf-8") for arquivo in sorted(MIGRATIONS.glob("*.sql"))
+        )
+    sql = re.sub(r"--[^\n]*", "", sql)
+
+    chaves: dict[str, set[tuple[str, str]]] = {}
+    for tabela, definicoes in _definicoes_por_tabela(sql):
+        encontradas = set()
+        for definicao in definicoes:
+            achado = REFERENCIA.match(definicao)
+            if achado and achado.group(1).lower() not in {
+                "primary", "foreign", "unique", "check", "constraint",
+            }:
+                encontradas.add((achado.group(1).lower(), achado.group(2).lower()))
+        if encontradas:
+            chaves[tabela] = encontradas
+    return chaves
+
+
 def colunas_do_ddl() -> dict[str, set[str]]:
     """O retrato do schema, lido de TODAS as migrations em ordem."""
     return _colunas_do_sql(
@@ -66,24 +130,9 @@ def _colunas_do_sql(sql: str) -> dict[str, set[str]]:
     sql = re.sub(r"--[^\n]*", "", sql)
 
     tabelas: dict[str, set[str]] = {}
-    for nome, corpo in BLOCO_CREATE_TABLE.findall(sql):
-        colunas: set[str] = set()
-        profundidade = 0
-        linha_atual = ""
-        for caractere in corpo:
-            if caractere == "(":
-                profundidade += 1
-            elif caractere == ")":
-                profundidade -= 1
-            if caractere == "," and profundidade == 0:
-                colunas.add(linha_atual)
-                linha_atual = ""
-                continue
-            linha_atual += caractere
-        colunas.add(linha_atual)
-
+    for nome, definicoes in _definicoes_por_tabela(sql):
         nomes = set()
-        for definicao in colunas:
+        for definicao in definicoes:
             primeira = definicao.strip().split()
             if not primeira:
                 continue
@@ -194,6 +243,52 @@ def test_toda_coluna_do_orm_existe_na_migration(ddl):
             divergencias[nome] = sorted(sobrando)
 
     assert not divergencias, f"Colunas no ORM e ausentes no DDL: {divergencias}"
+
+
+def test_toda_chave_estrangeira_do_ddl_esta_declarada_no_orm():
+    """O retrato de COLUNAS não bastava, e a lacuna custou caro uma vez.
+
+    `interacao.tier` ganhou `references relevancia(id)` na migration, e o ORM
+    ficou sem a `ForeignKey` correspondente. O banco continuava recusando um
+    nível inexistente, então nada quebrava em teste; o que mentia era o
+    metadata do SQLAlchemy — e é dele que sai qualquer schema gerado por
+    ferramenta, incluindo o que uma migração automática escreveria.
+
+    Confere só o sentido perigoso: FK no DDL e ausente no ORM. O contrário —
+    FK no ORM sem estar no DDL — quebraria na aplicação da migration, que é
+    barulho suficiente.
+    """
+    configure_mappers()
+    no_ddl = chaves_estrangeiras_do_ddl()
+
+    faltando: dict[str, list[str]] = {}
+    for tabela, esperadas in no_ddl.items():
+        mapeada = Tabela.metadata.tables.get(tabela)
+        if mapeada is None:
+            continue  # tabela ainda sem ORM: o teste de tabelas cobre
+        do_orm = {
+            (coluna.name.lower(), fk.column.table.name.lower())
+            for coluna in mapeada.columns
+            for fk in coluna.foreign_keys
+        }
+        ausentes = esperadas - do_orm
+        if ausentes:
+            faltando[tabela] = sorted(f"{c} -> {t}" for c, t in ausentes)
+
+    assert not faltando, f"Chaves estrangeiras no DDL e ausentes no ORM: {faltando}"
+
+
+def test_o_leitor_de_chaves_encontra_o_que_deve():
+    """Âncora do próprio leitor.
+
+    Sem ela, uma regex que parasse de casar faria o teste acima aprovar
+    qualquer ORM — encontraria zero chaves no DDL e concluiria que nenhuma
+    falta.
+    """
+    chaves = chaves_estrangeiras_do_ddl()
+    assert ("tier", "relevancia") in chaves["interacao"]
+    assert ("frente_id", "frente") in chaves["interacao"]
+    assert len(chaves) >= 10
 
 
 def test_toda_coluna_da_migration_existe_no_orm(ddl):

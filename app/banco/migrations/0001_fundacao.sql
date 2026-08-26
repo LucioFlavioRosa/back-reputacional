@@ -101,6 +101,21 @@ create table resultado (
   cor_hex char(7) not null, ordem smallint not null, ativo boolean not null default true
 );
 
+-- Relevância da contraparte, o que o painel chama de "tier".
+--
+-- É TABELA, e não `check (tier between 1 and 3)` na coluna, pelo mesmo motivo
+-- que todos os outros vocabulários daqui: acrescentar um nível é um `insert`, e
+-- não uma migration com deploy. O filtro do painel lista o que estiver aqui.
+--
+-- O `id` é o PRÓPRIO número do tier, e não uma sequência: a coluna
+-- `interacao.tier` guarda 1, 2, 3… e é esse número que aparece na tela, nos
+-- KPIs e na exportação. Deixar a chave ser o número evita uma tradução entre
+-- "o id 4" e "o Tier 4" que não serviria a ninguém.
+create table relevancia (
+  id smallint primary key check (id > 0), nome text not null,
+  ordem smallint not null, ativo boolean not null default true
+);
+
 -- Quem procurou quem.
 create table iniciativa (
   id smallserial primary key, codigo text not null unique, nome text not null,
@@ -201,6 +216,17 @@ insert into esfera (codigo, nome, ordem) values
   ('federal',       'Federal',       4),
   ('nacional',      'Nacional',      5),
   ('internacional', 'Internacional', 6);
+
+-- Quatro níveis. O quinto, se vier, é um `insert` — sem deploy, e o filtro do
+-- painel passa a mostrá-lo na carga seguinte da tela.
+--
+-- Os nomes são editáveis por `update`: trocar 'Tier 4' por 'Regional' muda a
+-- tela sem tocar em código.
+insert into relevancia (id, nome, ordem) values
+  (1, 'Tier 1', 1),
+  (2, 'Tier 2', 2),
+  (3, 'Tier 3', 3),
+  (4, 'Tier 4', 4);
 
 insert into clima (codigo, nome, cor_hex, ordem) values
   ('propositivo', 'Propositivo', '#17E3CB', 1),

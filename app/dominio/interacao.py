@@ -114,8 +114,18 @@ class Interacao:
                 "'NA' (nacional) ou 'IN' (internacional). O mapa do painel depende dela."
             )
 
-        if self.tier is not None and self.tier not in (1, 2, 3):
-            raise RegraViolada(f"Tier inválido: {self.tier!r}. Use 1, 2 ou 3.")
+        if self.tier is not None and self.tier < 1:
+            raise RegraViolada(f"Tier inválido: {self.tier!r}. Use um número positivo.")
+        # QUAIS números existem é decisão do BANCO, não daqui: os níveis são
+        # linhas em `relevancia`, e `interacao.tier` tem chave estrangeira para
+        # lá. Repetir a lista neste ponto criaria uma segunda fonte da verdade
+        # que nada obriga a concordar com a primeira — foi exatamente o que
+        # havia antes: QUATRO cópias da mesma lista — esta, uma em
+        # `dominio/recorte.py`, um `check between 1 and 3` no schema e as opções
+        # escritas à mão no filtro do front, em outro repositório.
+        #
+        # Um número inexistente vira violação de chave estrangeira, traduzida
+        # para `RegraViolada` na borda do banco.
 
         if self.fonte not in FONTES:
             raise RegraViolada(

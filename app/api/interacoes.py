@@ -66,7 +66,9 @@ def obter_recorte(
         Query(description="sigla, NA (nacional) ou IN (internacional)"),
     ] = None,
     esfera: Annotated[str | None, Query()] = None,
-    tier: Annotated[int | None, Query(ge=1, le=3)] = None,
+    # Sem `le`: quantos níveis existem é o que estiver em `relevancia`, e
+    # um teto aqui voltaria a ser uma cópia que envelhece sozinha.
+    tier: Annotated[int | None, Query(ge=1)] = None,
     clima: Annotated[str | None, Query()] = None,
     resultado: Annotated[str | None, Query()] = None,
     status_: Annotated[
