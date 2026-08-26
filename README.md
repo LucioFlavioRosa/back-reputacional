@@ -75,9 +75,12 @@ Cada pacote tem um `__init__.py` com uma descrição do que mora ali. Comece por
 isso que faz o número do KPI bater com o da tabela. Uma consulta nova que monte
 `where` por conta própria quebra a garantia em silêncio.
 
-**O padrão é não ver nada.** Papel, escopo e prazo vêm do banco e são aplicados
-a cada requisição. Usuário sem papel não entra; usuário sem escopo não vê nada.
-Ver [`docs/SEGURANCA.md`](docs/SEGURANCA.md).
+**O padrão é não ver nada.** Papel, escopo e prazo vêm do banco — nunca do
+cookie — e são aplicados a toda requisição. Usuário sem papel não entra; usuário
+sem escopo não vê nada. A leitura é cacheada por cinco minutos
+(`AUTORIZACAO_CACHE_SEGUNDOS`), com duas exceções que o cache não cega: o prazo
+de acesso vale na hora exata, e a revogação feita pela tela vale no ato. Ver
+[`docs/SEGURANCA.md`](docs/SEGURANCA.md).
 
 ## Banco
 

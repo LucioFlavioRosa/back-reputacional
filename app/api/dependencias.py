@@ -31,6 +31,7 @@ from app.configuracao import Configuracao, obter_configuracao
 from app.dominio.erros import NaoAutorizado
 from app.dominio.identidade import Perfil, UsuarioAtual
 from app.seguranca import sessao_assinada
+from app.seguranca.cache_de_autorizacao import CacheDeAutorizacao, cache_para
 from app.seguranca.limite_de_taxa import (
     ExcessoDeRequisicoes,
     RegistroDeBaldes,
@@ -108,11 +109,14 @@ def _usuario_provisionado(
 def _da_sessao(
     requisicao: Request, sessao: Session, configuracao: Configuracao
 ) -> UsuarioAtual:
-    """O caminho de produção: cookie assinado, usuário lido do banco.
+    """O caminho de produção: cookie assinado, usuário do cache ou do banco.
 
-    O cookie carrega apenas o id e o prazo. Papel e escopo vêm do banco a cada
-    requisição — é isso que faz uma revogação valer no próximo clique, e não na
-    próxima hora.
+    O cookie carrega apenas o id e o prazo — nunca papel nem escopo, que são do
+    banco. O que muda com o cache é a FREQUÊNCIA da leitura, não a fonte: a
+    autorização vale por `autorizacao_cache_segundos` antes de ser relida.
+
+    A verificação da sessão continua a cada requisição. É só o que o banco diria
+    sobre um usuário já identificado que se guarda, nunca a identidade.
     """
     try:
         atual = sessao_assinada.ler(
@@ -128,14 +132,31 @@ def _da_sessao(
 
     _exigir_csrf(requisicao, atual)
 
-    usuario = carregar(sessao, atual.usuario_id)
-    if usuario is None:
-        # Sessão válida de alguém que não existe mais, ou foi desativado. O
-        # cookie continua assinado corretamente; o que mudou foi o banco.
-        raise NaoAutorizado(
-            "Sessão ausente ou expirada. Entre novamente.", sobre_o_pedido=True
-        )
+    cache = cache_de_autorizacao(configuracao)
+    usuario = cache.obter(atual.usuario_id)
 
+    if usuario is None:
+        # O marcador vem ANTES da leitura: se alguém revogar enquanto ela
+        # acontece, `guardar` recusa o valor velho. Ver o docstring de
+        # `CacheDeAutorizacao.guardar`.
+        marcador = cache.marcador()
+        usuario = carregar(sessao, atual.usuario_id)
+        if usuario is None:
+            # Sessão válida de alguém que não existe mais, ou foi desativado. O
+            # cookie continua assinado corretamente; o que mudou foi o banco.
+            #
+            # A ausência NÃO é guardada no cache, de propósito: guardá-la faria
+            # uma reativação demorar a valer, e o caso é raro demais para que
+            # economizar a consulta dele valha esse preço.
+            raise NaoAutorizado(
+                "Sessão ausente ou expirada. Entre novamente.", sobre_o_pedido=True
+            )
+        cache.guardar(usuario, marcador)
+
+    # Fora do `if`: vale para o caminho do cache também. É um `SET LOCAL` na
+    # transação em curso, que os gatilhos de auditoria leem (migration 0005), e
+    # o cache não o dispensa — o que ele evita é RECONSTRUIR o usuário, não
+    # carimbar a transação.
     marcar_autor_na_sessao(sessao, usuario.id)
     return usuario
 
@@ -202,6 +223,11 @@ UsuarioLogado = Annotated[UsuarioAtual, Depends(obter_usuario_atual)]
 #: processo — que é o que os testes fazem — continuaria usando o teto antigo, e
 #: o teste validaria um limite diferente do que roda.
 _registros: dict[tuple[float, float], RegistroDeBaldes] = {}
+
+def cache_de_autorizacao(configuracao: Configuracao) -> CacheDeAutorizacao:
+    """O cache em vigor. O registro mora em `app/seguranca/`, e não aqui, para
+    que `administrar_acessos` possa invalidar sem importar de `app/api/`."""
+    return cache_para(configuracao.autorizacao_cache_segundos)
 
 
 def _registro_por_usuario(configuracao: Configuracao) -> RegistroDeBaldes:

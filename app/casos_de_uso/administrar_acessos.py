@@ -43,6 +43,7 @@ from app.banco.tabelas_acesso import (
 )
 from app.dominio.erros import NaoAutorizado, RegraViolada
 from app.dominio.identidade import UsuarioAtual
+from app.seguranca.cache_de_autorizacao import esquecer_em_todos
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,6 +195,16 @@ def conceder(
     alterado = sessao.get(Usuario, alvo)
     if alterado is not None:
         sessao.expire(alterado)
+
+    # Pelo mesmo motivo do `expire` acima, uma camada adiante: papel e escopo
+    # ficam em memória por `autorizacao_cache_segundos` (ver
+    # `app/seguranca/cache_de_autorizacao.py`), e sem esta linha a concessão que
+    # acabou de ser gravada só valeria quando a entrada vencesse.
+    #
+    # É o que faz a revogação pela TELA valer no ato — que é justamente quando
+    # alguém confere se ela pegou. Revogação feita por SQL direto no banco não
+    # passa por aqui e continua limitada pelo TTL; está documentado.
+    esquecer_em_todos(alvo)
 
 
 #: SQLSTATE de `raise exception` em PL/pgSQL.

@@ -42,10 +42,50 @@ Cookie assinado com HMAC-SHA256, montado com a biblioteca padrão
 (`app/seguranca/sessao_assinada.py`). Guarda o id do usuário,
 o prazo e o token anti-CSRF — e **não** guarda papel nem escopo.
 
-Isso é deliberado: papel e escopo são lidos do banco a cada requisição, então
-uma revogação vale no próximo clique em vez de na próxima sessão. O custo é uma
-consulta por requisição; o ganho é não ter janela entre revogar e deixar de
-valer.
+Isso é deliberado: papel e escopo vêm do banco, nunca do cookie. Uma sessão
+emitida ontem não carrega as permissões de ontem.
+
+**Mas a leitura é cacheada em memória por cinco minutos** — ver
+`app/seguranca/cache_de_autorizacao.py`. Reconstruir a autorização custa 3
+comandos no banco, medidos — 4 quando o escopo é por linha —, e um deles é uma
+ESCRITA (`ultimo_acesso_em`). Uma tela do painel dispara dezenas de requisições
+que reconstroem exatamente a mesma permissão, porque a paginação vai de 200 em
+200 até 5.000 registros. A troca é consciente: leitura é constante, mudança de
+permissão é rara — concessão e revogação passam por coordenação, não por
+autoatendimento.
+
+O que a janela custa, em concreto:
+
+| Como a permissão muda | Quando passa a valer |
+|---|---|
+| Pela tela de administração | **no ato** — `conceder()` descarta a entrada |
+| `update` direto no banco | em até 5 min, por instância |
+| Prazo de acesso vencendo | **na hora exata** — a entrada nunca vive além dele |
+| Sessão expirada ou cookie adulterado | **no ato** — o cookie é verificado sempre |
+
+Três coisas que valem saber antes de mexer no número:
+
+- **O prazo não é cacheável, e não é cacheado.** Uma entrada nunca vive além de
+  `acesso_expira_em`. Sem isso, um acesso que vence às 14h00 valeria até 14h05,
+  e o prazo deixaria de ser prazo — que é justamente o mecanismo que sustenta o
+  acesso de convidado externo.
+
+- **O estado é da instância.** Com N instâncias no App Service, cada uma tem o
+  seu cache, e uma revogação feita por fora chega em momentos diferentes — todos
+  dentro do mesmo teto.
+
+- **A revogação pela tela vale no ato mesmo sob corrida.** Uma requisição que
+  errou o cache e está lendo do banco não pode gravar o valor velho por cima de
+  uma revogação que aconteceu no meio da leitura — se pudesse, a permissão
+  revogada ressuscitaria por mais um TTL, na instância onde alguém acabou de
+  revogar. Quem lê pega um marcador antes, e a gravação é recusada se algo foi
+  invalidado desde então. Ver `CacheDeAutorizacao.guardar` e
+  `test_revogar_durante_a_leitura_recusa_o_valor_velho`.
+
+- **`AUTORIZACAO_CACHE_SEGUNDOS=0` desliga**, e devolve exatamente o
+  comportamento anterior: nenhuma permissão em memória, revogação valendo no
+  clique seguinte, ao custo de reler o banco sempre. Há teste para os dois
+  modos.
 
 Atributos do cookie: `HttpOnly`, `Secure` em produção, `SameSite=Lax`,
 `Path=/`. `Lax` e não `Strict` porque o retorno do provedor é uma navegação de
@@ -94,10 +134,15 @@ banco do resto.
 O item 3 é o que importa. A alternativa natural — "sem linha significa sem
 restrição" — falharia ABERTA: um convidado recém-provisionado enxergaria tudo.
 
-O item 4 é conferido a cada requisição porque a dependência monta o usuário do
-banco toda vez. **Se um dia a sessão passar a guardar papel e escopo, a
-revalidação por requisição precisa entrar junto** — senão um acesso que vence no
-meio do expediente continua valendo até o próximo login.
+O item 4 vale na hora exata, e continua valendo apesar do cache: uma entrada
+nunca vive além de `acesso_expira_em` (ver `_ate_quando`, e o teste
+`test_a_entrada_nunca_vive_alem_do_prazo_de_acesso`). Sem esse teto, um acesso
+que vence no meio do expediente continuaria valendo pelo resto da janela — e o
+prazo é justamente o que sustenta o acesso de quem é de fora.
+
+**Se um dia a sessão passar a guardar papel e escopo no COOKIE**, este teto
+precisa ir junto. No cookie ele é mais difícil: um cookie emitido de manhã não
+tem como encolher sozinho à tarde.
 
 ### Por que o prazo é obrigatório para quem é de fora
 

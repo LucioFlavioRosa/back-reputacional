@@ -25,6 +25,7 @@ from app.casos_de_uso import administrar_acessos
 from app.configuracao import obter_configuracao
 from app.dominio.erros import NaoAutorizado, RegraViolada
 from app.seguranca import sessao_assinada
+from app.seguranca.cache_de_autorizacao import cache_para, limpar_todos
 from main import app
 from tests.test_acesso_http import SEGREDO, configuracao_real
 from tests.test_e2e_postgres import URL
@@ -924,3 +925,61 @@ def test_email_ja_provisionado_com_outro_oid_recusa_com_mensagem(sessao):
             email=email,
             nome="Pessoa",
         )
+
+
+# -- a revogação pela tela vale no ato, apesar do cache -------------------------
+
+
+def test_conceder_descarta_o_que_o_cache_sabia_do_alvo(sessao):
+    """A garantia que sustenta a janela do cache.
+
+    Papel e escopo valem por `autorizacao_cache_segundos` em memória, então uma
+    revogação escrita por FORA da aplicação demora a valer. Pela aplicação, não:
+    `conceder()` descarta a entrada do alvo.
+
+    Isso importa porque é exatamente aí que alguém confere se a revogação pegou
+    — administrador revoga e vai olhar. Se o cache respondesse a permissão
+    antiga nesse momento, a conclusão seria "não funcionou", e a próxima ação
+    seria revogar de novo, ou pior, ir mexer no banco.
+    """
+    limpar_todos()
+    admin = como(sessao, cria_usuario(sessao, "coordenacao", acesso_irrestrito=True))
+    alvo = cria_usuario(sessao, "analista", acesso_irrestrito=True)
+
+    cache = cache_para(300.0)
+    cache.guardar(como(sessao, alvo))
+    assert cache.obter(alvo.id) is not None
+
+    administrar_acessos.conceder(
+        sessao,
+        alvo=alvo.id,
+        concessao=administrar_acessos.Concessao(papel=None, versao_vista=None),
+        solicitante=admin,
+    )
+
+    assert cache.obter(alvo.id) is None
+
+
+def test_conceder_nao_derruba_o_cache_de_quem_nao_foi_alterado(sessao):
+    """Descartar demais custa o que o cache economiza.
+
+    Se uma concessão esvaziasse o cache inteiro, num painel com dezenas de
+    pessoas conectadas cada mexida de permissão faria todas voltarem a reler o
+    banco — e revogação em lote viraria uma rajada de consultas.
+    """
+    limpar_todos()
+    admin = como(sessao, cria_usuario(sessao, "coordenacao", acesso_irrestrito=True))
+    alvo = cria_usuario(sessao, "analista", acesso_irrestrito=True)
+    terceiro = cria_usuario(sessao, "analista", acesso_irrestrito=True)
+
+    cache = cache_para(300.0)
+    cache.guardar(como(sessao, terceiro))
+
+    administrar_acessos.conceder(
+        sessao,
+        alvo=alvo.id,
+        concessao=administrar_acessos.Concessao(papel=None, versao_vista=None),
+        solicitante=admin,
+    )
+
+    assert cache.obter(terceiro.id) is not None

@@ -1,9 +1,14 @@
 """Sessão em cookie assinado.
 
 O cookie carrega quem é a pessoa e até quando vale — nada mais. Nem o
-`id_token`, nem claims, nem papel: papel e escopo são lidos do banco a cada
-requisição, e é isso que faz uma revogação valer no próximo clique em vez de na
-próxima hora.
+`id_token`, nem claims, nem papel: papel e escopo vêm do banco, e é isso que
+impede uma sessão emitida ontem de carregar as permissões de ontem.
+
+A leitura do banco é cacheada por alguns minutos
+(`app/seguranca/cache_de_autorizacao.py`), mas a diferença permanece: o que está
+em memória o servidor descarta quando quiser, e de fato descarta quando a
+permissão muda pela tela. O que estivesse no cookie estaria com o cliente, e só
+venceria no prazo dele.
 
 POR QUE ASSINADO E NÃO CIFRADO
 

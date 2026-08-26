@@ -84,6 +84,23 @@ class Configuracao(BaseSettings):
     #: de a borda (Front Door / WAF) já aplicar o teto.
     limite_de_taxa_ligado: bool = True
 
+    # -- cache de autorizacao -------------------------------------------------
+
+    #: Por quantos segundos papel e escopo valem em memória sem reler o banco.
+    #:
+    #: É o teto da janela de revogação: uma permissão retirada por FORA da
+    #: aplicação — `update usuario set ativo = false` direto no banco — continua
+    #: valendo por até este tempo. Retirada PELA aplicação vale no ato, porque
+    #: `conceder()` descarta a entrada.
+    #:
+    #: Cinco minutos porque a leitura é constante (uma tela do painel dispara
+    #: dezenas de requisições, todas reconstruindo a mesma permissão) e a
+    #: escrita é rara — concessão e revogação passam por coordenação.
+    #:
+    #: `0` desliga e volta ao comportamento de reler a cada requisição. Ver
+    #: `app/seguranca/cache_de_autorizacao.py`.
+    autorizacao_cache_segundos: float = 300.0
+
     # -- superficie HTTP ------------------------------------------------------
     #
     # Metodos e cabecalhos explicitos, no lugar de `["*"]`. Nao e paranoia: com

@@ -7,6 +7,7 @@ verdade. Daqui para a frente o que importa é o cookie que sobrou do login.
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from uuid import uuid4
 
 import pytest
@@ -23,6 +24,7 @@ from app.banco.tabelas_acesso import (
 )
 from app.configuracao import Configuracao, obter_configuracao
 from app.seguranca import sessao_assinada
+from app.seguranca.cache_de_autorizacao import esquecer_em_todos, limpar_todos
 from main import app
 from tests.test_e2e_postgres import URL
 
@@ -70,6 +72,19 @@ def usuario(sessao):
     sessao.add(registro)
     sessao.flush()
     return registro
+
+
+@pytest.fixture(autouse=True)
+def _cache_limpo():
+    """O cache vive no processo e sobrevive entre testes.
+
+    Sem isto, um teste herdaria a permissão que outro deixou em memória, e a
+    ordem da suíte passaria a importar — o tipo de falha que só aparece quando
+    alguém acrescenta um teste no meio.
+    """
+    limpar_todos()
+    yield
+    limpar_todos()
 
 
 @pytest.fixture
@@ -177,11 +192,15 @@ def test_eu_entrega_o_papel_e_o_token(cliente, usuario):
     assert corpo["csrf_token"] == sessao_assinada.ler(cookie, SEGREDO).csrf
 
 
-def test_papel_revogado_vale_no_proximo_clique(cliente, usuario, sessao):
-    """O motivo de o cookie NÃO carregar o papel.
+def test_papel_revogado_por_fora_vale_quando_o_cache_vence(cliente, usuario, sessao):
+    """A janela que o cache custa, medida.
 
-    Se ele carregasse, tirar a permissão de alguém só surtiria efeito quando a
-    sessão vencesse — até oito horas depois.
+    Papel e escopo valem por `autorizacao_cache_segundos` sem reler o banco.
+    Uma revogação escrita por FORA da aplicação — como esta, direto no ORM, e
+    como seria um `update` no banco — não é vista até a entrada vencer.
+
+    O teste existe para essa janela ser um NÚMERO conferido, e não uma
+    suposição de quem lê o código.
     """
     cliente.cookies.set(sessao_assinada.NOME_DO_COOKIE, cookie_de(usuario.id))
     assert cliente.get("/api/interacoes").status_code == 200
@@ -189,7 +208,41 @@ def test_papel_revogado_vale_no_proximo_clique(cliente, usuario, sessao):
     usuario.papel_id = None
     sessao.flush()
 
+    # Ainda passa: a permissão em memória é a de antes da revogação.
+    assert cliente.get("/api/interacoes").status_code == 200
+
+    # E deixa de passar quando a entrada vence.
+    esquecer_em_todos(usuario.id)
     assert cliente.get("/api/interacoes").status_code == 403
+
+
+def test_com_o_cache_desligado_a_revogacao_vale_no_proximo_clique(usuario, sessao):
+    """`AUTORIZACAO_CACHE_SEGUNDOS=0` devolve o comportamento sem janela.
+
+    É a saída para quem não aceitar a janela: nenhuma permissão em memória,
+    revogação valendo no clique seguinte, ao custo de reler o banco sempre.
+    """
+    app.dependency_overrides[obter_sessao] = lambda: sessao
+    app.dependency_overrides[obter_configuracao] = lambda: Configuracao(
+        auth_mock=False,
+        sessao_secreta=SEGREDO,
+        entra_tenant_id="t",
+        entra_client_id="c",
+        entra_client_secret="s",
+        url_do_front="https://painel.aegea.com.br",
+        autorizacao_cache_segundos=0,
+    )
+    try:
+        cliente = TestClient(app)
+        cliente.cookies.set(sessao_assinada.NOME_DO_COOKIE, cookie_de(usuario.id))
+        assert cliente.get("/api/interacoes").status_code == 200
+
+        usuario.papel_id = None
+        sessao.flush()
+
+        assert cliente.get("/api/interacoes").status_code == 403
+    finally:
+        app.dependency_overrides.clear()
 
 
 # -- logout --------------------------------------------------------------------
@@ -482,3 +535,35 @@ def test_endereco_valido_e_preservado(sessao):
         select(AcessoLog).where(AcessoLog.email_tentado == marca)
     ).first()
     assert linha.ip == "203.0.113.9"
+
+
+def test_convidado_externo_com_prazo_entra(sessao, cliente):
+    """O caminho que o cache quase quebrou.
+
+    `acesso_expira_em` é uma coluna `date`, e a primeira versão do cache lia
+    `.tzinfo` nela — atributo que só `datetime` tem. O resultado seria 500 na
+    primeira requisição de TODO convidado externo, que é justamente quem é
+    OBRIGADO a ter prazo (`check (not externo or acesso_expira_em is not null)`,
+    migration 0003).
+
+    O teste sobe pelo HTTP de propósito: o defeito estava entre o tipo que o
+    banco devolve e o que o cache supunha, e nenhum dos dois lados sozinho o
+    mostrava.
+    """
+    papel = sessao.scalars(select(Papel).where(Papel.codigo == "analista")).first()
+    convidado = Usuario(
+        entra_object_id=f"oid-{uuid4().hex[:8]}",
+        email=f"{uuid4().hex[:8]}@fornecedor.com.br",
+        nome="Convidado de Fora",
+        papel_id=papel.id,
+        acesso_irrestrito=True,
+        externo=True,
+        acesso_expira_em=date.today() + timedelta(days=30),
+    )
+    sessao.add(convidado)
+    sessao.flush()
+
+    cliente.cookies.set(sessao_assinada.NOME_DO_COOKIE, cookie_de(convidado.id))
+    assert cliente.get("/api/interacoes").status_code == 200
+    # De novo, agora servido pelo cache — é o caminho que estourava.
+    assert cliente.get("/api/interacoes").status_code == 200

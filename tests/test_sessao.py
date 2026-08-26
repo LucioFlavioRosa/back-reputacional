@@ -106,10 +106,13 @@ def test_token_anti_csrf_e_imprevisivel():
 
 
 def test_o_cookie_nao_carrega_papel_nem_escopo():
-    """Deliberado, e é o que faz revogação valer no próximo clique.
+    """Deliberado: a permissão fica do lado do servidor.
 
-    Se o papel viajasse no cookie, tirar a permissão de alguém só surtiria
-    efeito quando a sessão dele vencesse — até oito horas depois.
+    Papel e escopo valem por alguns minutos em MEMÓRIA
+    (`app/seguranca/cache_de_autorizacao.py`), e a diferença é essencial: o que
+    está em memória o servidor descarta quando quer, e descarta de fato quando a
+    permissão muda pela tela. O que viajasse no cookie estaria com o cliente, e
+    só venceria no prazo dele — até oito horas depois.
     """
     cookie = assinar(nova_sessao(uuid4()), SEGREDO)
     import base64

@@ -110,10 +110,14 @@ def provisionar(
 def carregar(sessao: Session, usuario_id) -> UsuarioAtual | None:
     """Reconstrói o usuário a partir do id guardado na sessão.
 
-    Papel e escopo são lidos do banco A CADA requisição, e não guardados no
-    cookie. É o que faz uma revogação valer no próximo clique em vez de na
-    próxima hora — e o que impede que uma sessão emitida ontem carregue as
-    permissões de ontem.
+    Papel e escopo vêm do banco, e não do cookie — é o que impede que uma sessão
+    emitida ontem carregue as permissões de ontem.
+
+    Esta função é o caminho CARO, e a dependência que a chama consulta antes o
+    cache de autorização (`app/seguranca/cache_de_autorizacao.py`). Quem mexer
+    aqui deve saber que o retorno fica em memória por
+    `autorizacao_cache_segundos`: um campo novo acrescentado a `UsuarioAtual`
+    herda essa janela sem pedir licença.
     """
     registro = sessao.get(Usuario, usuario_id)
     if registro is None or not registro.ativo:
