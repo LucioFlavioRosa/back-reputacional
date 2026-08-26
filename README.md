@@ -163,12 +163,33 @@ código de um status e o nome de um grupo — que também contém `cancelado`.
 ## Testes e qualidade
 
 ```bash
-python -m pytest        # 365 testes; precisa do Postgres no ar
+python -m pytest        # 366 testes; precisa do Postgres no ar
 ruff check .            # linter, com as regras FastAPI (FAST); passa limpo
 ```
 
 Os testes de banco usam uma base **própria** (`painel_reputacional_teste`),
 criada e migrada pelo próprio módulo a cada execução.
+
+### CI
+
+`.github/workflows/ci.yml`, em push para `main` e em todo pull request:
+
+| Etapa | O que faz |
+|---|---|
+| Lint | `ruff check` com as regras do `pyproject.toml`, FastAPI incluídas |
+| Testes | a suíte em Python 3.12 **e** 3.13, contra Postgres 18 |
+| Migrations | aplica as 9 num banco limpo, em **5 versões × 2 níveis de privilégio** |
+| Imagem Docker | constrói, sobe contra um Postgres migrado e confere 7 rotas |
+
+A matriz de migrations é a etapa que mais paga: ela já pegou um bloqueio de
+deploy real — no Postgres gerenciado a conta administrativa não é superusuário,
+e a transferência de posse das funções `security definer` falhava com mensagens
+diferentes até o 15 e do 16 em diante. Cada combinação roda num contêiner
+próprio, porque roles no Postgres são de cluster.
+
+Para proteger o branch, aponte a regra para o check **`CI`** — ele agrega os
+demais, então acrescentar uma versão de Postgres não exige mexer na
+configuração do repositório.
 
 | Arquivo | O que garante |
 |---|---|

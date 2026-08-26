@@ -1,0 +1,291 @@
+name: CI
+
+# Em push para `main` e em todo pull request. Não roda em tag nem em push de
+# branch de rascunho: o que interessa é o que vai para `main` e o que pede para
+# entrar nela.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Um push novo cancela a execução anterior do MESMO branch. Sem isto, uma
+# sequência de commits enfileira execuções que já nasceram obsoletas.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Só leitura. Nada aqui publica nem comenta — não há motivo para o token poder.
+permissions:
+  contents: read
+
+env:
+  # A versão que a imagem de produção usa. Ver o `Dockerfile`.
+  PYTHON_PRODUCAO: "3.13"
+
+jobs:
+  # ===========================================================================
+  qualidade:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_PRODUCAO }}
+          cache: pip
+
+      - run: pip install --upgrade ruff
+
+      # As regras estão em `pyproject.toml`: E, F, I, UP, B e FAST — a última é
+      # o conjunto específico de FastAPI.
+      #
+      # `ruff format` NÃO entra aqui: o código é formatado à mão, com blocos de
+      # comentário que o formatador reorganizaria. E um passo que nunca falha só
+      # ensinaria o time a ignorar a saída do CI.
+      - name: ruff check
+        run: ruff check --no-cache .
+
+  # ===========================================================================
+  testes:
+    name: Testes · Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.12 é o piso declarado em `pyproject.toml`; 3.13 é o que a imagem de
+        # produção roda. Rodar os dois é o que impede "passa aqui e quebra lá".
+        python: ["3.12", "3.13"]
+
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: painel_reputacional
+        ports:
+          - 5432:5432
+        # Sem o healthcheck, os testes começam antes de o banco aceitar conexão
+        # e falham por corrida, não por defeito.
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # A suíte cria e migra o próprio banco (`painel_reputacional_teste`) a
+      # cada execução, a partir deste servidor. Ver `tests/test_e2e_postgres.py`.
+      BANCO_URL_TESTE: postgresql+psycopg2://postgres:postgres@localhost:5432/painel_reputacional
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - run: pip install -e ".[dev]"
+
+      # `-p no:randomly` não é usado: a suíte não depende de ordem, e queremos
+      # saber se algum dia passar a depender.
+      - name: pytest
+        run: python -m pytest -q
+
+  # ===========================================================================
+  migrations:
+    name: Migrations · pg${{ matrix.postgres }} · ${{ matrix.modo }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["13", "14", "15", "16", "18"]
+        modo: [superusuario, conta-comum]
+
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # O modo `conta-comum` é o que importa para o deploy: no Postgres
+      # gerenciado do Azure a conta administrativa NÃO é superusuário, e as
+      # migrations criam roles e transferem posse de funções `security definer`
+      # para elas. Isso já quebrou de verdade — com mensagens diferentes até o
+      # 15 ("must be member of role") e do 16 em diante ("must be able to SET
+      # ROLE"). As migrations 0005 e 0006 tratam os dois casos.
+      #
+      # Cada combinação da matriz roda num contêiner PRÓPRIO. É requisito, e não
+      # zelo: roles no Postgres são de CLUSTER, então reaproveitar o servidor
+      # entre os dois modos faria o segundo encontrar as roles já criadas pelo
+      # primeiro e falhar por um motivo que não é o testado.
+      - name: Prepara o banco e a conta
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.modo }}" = "superusuario" ]; then
+            psql -h localhost -U postgres -c "create database alvo"
+            echo "USUARIO=postgres" >> "$GITHUB_ENV"
+            echo "PGPASSWORD=postgres" >> "$GITHUB_ENV"
+          else
+            psql -h localhost -U postgres \
+              -c "create role aplicador login createrole createdb password 'aplicador'"
+            psql -h localhost -U postgres -c "create database alvo owner aplicador"
+            echo "USUARIO=aplicador" >> "$GITHUB_ENV"
+            echo "PGPASSWORD=aplicador" >> "$GITHUB_ENV"
+          fi
+
+      # `USUARIO` e `PGPASSWORD` vêm do passo anterior, por `$GITHUB_ENV`.
+      - name: Aplica as 9 migrations em ordem
+        run: |
+          set -euo pipefail
+          for arquivo in app/banco/migrations/*.sql; do
+            echo "→ $(basename "$arquivo")"
+            psql -h localhost -U "$USUARIO" -d alvo -q -v ON_ERROR_STOP=1 -f "$arquivo"
+          done
+
+      # Contar tabelas prova que rodou; conferir a posse das funções prova que a
+      # parte que quebra sem superusuário de fato aconteceu.
+      - name: Confere o resultado
+        run: |
+          set -euo pipefail
+          consulta() { psql -h localhost -U "$USUARIO" -d alvo -tAc "$1"; }
+
+          tabelas=$(consulta "select count(*) from information_schema.tables where table_schema='public'")
+          echo "tabelas: $tabelas"
+          test "$tabelas" -eq 37
+
+          donos=$(consulta "select string_agg(distinct proowner::regrole::text, ',' order by proowner::regrole::text)
+                              from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                             where n.nspname = 'public' and p.prosecdef")
+          echo "donos das funcoes security definer: $donos"
+          test "$donos" = "painel_auditoria,painel_concessao"
+
+          # O `grant create` da transferência de posse é temporário. Se sobrar,
+          # uma role de sistema fica podendo criar objeto em `public` — e é
+          # justamente disso que o `search_path` das funções depende.
+          sobrou=$(consulta "select count(*) from pg_roles r
+                              where r.rolname like 'painel%'
+                                and has_schema_privilege(r.rolname, 'public', 'CREATE')")
+          echo "roles painel* com CREATE em public: $sobrou"
+          test "$sobrou" -eq 0
+
+  # ===========================================================================
+  imagem:
+    name: Imagem Docker
+    runs-on: ubuntu-latest
+    # Não faz sentido construir a imagem se o código nem passa no linter.
+    needs: [qualidade]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Não publica: só prova que constrói. A publicação é decisão de quem
+      # implanta, e vai exigir credencial de registro.
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: back-reputacional:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # O build sozinho não prova nada sobre caminho de import: um `COPY`
+      # errado só aparece quando o processo sobe. Aqui a imagem roda contra um
+      # Postgres de verdade, com as migrations aplicadas.
+      - name: A imagem sobe e responde
+        run: |
+          set -euo pipefail
+          docker network create ci >/dev/null
+
+          docker run -d --name banco --network ci \
+            -e POSTGRES_PASSWORD=x -e POSTGRES_DB=painel \
+            -v "$PWD/app/banco/migrations:/docker-entrypoint-initdb.d:ro" \
+            postgres:18-alpine >/dev/null
+
+          for _ in $(seq 1 30); do
+            docker exec banco pg_isready -U postgres -d painel >/dev/null 2>&1 && break
+            sleep 2
+          done
+          # `pg_isready` responde antes de as migrations terminarem. Consultar
+          # uma tabela do schema é o que garante que a carga acabou.
+          for _ in $(seq 1 30); do
+            docker exec banco psql -U postgres -d painel -tAc \
+              'select 1 from papel limit 1' >/dev/null 2>&1 && break
+            sleep 2
+          done
+
+          docker run -d --name api --network ci -p 8000:8000 \
+            -e BANCO_URL="postgresql+psycopg2://postgres:x@banco:5432/painel" \
+            -e AUTH_MOCK=true \
+            -e SESSAO_SECRETA=ci-somente-para-teste-com-mais-de-32-caracteres \
+            -e ORIGENS_PERMITIDAS='["http://localhost:5173"]' \
+            back-reputacional:ci >/dev/null
+
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8000/api/saude >/dev/null 2>&1 && break
+            sleep 2
+          done
+
+          falhou=0
+          for rota in /api/saude /api/eu /api/interacoes /api/metricas/kpis \
+                      /api/metricas/mapa /api/dicionarios /api/instituicoes; do
+            codigo=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8000$rota")
+            printf '  %-24s %s\n' "$rota" "$codigo"
+            [ "$codigo" = "200" ] || falhou=1
+          done
+
+          if [ "$falhou" -ne 0 ]; then
+            echo "--- log da API ---"
+            docker logs api
+            exit 1
+          fi
+
+      - name: Log da API em caso de falha
+        if: failure()
+        run: docker logs api || true
+
+  # ===========================================================================
+  # Um alvo só para a regra de proteção do branch apontar.
+  #
+  # Sem isto, proteger `main` exigiria listar cada combinação da matriz pelo
+  # nome — e acrescentar uma versão de Postgres passaria a exigir mexer na
+  # configuração do repositório, coisa que ninguém lembra de fazer. O resultado
+  # seria uma proteção que silenciosamente deixa de cobrir o caso novo.
+  #
+  # `if: always()` para este job rodar mesmo com etapa anterior falhando: é
+  # justamente aí que ele precisa reprovar.
+  resumo:
+    name: CI
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [qualidade, testes, migrations, imagem]
+    steps:
+      - name: Alguma etapa falhou?
+        run: |
+          echo "qualidade:  ${{ needs.qualidade.result }}"
+          echo "testes:     ${{ needs.testes.result }}"
+          echo "migrations: ${{ needs.migrations.result }}"
+          echo "imagem:     ${{ needs.imagem.result }}"
+          if ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}; then
+            echo "::error::alguma etapa do CI não passou"
+            exit 1
+          fi
