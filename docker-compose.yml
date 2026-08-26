@@ -1,0 +1,55 @@
+# O Postgres de desenvolvimento, e só ele.
+#
+#   docker compose up -d
+#
+# A API roda fora do contêiner, com `uvicorn main:app --reload`, para ter recarga
+# automática. A imagem de produção está no `Dockerfile`.
+#
+# As migrations em `app/banco/migrations/` são montadas em
+# `/docker-entrypoint-initdb.d` e rodam sozinhas na PRIMEIRA subida, em ordem
+# alfabética — 0001 a 0009.
+#
+# Elas NÃO rodam de novo enquanto o volume existir. Para recriar do zero depois
+# de mexer no DDL:
+#
+#   docker compose down -v && docker compose up -d
+
+services:
+  banco:
+    image: postgres:18-alpine
+    container_name: back-reputacional-banco
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-painel_reputacional}
+      # A base guarda nome de veículo, órgão e pessoa em português.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+      TZ: America/Sao_Paulo
+      PGTZ: America/Sao_Paulo
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # Atenção ao caminho: a partir do Postgres 18 a imagem oficial guarda os
+      # dados em /var/lib/postgresql (com subpasta por versão maior), e não mais
+      # em /var/lib/postgresql/data. Montar no caminho antigo faz o contêiner
+      # recusar a subir. Ver docker-library/postgres#1259.
+      - dados-postgres:/var/lib/postgresql
+      - ./app/banco/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # `pg_isready` sozinho responde antes das migrations terminarem. Consultar
+      # uma tabela do schema garante que a carga inicial de fato acabou.
+      test:
+        - CMD-SHELL
+        - >-
+          pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-painel_reputacional}
+          && psql -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-painel_reputacional}
+          -c 'select 1 from frente limit 1'
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  dados-postgres:
+    name: back-reputacional-dados

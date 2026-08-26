@@ -1,0 +1,71 @@
+[project]
+name = "back-reputacional"
+version = "0.1.0"
+description = "API do Painel Reputacional Aegea — CRM dos Stakeholders"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy>=2.0",
+    "psycopg2-binary>=2.9",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    # Telemetria. O código importa de forma opcional e degrada para só-log se
+    # faltar, o que é bom em desenvolvimento e péssimo em produção: sem a
+    # dependência declarada, um deploy limpo sobe sem telemetria e o único
+    # sinal é uma linha de warning no log.
+    "azure-monitor-opentelemetry>=1.6",
+    # SSO do Entra ID. `[crypto]` traz o `cryptography`, sem o qual o PyJWT não
+    # valida assinatura RS256 — que é a única que o Entra ID emite. Declarados
+    # aqui porque já estavam instalados por transitividade: contar com isso é
+    # como o projeto quase subiu sem telemetria uma vez.
+    "pyjwt[crypto]>=2.9",
+    # Descoberta OIDC, JWKS e troca do code por token. Era dependência só de
+    # desenvolvimento (o TestClient usa); agora o servidor precisa dela em
+    # produção.
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# `main.py` fica na RAIZ, fora do pacote `app`: é o ponto de entrada, e quem
+# abre o repositório o encontra sem navegar.
+#
+# Mas ele precisa entrar no wheel, senão `pip install .` seguido de
+# `uvicorn main:app` falha com `ModuleNotFoundError` — o Dockerfile não pega
+# isso porque copia o arquivo à mão.
+py-modules = ["main"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.setuptools.package-data]
+# As migrations e a amostra são DADOS que o código lê em tempo de execução, e
+# `packages.find` só recolhe `.py`. Sem esta declaração o wheel instala sem elas,
+# e `python -m app.banco.semear_desenvolvimento` quebra numa instalação real.
+"app.banco" = ["migrations/*.sql", "amostra_de_desenvolvimento.json"]
+
+[tool.fastapi]
+# Permite `fastapi dev` e `fastapi run` sem passar o caminho do módulo.
+entrypoint = "main:app"
+
+[tool.pytest.ini_options]
+# A raiz do repositório: é de lá que `app` e `main` são importáveis.
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["."]
+
+[tool.ruff.lint]
+# FAST = regras específicas de FastAPI (dependência não usada em `Depends`,
+# `Annotated` esquecido, `response_model` redundante). Passam limpo hoje; estão
+# aqui para continuarem passando.
+select = ["E", "F", "I", "UP", "B", "FAST"]

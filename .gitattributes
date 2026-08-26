@@ -1,0 +1,16 @@
+# Quebra de linha LF no repositório, sempre.
+#
+# A imagem é construída em Linux e as migrations são montadas dentro do
+# contêiner do Postgres. Um arquivo com CRLF que vire script executável ali
+# falha com "bad interpreter: ^M" — erro que só aparece em quem clonou no
+# Windows, e não em quem clonou no Mac.
+#
+# `eol=lf` normaliza na entrada E na saída: o arquivo fica LF também na cópia de
+# trabalho, então o que você edita é o que o contêiner recebe.
+* text=auto eol=lf
+
+# Binários, se um dia houver.
+*.png binary
+*.jpg binary
+*.pdf binary
+*.xlsx binary
