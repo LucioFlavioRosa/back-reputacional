@@ -91,19 +91,19 @@ def como(sessao, registro: Usuario):
 
 
 def test_sem_administra_acessos_nao_lista(sessao):
-    analista = como(sessao, cria_usuario(sessao, "analista", acesso_irrestrito=True))
+    analista = como(sessao, cria_usuario(sessao, "crm", acesso_irrestrito=True))
     with pytest.raises(NaoAutorizado):
         administrar_acessos.listar(sessao, solicitante=analista)
 
 
 def test_sem_administra_acessos_nao_concede(sessao):
-    analista = como(sessao, cria_usuario(sessao, "analista", acesso_irrestrito=True))
+    analista = como(sessao, cria_usuario(sessao, "crm", acesso_irrestrito=True))
     alvo = cria_usuario(sessao)
     with pytest.raises(NaoAutorizado):
         administrar_acessos.conceder(
             sessao,
             alvo=alvo.id,
-            concessao=administrar_acessos.Concessao(papel="coordenacao", versao_vista=None),
+            concessao=administrar_acessos.Concessao(papel="plataforma", versao_vista=None),
             solicitante=analista,
         )
 
@@ -115,12 +115,12 @@ def test_ninguem_altera_o_proprio_acesso(sessao):
     é outra pessoa com o mesmo papel — que pode não existir. Pior seria alguém
     se conceder mais do que tem.
     """
-    admin = cria_usuario(sessao, "coordenacao", acesso_irrestrito=True)
+    admin = cria_usuario(sessao, "plataforma", acesso_irrestrito=True)
     with pytest.raises(RegraViolada, match="próprio acesso"):
         administrar_acessos.conceder(
             sessao,
             alvo=admin.id,
-            concessao=administrar_acessos.Concessao(papel="coordenacao", versao_vista=None),
+            concessao=administrar_acessos.Concessao(papel="plataforma", versao_vista=None),
             solicitante=como(sessao, admin),
         )
 
@@ -129,14 +129,14 @@ def test_ninguem_altera_o_proprio_acesso(sessao):
 
 
 def test_concede_papel_e_escopo(sessao):
-    admin = como(sessao, cria_usuario(sessao, "coordenacao", acesso_irrestrito=True))
+    admin = como(sessao, cria_usuario(sessao, "plataforma", acesso_irrestrito=True))
     alvo = cria_usuario(sessao)
 
     administrar_acessos.conceder(
         sessao,
         alvo=alvo.id,
         concessao=administrar_acessos.Concessao(
-            papel="externo",
+            papel="score",
             externo=True,
             expira_em=date.today() + timedelta(days=90),
             frentes=("imprensa",),
@@ -147,7 +147,7 @@ def test_concede_papel_e_escopo(sessao):
     sessao.flush()
 
     atual = como(sessao, alvo)
-    assert atual.papel.codigo == "externo"
+    assert atual.papel.codigo == "score"
     assert atual.externo
     assert atual.escopo.frentes == {"imprensa"}
 
@@ -158,8 +158,8 @@ def test_revogar_e_conceder_papel_nenhum(sessao):
     É o oposto de apagar: o histórico dela permanece atribuído, e o registro de
     quem revogou fica na trilha.
     """
-    admin = como(sessao, cria_usuario(sessao, "coordenacao", acesso_irrestrito=True))
-    alvo = cria_usuario(sessao, "analista", acesso_irrestrito=True)
+    admin = como(sessao, cria_usuario(sessao, "plataforma", acesso_irrestrito=True))
+    alvo = cria_usuario(sessao, "crm", acesso_irrestrito=True)
 
     # `versao_vista=None` mesmo com o alvo JÁ tendo papel, e isto é verdade
     # aqui: `cria_usuario` escreve `papel_id` direto pelo ORM, sem passar por
@@ -187,14 +187,14 @@ def test_a_concessao_substitui_em_vez_de_somar(sessao):
     Aplicar diferença abriria a porta para "acrescentei uma frente e esqueci que
     ele já tinha acesso irrestrito" — e o erro só apareceria depois.
     """
-    admin = como(sessao, cria_usuario(sessao, "coordenacao", acesso_irrestrito=True))
+    admin = como(sessao, cria_usuario(sessao, "plataforma", acesso_irrestrito=True))
     alvo = cria_usuario(sessao)
 
     for frentes in (("imprensa", "governo"), ("governo",)):
         administrar_acessos.conceder(
             sessao,
             alvo=alvo.id,
-            concessao=administrar_acessos.Concessao(papel="externo", externo=True,
+            concessao=administrar_acessos.Concessao(papel="score", externo=True,
                                                     expira_em=date.today() + timedelta(days=30),
                                                     frentes=frentes,
                                                     versao_vista=versao(sessao, alvo)),
@@ -214,7 +214,7 @@ def test_externo_sem_prazo_e_recusado(sessao):
     A função é a fronteira de confiança: quem a chama tem privilégio menor do
     que ela. Validar lá é o que impede que um caminho futuro esqueça a regra.
     """
-    admin = como(sessao, cria_usuario(sessao, "coordenacao", acesso_irrestrito=True))
+    admin = como(sessao, cria_usuario(sessao, "plataforma", acesso_irrestrito=True))
     alvo = cria_usuario(sessao)
 
     with pytest.raises(RegraViolada, match="prazo"):
@@ -222,7 +222,7 @@ def test_externo_sem_prazo_e_recusado(sessao):
             sessao,
             alvo=alvo.id,
             concessao=administrar_acessos.Concessao(
-                papel="externo",
+                papel="score",
                 externo=True,
                 versao_vista=None,
             ),
@@ -231,7 +231,7 @@ def test_externo_sem_prazo_e_recusado(sessao):
 
 
 def test_irrestrito_com_externo_e_recusado(sessao):
-    admin = como(sessao, cria_usuario(sessao, "coordenacao", acesso_irrestrito=True))
+    admin = como(sessao, cria_usuario(sessao, "plataforma", acesso_irrestrito=True))
     alvo = cria_usuario(sessao)
 
     with pytest.raises(RegraViolada):
@@ -239,7 +239,7 @@ def test_irrestrito_com_externo_e_recusado(sessao):
             sessao,
             alvo=alvo.id,
             concessao=administrar_acessos.Concessao(
-                papel="externo", externo=True, acesso_irrestrito=True,
+                papel="score", externo=True, acesso_irrestrito=True,
                 expira_em=date.today() + timedelta(days=30),
                 versao_vista=None,
             ),
@@ -248,7 +248,7 @@ def test_irrestrito_com_externo_e_recusado(sessao):
 
 
 def test_papel_inexistente_e_recusado(sessao):
-    admin = como(sessao, cria_usuario(sessao, "coordenacao", acesso_irrestrito=True))
+    admin = como(sessao, cria_usuario(sessao, "plataforma", acesso_irrestrito=True))
     alvo = cria_usuario(sessao)
 
     with pytest.raises(RegraViolada, match="[Pp]apel"):
@@ -265,7 +265,7 @@ def test_mensagem_de_erro_nao_traz_a_instrucao_sql(sessao):
 
     Isso inclui ids de usuário, e vai para o log — não para a tela.
     """
-    admin = como(sessao, cria_usuario(sessao, "coordenacao", acesso_irrestrito=True))
+    admin = como(sessao, cria_usuario(sessao, "plataforma", acesso_irrestrito=True))
     alvo = cria_usuario(sessao)
 
     with pytest.raises(RegraViolada) as erro:
@@ -273,7 +273,7 @@ def test_mensagem_de_erro_nao_traz_a_instrucao_sql(sessao):
             sessao,
             alvo=alvo.id,
             concessao=administrar_acessos.Concessao(
-                papel="externo",
+                papel="score",
                 externo=True,
                 versao_vista=None,
             ),
@@ -289,14 +289,14 @@ def test_mensagem_de_erro_nao_traz_a_instrucao_sql(sessao):
 
 def test_concessao_deixa_rastro_com_autor(sessao):
     """A pergunta que motivou a tabela: quem liberou este acesso?"""
-    admin = cria_usuario(sessao, "coordenacao", acesso_irrestrito=True)
+    admin = cria_usuario(sessao, "plataforma", acesso_irrestrito=True)
     alvo = cria_usuario(sessao)
 
     administrar_acessos.conceder(
         sessao,
         alvo=alvo.id,
         concessao=administrar_acessos.Concessao(
-            papel="analista",
+            papel="crm",
             acesso_irrestrito=True,
             versao_vista=None,
         ),
@@ -319,7 +319,7 @@ def test_concessao_deixa_rastro_com_autor(sessao):
 
 
 def test_escopo_concedido_e_removido_aparecem_na_trilha(sessao):
-    admin = como(sessao, cria_usuario(sessao, "coordenacao", acesso_irrestrito=True))
+    admin = como(sessao, cria_usuario(sessao, "plataforma", acesso_irrestrito=True))
     alvo = cria_usuario(sessao)
     prazo = date.today() + timedelta(days=30)
 
@@ -328,7 +328,7 @@ def test_escopo_concedido_e_removido_aparecem_na_trilha(sessao):
             sessao,
             alvo=alvo.id,
             concessao=administrar_acessos.Concessao(
-                papel="externo", externo=True, expira_em=prazo, frentes=frentes,
+                papel="score", externo=True, expira_em=prazo, frentes=frentes,
                 versao_vista=versao(sessao, alvo),
             ),
             solicitante=admin,
@@ -371,13 +371,13 @@ def entra(cliente, registro: Usuario) -> str:
 
 
 def test_rota_de_listagem_exige_o_papel(cliente, sessao):
-    analista = cria_usuario(sessao, "analista", acesso_irrestrito=True)
+    analista = cria_usuario(sessao, "crm", acesso_irrestrito=True)
     entra(cliente, analista)
     assert cliente.get("/api/acessos").status_code == 403
 
 
 def test_rota_concede_pela_http(cliente, sessao):
-    admin = cria_usuario(sessao, "coordenacao", acesso_irrestrito=True)
+    admin = cria_usuario(sessao, "plataforma", acesso_irrestrito=True)
     alvo = cria_usuario(sessao)
     token = entra(cliente, admin)
 
@@ -385,7 +385,12 @@ def test_rota_concede_pela_http(cliente, sessao):
         f"/api/acessos/{alvo.id}",
         headers={"X-CSRF-Token": token},
         json={
-            "papel": "externo",
+            "papel": "score",
+            # `externo` é o BOOLEANO de convidado de fora, e não o código de um
+            # papel. Os dois se chamavam parecido enquanto existia um papel
+            # `externo`, e uma troca de nomes em massa confundiu os dois: a
+            # chave virou `score` e o teste passou a mandar um campo que a rota
+            # ignora — continuava verde sem exercitar a regra do prazo.
             "externo": True,
             "expira_em": (date.today() + timedelta(days=60)).isoformat(),
             "frentes": ["imprensa"],
@@ -404,14 +409,14 @@ def test_rota_exige_a_versao_vista(cliente, sessao):
     Enquanto havia default, quem não conhecesse o campo apagava concessão
     alheia sem nunca ter decidido apagar. O erro é mais barato.
     """
-    admin = cria_usuario(sessao, "coordenacao", acesso_irrestrito=True)
+    admin = cria_usuario(sessao, "plataforma", acesso_irrestrito=True)
     alvo = cria_usuario(sessao)
     token = entra(cliente, admin)
 
     resposta = cliente.put(
         f"/api/acessos/{alvo.id}",
         headers={"X-CSRF-Token": token},
-        json={"papel": "analista", "acesso_irrestrito": True},
+        json={"papel": "crm", "acesso_irrestrito": True},
     )
     assert resposta.status_code == 422, resposta.text
     assert "versao_vista" in resposta.text
@@ -419,23 +424,23 @@ def test_rota_exige_a_versao_vista(cliente, sessao):
 
 def test_concessao_pela_http_exige_token_anti_csrf(cliente, sessao):
     """Conceder acesso é o alvo mais valioso de um CSRF neste sistema."""
-    admin = cria_usuario(sessao, "coordenacao", acesso_irrestrito=True)
+    admin = cria_usuario(sessao, "plataforma", acesso_irrestrito=True)
     alvo = cria_usuario(sessao)
     entra(cliente, admin)
 
-    resposta = cliente.put(f"/api/acessos/{alvo.id}", json={"papel": "coordenacao"})
+    resposta = cliente.put(f"/api/acessos/{alvo.id}", json={"papel": "plataforma"})
     assert resposta.status_code == 403
 
 
 def test_historico_pela_http(cliente, sessao):
-    admin = cria_usuario(sessao, "coordenacao", acesso_irrestrito=True)
+    admin = cria_usuario(sessao, "plataforma", acesso_irrestrito=True)
     alvo = cria_usuario(sessao)
     token = entra(cliente, admin)
 
     cliente.put(
         f"/api/acessos/{alvo.id}",
         headers={"X-CSRF-Token": token},
-        json={"papel": "diretoria", "acesso_irrestrito": True, "versao_vista": None},
+        json={"papel": "sintese", "acesso_irrestrito": True, "versao_vista": None},
     )
     corpo = cliente.get(f"/api/acessos/{alvo.id}/historico").json()
 
@@ -455,14 +460,14 @@ def test_erro_inesperado_nao_vaza_estrutura_do_banco(sessao):
     Filtrar por SQLSTATE separa "mensagem que escrevi para o usuário" do que o
     Postgres achou de dizer.
     """
-    admin = como(sessao, cria_usuario(sessao, "coordenacao", acesso_irrestrito=True))
+    admin = como(sessao, cria_usuario(sessao, "plataforma", acesso_irrestrito=True))
 
     with pytest.raises(RegraViolada) as erro:
         administrar_acessos.conceder(
             sessao,
             alvo=uuid4(),  # não existe: a função levanta antes, mas por outro caminho
             concessao=administrar_acessos.Concessao(
-                papel="analista",
+                papel="crm",
                 acesso_irrestrito=True,
                 versao_vista=None,
             ),
@@ -480,7 +485,7 @@ def test_mensagem_escrita_pela_funcao_chega_ao_usuario(sessao):
     "Acesso externo exige prazo" é uma frase escrita para quem está na tela.
     Trocá-la por "não foi possível" tornaria a validação inútil na prática.
     """
-    admin = como(sessao, cria_usuario(sessao, "coordenacao", acesso_irrestrito=True))
+    admin = como(sessao, cria_usuario(sessao, "plataforma", acesso_irrestrito=True))
     alvo = cria_usuario(sessao)
 
     with pytest.raises(RegraViolada, match="prazo"):
@@ -488,7 +493,7 @@ def test_mensagem_escrita_pela_funcao_chega_ao_usuario(sessao):
             sessao,
             alvo=alvo.id,
             concessao=administrar_acessos.Concessao(
-                papel="externo",
+                papel="score",
                 externo=True,
                 versao_vista=None,
             ),
@@ -507,14 +512,14 @@ def test_dois_administradores_nao_se_sobrescrevem(sessao):
     mudança de B some — sem conflito, sem aviso. O acesso simplesmente volta a
     ser o de antes, e ninguém liga uma coisa à outra.
     """
-    admin = como(sessao, cria_usuario(sessao, "coordenacao", acesso_irrestrito=True))
+    admin = como(sessao, cria_usuario(sessao, "plataforma", acesso_irrestrito=True))
     alvo = cria_usuario(sessao)
 
     # A concessão inicial, que dá a versão que "A" vê na tela.
     administrar_acessos.conceder(
         sessao, alvo=alvo.id,
         concessao=administrar_acessos.Concessao(
-            papel="analista",
+            papel="crm",
             acesso_irrestrito=True,
             versao_vista=None,
         ),
@@ -528,7 +533,7 @@ def test_dois_administradores_nao_se_sobrescrevem(sessao):
     administrar_acessos.conceder(
         sessao, alvo=alvo.id,
         concessao=administrar_acessos.Concessao(
-            papel="diretoria", acesso_irrestrito=True,
+            papel="sintese", acesso_irrestrito=True,
             versao_vista=versao(sessao, alvo),
         ),
         solicitante=admin,
@@ -540,7 +545,7 @@ def test_dois_administradores_nao_se_sobrescrevem(sessao):
         administrar_acessos.conceder(
             sessao, alvo=alvo.id,
             concessao=administrar_acessos.Concessao(
-                papel="analista", acesso_irrestrito=True, versao_vista=versao_que_A_viu
+                papel="crm", acesso_irrestrito=True, versao_vista=versao_que_A_viu
             ),
             solicitante=admin,
         )
@@ -553,20 +558,20 @@ def test_sem_versao_a_primeira_concessao_passa(sessao):
     mais comum na tela. `is distinct from` compara nulo com nulo como
     igualdade, então o caso passa sem precisar de exceção no código.
     """
-    admin = como(sessao, cria_usuario(sessao, "coordenacao", acesso_irrestrito=True))
+    admin = como(sessao, cria_usuario(sessao, "plataforma", acesso_irrestrito=True))
     alvo = cria_usuario(sessao)
 
     administrar_acessos.conceder(
         sessao, alvo=alvo.id,
         concessao=administrar_acessos.Concessao(
-            papel="analista",
+            papel="crm",
             acesso_irrestrito=True,
             versao_vista=None,
         ),
         solicitante=admin,
     )
     sessao.flush()
-    assert como(sessao, alvo).papel.codigo == "analista"
+    assert como(sessao, alvo).papel.codigo == "crm"
 
 
 def test_versao_nula_nao_e_curinga(sessao):
@@ -577,15 +582,15 @@ def test_versao_nula_nao_e_curinga(sessao):
     Se nulo fosse curinga, bastaria uma tela aberta antes da concessão de outra
     pessoa para apagá-la — sem conflito e sem aviso.
     """
-    admin = como(sessao, cria_usuario(sessao, "coordenacao", acesso_irrestrito=True))
-    outro = como(sessao, cria_usuario(sessao, "coordenacao", acesso_irrestrito=True))
+    admin = como(sessao, cria_usuario(sessao, "plataforma", acesso_irrestrito=True))
+    outro = como(sessao, cria_usuario(sessao, "plataforma", acesso_irrestrito=True))
     alvo = cria_usuario(sessao)
 
     # "B" concede, e o alvo passa a ter versão.
     administrar_acessos.conceder(
         sessao, alvo=alvo.id,
         concessao=administrar_acessos.Concessao(
-            papel="analista",
+            papel="crm",
             acesso_irrestrito=True,
             versao_vista=None,
         ),
@@ -605,7 +610,7 @@ def test_versao_nula_nao_e_curinga(sessao):
         administrar_acessos.conceder(
             sessao, alvo=alvo.id,
             concessao=administrar_acessos.Concessao(
-                papel="coordenacao", acesso_irrestrito=True, versao_vista=None
+                papel="plataforma", acesso_irrestrito=True, versao_vista=None
             ),
             solicitante=admin,
         )
@@ -615,7 +620,7 @@ def test_versao_nula_nao_e_curinga(sessao):
     ponto.rollback()
 
     sessao.expire_all()
-    assert como(sessao, alvo).papel.codigo == "analista", (
+    assert como(sessao, alvo).papel.codigo == "crm", (
         "a concessão de quem chegou primeiro tem de continuar de pé"
     )
 
@@ -646,7 +651,7 @@ def dois_usuarios_comitados():
         admin = conexao.execute(
             text(
                 "insert into usuario (entra_object_id, email, nome, acesso_irrestrito, papel_id) "
-                "values (:o, :e, 'Admin', true, (select id from papel where codigo='coordenacao')) "
+                "values (:o, :e, 'Admin', true, (select id from papel where codigo='plataforma')) "
                 "returning id"
             ),
             {"o": f"conc-admin-{sufixo}", "e": f"admin-{sufixo}@aegea.com.br"},
@@ -661,7 +666,7 @@ def dois_usuarios_comitados():
         # Uma concessão inicial, para o alvo passar a ter versão.
         conexao.execute(
             text(
-                "select conceder_acesso(:alvo, :quem, 'analista', true, false, "
+                "select conceder_acesso(:alvo, :quem, 'crm', true, false, "
                 "null, '{}'::text[], '{}'::text[], null)"
             ),
             {"alvo": alvo, "quem": admin},
@@ -750,7 +755,7 @@ def test_duas_concessoes_simultaneas_nao_se_atropelam(dois_usuarios_comitados):
 
     primeira = _engine.connect()
     primeira.begin()
-    _conceder(primeira, alvo=alvo, quem=admin, papel="diretoria", versao=versao)
+    _conceder(primeira, alvo=alvo, quem=admin, papel="sintese", versao=versao)
     ja_comitou = False
 
     def segunda_concessao() -> None:
@@ -759,7 +764,7 @@ def test_duas_concessoes_simultaneas_nao_se_atropelam(dois_usuarios_comitados):
             try:
                 # MESMA versão que a primeira usou: as duas telas foram abertas
                 # antes de qualquer uma salvar.
-                _conceder(conexao, alvo=alvo, quem=admin, papel="externo", versao=versao)
+                _conceder(conexao, alvo=alvo, quem=admin, papel="score", versao=versao)
                 conexao.commit()
                 desfecho["resultado"] = "escreveu"
             except Exception as erro:  # noqa: BLE001 - o teste julga a mensagem
@@ -820,7 +825,7 @@ def test_duas_concessoes_simultaneas_nao_se_atropelam(dois_usuarios_comitados):
             ),
             {"id": alvo},
         ).scalar()
-    assert papel == "diretoria", "quem chegou primeiro tem de continuar de pé"
+    assert papel == "sintese", "quem chegou primeiro tem de continuar de pé"
 
 
 # -- revogar é estado limpo ----------------------------------------------------
@@ -833,13 +838,13 @@ def test_revogar_apaga_escopo_e_prazo(sessao):
     conceder papel depois: o alcance de um contrato encerrado ressuscitaria
     intacto, sem ninguém pedir.
     """
-    admin = como(sessao, cria_usuario(sessao, "coordenacao", acesso_irrestrito=True))
+    admin = como(sessao, cria_usuario(sessao, "plataforma", acesso_irrestrito=True))
     alvo = cria_usuario(sessao)
 
     administrar_acessos.conceder(
         sessao, alvo=alvo.id,
         concessao=administrar_acessos.Concessao(
-            papel="externo", externo=True,
+            papel="score", externo=True,
             expira_em=date.today() + timedelta(days=30), frentes=("imprensa",),
             versao_vista=None,
         ),
@@ -865,13 +870,13 @@ def test_revogar_apaga_escopo_e_prazo(sessao):
 
 def test_escopo_antigo_nao_ressuscita(sessao):
     """O cenário completo: revogar e conceder de novo."""
-    admin = como(sessao, cria_usuario(sessao, "coordenacao", acesso_irrestrito=True))
+    admin = como(sessao, cria_usuario(sessao, "plataforma", acesso_irrestrito=True))
     alvo = cria_usuario(sessao)
 
     administrar_acessos.conceder(
         sessao, alvo=alvo.id,
         concessao=administrar_acessos.Concessao(
-            papel="externo", externo=True,
+            papel="score", externo=True,
             expira_em=date.today() + timedelta(days=30), frentes=("imprensa",),
             versao_vista=None,
         ),
@@ -879,7 +884,7 @@ def test_escopo_antigo_nao_ressuscita(sessao):
     )
     sessao.flush()
 
-    for papel in (None, "diretoria"):
+    for papel in (None, "sintese"):
         administrar_acessos.conceder(
             sessao, alvo=alvo.id,
             concessao=administrar_acessos.Concessao(
@@ -943,8 +948,8 @@ def test_conceder_descarta_o_que_o_cache_sabia_do_alvo(sessao):
     seria revogar de novo, ou pior, ir mexer no banco.
     """
     limpar_todos()
-    admin = como(sessao, cria_usuario(sessao, "coordenacao", acesso_irrestrito=True))
-    alvo = cria_usuario(sessao, "analista", acesso_irrestrito=True)
+    admin = como(sessao, cria_usuario(sessao, "plataforma", acesso_irrestrito=True))
+    alvo = cria_usuario(sessao, "crm", acesso_irrestrito=True)
 
     cache = cache_para(300.0)
     cache.guardar(como(sessao, alvo))
@@ -968,9 +973,9 @@ def test_conceder_nao_derruba_o_cache_de_quem_nao_foi_alterado(sessao):
     banco — e revogação em lote viraria uma rajada de consultas.
     """
     limpar_todos()
-    admin = como(sessao, cria_usuario(sessao, "coordenacao", acesso_irrestrito=True))
-    alvo = cria_usuario(sessao, "analista", acesso_irrestrito=True)
-    terceiro = cria_usuario(sessao, "analista", acesso_irrestrito=True)
+    admin = como(sessao, cria_usuario(sessao, "plataforma", acesso_irrestrito=True))
+    alvo = cria_usuario(sessao, "crm", acesso_irrestrito=True)
+    terceiro = cria_usuario(sessao, "crm", acesso_irrestrito=True)
 
     cache = cache_para(300.0)
     cache.guardar(como(sessao, terceiro))

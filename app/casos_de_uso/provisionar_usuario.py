@@ -166,6 +166,9 @@ def _papel_de(sessao: Session, papel_id: int | None) -> Papel | None:
         ve_campos_sensiveis=registro.ve_campos_sensiveis,
         ve_diretorio=registro.ve_diretorio,
         pode_exportar=registro.pode_exportar,
+        acessa_crm=registro.acessa_crm,
+        acessa_sintese=registro.acessa_sintese,
+        acessa_score=registro.acessa_score,
     )
 
 

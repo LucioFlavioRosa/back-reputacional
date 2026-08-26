@@ -120,7 +120,7 @@ class Tema(Tabela):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     nome: Mapped[str] = mapped_column(Text, unique=True)
-    #: estrategico (vocabulário fechado) | livre (criada pelo analista)
+    #: estrategico (vocabulário fechado) | livre (criada por quem registra)
     nivel: Mapped[str] = mapped_column(Text)
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
     #: Tag livre nasce datada — é o rastro de quando o vocabulário cresceu.

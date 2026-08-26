@@ -200,22 +200,22 @@ def test_dias_parada_alimenta_a_fila_de_pendencias():
 #: fixture de banco, porque estes testes sao de dominio puro: a politica so
 #: precisa das bandeiras, nao de onde elas foram lidas.
 PAPEIS = {
-    Perfil.ANALISTA: Papel(
-        codigo="analista", nome="Analista",
+    Perfil.CRM: Papel(
+        codigo="crm", nome="Analista",
         pode_criar=True, pode_editar_proprio=True,
         ve_campos_sensiveis=True, ve_diretorio=True, pode_exportar=True,
     ),
-    Perfil.COORDENACAO: Papel(
-        codigo="coordenacao", nome="Coordenacao",
+    Perfil.PLATAFORMA: Papel(
+        codigo="plataforma", nome="Coordenacao",
         pode_criar=True, pode_editar_proprio=True, pode_editar_tudo=True,
         administra_dicionarios=True, administra_acessos=True,
         ve_campos_sensiveis=True, ve_diretorio=True, pode_exportar=True,
     ),
-    Perfil.DIRETORIA: Papel(
-        codigo="diretoria", nome="Diretoria",
+    Perfil.SINTESE: Papel(
+        codigo="sintese", nome="Diretoria",
         ve_campos_sensiveis=True, ve_diretorio=True, pode_exportar=True,
     ),
-    Perfil.EXTERNO: Papel(codigo="externo", nome="Externo"),
+    Perfil.SCORE: Papel(codigo="score", nome="Externo"),
 }
 
 
@@ -230,25 +230,25 @@ def usuario(perfil: Perfil, id_=None, escopo: Escopo | None = None) -> UsuarioAt
 
 
 def test_analista_edita_o_que_criou():
-    autor = usuario(Perfil.ANALISTA)
+    autor = usuario(Perfil.CRM)
     interacao = nova(criado_por=autor.id)
     assert pode_editar(autor, interacao)
 
 
 def test_analista_nao_edita_registro_alheio():
-    autor = usuario(Perfil.ANALISTA)
-    outro = usuario(Perfil.ANALISTA)
+    autor = usuario(Perfil.CRM)
+    outro = usuario(Perfil.CRM)
     interacao = nova(criado_por=autor.id)
     assert not pode_editar(outro, interacao)
 
 
 def test_coordenacao_edita_tudo():
     interacao = nova(criado_por=uuid4())
-    assert pode_editar(usuario(Perfil.COORDENACAO), interacao)
+    assert pode_editar(usuario(Perfil.PLATAFORMA), interacao)
 
 
 def test_diretoria_nao_edita_nada():
-    diretoria = usuario(Perfil.DIRETORIA)
+    diretoria = usuario(Perfil.SINTESE)
     interacao = nova(criado_por=diretoria.id)
     assert not pode_editar(diretoria, interacao)
     assert diretoria.somente_leitura

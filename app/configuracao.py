@@ -23,11 +23,23 @@ class Configuracao(BaseSettings):
     #: Em desenvolvimento a autenticação usa um usuário fixo, provisionado no
     #: primeiro acesso pelo mesmo caminho JIT que o Entra ID usará em produção.
     auth_mock: bool = True
-    auth_mock_email: str = "analista@aegea.com.br"
-    auth_mock_nome: str = "Analista de Desenvolvimento"
-    auth_mock_perfil: str = "analista"
+    auth_mock_email: str = "crm@aegea.com.br"
+    auth_mock_nome: str = "Usuário de Desenvolvimento"
+    auth_mock_perfil: str = "crm"
 
     #: Preenchidos quando `auth_mock` for desligado.
+    #: O SSO responde, ou responde que está fora do ar.
+    #:
+    #: Desligado, `/api/auth/login` e `/api/auth/callback` devolvem 503 em vez de
+    #: tentar a descoberta OIDC e estourar 500 com rastro de pilha. A diferença
+    #: importa: 500 é defeito, e alguém vai investigar; 503 com mensagem é uma
+    #: decisão, e o log fica limpo para os defeitos de verdade.
+    #:
+    #: Precisa existir no BACKEND, e não só no botão da tela: esconder o botão
+    #: não fecha a rota, e uma rota pública que estoura é superfície de ruído —
+    #: e de sondagem, porque o rastro conta como o sistema é montado por dentro.
+    sso_ligado: bool = False
+
     entra_tenant_id: str | None = None
     entra_client_id: str | None = None
     entra_client_secret: str | None = None

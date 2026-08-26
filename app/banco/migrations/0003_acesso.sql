@@ -38,12 +38,34 @@ create table papel (
   ve_campos_sensiveis    boolean     not null default false,
   ve_diretorio           boolean     not null default false,
   pode_exportar          boolean     not null default false,
+
+  -- ONDE a pessoa entra, e não o que ela faz lá dentro.
+  --
+  -- A plataforma tem três portais — CRM dos Stakeholders, Síntese Executiva e
+  -- Score Executivo —, e a capa oferece os três. Estas colunas dizem quais
+  -- deles um papel abre.
+  --
+  -- É dimensão SEPARADA das bandeiras acima, e a separação é o que impede a
+  -- lista de papéis de multiplicar: sem ela, "quem lê a Síntese" e "quem lê a
+  -- Síntese e o Score" seriam papéis diferentes, e cada portal novo dobraria a
+  -- tabela.
+  --
+  -- Fecham por padrão. Papel novo criado sem mexer nelas não abre porta
+  -- nenhuma, que é o comportamento certo para quem esqueceu de decidir.
+  acessa_crm             boolean     not null default false,
+  acessa_sintese         boolean     not null default false,
+  acessa_score           boolean     not null default false,
+
   ativo                  boolean     not null default true,
   criado_em              timestamptz not null default now()
 );
 
 comment on table papel is
-  'Conjunto nomeado de permissões. Não contém escopo: ver usuario_escopo.';
+  'Conjunto nomeado de permissões e de portais. Não contém escopo: ver '
+  'usuario_escopo.';
+
+comment on column papel.acessa_crm is
+  'Abre o CRM dos Stakeholders. Ver acessa_sintese e acessa_score.';
 
 comment on column papel.ve_campos_sensiveis is
   'relato e pendencias saem do payload da API quando falso.';
@@ -51,17 +73,41 @@ comment on column papel.ve_campos_sensiveis is
 -- Uma coluna por permissão, e não uma lista: assim a pergunta "quem pode
 -- exportar?" é um `select`, e acrescentar uma permissão nova não exige
 -- reinterpretar dado existente.
+-- OS QUATRO PAPÉIS DE PARTIDA.
+--
+-- São a divisão por PORTAL, que é a fronteira mais grossa da plataforma:
+-- `plataforma` alcança os três, e os outros três alcançam um cada.
+--
+-- As bandeiras de permissão abaixo são ponto de partida, e mudá-las é um
+-- `update` — não uma migration. Um papel intermediário ("lê a Síntese e o
+-- Score, não exporta") é um `insert`.
+--
+-- `administra_acessos` fica SÓ em `plataforma`, e a exclusividade é
+-- deliberada: é a permissão que concede todas as outras. Espalhá-la faria
+-- cada portal poder ampliar o próprio alcance.
+--
+-- ATENÇÃO ao mexer: `conceder_acesso` proíbe alterar o próprio acesso
+-- (migration 0006). Deixar zero pessoas com `administra_acessos` tranca a
+-- administração, e sair disso exige SQL direto no banco.
 insert into papel (
   codigo, nome,
   pode_criar, pode_editar_proprio, pode_editar_tudo,
   administra_dicionarios, administra_acessos,
-  ve_campos_sensiveis, ve_diretorio, pode_exportar
+  ve_campos_sensiveis, ve_diretorio, pode_exportar,
+  acessa_crm, acessa_sintese, acessa_score
 ) values
-  ('analista',    'Analista',    true,  true,  false, false, false, true,  true,  true ),
-  ('coordenacao', 'Coordenação', true,  true,  true,  true,  true,  true,  true,  true ),
-  ('diretoria',   'Diretoria',   false, false, false, false, false, true,  true,  true ),
-  ('externo',     'Externo',     false, false, false, false, false, false, false, false)
+  -- Alcança os três portais e administra a plataforma.
+  ('plataforma', 'Plataforma',        true,  true,  true,  true,  true,  true,  true,  true,  true,  true,  true ),
+
+  -- O CRM é o único portal com dado hoje, e é onde se registra: este papel
+  -- trabalha lá dentro, mas não edita o que é dos outros nem administra nada.
+  ('crm',        'CRM',               true,  true,  false, false, false, true,  true,  true,  true,  false, false),
+
+  -- Síntese e Score são leitura executiva: consultam e exportam.
+  ('sintese',    'Síntese Executiva', false, false, false, false, false, true,  false, true,  false, true,  false),
+  ('score',      'Score Executivo',   false, false, false, false, false, true,  false, true,  false, false, true )
 on conflict (codigo) do nothing;
+
 
 
 -- -- quem entra ----------------------------------------------------------------
@@ -76,7 +122,28 @@ on conflict (codigo) do nothing;
 -- unicidade deixaria passar duplicata.
 create table usuario (
   id                  uuid        primary key default gen_random_uuid(),
-  entra_object_id     text        not null unique,
+
+  -- NULO é permitido, e é o que abre a porta para senha local.
+  --
+  -- Era `not null`: quem entra é sempre do Entra ID. Passou a aceitar nulo
+  -- porque a plataforma ganhou uma segunda forma de autenticar, e um usuário de
+  -- senha não tem `oid` nenhum para guardar aqui. `unique` continua valendo, e
+  -- no Postgres vários nulos convivem sob `unique` — é exatamente o que se
+  -- quer: muitos usuários locais, nenhum deles colidindo.
+  entra_object_id     text        unique,
+
+  -- Hash bcrypt, produzido por `crypt(senha, gen_salt('bf', 12))` do pgcrypto.
+  --
+  -- Nulo quer dizer "esta pessoa não entra por senha", e é o normal: quem vem
+  -- do Entra ID nunca tem senha aqui. Guardar a senha em claro, ou um hash
+  -- rápido como SHA, transformaria um vazamento de banco em vazamento de
+  -- credencial — bcrypt custa de propósito.
+  --
+  -- A COMPARAÇÃO acontece no Postgres (`senha_hash = crypt($1, senha_hash)`),
+  -- e não em Python: assim a senha em claro não passa por variável da
+  -- aplicação além do necessário, nem entra em log de exceção.
+  senha_hash          text,
+
   email               citext      not null unique,
   nome                text        not null,
   ativo               boolean     not null default true,
@@ -90,6 +157,15 @@ create table usuario (
 
   -- Quem concedeu e quando. `papel_concedido_em` também é a VERSÃO usada na
   -- detecção de alteração concorrente — ver `conceder_acesso` em 0006.
+  -- Toda pessoa precisa poder entrar de ALGUM jeito.
+  --
+  -- Sem isto, um `insert` que esquecesse os dois criaria uma conta que existe,
+  -- aparece na tela de acessos, pode receber papel e escopo — e não autentica
+  -- por caminho nenhum. Uma conta fantasma que ninguém entende por que não
+  -- funciona.
+  constraint usuario_autentica_de_algum_jeito
+    check (entra_object_id is not null or senha_hash is not null),
+
   papel_concedido_por uuid        references usuario(id),
   papel_concedido_em  timestamptz,
 
@@ -98,6 +174,12 @@ create table usuario (
   constraint externo_tem_prazo
     check (not externo or acesso_expira_em is not null)
 );
+
+comment on column usuario.senha_hash is
+  'bcrypt do pgcrypto. Nulo = não entra por senha, só por SSO.';
+
+comment on column usuario.entra_object_id is
+  'oid do token do Entra ID. Nulo = usuário só de senha local.';
 
 create index idx_usuario_papel on usuario (papel_id);
 

@@ -24,21 +24,37 @@ from typing import Annotated, Literal
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, Response, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import select, text
 
 from app.api.dependencias import UsuarioLogado
 from app.banco.sessao import SessaoDoPedido
-from app.casos_de_uso import administrar_acessos, registrar_acesso
-from app.casos_de_uso.provisionar_usuario import provisionar
+from app.casos_de_uso import (
+    administrar_acessos,
+    autenticar_por_senha,
+    registrar_acesso,
+)
+from app.casos_de_uso.provisionar_usuario import carregar, provisionar
 from app.configuracao import Configuracao, obter_configuracao
 from app.dominio.erros import NaoAutorizado
 from app.dominio.identidade import UsuarioAtual
 from app.observabilidade import obter_logger
 from app.seguranca import sessao_assinada
-from app.seguranca.limite_de_taxa import ip_do_cliente
+from app.seguranca.limite_de_taxa import (
+    ExcessoDeRequisicoes,
+    RegistroDeBaldes,
+    ip_do_cliente,
+)
 from app.seguranca.oidc import (
     ClienteEntraId,
     FalhaNoLogin,
@@ -128,6 +144,15 @@ def login(
     redirect: Annotated[str | None, Query()] = None,
 ) -> RedirectResponse:
     """Começa o fluxo. Redireciona para a tela da Microsoft."""
+    if not configuracao.sso_ligado:
+        # 503, e não 404: a rota EXISTE e vai voltar. 404 diria "isto nunca
+        # existiu", e quem estivesse depurando procuraria o erro no lugar
+        # errado. `Retry-After` fica de fora porque não há data prometida.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="O acesso pelo SSO da Microsoft ainda não está liberado.",
+        )
+
     desafio = novo_desafio()
     estado = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(32)
@@ -178,6 +203,14 @@ def callback(
     error: Annotated[str | None, Query()] = None,
 ) -> RedirectResponse:
     """Recebe o `code`, valida tudo e cria a sessão."""
+    if not configuracao.sso_ligado:
+        # Mesmo motivo do `/auth/login`: com o SSO desligado ninguém deveria
+        # chegar aqui, e quem chegar recebe a mesma resposta em vez de um 500.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="O acesso pelo SSO da Microsoft ainda não está liberado.",
+        )
+
     ip = ip_do_cliente(requisicao, proxies_confiaveis=configuracao.proxies_confiaveis)
 
     try:
@@ -279,6 +312,146 @@ def callback(
     return resposta
 
 
+class EntradaPorSenha(BaseModel):
+    """O que a tela de login manda."""
+
+    email: str
+    senha: str
+
+
+#: Tentativas por CONTA, e não por IP.
+#:
+#: O middleware por IP já cobre esta rota, e não basta: quem tem uma botnet
+#: tenta a mesma conta de mil endereços, e cada um deles fica muito abaixo do
+#: teto. O teto por e-mail é o que transforma "mil IPs, mil tentativas" em "mil
+#: IPs, dez tentativas".
+#:
+#: 10 fichas e uma nova a cada 30s: erro de digitação não incomoda ninguém, e
+#: quem varre dicionário para na décima.
+#:
+#: A memória é DA INSTÂNCIA, como a do limitador de taxa: com N instâncias o
+#: teto efetivo é N vezes maior. É o mesmo compromisso documentado em
+#: `app/seguranca/limite_de_taxa.py`, e a saída é a mesma — um contador
+#: compartilhado, no dia em que a escala pedir.
+_TENTATIVAS_POR_CONTA = RegistroDeBaldes(capacidade=10, por_segundo=1 / 30)
+
+
+@rotas.post("/auth/senha", status_code=status.HTTP_204_NO_CONTENT)
+def entrar_por_senha(
+    requisicao: Request,
+    resposta: Response,
+    sessao: Sessao,
+    configuracao: Config,
+    corpo: EntradaPorSenha,
+) -> Response:
+    """Entrada por e-mail e senha, para quem não está no Entra ID.
+
+    Emite EXATAMENTE a mesma sessão que o retorno do SSO: mesmo cookie, mesma
+    assinatura, mesma duração. Daqui para a frente o resto da aplicação não
+    sabe — nem precisa saber — por qual porta a pessoa entrou. Fosse um segundo
+    tipo de sessão, cada verificação teria de tratar os dois, e é assim que uma
+    delas passa a tratar só um.
+
+    A resposta é 204 e o cookie vai no cabeçalho. Nada do usuário volta no
+    corpo: quem precisa disso chama `/api/eu` em seguida, que é a rota que já
+    existe para essa pergunta.
+    """
+    ip = ip_do_cliente(requisicao, proxies_confiaveis=configuracao.proxies_confiaveis)
+    # Normalizado antes de virar chave do balde: `Fulano@Aegea.com.br` e
+    # `fulano@aegea.com.br` são a mesma conta (a coluna é `citext`), e sem
+    # normalizar seriam dois baldes — dobrando o teto para quem alterna a caixa.
+    email = corpo.email.strip()
+    chave = email.casefold()
+
+    espera = _TENTATIVAS_POR_CONTA.consumir(chave)
+    if espera is not None:
+        # A MESMA mensagem das outras recusas seria melhor para não revelar que
+        # a conta existe — mas 429 já revela por si, e esconder o motivo faria a
+        # pessoa legítima tentar de novo achando que errou a senha. O que se
+        # protege aqui é a conta, e quem está do outro lado já sabe que a
+        # atacou.
+        raise ExcessoDeRequisicoes(espera)
+
+    autenticado = autenticar_por_senha.autenticar(sessao, email=email, senha=corpo.senha)
+
+    if autenticado is None:
+        # `NEGADO_NO_PROVEDOR` porque foi a credencial que não conferiu, e não o
+        # papel: a pessoa não chegou a ser identificada. É o mesmo resultado que
+        # o SSO registra quando o token não vale.
+        # `registrar_e_confirmar`, e NÃO `registrar`: quem chama levanta em
+        # seguida, e `obter_sessao` desfaz a transação em qualquer exceção. Com
+        # `registrar`, a linha era gravada e descartada milissegundos depois —
+        # toda recusa de login sumia da trilha, que é justamente a linha que
+        # mais importa numa investigação.
+        registrar_acesso.registrar_e_confirmar(
+            sessao,
+            resultado=registrar_acesso.NEGADO_NO_PROVEDOR,
+            usuario_id=None,
+            email_tentado=email,
+            ip=ip,
+        )
+        # UMA mensagem para todos os casos — e-mail inexistente, senha errada,
+        # conta desativada. Distinguir entregaria a lista de quem tem acesso ao
+        # painel, e o painel guarda com quem a Aegea conversa.
+        raise NaoAutorizado("E-mail ou senha não conferem.", sobre_o_pedido=True)
+
+    usuario = carregar(sessao, autenticado.usuario_id)
+    if usuario is None:
+        # A credencial conferiu mas o usuário sumiu entre uma consulta e outra —
+        # desativado no meio do caminho, ou apagado. Trata-se como recusa de
+        # credencial: não há a quem dizer nada de específico.
+        registrar_acesso.registrar_e_confirmar(
+            sessao,
+            resultado=registrar_acesso.NEGADO_INATIVO,
+            usuario_id=autenticado.usuario_id,
+            email_tentado=email,
+            ip=ip,
+        )
+        raise NaoAutorizado("E-mail ou senha não conferem.", sobre_o_pedido=True)
+
+    # `_motivo_da_recusa`, o mesmo que o SSO usa: distingue "sem papel" de
+    # "prazo vencido". Fixar `NEGADO_SEM_PAPEL` para os dois faria a trilha
+    # dizer que ninguém nunca teve acesso expirado.
+    negativa = _motivo_da_recusa(usuario)
+    if negativa is not None:
+        registrar_acesso.registrar_e_confirmar(
+            sessao,
+            resultado=negativa,
+            usuario_id=usuario.id,
+            email_tentado=email,
+            ip=ip,
+        )
+        # Aqui a mensagem PODE ser específica: a credencial já provou quem é a
+        # pessoa, então dizer "seu acesso não foi liberado" não conta nada que
+        # ela não saiba sobre si mesma — e é acionável.
+        raise NaoAutorizado(_texto_da_recusa(usuario), sobre_o_pedido=True)
+
+    # Entrou: o balde da conta volta ao cheio. Sem isto, nove erros de digitação
+    # ao longo do dia deixariam a pessoa a uma tentativa do bloqueio mesmo tendo
+    # acertado nove vezes no meio.
+    _TENTATIVAS_POR_CONTA.esquecer(chave)
+
+    registrar_acesso.registrar(
+        sessao,
+        resultado=registrar_acesso.CONCEDIDO,
+        usuario_id=usuario.id,
+        email_tentado=email,
+        ip=ip,
+    )
+
+    _gravar_cookie(
+        resposta,
+        configuracao,
+        nome=sessao_assinada.NOME_DO_COOKIE,
+        valor=sessao_assinada.assinar(
+            sessao_assinada.nova_sessao(usuario.id), configuracao.sessao_secreta
+        ),
+        duracao=sessao_assinada.DURACAO_PADRAO,
+    )
+    resposta.status_code = status.HTTP_204_NO_CONTENT
+    return resposta
+
+
 @rotas.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
 def logout(requisicao: Request, configuracao: Config) -> Response:
     """Apaga a sessão.
@@ -330,6 +503,15 @@ class PapelSaida(BaseModel):
     ve_campos_sensiveis: bool
     ve_diretorio: bool
     pode_exportar: bool
+
+    #: Quais portais este papel abre. A capa usa para decidir o que oferecer.
+    #:
+    #: Vai no `/api/eu` e não numa rota própria: a tela precisa dos três junto
+    #: com o resto do papel, e buscá-los à parte criaria um instante em que a
+    #: pessoa está identificada mas a capa ainda não sabe o que mostrar.
+    acessa_crm: bool
+    acessa_sintese: bool
+    acessa_score: bool
 
 
 class EuSaida(BaseModel):

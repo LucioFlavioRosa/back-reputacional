@@ -48,9 +48,9 @@ def pessoa(papel: Papel | None, escopo: Escopo | None = None, **ajustes) -> Usua
     )
 
 
-EXTERNO = Papel(codigo="externo", nome="Externo")
+EXTERNO = Papel(codigo="score", nome="Externo")
 COORDENACAO = Papel(
-    codigo="coordenacao",
+    codigo="plataforma",
     nome="Coordenação",
     pode_criar=True,
     pode_editar_tudo=True,

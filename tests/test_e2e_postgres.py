@@ -618,7 +618,7 @@ def papel_de_coordenacao():
     from app.dominio.identidade import Papel
 
     return Papel(
-        codigo="coordenacao",
+        codigo="plataforma",
         nome="Coordenacao",
         pode_criar=True,
         pode_editar_proprio=True,
@@ -766,14 +766,14 @@ def como(cliente, papel, escopo=None):
 def papel_externo():
     from app.dominio.identidade import Papel
 
-    return Papel(codigo="externo", nome="Externo")
+    return Papel(codigo="score", nome="Externo")
 
 
 def test_migration_semeou_os_quatro_papeis(sessao):
     codigos = set(
         sessao.scalars(text("select codigo from papel")).all()
     )
-    assert codigos == {"analista", "coordenacao", "diretoria", "externo"}
+    assert codigos == {"crm", "plataforma", "sintese", "score"}
 
 
 def test_banco_recusa_externo_sem_prazo(sessao):
@@ -884,7 +884,7 @@ def test_diretorio_exige_papel(cliente, semente):
     from app.dominio.identidade import Papel
 
     com_direito = como(
-        cliente, Papel(codigo="analista", nome="Analista", ve_diretorio=True)
+        cliente, Papel(codigo="crm", nome="Analista", ve_diretorio=True)
     )
     assert com_direito.get("/api/instituicoes").status_code == 200
 
@@ -930,7 +930,7 @@ def test_busca_livre_nao_delata_relato_escondido(cliente, semente, sessao):
     # Quem tem direito ao campo continua encontrando por ele.
     interno = como(
         cliente,
-        Papel(codigo="analista", nome="Analista", ve_campos_sensiveis=True),
+        Papel(codigo="crm", nome="Analista", ve_campos_sensiveis=True),
         escopo_valido,
     )
     assert interno.get("/api/interacoes?q=desligamento").json()["total"] == 1

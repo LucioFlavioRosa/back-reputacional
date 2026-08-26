@@ -22,22 +22,35 @@ from enum import StrEnum
 from uuid import UUID
 
 
+class Portal(StrEnum):
+    """As três divisões da plataforma, como a capa as oferece."""
+
+    CRM = "crm"
+    SINTESE = "sintese"
+    SCORE = "score"
+
+
 class Perfil(StrEnum):
     """Os papéis semeados pela migration 0003.
 
-    Não é mais a fonte da autorização — é o vocabulário usado para semear e
-    para escolher o usuário do provedor mock de desenvolvimento.
+    NÃO é a fonte da autorização — quem decide são as bandeiras de `Papel`.
+    Isto é o vocabulário para semear e para escolher o usuário do provedor mock
+    de desenvolvimento.
+
+    A lista pode crescer sem passar por aqui: `papel` é tabela, e um papel novo
+    é um `insert`. O que está neste enum são os quatro de partida, que são a
+    divisão por PORTAL — a fronteira mais grossa da plataforma.
     """
 
-    ANALISTA = "analista"
-    COORDENACAO = "coordenacao"
-    DIRETORIA = "diretoria"
-    EXTERNO = "externo"
+    PLATAFORMA = "plataforma"
+    CRM = "crm"
+    SINTESE = "sintese"
+    SCORE = "score"
 
 
 @dataclass(frozen=True, slots=True)
 class Papel:
-    """O que a pessoa pode fazer. Espelha uma linha de `papel`."""
+    """O que a pessoa pode fazer, e ONDE. Espelha uma linha de `papel`."""
 
     codigo: str
     nome: str
@@ -52,9 +65,42 @@ class Papel:
     ve_diretorio: bool = False
     pode_exportar: bool = False
 
+    #: ONDE a pessoa entra — dimensão separada do que ela faz lá dentro.
+    #:
+    #: Sem essa separação a lista de papéis multiplicaria: "lê a Síntese" e "lê
+    #: a Síntese e o Score" seriam papéis diferentes, e cada portal novo
+    #: dobraria a tabela.
+    #:
+    #: Fecham por padrão, como todas as outras bandeiras. Papel novo que não
+    #: decida nada não abre porta nenhuma.
+    acessa_crm: bool = False
+    acessa_sintese: bool = False
+    acessa_score: bool = False
+
     @property
     def somente_leitura(self) -> bool:
         return not (self.pode_criar or self.pode_editar_proprio or self.pode_editar_tudo)
+
+    def alcanca(self, portal: Portal) -> bool:
+        """Se este papel abre o portal.
+
+        Um `match` e não três `if`: acrescentar um portal ao enum passa a
+        quebrar aqui em vez de devolver `False` calado, que seria uma porta
+        fechada sem ninguém saber por quê.
+        """
+        match portal:
+            case Portal.CRM:
+                return self.acessa_crm
+            case Portal.SINTESE:
+                return self.acessa_sintese
+            case Portal.SCORE:
+                return self.acessa_score
+
+    @property
+    def portais(self) -> frozenset[Portal]:
+        """Os portais que este papel abre. É o que a tela usa para decidir o
+        que mostrar na capa."""
+        return frozenset(p for p in Portal if self.alcanca(p))
 
 
 @dataclass(frozen=True, slots=True)

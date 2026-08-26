@@ -38,6 +38,9 @@ def configuracao_real() -> Configuracao:
     return Configuracao(
         auth_mock=False,
         sessao_secreta=SEGREDO,
+        # Declarar tenant e client É dizer "o SSO está configurado"; a
+        # bandeira torna isso explícito, e sem ela a rota devolve 503.
+        sso_ligado=True,
         entra_tenant_id="t",
         entra_client_id="c",
         entra_client_secret="s",
@@ -61,7 +64,7 @@ def sessao():
 @pytest.fixture
 def usuario(sessao):
     """Alguém liberado, para o cookie apontar para uma pessoa real."""
-    papel = sessao.scalars(select(Papel).where(Papel.codigo == "coordenacao")).first()
+    papel = sessao.scalars(select(Papel).where(Papel.codigo == "plataforma")).first()
     registro = Usuario(
         entra_object_id=f"oid-{uuid4().hex[:8]}",
         email=f"{uuid4().hex[:8]}@aegea.com.br",
@@ -188,7 +191,7 @@ def test_eu_entrega_o_papel_e_o_token(cliente, usuario):
 
     corpo = cliente.get("/api/eu").json()
     assert corpo["email"] == usuario.email
-    assert corpo["papel"]["codigo"] == "coordenacao"
+    assert corpo["papel"]["codigo"] == "plataforma"
     assert corpo["csrf_token"] == sessao_assinada.ler(cookie, SEGREDO).csrf
 
 
@@ -226,6 +229,9 @@ def test_com_o_cache_desligado_a_revogacao_vale_no_proximo_clique(usuario, sessa
     app.dependency_overrides[obter_configuracao] = lambda: Configuracao(
         auth_mock=False,
         sessao_secreta=SEGREDO,
+        # Declarar tenant e client É dizer "o SSO está configurado"; a
+        # bandeira torna isso explícito, e sem ela a rota devolve 503.
+        sso_ligado=True,
         entra_tenant_id="t",
         entra_client_id="c",
         entra_client_secret="s",
@@ -550,7 +556,7 @@ def test_convidado_externo_com_prazo_entra(sessao, cliente):
     banco devolve e o que o cache supunha, e nenhum dos dois lados sozinho o
     mostrava.
     """
-    papel = sessao.scalars(select(Papel).where(Papel.codigo == "analista")).first()
+    papel = sessao.scalars(select(Papel).where(Papel.codigo == "crm")).first()
     convidado = Usuario(
         entra_object_id=f"oid-{uuid4().hex[:8]}",
         email=f"{uuid4().hex[:8]}@fornecedor.com.br",

@@ -1,13 +1,18 @@
 """Quem pode mexer em quê.
 
-As permissões deixaram de ser um `match` sobre três perfis fixos e passaram a
-ser bandeiras de `papel`, concedidas no banco (migration 0003). Os papéis
-semeados continuam se comportando como antes:
+As permissões são bandeiras de `papel`, concedidas no banco (migration 0003), e
+não um `match` sobre perfis fixos. Este módulo NUNCA lê o código do papel — só
+as bandeiras —, e é o que permite acrescentar um papel por `insert`.
 
-    analista      cria; edita os próprios registros
-    coordenacao   edita tudo; administra dicionários e acessos
-    diretoria     somente leitura
-    externo       somente leitura, sem campos sensíveis nem diretório
+Os quatro semeados são a divisão por PORTAL, e a lista deve crescer:
+
+    plataforma   alcança os três portais; administra a plataforma
+    crm          trabalha no CRM: cria e edita os próprios registros
+    sintese      lê e exporta a Síntese Executiva
+    score        lê e exporta o Score Executivo
+
+QUAL portal um papel abre é outra dimensão, e mora em `Papel.acessa_*`. Aqui só
+importa o que ele pode FAZER com o que alcança.
 
 A regra mora no domínio porque depende de um dado do agregado — `criado_por` —
 e não apenas do papel de quem pede.

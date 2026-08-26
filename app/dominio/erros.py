@@ -19,7 +19,7 @@ O corte não é por público, é pelo QUE A MENSAGEM DESCREVE:
                   para todo mundo. Descreve o que a pessoa enviou, e ela já sabe
                   o que enviou.
 
-    o sistema     "analista só edita o que criou", "seu perfil não vê o
+    o sistema     "seu papel só edita o que criou", "seu perfil não vê o
                   diretório" — específica para quem é da casa, genérica para
                   quem é de fora. Descreve como as regras funcionam por dentro.
 

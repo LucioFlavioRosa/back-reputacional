@@ -45,6 +45,11 @@ class Papel(Tabela):
     ve_diretorio: Mapped[bool] = mapped_column(Boolean, default=False)
     pode_exportar: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    #: ONDE a pessoa entra. Ver o comentário em `Papel`, no domínio.
+    acessa_crm: Mapped[bool] = mapped_column(Boolean, default=False)
+    acessa_sintese: Mapped[bool] = mapped_column(Boolean, default=False)
+    acessa_score: Mapped[bool] = mapped_column(Boolean, default=False)
+
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
     criado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -77,7 +82,14 @@ class Usuario(Tabela):
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     #: `oid` do token do Entra ID — a identidade estável da pessoa no diretório.
-    entra_object_id: Mapped[str] = mapped_column(Text, unique=True)
+    #: Nulo para quem só entra por senha local. Ver a migration 0003.
+    entra_object_id: Mapped[str | None] = mapped_column(Text, unique=True, nullable=True)
+
+    #: bcrypt do pgcrypto. Nulo = não entra por senha.
+    #:
+    #: NUNCA sai em resposta de API, e não há esquema Pydantic que o inclua. A
+    #: comparação acontece no Postgres, em `autenticar_por_senha`.
+    senha_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: CITEXT: o Entra ID pode devolver a claim com outra caixa, e sem isso a
     #: mesma pessoa ganharia uma segunda conta no provisionamento JIT.
     email: Mapped[str] = mapped_column(CITEXT, unique=True)

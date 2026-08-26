@@ -2,6 +2,11 @@
 
     python -m app.banco.semear_desenvolvimento
 
+Cria também o usuário de desenvolvimento e a senha dele, para a pilha local
+não subir trancada — ver `SENHA_DE_DESENVOLVIMENTO`.
+
+    python -m app.banco.semear_desenvolvimento
+
 São 60 registros **sintéticos**, derivados da planilha real mas sem ser dado de
 produção — servem para ver as telas funcionando antes da importação de verdade.
 O script é idempotente: rodar duas vezes não duplica nada.
@@ -41,6 +46,7 @@ from app.banco.tabelas_stakeholders import (
     Interlocutor,
     PessoaAegea,
 )
+from app.casos_de_uso.autenticar_por_senha import definir_senha
 from app.dominio.texto import normalizar
 
 AMOSTRA = Path(__file__).with_name("amostra_de_desenvolvimento.json")
@@ -88,6 +94,14 @@ PORTA_VOZES = [
 ]
 
 
+#: A senha do usuário local. NÃO é segredo, e não pretende ser.
+#:
+#: Longa porque `definir_senha` exige 12 caracteres — a mesma regra que vale
+#: para qualquer senha da plataforma, e um mínimo aplicado só em produção é um
+#: mínimo que ninguém testa.
+SENHA_DE_DESENVOLVIMENTO = "painel-reputacional-2026"
+
+
 def semear(sessao: Session) -> dict[str, int]:
     registros = json.loads(AMOSTRA.read_text(encoding="utf-8"))
 
@@ -95,8 +109,8 @@ def semear(sessao: Session) -> dict[str, int]:
         sessao.add(
             Usuario(
                 entra_object_id="mock-desenvolvimento",
-                email="analista@aegea.com.br",
-                nome="Analista de Desenvolvimento",
+                email="crm@aegea.com.br",
+                nome="Usuário de Desenvolvimento",
                 acesso_irrestrito=True,
             )
         )
@@ -106,9 +120,21 @@ def semear(sessao: Session) -> dict[str, int]:
         sessao.execute(
             text(
                 "update usuario set papel_id = (select id from papel "
-                "where codigo = 'analista') where papel_id is null"
+                "where codigo = 'crm') where papel_id is null"
             )
         )
+
+        # SENHA DE DESENVOLVIMENTO, e só isso.
+        #
+        # Sem ela, `docker compose down -v` seguido de `up` deixa a pilha sem
+        # nenhuma forma de entrar: o SSO está desligado na tela e ninguém tem
+        # senha. O ambiente subiria bonito e trancado.
+        #
+        # Está EM CLARO neste arquivo de propósito: é o mesmo lugar onde os 60
+        # registros sintéticos estão em claro, e nada aqui é dado de produção.
+        # `verificacao_de_producao.py` recusa subir em produção com
+        # `AUTH_MOCK`; um banco de produção nunca roda este semeador.
+        definir_senha(sessao, email="crm@aegea.com.br", senha=SENHA_DE_DESENVOLVIMENTO)
     autor = sessao.scalar(select(Usuario).limit(1))
     # O bloco acima garante que existe pelo menos um usuário. Tornar a garantia
     # explícita evita que uma edição naquele `if` transforme isto num
@@ -277,6 +303,7 @@ def main() -> int:
     for chave, valor in resultado.items():
         print(f"  {chave:<16} {valor}")
     print("\nAmostra sintética carregada. Não é dado de produção.")
+    print(f"Entre com  crm@aegea.com.br  /  {SENHA_DE_DESENVOLVIMENTO}")
     return 0
 
 

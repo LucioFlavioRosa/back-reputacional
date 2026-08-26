@@ -344,7 +344,7 @@ def test_papel_da_aplicacao_executa_a_funcao_de_concessao(sessao_restrita, semen
         text(
             "insert into usuario (entra_object_id, email, nome, acesso_irrestrito, papel_id) "
             "values (:o, :e, 'Quem concede', true, "
-            "        (select id from papel where codigo = 'coordenacao')) returning id"
+            "        (select id from papel where codigo = 'plataforma')) returning id"
         ),
         {"o": f"concede-{uuid4().hex[:8]}", "e": f"{uuid4().hex[:8]}@aegea.com.br"},
     ).scalar()
@@ -358,7 +358,7 @@ def test_papel_da_aplicacao_executa_a_funcao_de_concessao(sessao_restrita, semen
 
     sessao_restrita.execute(
         text(
-            "select conceder_acesso(:alvo, :quem, 'analista', true, false, null, "
+            "select conceder_acesso(:alvo, :quem, 'crm', true, false, null, "
             "'{}'::text[], '{}'::text[])"
         ),
         {"alvo": alvo, "quem": concedente},
@@ -416,7 +416,7 @@ def _dois_usuarios(sessao, admin=True):
         {
             "o": f"c-{uuid4().hex[:8]}",
             "e": f"{uuid4().hex[:8]}@aegea.com.br",
-            "papel": "coordenacao" if admin else "analista",
+            "papel": "plataforma" if admin else "crm",
         },
     ).scalar()
     alvo = sessao.execute(
@@ -429,7 +429,7 @@ def _dois_usuarios(sessao, admin=True):
     return concedente, alvo
 
 
-def _conceder(sessao, alvo, quem, papel="coordenacao"):
+def _conceder(sessao, alvo, quem, papel="plataforma"):
     sessao.execute(
         text(
             "select conceder_acesso(:alvo, :quem, :papel, true, false, null, "
@@ -468,7 +468,7 @@ def test_funcao_recusa_frente_inexistente(sessao_restrita, semente):
     with pytest.raises(InternalError), _isolado(sessao_restrita):
         sessao_restrita.execute(
             text(
-                "select conceder_acesso(:alvo, :quem, 'externo', false, true, "
+                "select conceder_acesso(:alvo, :quem, 'score', false, true, "
                 "'2026-12-31'::date, array['NAO_EXISTE'], '{}'::text[])"
             ),
             {"alvo": alvo, "quem": concedente},
