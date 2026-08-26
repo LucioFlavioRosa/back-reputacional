@@ -81,8 +81,9 @@ Ver [`docs/SEGURANCA.md`](docs/SEGURANCA.md).
 
 ## Banco
 
-PostgreSQL. 37 tabelas: uma tabela-mãe `interacao` com os campos comuns, mais
-cinco extensões 1-para-1 por frente.
+PostgreSQL **15 ou superior** — a razão do piso está em [Versão e
+privilégio](#versão-e-privilégio). 37 tabelas: uma tabela-mãe `interacao` com os
+campos comuns, mais cinco extensões 1-para-1 por frente.
 
 As migrations ficam em `app/banco/migrations/` e rodam **em ordem alfabética**:
 
@@ -106,12 +107,24 @@ outra.
 
 ### Versão e privilégio
 
-Conferido aplicando as 9 migrations num banco limpo, em cada combinação:
+Conferido no CI, aplicando as 9 migrations num banco limpo:
 
-| | 13 | 14 | 15 | 16 | 18 |
-|---|---|---|---|---|---|
-| superusuário | ok | ok | ok | ok | ok |
-| conta comum com `CREATEROLE` | ok | ok | ok | ok | ok |
+| | 15 | 16 | 17 | 18 |
+|---|---|---|---|---|
+| superusuário | ok | ok | ok | ok |
+| conta comum com `CREATEROLE` | ok | ok | ok | ok |
+
+**O piso é o Postgres 15, e a razão é de segurança.** Até o 14, o schema
+`public` pertence a `postgres` e concede `CREATE` a `PUBLIC` por padrão. Uma
+conta comum não consegue revogar isso — o Postgres emite *warning*, não erro —,
+e as funções `security definer`, que usam `set search_path = public`, ficariam
+sem a garantia de que dependem: qualquer role poderia plantar ali uma função com
+nome de built-in.
+
+A migration 0005 **recusa aplicar** nesse estado, com mensagem dizendo o que
+fazer. Sem essa recusa, o banco terminava mais fraco do que a documentação
+afirmava, em silêncio. O Postgres 13 está fora de suporte desde novembro de
+2025.
 
 A segunda linha é a que importa para o deploy: **no Postgres gerenciado do Azure
 a conta administrativa não é superusuário**. As migrations criam três roles e
@@ -178,14 +191,15 @@ criada e migrada pelo próprio módulo a cada execução.
 |---|---|
 | Lint | `ruff check` com as regras do `pyproject.toml`, FastAPI incluídas |
 | Testes | a suíte em Python 3.12 **e** 3.13, contra Postgres 18 |
-| Migrations | aplica as 9 num banco limpo, em **5 versões × 2 níveis de privilégio** |
+| Migrations | aplica as 9 num banco limpo, em **4 versões × 2 níveis de privilégio** |
 | Imagem Docker | constrói, sobe contra um Postgres migrado e confere 7 rotas |
 
-A matriz de migrations é a etapa que mais paga: ela já pegou um bloqueio de
-deploy real — no Postgres gerenciado a conta administrativa não é superusuário,
-e a transferência de posse das funções `security definer` falhava com mensagens
-diferentes até o 15 e do 16 em diante. Cada combinação roda num contêiner
-próprio, porque roles no Postgres são de cluster.
+A matriz de migrations é a etapa que mais paga, e já provou isso duas vezes:
+pegou a transferência de posse das funções `security definer` falhando sem
+superusuário, e depois pegou o schema `public` ficando gravável por qualquer
+role até o Postgres 14 — uma garantia que a documentação afirmava e o banco não
+tinha. Cada combinação roda num contêiner próprio, porque roles no Postgres são
+de cluster.
 
 Para proteger o branch, aponte a regra para o check **`CI`** — ele agrega os
 demais, então acrescentar uma versão de Postgres não exige mexer na

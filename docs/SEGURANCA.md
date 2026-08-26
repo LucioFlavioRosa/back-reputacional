@@ -340,6 +340,26 @@ Conferido aplicando as 9 migrations num banco limpo nas versões 13, 14, 15, 16 
 As quatro extensões precisam estar liberadas em `azure.extensions` antes da
 primeira migration.
 
+### Por que o piso é o Postgres 15
+
+`revoke create on schema public from public`, em 0005, é a base de toda a
+segurança das funções `security definer`: elas usam `set search_path = public`,
+e isso só é seguro se ninguém puder criar objeto ali. Sem a revogação, qualquer
+role planta uma função com nome de built-in e a função privilegiada passa a
+chamá-la.
+
+Até o Postgres 14 o schema `public` pertence a `postgres` e concede `CREATE` a
+`PUBLIC` por padrão. **Uma conta comum não consegue revogar isso, e o Postgres
+não reclama**: emite *warning*, não erro. A migration seguia adiante e o banco
+terminava sem a garantia — em silêncio, e com a documentação afirmando o
+contrário.
+
+Do 15 em diante o schema pertence a `pg_database_owner` e já nasce sem `CREATE`
+para `PUBLIC`.
+
+A 0005 confere o estado depois de revogar e **recusa aplicar** se `PUBLIC` ainda
+puder criar. É uma invariante conferida, e não presumida.
+
 ---
 
 ## 8. Mensagem de erro

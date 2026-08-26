@@ -102,7 +102,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        postgres: ["13", "14", "15", "16", "18"]
+        # O piso é o 15, e não é escolha de conveniência: até o 14 o schema
+        # `public` pertence a `postgres` e concede CREATE a PUBLIC por padrão.
+        # Uma conta comum não consegue revogar isso — o Postgres emite WARNING,
+        # não erro —, e o banco ficaria sem a garantia de que as funções
+        # `security definer` dependem. A migration 0005 agora RECUSA aplicar
+        # nesse estado; ver o `raise` lá.
+        #
+        # O 13 está fora de suporte desde novembro de 2025. O Azure Flexible
+        # Server oferece 15, 16 e 17.
+        postgres: ["15", "16", "17", "18"]
         modo: [superusuario, conta-comum]
 
     services:

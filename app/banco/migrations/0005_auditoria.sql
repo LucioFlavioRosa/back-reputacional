@@ -80,6 +80,29 @@ grant create on schema public to painel_auditoria;
 -- nome de built-in e a função privilegiada passa a chamá-la.
 revoke create on schema public from public;
 
+-- E CONFERE, em vez de só executar.
+--
+-- `revoke` sobre um schema que não é seu emite WARNING, e não erro: a instrução
+-- "passa" sem fazer nada. Até o Postgres 14 o schema `public` pertence a
+-- `postgres` e concede CREATE a PUBLIC por padrão — então aplicar estas
+-- migrations com uma conta comum (o caso do Postgres gerenciado) deixaria o
+-- banco mais fraco do que este arquivo afirma, EM SILÊNCIO.
+--
+-- Do 15 em diante o schema pertence a `pg_database_owner` e já nasce sem CREATE
+-- para PUBLIC, e o revoke acima é redundante mas inofensivo.
+--
+-- Falhar aqui é melhor do que seguir: todas as funções abaixo dependem desta
+-- garantia, e um banco que não a tenha não deveria ganhá-las.
+do $$
+begin
+  if has_schema_privilege('public', 'public', 'CREATE') then
+    raise exception
+      'PUBLIC ainda pode criar objeto no schema public, e as funções '
+      '`security definer` deste arquivo dependem do contrário. '
+      'Use Postgres 15+, ou aplique como dono do schema public.';
+  end if;
+end $$;
+
 
 -- =============================================================================
 -- Trilha das interações
