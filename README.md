@@ -132,9 +132,66 @@ transferem posse de funções `security definer` para elas — o que exige ser
 membro da role. 0005 e 0006 tratam isso, com sintaxe diferente até o 15 e do 16
 em diante.
 
-**Antes de aplicar em Azure Flexible Server:** as quatro extensões (`pgcrypto`,
-`citext`, `unaccent`, `pg_trgm`) precisam estar liberadas no parâmetro de
-servidor `azure.extensions`. `create extension` falha sem isso.
+**Antes de aplicar em Azure Flexible Server:** as três extensões (`pgcrypto`,
+`citext`, `pg_trgm`) precisam estar liberadas no parâmetro de servidor
+`azure.extensions`. `create extension` falha sem isso.
+
+### Índices seguem a consulta, não a estrutura
+
+A regra do repositório: **um índice existe porque uma consulta o usa** — do
+painel ou operacional, mas escrita em algum lugar. Índice para consulta que
+"algum dia pode aparecer" não entra; entra o comentário dizendo qual criar e com
+que operador, no arquivo da tabela.
+
+Existe índice onde o filtro é seletivo: `instituicao_id`, `interlocutor_id`,
+`unidade_negocio_id` e `criado_por` em `interacao`; parciais em `status_id` e
+`uf` (`where arquivado_em is null`, porque o painel nunca conta arquivado);
+composto em `(frente_id, data_interacao desc)`; e trigrama (`pg_trgm`) em
+`pauta`, `relato` e `encaminhamentos`, para a busca livre com `ILIKE '%termo%'`.
+
+**Dezoito chaves estrangeiras NÃO têm índice, e é decisão.** O Postgres não cria
+nenhum sozinho, então cada um seria escolha explícita. Dois motivos, e vale
+saber qual se aplica antes de acrescentar o próximo:
+
+1. **Seletividade baixa demais.** `esfera_id`, `clima_id` e `resultado_id`
+   aparecem no `WHERE` de `app/banco/filtros_sql.py` — não é que ninguém
+   consulte. É que os dicionários têm 6, 3 e 4 linhas: um índice sobre três
+   valores distintos não ganha da varredura sequencial, e o planejador não o
+   usaria. O mesmo vale para `iniciativa` (2), `casa` (5), `tema` (17) e
+   `formato` (17).
+
+2. **A verificação de integridade nunca roda.** O outro motivo clássico para
+   indexar uma FK é o `DELETE` no lado referenciado, que sem índice varre a
+   tabela filha. Aqui não acontece: os dicionários não são apagados, e
+   `interacao` é arquivada (`arquivado_em`), nunca removida — ver a rota
+   `DELETE /api/interacoes/{id}`, que é *soft delete*.
+
+**Quatro dessas dezoito apontam para tabelas que CRESCEM, não para dicionário**,
+e são as que merecem atenção quando o volume subir:
+
+| Coluna | Aponta para | Por que ainda não tem índice |
+|---|---|---|
+| `interacao.stakeholder_id` | `stakeholder` | só é lida e gravada; nada filtra por ela |
+| `importacao_linha.interacao_id` | `interacao` | idem |
+| `relatorio.criado_por` | `usuario` | a listagem ordena por `criado_em`, não por autor |
+| `importacao.criado_por` | `usuario` | idem |
+
+No dia em que aparecer uma visão "por stakeholder" ou "o que fulano exportou",
+esses são os primeiros índices a criar.
+
+**Duas exceções à regra, e as duas estão comentadas no SQL.** A primeira é
+`acesso_log.usuario_id`: nenhuma rota o consulta, e ele existe assim mesmo. O motivo está escrito em `0003_acesso.sql`, junto com
+a consulta operacional que ele serve — `acesso_log` é a única tabela sem teto de
+crescimento, e uma varredura sequencial nela durante uma investigação seria cara
+justamente na hora errada.
+
+A segunda são os dois GIN de `importacao_linha`, em `0008_importacao.sql`. Ali a
+tabela inteira é rascunho — a importação da planilha não foi implementada, e o
+arquivo diz isso no cabeçalho. Os índices fazem parte do desenho e caem junto se
+o desenho cair.
+
+Antes de acrescentar qualquer índice, meça: `explain (analyze, buffers)` sobre a
+consulta real.
 
 ## API
 

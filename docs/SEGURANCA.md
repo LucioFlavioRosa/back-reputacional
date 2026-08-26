@@ -337,8 +337,8 @@ isso muda duas coisas nas migrations:
 Conferido aplicando as 9 migrations num banco limpo nas versões 13, 14, 15, 16 e
 18, como superusuário e como conta comum.
 
-As quatro extensões precisam estar liberadas em `azure.extensions` antes da
-primeira migration.
+As três extensões (`pgcrypto`, `citext`, `pg_trgm`) precisam estar liberadas em
+`azure.extensions` antes da primeira migration.
 
 ### Por que o piso é o Postgres 15
 

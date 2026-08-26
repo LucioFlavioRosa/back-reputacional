@@ -19,7 +19,9 @@ class Instituicao(Tabela):
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     nome: Mapped[str] = mapped_column(Text)
-    #: unaccent(lower(nome)) — junta "Radamés" e "Radames" na importação.
+    #: Sem acento e em minúsculas, normalizado por `app/dominio/texto.py` —
+    #: junta "Radamés" e "Radames". É esta coluna que carrega a unicidade e o
+    #: índice de trigrama; `nome` fica intacto para exibição.
     nome_normalizado: Mapped[str] = mapped_column(Text)
     #: veiculo | orgao | entidade | escritorio | investidor | proposicao | area_interna
     tipo: Mapped[str] = mapped_column(Text)

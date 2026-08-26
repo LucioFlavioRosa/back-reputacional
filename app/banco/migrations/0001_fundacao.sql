@@ -25,8 +25,18 @@
 
 create extension if not exists pgcrypto;   -- gen_random_uuid()
 create extension if not exists citext;     -- e-mail sem diferenciar maiúscula
-create extension if not exists unaccent;   -- normalização de nome
 create extension if not exists pg_trgm;    -- busca por semelhança em nome
+
+-- NÃO há `unaccent` aqui, e a ausência é deliberada.
+--
+-- A normalização de nome acontece em Python, em `app/dominio/texto.py`, e o
+-- resultado é gravado em `nome_normalizado`. Precisa ser assim: a MESMA regra
+-- roda na carga e na busca, e uma diferença entre as duas faria a busca deixar
+-- de encontrar exatamente os nomes que a carga uniu.
+--
+-- Declarar a extensão sem usá-la não seria inócuo: no Postgres gerenciado do
+-- Azure cada extensão exige uma entrada em `azure.extensions`, e uma entrada a
+-- mais é uma exigência de implantação em troca de nada.
 
 
 -- -- abrangência geográfica ----------------------------------------------------

@@ -63,6 +63,13 @@ create table importacao_linha (
 create index importacao_linha_importacao_id_decisao_idx
   on importacao_linha (importacao_id, decisao);
 
+-- Estes dois índices são a única outra exceção à regra "índice segue a
+-- consulta", e pelo mesmo motivo que as tabelas: fazem parte do desenho de uma
+-- funcionalidade que ainda não foi implementada. Não são especulação sobre
+-- tabela viva — são parte do rascunho, e caem junto se o desenho cair.
+--
+-- Quem implementar a conferência precisa usar contenção para alcançá-los:
+-- `where divergencias @> '[{"campo":"veiculo"}]'`. Com `->>`, o GIN não entra.
 create index importacao_linha_dados_brutos_idx
   on importacao_linha using gin (dados_brutos);
 create index importacao_linha_divergencias_idx

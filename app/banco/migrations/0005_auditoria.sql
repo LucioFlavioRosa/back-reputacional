@@ -112,6 +112,14 @@ create table interacao_auditoria (
   id             bigserial   primary key,
   interacao_id   uuid        not null references interacao(id),
   usuario_id     uuid        references usuario(id),
+  -- `now()`, e não `clock_timestamp()`: os gatilhos gravam VÁRIAS linhas por
+  -- edição, uma por campo alterado, e `now()` devolve o início da TRANSAÇÃO —
+  -- então as linhas de uma mesma edição compartilham o instante.
+  --
+  -- Cuidado ao ler a trilha: `ocorrido_em` identifica a TRANSAÇÃO, não o evento.
+  -- Duas edições distintas feitas na mesma transação recebem o mesmo carimbo, e
+  -- agrupar só por ele as fundiria numa só. Para reconstruir uma edição, filtre
+  -- pela entidade e ordene por `id` — o `bigserial` é a única ordem confiável.
   ocorrido_em    timestamptz not null default now(),
   -- Nome do campo, prefixado pela tabela quando vem de uma extensão:
   -- `imprensa.data_publicacao`. Sem o prefixo, `formato_id` de imprensa e de
@@ -293,6 +301,14 @@ create table usuario_auditoria (
   id             bigserial   primary key,
   usuario_id     uuid        not null references usuario(id),
   concedido_por  uuid        references usuario(id),
+  -- `now()`, e não `clock_timestamp()`: os gatilhos gravam VÁRIAS linhas por
+  -- edição, uma por campo alterado, e `now()` devolve o início da TRANSAÇÃO —
+  -- então as linhas de uma mesma edição compartilham o instante.
+  --
+  -- Cuidado ao ler a trilha: `ocorrido_em` identifica a TRANSAÇÃO, não o evento.
+  -- Duas edições distintas feitas na mesma transação recebem o mesmo carimbo, e
+  -- agrupar só por ele as fundiria numa só. Para reconstruir uma edição, filtre
+  -- pela entidade e ordene por `id` — o `bigserial` é a única ordem confiável.
   ocorrido_em    timestamptz not null default now(),
   campo          text        not null,
   valor_anterior text,

@@ -47,5 +47,13 @@ comment on column relatorio.formato is
 
 create index idx_relatorio_recente on relatorio (criado_em desc);
 
--- Para cruzar gerações pelo recorte: "quem mais exportou este mesmo filtro?".
-create index relatorio_filtros_idx on relatorio using gin (filtros);
+-- NÃO há índice sobre `filtros`, e a ausência é deliberada: a coluna é gravada
+-- e lida INTEIRA — nada consulta por dentro dela.
+--
+-- A investigação que o motivaria ("quem mais exportou este mesmo recorte?")
+-- ainda não existe, e será escrita à mão quando precisar. Nesse dia:
+--
+--   create index relatorio_filtros_idx on relatorio using gin (filtros);
+--
+-- e a consulta tem de usar contenção (`filtros @> '{"uf":"SP"}'`) para
+-- alcançá-lo. Com `filtros ->> 'uf' = 'SP'` o GIN não entra.

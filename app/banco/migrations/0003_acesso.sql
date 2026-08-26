@@ -155,3 +155,20 @@ create index acesso_log_ocorrido_em_idx on acesso_log (ocorrido_em desc);
 
 -- A recusa é o que se procura numa investigação, e ela é minoria das linhas.
 create index idx_acesso_log_resultado on acesso_log (resultado, ocorrido_em desc);
+
+-- Este índice é a ÚNICA exceção à regra "índice segue a consulta", porque
+-- nenhuma rota da API consulta `acesso_log` por usuário. Ele serve a uma
+-- consulta OPERACIONAL, que fica escrita aqui para não ser hipotética:
+--
+--   select ocorrido_em, resultado, ip
+--     from acesso_log
+--    where usuario_id = $1
+--      and ocorrido_em >= now() - interval '30 days'
+--    order by ocorrido_em desc;
+--
+-- É a segunda pergunta de todo incidente — "o que esta pessoa fez?" — e vem
+-- logo depois de "quem entrou?". Vale o índice porque `acesso_log` é a única
+-- tabela que cresce sem teto: uma linha por TENTATIVA de login, para sempre. As
+-- outras têm volume limitado pelo negócio, e nelas uma varredura sequencial
+-- durante uma investigação é aceitável. Aqui não seria.
+create index idx_acesso_log_usuario on acesso_log (usuario_id, ocorrido_em desc);

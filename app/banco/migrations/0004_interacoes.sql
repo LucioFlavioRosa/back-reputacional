@@ -125,8 +125,19 @@ create table interacao_imprensa (
   mensagens_chave text[]
 );
 
-create index interacao_imprensa_mensagens_idx
-  on interacao_imprensa using gin (mensagens_chave);
+-- NÃO há índice sobre `mensagens_chave`, e a ausência é deliberada: nada no
+-- código filtra por essa coluna — ela é lida e escrita inteira, junto com a
+-- interação.
+--
+-- Quando existir a consulta que se imagina ("quais atendimentos levaram a
+-- mensagem X?"), o índice a criar é
+--
+--   create index interacao_imprensa_mensagens_idx
+--     on interacao_imprensa using gin (mensagens_chave);
+--
+-- e a consulta precisa usar o operador de contenção (`@>`) para alcançá-lo:
+-- `where mensagens_chave @> array['tarifa']`. Com `= any(...)` o GIN não é
+-- usado, e o índice fica pago sem servir.
 
 -- Serve governo, parceiros e eventos: as três registram órgão, cargo de quem
 -- recebeu e, quando é evento, o nome dele.
