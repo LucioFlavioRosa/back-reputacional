@@ -23,9 +23,9 @@ class Configuracao(BaseSettings):
     #: Em desenvolvimento a autenticação usa um usuário fixo, provisionado no
     #: primeiro acesso pelo mesmo caminho JIT que o Entra ID usará em produção.
     auth_mock: bool = True
-    auth_mock_email: str = "crm@aegea.com.br"
+    auth_mock_email: str = "crm.edicao@aegea.com.br"
     auth_mock_nome: str = "Usuário de Desenvolvimento"
-    auth_mock_perfil: str = "crm"
+    auth_mock_perfil: str = "crm_edicao"
 
     #: Preenchidos quando `auth_mock` for desligado.
     #: O SSO responde, ou responde que está fora do ar.

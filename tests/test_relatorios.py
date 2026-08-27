@@ -190,13 +190,13 @@ def test_historico_exige_administrar_acessos(cliente, semente, sessao):
     Isso é informação sobre as PESSOAS, não sobre as interações — quem lê
     precisa ter o papel de quem responde por isso.
     """
-    analista = como(sessao, cria_usuario(sessao, "crm"))
+    analista = como(sessao, cria_usuario(sessao, "crm_edicao"))
     with pytest.raises(NaoAutorizado):
         registrar_relatorio.historico(sessao, solicitante=analista)
 
 
 def test_historico_mostra_quem_gerou_e_quanto(cliente, semente, sessao):
-    admin = cria_usuario(sessao, "plataforma")
+    admin = cria_usuario(sessao, "plataforma_edicao")
     cliente.post("/api/interacoes", json=corpo(semente))
 
     registrar_relatorio.registrar(
@@ -216,7 +216,7 @@ def test_historico_mostra_quem_gerou_e_quanto(cliente, semente, sessao):
 
 
 def test_recorte_sem_filtro_aparece_legivel_no_historico(cliente, semente, sessao):
-    admin = cria_usuario(sessao, "plataforma")
+    admin = cria_usuario(sessao, "plataforma_edicao")
     registrar_relatorio.registrar(
         sessao, secoes=("resumo",), recorte=Recorte(), usuario=como(sessao, admin)
     )
@@ -241,7 +241,7 @@ def test_o_total_respeita_o_escopo_de_quem_gera(cliente, semente, sessao):
     cliente.post("/api/interacoes", json=corpo(semente, frente="governo"))
     sessao.flush()
 
-    admin = cria_usuario(sessao, "plataforma")
+    admin = cria_usuario(sessao, "plataforma_edicao")
     irrestrito = como(sessao, admin)
 
     # `replace`, e não reconstruir campo a campo: se `UsuarioAtual` ganhar um
@@ -399,7 +399,7 @@ def test_o_banco_tambem_recusa_formato_desconhecido(sessao, semente):
 
     # Cria o autor: a transação do teste é desfeita ao final, então não há
     # usuário garantido no banco.
-    usuario = cria_usuario(sessao, "plataforma")
+    usuario = cria_usuario(sessao, "plataforma_edicao")
     with pytest.raises(IntegrityError), sessao.begin_nested():
         sessao.execute(
             text(
@@ -411,7 +411,7 @@ def test_o_banco_tambem_recusa_formato_desconhecido(sessao, semente):
 
 
 def test_historico_distingue_os_dois_formatos(cliente, semente, sessao):
-    admin = cria_usuario(sessao, "plataforma")
+    admin = cria_usuario(sessao, "plataforma_edicao")
     cliente.post("/api/interacoes", json=corpo(semente))
 
     for formato in ("documento", "csv"):

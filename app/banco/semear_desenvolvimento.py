@@ -96,14 +96,19 @@ PORTA_VOZES = [
 
 #: Um usuário por papel, para comparar o que cada perfil enxerga.
 #:
-#: São os quatro papéis de partida da migration 0003 — a divisão por PORTAL.
+#: São os oito papéis de partida da migration 0003 — um leitor e um editor
+#: para cada portal.
 #: Acrescentar um papel ao banco e uma linha aqui basta para ele ganhar conta de
 #: desenvolvimento.
 USUARIOS_DE_DESENVOLVIMENTO = [
-    ("plataforma", "plataforma@aegea.com.br", "Plataforma (os três portais)"),
-    ("crm", "crm@aegea.com.br", "CRM dos Stakeholders"),
-    ("sintese", "sintese@aegea.com.br", "Síntese Executiva"),
-    ("score", "score@aegea.com.br", "Score Executivo"),
+    ("plataforma_leitura", "plataforma.leitura@aegea.com.br", "Plataforma · leitura"),
+    ("plataforma_edicao", "plataforma.edicao@aegea.com.br", "Plataforma · edição"),
+    ("crm_leitura", "crm.leitura@aegea.com.br", "CRM · leitura"),
+    ("crm_edicao", "crm.edicao@aegea.com.br", "CRM · edição"),
+    ("sintese_leitura", "sintese.leitura@aegea.com.br", "Síntese · leitura"),
+    ("sintese_edicao", "sintese.edicao@aegea.com.br", "Síntese · edição"),
+    ("score_leitura", "score.leitura@aegea.com.br", "Score · leitura"),
+    ("score_edicao", "score.edicao@aegea.com.br", "Score · edição"),
 ]
 
 #: A senha do usuário local. NÃO é segredo, e não pretende ser.
@@ -120,11 +125,11 @@ def _semear_usuarios(sessao: Session) -> None:
     Ver o modelo de permissão exige alternar entre perfis, e com um usuário só
     isso é `update` no banco seguido de reinício da API — porque a autorização
     fica em cache por cinco minutos. Quatro contas transformam a comparação em
-    quatro logins.
+    oito logins.
 
     Cada uma recebe a MESMA senha, e isso é conveniência de desenvolvimento
-    consciente: quem testa não deveria ter de consultar quatro credenciais para
-    comparar quatro telas.
+    consciente: quem testa não deveria ter de consultar oito credenciais para
+    comparar oito perfis.
 
     Idempotente por e-mail: rodar duas vezes não duplica, e um papel novo
     acrescentado a esta lista aparece na execução seguinte sem apagar nada.
@@ -163,7 +168,7 @@ def semear(sessao: Session) -> dict[str, int]:
 
     _semear_usuarios(sessao)
     autor = sessao.scalar(
-        select(Usuario).where(Usuario.email == "plataforma@aegea.com.br")
+        select(Usuario).where(Usuario.email == "plataforma.edicao@aegea.com.br")
     )
     # O bloco acima garante que existe pelo menos um usuário. Tornar a garantia
     # explícita evita que uma edição naquele `if` transforme isto num
@@ -173,7 +178,7 @@ def semear(sessao: Session) -> dict[str, int]:
     # que some conforme a flag de execução não é invariante.
     if autor is None:
         raise RuntimeError(
-            "Usuário `plataforma@aegea.com.br` não encontrado. Ele é o autor "
+            "Usuário `plataforma.edicao@aegea.com.br` não encontrado. Ele é o autor "
             "dos registros da amostra, e `_semear_usuarios` deveria tê-lo "
             "criado logo acima — se chegou aqui, a criação falhou em silêncio."
         )
@@ -333,9 +338,9 @@ def main() -> int:
     for chave, valor in resultado.items():
         print(f"  {chave:<16} {valor}")
     print("\nAmostra sintética carregada. Não é dado de produção.")
-    print(f"\nQuatro contas, todas com a senha  {SENHA_DE_DESENVOLVIMENTO}")
+    print(f"\nOito contas, todas com a senha  {SENHA_DE_DESENVOLVIMENTO}")
     for _codigo, email, nome in USUARIOS_DE_DESENVOLVIMENTO:
-        print(f"  {email:28} {nome}")
+        print(f"  {email:34} {nome}")
     return 0
 
 

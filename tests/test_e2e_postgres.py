@@ -618,7 +618,7 @@ def papel_de_coordenacao():
     from app.dominio.identidade import Papel
 
     return Papel(
-        codigo="plataforma",
+        codigo="plataforma_edicao",
         nome="Coordenacao",
         # `plataforma` abre os tres portais. Sem declarar aqui, a requisicao
         # parava antes de chegar a rota — `exigir_portal_crm` barra quem nao
@@ -782,11 +782,19 @@ def papel_externo():
     return Papel(codigo="externo_crm", nome="Externo", acessa_crm=True)
 
 
-def test_migration_semeou_os_quatro_papeis(sessao):
-    codigos = set(
-        sessao.scalars(text("select codigo from papel")).all()
-    )
-    assert codigos == {"crm", "plataforma", "sintese", "score"}
+def test_migration_semeou_os_oito_papeis(sessao):
+    """Um par por portal: quem lê e quem edita."""
+    codigos = set(sessao.scalars(text("select codigo from papel")).all())
+    assert codigos == {
+        "plataforma_leitura",
+        "plataforma_edicao",
+        "crm_leitura",
+        "crm_edicao",
+        "sintese_leitura",
+        "sintese_edicao",
+        "score_leitura",
+        "score_edicao",
+    }
 
 
 def test_banco_recusa_externo_sem_prazo(sessao):
@@ -897,7 +905,7 @@ def test_diretorio_exige_papel(cliente, semente):
     from app.dominio.identidade import Papel
 
     com_direito = como(
-        cliente, Papel(codigo="crm", nome="Analista", ve_diretorio=True, acessa_crm=True)
+        cliente, Papel(codigo="crm_edicao", nome="Analista", ve_diretorio=True, acessa_crm=True)
     )
     assert com_direito.get("/api/instituicoes").status_code == 200
 
@@ -943,7 +951,7 @@ def test_busca_livre_nao_delata_relato_escondido(cliente, semente, sessao):
     # Quem tem direito ao campo continua encontrando por ele.
     interno = como(
         cliente,
-        Papel(codigo="crm", nome="Analista", ve_campos_sensiveis=True, acessa_crm=True),
+        Papel(codigo="crm_edicao", nome="Analista", ve_campos_sensiveis=True, acessa_crm=True),
         escopo_valido,
     )
     assert interno.get("/api/interacoes?q=desligamento").json()["total"] == 1

@@ -64,7 +64,7 @@ def sessao():
 @pytest.fixture
 def usuario(sessao):
     """Alguém liberado, para o cookie apontar para uma pessoa real."""
-    papel = sessao.scalars(select(Papel).where(Papel.codigo == "plataforma")).first()
+    papel = sessao.scalars(select(Papel).where(Papel.codigo == "plataforma_edicao")).first()
     registro = Usuario(
         entra_object_id=f"oid-{uuid4().hex[:8]}",
         email=f"{uuid4().hex[:8]}@aegea.com.br",
@@ -191,7 +191,7 @@ def test_eu_entrega_o_papel_e_o_token(cliente, usuario):
 
     corpo = cliente.get("/api/eu").json()
     assert corpo["email"] == usuario.email
-    assert corpo["papel"]["codigo"] == "plataforma"
+    assert corpo["papel"]["codigo"] == "plataforma_edicao"
     assert corpo["csrf_token"] == sessao_assinada.ler(cookie, SEGREDO).csrf
 
 
@@ -556,7 +556,7 @@ def test_convidado_externo_com_prazo_entra(sessao, cliente):
     banco devolve e o que o cache supunha, e nenhum dos dois lados sozinho o
     mostrava.
     """
-    papel = sessao.scalars(select(Papel).where(Papel.codigo == "crm")).first()
+    papel = sessao.scalars(select(Papel).where(Papel.codigo == "crm_edicao")).first()
     convidado = Usuario(
         entra_object_id=f"oid-{uuid4().hex[:8]}",
         email=f"{uuid4().hex[:8]}@fornecedor.com.br",

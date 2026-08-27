@@ -17,6 +17,7 @@ Três perguntas diferentes, que coexistem e não se substituem:
 from __future__ import annotations
 
 import uuid
+from datetime import date
 
 import pytest
 from fastapi.testclient import TestClient
@@ -117,20 +118,20 @@ def entra(cliente, sessao, codigo_do_papel: str):
 
 @pytest.mark.parametrize("rota", ROTAS_DO_CRM)
 def test_o_papel_crm_alcanca_as_rotas_do_crm(cliente, sessao, rota):
-    entra(cliente, sessao, "crm")
+    entra(cliente, sessao, "crm_edicao")
     assert cliente.get(rota).status_code == 200
 
 
 @pytest.mark.parametrize("rota", ROTAS_DO_CRM)
 def test_a_plataforma_alcanca_as_rotas_do_crm(cliente, sessao, rota):
-    entra(cliente, sessao, "plataforma")
+    entra(cliente, sessao, "plataforma_edicao")
     assert cliente.get(rota).status_code == 200
 
 
 # -- quem NÃO abre o CRM é barrado --------------------------------------------
 
 
-@pytest.mark.parametrize("papel", ["sintese", "score"])
+@pytest.mark.parametrize("papel", ["sintese_leitura", "score_leitura"])
 @pytest.mark.parametrize("rota", ROTAS_DO_CRM)
 def test_quem_nao_abre_o_crm_nao_le_o_crm(cliente, sessao, papel, rota):
     """O furo, em uma linha.
@@ -156,17 +157,17 @@ def test_o_historico_de_relatorios_e_barrado_por_DOIS_motivos(cliente, sessao):
     remover a permissão interna achando que o portal já basta, `sintese`
     continuaria barrado — mas `crm` passaria a ler o histórico de todo mundo.
     """
-    entra(cliente, sessao, "sintese")
+    entra(cliente, sessao, "sintese_leitura")
     por_portal = cliente.get("/api/relatorios/historico")
     assert por_portal.status_code == 403
     assert "CRM dos Stakeholders" in por_portal.json()["detalhe"]
 
-    entra(cliente, sessao, "crm")
+    entra(cliente, sessao, "crm_edicao")
     por_permissao = cliente.get("/api/relatorios/historico")
     assert por_permissao.status_code == 403
     assert "CRM dos Stakeholders" not in por_permissao.json()["detalhe"]
 
-    entra(cliente, sessao, "plataforma")
+    entra(cliente, sessao, "plataforma_edicao")
     assert cliente.get("/api/relatorios/historico").status_code == 200
 
 
@@ -176,12 +177,12 @@ def test_a_recusa_diz_qual_modulo(cliente, sessao):
     Nomear o módulo não conta nada que a pessoa não saiba sobre si mesma, e é
     acionável — diferente de "não autorizado", que manda adivinhar.
     """
-    entra(cliente, sessao, "sintese")
+    entra(cliente, sessao, "sintese_leitura")
     resposta = cliente.get("/api/interacoes")
     assert "CRM dos Stakeholders" in resposta.json()["detalhe"]
 
 
-@pytest.mark.parametrize("papel", ["sintese", "score"])
+@pytest.mark.parametrize("papel", ["sintese_leitura", "score_leitura"])
 def test_quem_nao_abre_o_crm_tambem_nao_escreve(cliente, sessao, papel):
     """Já era barrado por `exigir_escrita`, e continua.
 
@@ -195,7 +196,19 @@ def test_quem_nao_abre_o_crm_tambem_nao_escreve(cliente, sessao, papel):
 # -- o que não é do CRM continua aberto ---------------------------------------
 
 
-@pytest.mark.parametrize("papel", ["plataforma", "crm", "sintese", "score"])
+@pytest.mark.parametrize(
+    "papel",
+    [
+        "plataforma_leitura",
+        "plataforma_edicao",
+        "crm_leitura",
+        "crm_edicao",
+        "sintese_leitura",
+        "sintese_edicao",
+        "score_leitura",
+        "score_edicao",
+    ],
+)
 @pytest.mark.parametrize("rota", ROTAS_DE_TODOS)
 def test_o_vocabulario_e_a_identidade_valem_para_todos(cliente, sessao, papel, rota):
     """Barrar estas por portal quebraria a Síntese antes de ela existir.
@@ -288,3 +301,96 @@ def test_o_papel_sem_portal_nenhum_nao_alcanca_o_crm(cliente, sessao):
     sessao.flush()
     entra(cliente, sessao, "sem_portal")
     assert cliente.get("/api/interacoes").status_code == 403
+
+
+# -- editar o proprio nao e editar o de todos ---------------------------------
+
+
+def test_o_editor_do_crm_nao_mexe_em_registro_alheio(cliente, sessao):
+    """A distinção que separa "trabalha aqui" de "manda aqui".
+
+    Este teste existe porque o defeito passou: `crm_edicao` nasceu com
+    `pode_editar_tudo`, e por um momento o editor do CRM podia alterar e
+    arquivar registro criado por qualquer pessoa.
+
+    A suíte não pegou, e o motivo vale registrar: um teste montava `crm_edicao`
+    SEM aquela bandeira, e outro exigia que todo editor a tivesse. Os dois
+    passavam, discordando sobre o que o papel é — e nenhum falava com o banco,
+    que é onde a permissão de verdade estava gravada.
+    """
+
+    # Alguém do CRM cria um registro.
+    autor = entra(cliente, sessao, "crm_edicao")
+    registro = _registro_de(sessao, autor)
+
+    # OUTRA pessoa, com o mesmo papel de edição do CRM.
+    entra(cliente, sessao, "crm_edicao")
+
+    recusado = cliente.patch(
+        f"/api/interacoes/{registro.id}",
+        headers={"X-CSRF-Token": _csrf(cliente)},
+        json={"pauta": "mexi no que não é meu"},
+    )
+    assert recusado.status_code == 403, recusado.text
+
+    arquivar = cliente.delete(
+        f"/api/interacoes/{registro.id}", headers={"X-CSRF-Token": _csrf(cliente)}
+    )
+    assert arquivar.status_code == 403
+
+
+def test_a_plataforma_mexe_em_registro_alheio(cliente, sessao):
+    """O contrapeso: alguém precisa poder corrigir o registro de quem saiu.
+
+    Sem este teste, restringir demais passaria despercebido — e a coordenação
+    ficaria sem como consertar um erro de digitação de quem já não está na
+    empresa.
+    """
+
+    autor = entra(cliente, sessao, "crm_edicao")
+    registro = _registro_de(sessao, autor)
+
+    entra(cliente, sessao, "plataforma_edicao")
+    aceito = cliente.patch(
+        f"/api/interacoes/{registro.id}",
+        headers={"X-CSRF-Token": _csrf(cliente)},
+        json={"pauta": "corrigido pela coordenação"},
+    )
+    assert aceito.status_code == 200, aceito.text
+
+
+def _registro_de(sessao, autor):
+    """Uma interação de `autor`, com o mínimo que o schema exige.
+
+    A instituição é CRIADA aqui, e não buscada: o banco de teste tem as
+    migrations mas não a amostra sintética, então `select ... limit 1` voltava
+    vazio e o `insert` falhava por `not null` — um erro que aponta para a
+    coluna, e não para a causa.
+    """
+    from app.banco.tabelas_interacoes import InteracaoRegistro
+    from app.banco.tabelas_stakeholders import Instituicao
+
+    instituicao = Instituicao(
+        nome=f"Instituição {uuid.uuid4().hex[:6]}",
+        nome_normalizado=uuid.uuid4().hex[:12],
+        tipo="veiculo",
+    )
+    sessao.add(instituicao)
+    sessao.flush()
+
+    registro = InteracaoRegistro(
+        frente_id=sessao.scalar(text("select id from frente where codigo='imprensa'")),
+        data_interacao=date.today(),
+        uf="SP",
+        status_id=sessao.scalar(text("select id from status limit 1")),
+        instituicao_id=instituicao.id,
+        pauta="registro de outra pessoa",
+        criado_por=autor.id,
+    )
+    sessao.add(registro)
+    sessao.flush()
+    return registro
+
+
+def _csrf(cliente) -> str:
+    return cliente.get("/api/eu").json()["csrf_token"]

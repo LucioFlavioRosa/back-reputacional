@@ -73,22 +73,39 @@ comment on column papel.ve_campos_sensiveis is
 -- Uma coluna por permissão, e não uma lista: assim a pergunta "quem pode
 -- exportar?" é um `select`, e acrescentar uma permissão nova não exige
 -- reinterpretar dado existente.
--- OS QUATRO PAPÉIS DE PARTIDA.
+-- OS OITO PAPÉIS DE PARTIDA: um LEITOR e um EDITOR por portal.
 --
--- São a divisão por PORTAL, que é a fronteira mais grossa da plataforma:
--- `plataforma` alcança os três, e os outros três alcançam um cada.
+-- Duas perguntas, respondidas por dimensões separadas:
 --
--- As bandeiras de permissão abaixo são ponto de partida, e mudá-las é um
--- `update` — não uma migration. Um papel intermediário ("lê a Síntese e o
--- Score, não exporta") é um `insert`.
+--   ONDE entra   `acessa_crm`, `acessa_sintese`, `acessa_score`
+--   O QUE faz    `pode_criar`, `pode_editar_*`, `administra_*`
 --
--- `administra_acessos` fica SÓ em `plataforma`, e a exclusividade é
--- deliberada: é a permissão que concede todas as outras. Espalhá-la faria
--- cada portal poder ampliar o próprio alcance.
+-- O sufixo diz a segunda. `crm_leitura` e `crm_edicao` alcançam o mesmo
+-- módulo e diferem no que fazem lá dentro.
 --
--- ATENÇÃO ao mexer: `conceder_acesso` proíbe alterar o próprio acesso
--- (migration 0006). Deixar zero pessoas com `administra_acessos` tranca a
--- administração, e sair disso exige SQL direto no banco.
+-- POR QUE O SUFIXO É EXPLÍCITO
+--
+-- Antes havia só `crm`, e ele ESCREVIA. O nome não dizia isso, e quem lesse a
+-- lista de papéis concluiria que `crm` era "o papel do CRM" — sem suspeitar
+-- que dava permissão de escrita. Um papel cujo nome não revela o que ele
+-- concede é um papel que alguém vai atribuir por engano.
+--
+-- `administra_acessos` fica SÓ em `plataforma_edicao`. É a permissão que
+-- concede todas as outras: quem a tem pode se dar qualquer papel, inclusive um
+-- que abra os três portais. Uma linha só, e há teste garantindo a
+-- exclusividade E teste garantindo que alguém a tem — `conceder_acesso` proíbe
+-- alterar o próprio acesso, então zero pessoas com ela tranca a administração.
+--
+-- EDITAR O PRÓPRIO, E NÃO O DE TODOS.
+--
+-- Os editores de portal recebem `pode_editar_proprio`, e não
+-- `pode_editar_tudo`. A distinção é o que separa "trabalha aqui" de "manda
+-- aqui": mexer no registro que outra pessoa criou é permissão de coordenação,
+-- e fica só em `plataforma_edicao`.
+--
+-- Síntese e Score ainda não têm tela nem dado. As bandeiras de edição existem
+-- para quando tiverem: declarar agora evita que a permissão seja inventada às
+-- pressas no dia da entrega.
 insert into papel (
   codigo, nome,
   pode_criar, pode_editar_proprio, pode_editar_tudo,
@@ -96,16 +113,36 @@ insert into papel (
   ve_campos_sensiveis, ve_diretorio, pode_exportar,
   acessa_crm, acessa_sintese, acessa_score
 ) values
-  -- Alcança os três portais e administra a plataforma.
-  ('plataforma', 'Plataforma',        true,  true,  true,  true,  true,  true,  true,  true,  true,  true,  true ),
+  -- -- os três portais ---------------------------------------------------------
+  ('plataforma_leitura', 'Plataforma · leitura',
+   false, false, false, false, false, true,  true,  true,  true,  true,  true ),
 
-  -- O CRM é o único portal com dado hoje, e é onde se registra: este papel
-  -- trabalha lá dentro, mas não edita o que é dos outros nem administra nada.
-  ('crm',        'CRM',               true,  true,  false, false, false, true,  true,  true,  true,  false, false),
+  ('plataforma_edicao',  'Plataforma · edição',
+   true,  true,  true,  true,  true,  true,  true,  true,  true,  true,  true ),
 
-  -- Síntese e Score são leitura executiva: consultam e exportam.
-  ('sintese',    'Síntese Executiva', false, false, false, false, false, true,  false, true,  false, true,  false),
-  ('score',      'Score Executivo',   false, false, false, false, false, true,  false, true,  false, false, true )
+  -- -- CRM dos Stakeholders ----------------------------------------------------
+  ('crm_leitura',        'CRM · leitura',
+   false, false, false, false, false, true,  true,  true,  true,  false, false),
+
+  -- `pode_editar_tudo` FALSO, e a diferença é grande: este papel edita o que
+  -- ELE criou, e não o que qualquer pessoa criou. Editar registro alheio é
+  -- permissão de coordenação, e mora em `plataforma_edicao`.
+  ('crm_edicao',         'CRM · edição',
+   true,  true,  false, false, false, true,  true,  true,  true,  false, false),
+
+  -- -- Síntese Executiva -------------------------------------------------------
+  ('sintese_leitura',    'Síntese · leitura',
+   false, false, false, false, false, true,  false, true,  false, true,  false),
+
+  ('sintese_edicao',     'Síntese · edição',
+   true,  true,  false, false, false, true,  false, true,  false, true,  false),
+
+  -- -- Score Executivo ---------------------------------------------------------
+  ('score_leitura',      'Score · leitura',
+   false, false, false, false, false, true,  false, true,  false, false, true ),
+
+  ('score_edicao',       'Score · edição',
+   true,  true,  false, false, false, true,  false, true,  false, false, true )
 on conflict (codigo) do nothing;
 
 

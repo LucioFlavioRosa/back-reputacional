@@ -38,14 +38,20 @@ class Perfil(StrEnum):
     de desenvolvimento.
 
     A lista pode crescer sem passar por aqui: `papel` é tabela, e um papel novo
-    é um `insert`. O que está neste enum são os quatro de partida, que são a
-    divisão por PORTAL — a fronteira mais grossa da plataforma.
+    é um `insert`. O que está neste enum são os oito de partida — um LEITOR e
+    um EDITOR para cada um dos três portais, mais o par que alcança os três.
+
+    O sufixo diz o que o papel FAZ; o prefixo diz ONDE ele entra.
     """
 
-    PLATAFORMA = "plataforma"
-    CRM = "crm"
-    SINTESE = "sintese"
-    SCORE = "score"
+    PLATAFORMA_LEITURA = "plataforma_leitura"
+    PLATAFORMA_EDICAO = "plataforma_edicao"
+    CRM_LEITURA = "crm_leitura"
+    CRM_EDICAO = "crm_edicao"
+    SINTESE_LEITURA = "sintese_leitura"
+    SINTESE_EDICAO = "sintese_edicao"
+    SCORE_LEITURA = "score_leitura"
+    SCORE_EDICAO = "score_edicao"
 
 
 @dataclass(frozen=True, slots=True)
