@@ -94,6 +94,18 @@ PORTA_VOZES = [
 ]
 
 
+#: Um usuário por papel, para comparar o que cada perfil enxerga.
+#:
+#: São os quatro papéis de partida da migration 0003 — a divisão por PORTAL.
+#: Acrescentar um papel ao banco e uma linha aqui basta para ele ganhar conta de
+#: desenvolvimento.
+USUARIOS_DE_DESENVOLVIMENTO = [
+    ("plataforma", "plataforma@aegea.com.br", "Plataforma (os três portais)"),
+    ("crm", "crm@aegea.com.br", "CRM dos Stakeholders"),
+    ("sintese", "sintese@aegea.com.br", "Síntese Executiva"),
+    ("score", "score@aegea.com.br", "Score Executivo"),
+]
+
 #: A senha do usuário local. NÃO é segredo, e não pretende ser.
 #:
 #: Longa porque `definir_senha` exige 12 caracteres — a mesma regra que vale
@@ -102,40 +114,57 @@ PORTA_VOZES = [
 SENHA_DE_DESENVOLVIMENTO = "painel-reputacional-2026"
 
 
-def semear(sessao: Session) -> dict[str, int]:
-    registros = json.loads(AMOSTRA.read_text(encoding="utf-8"))
+def _semear_usuarios(sessao: Session) -> None:
+    """Um usuário POR PAPEL, e não um só.
 
-    if sessao.scalar(select(Usuario).limit(1)) is None:
+    Ver o modelo de permissão exige alternar entre perfis, e com um usuário só
+    isso é `update` no banco seguido de reinício da API — porque a autorização
+    fica em cache por cinco minutos. Quatro contas transformam a comparação em
+    quatro logins.
+
+    Cada uma recebe a MESMA senha, e isso é conveniência de desenvolvimento
+    consciente: quem testa não deveria ter de consultar quatro credenciais para
+    comparar quatro telas.
+
+    Idempotente por e-mail: rodar duas vezes não duplica, e um papel novo
+    acrescentado a esta lista aparece na execução seguinte sem apagar nada.
+    """
+    for codigo, email, nome in USUARIOS_DE_DESENVOLVIMENTO:
+        if sessao.scalar(select(Usuario).where(Usuario.email == email)):
+            continue
+
         sessao.add(
             Usuario(
-                entra_object_id="mock-desenvolvimento",
-                email="crm@aegea.com.br",
-                nome="Usuário de Desenvolvimento",
+                # Prefixo `mock-` para nunca colidir com um `oid` de verdade do
+                # Entra ID, que é um UUID.
+                entra_object_id=f"mock-{codigo}",
+                email=email,
+                nome=nome,
+                # Sem escopo de frente ou unidade: o que se quer comparar aqui é
+                # o PAPEL. Escopo é a outra dimensão, e misturá-los faria a
+                # diferença entre duas telas ter duas causas possíveis.
                 acesso_irrestrito=True,
             )
         )
         sessao.flush()
-        # O papel vem da tabela semeada pela migration 0003; sem ele o
-        # ambiente local subiria autenticado e autorizado a nada.
+
         sessao.execute(
             text(
                 "update usuario set papel_id = (select id from papel "
-                "where codigo = 'crm') where papel_id is null"
-            )
+                "where codigo = :papel) where email = :email"
+            ),
+            {"papel": codigo, "email": email},
         )
+        definir_senha(sessao, email=email, senha=SENHA_DE_DESENVOLVIMENTO)
 
-        # SENHA DE DESENVOLVIMENTO, e só isso.
-        #
-        # Sem ela, `docker compose down -v` seguido de `up` deixa a pilha sem
-        # nenhuma forma de entrar: o SSO está desligado na tela e ninguém tem
-        # senha. O ambiente subiria bonito e trancado.
-        #
-        # Está EM CLARO neste arquivo de propósito: é o mesmo lugar onde os 60
-        # registros sintéticos estão em claro, e nada aqui é dado de produção.
-        # `verificacao_de_producao.py` recusa subir em produção com
-        # `AUTH_MOCK`; um banco de produção nunca roda este semeador.
-        definir_senha(sessao, email="crm@aegea.com.br", senha=SENHA_DE_DESENVOLVIMENTO)
-    autor = sessao.scalar(select(Usuario).limit(1))
+
+def semear(sessao: Session) -> dict[str, int]:
+    registros = json.loads(AMOSTRA.read_text(encoding="utf-8"))
+
+    _semear_usuarios(sessao)
+    autor = sessao.scalar(
+        select(Usuario).where(Usuario.email == "plataforma@aegea.com.br")
+    )
     # O bloco acima garante que existe pelo menos um usuário. Tornar a garantia
     # explícita evita que uma edição naquele `if` transforme isto num
     # `AttributeError` no meio da carga, com metade dos registros já dentro.
@@ -144,8 +173,9 @@ def semear(sessao: Session) -> dict[str, int]:
     # que some conforme a flag de execução não é invariante.
     if autor is None:
         raise RuntimeError(
-            "Nenhum usuário no banco: a semente precisa de um autor para "
-            "atribuir os registros."
+            "Usuário `plataforma@aegea.com.br` não encontrado. Ele é o autor "
+            "dos registros da amostra, e `_semear_usuarios` deveria tê-lo "
+            "criado logo acima — se chegou aqui, a criação falhou em silêncio."
         )
 
     ja_semeado = sessao.scalar(
@@ -303,7 +333,9 @@ def main() -> int:
     for chave, valor in resultado.items():
         print(f"  {chave:<16} {valor}")
     print("\nAmostra sintética carregada. Não é dado de produção.")
-    print(f"Entre com  crm@aegea.com.br  /  {SENHA_DE_DESENVOLVIMENTO}")
+    print(f"\nQuatro contas, todas com a senha  {SENHA_DE_DESENVOLVIMENTO}")
+    for _codigo, email, nome in USUARIOS_DE_DESENVOLVIMENTO:
+        print(f"  {email:28} {nome}")
     return 0
 
 
