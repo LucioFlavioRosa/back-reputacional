@@ -620,6 +620,12 @@ def papel_de_coordenacao():
     return Papel(
         codigo="plataforma",
         nome="Coordenacao",
+        # `plataforma` abre os tres portais. Sem declarar aqui, a requisicao
+        # parava antes de chegar a rota — `exigir_portal_crm` barra quem nao
+        # abre o CRM, e o teste deixaria de contar o que se propoe a contar.
+        acessa_crm=True,
+        acessa_sintese=True,
+        acessa_score=True,
         pode_criar=True,
         pode_editar_proprio=True,
         pode_editar_tudo=True,
@@ -764,9 +770,16 @@ def como(cliente, papel, escopo=None):
 
 
 def papel_externo():
+    """Convidado de fora: entra no CRM e não vê quase nada lá dentro.
+
+    `acessa_crm=True` porque o que estes testes exercitam é a POBREZA de
+    permissão dentro do módulo — sem campo sensível, sem diretório. Portal é a
+    outra dimensão, e sem ele a requisição pararia antes, num 403 de módulo, e
+    o teste deixaria de exercitar o que se propõe.
+    """
     from app.dominio.identidade import Papel
 
-    return Papel(codigo="score", nome="Externo")
+    return Papel(codigo="externo_crm", nome="Externo", acessa_crm=True)
 
 
 def test_migration_semeou_os_quatro_papeis(sessao):
@@ -884,7 +897,7 @@ def test_diretorio_exige_papel(cliente, semente):
     from app.dominio.identidade import Papel
 
     com_direito = como(
-        cliente, Papel(codigo="crm", nome="Analista", ve_diretorio=True)
+        cliente, Papel(codigo="crm", nome="Analista", ve_diretorio=True, acessa_crm=True)
     )
     assert com_direito.get("/api/instituicoes").status_code == 200
 
@@ -930,7 +943,7 @@ def test_busca_livre_nao_delata_relato_escondido(cliente, semente, sessao):
     # Quem tem direito ao campo continua encontrando por ele.
     interno = como(
         cliente,
-        Papel(codigo="crm", nome="Analista", ve_campos_sensiveis=True),
+        Papel(codigo="crm", nome="Analista", ve_campos_sensiveis=True, acessa_crm=True),
         escopo_valido,
     )
     assert interno.get("/api/interacoes?q=desligamento").json()["total"] == 1

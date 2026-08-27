@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.api.dependencias import exigir_diretorio
+from app.api.dependencias import exigir_diretorio, exigir_portal_crm
 from app.banco.sessao import SessaoDoPedido
 from app.banco.tabelas_stakeholders import (
     Instituicao,
@@ -30,7 +30,13 @@ rotas = APIRouter(
     # e entidade com quem a companhia fala. Para um terceiro isso pode valer
     # mais do que os registros. Não passam por `condicoes()`, então a barreira
     # é o papel.
-    dependencies=[Depends(exigir_diretorio)],
+    # DUAS dependências, e as duas importam.
+    #
+    # O portal diz em qual módulo se entra; `ve_diretorio` diz se, dentro dele,
+    # a pessoa alcança o mapa de relacionamento — que é todo jornalista, gestor
+    # e entidade com quem a Aegea fala. Um perfil do CRM sem `ve_diretorio`
+    # continua barrado, como antes.
+    dependencies=[Depends(exigir_portal_crm), Depends(exigir_diretorio)],
 )
 
 #: Vem da plataforma para carregar o `scope="function"` junto — ver

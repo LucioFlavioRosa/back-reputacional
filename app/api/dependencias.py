@@ -284,6 +284,36 @@ def exigir_diretorio(usuario: UsuarioLogado) -> UsuarioAtual:
     return usuario
 
 
+def exigir_portal_crm(usuario: UsuarioLogado) -> UsuarioAtual:
+    """As rotas do CRM dos Stakeholders exigem o portal, e não só o papel.
+
+    A plataforma tem três divisões, e `papel.acessa_*` diz quais delas um papel
+    abre. Isso já filtrava os cartões da capa — e SÓ isso, o que fazia da
+    separação uma decoração.
+
+    Sem esta dependência, `sintese@aegea.com.br` pedia `/api/interacoes` e
+    recebia os 60 registros. A tela escondia o cartão do CRM; a API entregava o
+    conteúdo dele a quem chamasse direto. Um `curl` bastava.
+
+    A regra vale para LEITURA também, e é aí que estava o furo: a escrita já
+    era barrada por `exigir_escrita`, porque `sintese` é somente-leitura. Quem
+    olhasse só as escritas concluiria que estava tudo protegido.
+
+    NÃO substitui `usuario_escopo`. São perguntas diferentes, e as três
+    coexistem: o portal diz em qual MÓDULO se entra, o papel diz o que se FAZ
+    lá dentro, e o escopo diz QUAIS registros se alcança.
+    """
+    if usuario.papel is None or not usuario.papel.acessa_crm:
+        # A mensagem nomeia o módulo porque quem chega aqui já provou identidade
+        # e sabe qual é o próprio perfil — dizer "o CRM não é seu" não conta
+        # nada que a pessoa não saiba, e é acionável.
+        raise NaoAutorizado(
+            "Seu perfil não tem acesso ao CRM dos Stakeholders. "
+            "Peça à coordenação do painel."
+        )
+    return usuario
+
+
 # NÃO existe `exigir_exportacao` aqui, e a ausência é deliberada.
 #
 # `papel.pode_exportar` está no banco, mas não há rota para protegê-lo: o CSV é
@@ -302,4 +332,5 @@ def _nome_do_papel(usuario: UsuarioAtual) -> str:
 
 
 UsuarioQueEscreve = Annotated[UsuarioAtual, Depends(exigir_escrita)]
+UsuarioDoCrm = Annotated[UsuarioAtual, Depends(exigir_portal_crm)]
 UsuarioQueVeDiretorio = Annotated[UsuarioAtual, Depends(exigir_diretorio)]

@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, Query, status
 from app.api.dependencias import (
     UsuarioLogado,
     UsuarioQueEscreve,
-    obter_usuario_atual,
+    exigir_portal_crm,
 )
 from app.banco.repositorio_interacoes import (
     RepositorioSQL,
@@ -40,7 +40,13 @@ rotas = APIRouter(
     # `obter_usuario_atual` já encadeia provisionamento, limite de taxa e
     # autorização, nessa ordem. Uma dependência só, resolvida uma vez por
     # requisição.
-    dependencies=[Depends(obter_usuario_atual)],
+    # `exigir_portal_crm`, e não `obter_usuario_atual`: estas rotas são do CRM
+    # dos Stakeholders, e quem não abre esse portal não as alcança.
+    #
+    # Fica no APIRouter, e não em cada rota: uma rota nova nasce protegida em
+    # vez de depender de alguém lembrar. `exigir_portal_crm` já resolve o
+    # usuário, então nada se perde.
+    dependencies=[Depends(exigir_portal_crm)],
 )
 
 #: Vem da plataforma para carregar o `scope="function"` junto — ver

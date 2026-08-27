@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from app.api.dependencias import (
     UsuarioLogado,
-    obter_usuario_atual,
+    exigir_portal_crm,
 )
 from app.api.interacoes import obter_recorte
 from app.banco.sessao import SessaoDoPedido
@@ -24,7 +24,13 @@ from app.dominio.recorte import Recorte
 rotas = APIRouter(
     prefix="/api/relatorios",
     tags=["relatorios"],
-    dependencies=[Depends(obter_usuario_atual)],
+    # `exigir_portal_crm`, e não `obter_usuario_atual`: estas rotas são do CRM
+    # dos Stakeholders, e quem não abre esse portal não as alcança.
+    #
+    # Fica no APIRouter, e não em cada rota: uma rota nova nasce protegida em
+    # vez de depender de alguém lembrar. `exigir_portal_crm` já resolve o
+    # usuário, então nada se perde.
+    dependencies=[Depends(exigir_portal_crm)],
 )
 
 #: Vem da plataforma para carregar o `scope="function"` junto — ver
