@@ -25,6 +25,20 @@ from app.seguranca.cache_de_autorizacao import (
 )
 
 
+def hoje_utc() -> date:
+    """A data que o DOMÍNIO usa para decidir vencimento.
+
+    `hoje_utc()` devolve a data LOCAL, e os dois divergem por três horas toda
+    noite no fuso de São Paulo: às 21h de um dia aqui já é o dia seguinte em
+    UTC. Um teste escrito com `hoje_utc()` passava o dia inteiro e falhava
+    entre 21h e meia-noite — o pior tipo de teste, porque quem o vê quebrar
+    supõe instabilidade e roda de novo de manhã, quando volta a passar.
+
+    Ver `_hoje_utc` em `app/dominio/identidade.py`: é a mesma conta.
+    """
+    return datetime.now(UTC).date()
+
+
 def _usuario(*, expira_em: date | None = None) -> UsuarioAtual:
     # `date`, e NÃO `datetime`: é o que a coluna `acesso_expira_em` guarda e o
     # que o ORM devolve. Fabricar `datetime` aqui — que passa no type checker,
@@ -100,7 +114,7 @@ def test_usuario_com_prazo_e_guardado_sem_estourar():
     `date` e tem `tzinfo`.
     """
     cache = CacheDeAutorizacao(ttl_segundos=300)
-    usuario = _usuario(expira_em=date.today() + timedelta(days=1))
+    usuario = _usuario(expira_em=hoje_utc() + timedelta(days=1))
     cache.guardar(usuario)
     assert cache.obter(usuario.id) is not None
 
@@ -110,7 +124,7 @@ def test_o_prazo_vale_o_dia_inteiro():
     UTC PASSOU do prazo. O cache tem de concordar, senão o último dia de acesso
     de quem é de fora some — e some em silêncio."""
     cache = CacheDeAutorizacao(ttl_segundos=300)
-    usuario = _usuario(expira_em=date.today())
+    usuario = _usuario(expira_em=hoje_utc())
     cache.guardar(usuario)
     assert cache.obter(usuario.id) is not None
     assert not usuario.acesso_vencido()
@@ -118,7 +132,7 @@ def test_o_prazo_vale_o_dia_inteiro():
 
 def test_acesso_ja_vencido_nao_vira_entrada():
     cache = CacheDeAutorizacao(ttl_segundos=300)
-    usuario = _usuario(expira_em=date.today() - timedelta(days=1))
+    usuario = _usuario(expira_em=hoje_utc() - timedelta(days=1))
     assert usuario.acesso_vencido()
     cache.guardar(usuario)
     assert cache.obter(usuario.id) is None
@@ -128,11 +142,11 @@ def test_o_prazo_encurta_a_janela_quando_e_menor_que_o_ttl():
     """A garantia, medida em vez de afirmada: com o prazo vencendo no fim deste
     dia UTC e um TTL de trinta dias, a entrada tem de morrer com o dia."""
     cache = CacheDeAutorizacao(ttl_segundos=30 * 24 * 3600)
-    usuario = _usuario(expira_em=date.today())
+    usuario = _usuario(expira_em=hoje_utc())
 
     sobra_do_dia = (
         datetime.combine(
-            date.today() + timedelta(days=1), datetime.min.time(), tzinfo=UTC
+            hoje_utc() + timedelta(days=1), datetime.min.time(), tzinfo=UTC
         )
         - datetime.now(UTC)
     ).total_seconds()
