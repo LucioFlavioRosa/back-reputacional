@@ -446,7 +446,121 @@ insegura quando `AMBIENTE=producao`:
 
 ---
 
-## 10. O que NÃO existe
+## 10. A virada para SSO
+
+A entrada por e-mail e senha é **temporária**. O destino é só SSO do Entra ID, e
+esta seção existe para essa troca não ser descoberta no dia em que for feita.
+
+### Por que a troca é pequena
+
+`POST /api/auth/senha` emite **exatamente o mesmo cookie assinado** que o retorno
+do OIDC emite — mesma assinatura, mesmos atributos, mesma duração. Daqui para a
+frente nada na aplicação sabe por qual porta a pessoa entrou.
+
+Foi decisão, e é o que faz a troca ser pequena: papel, portal, escopo, cache de
+autorização e trilha de acesso leem a SESSÃO, nunca a forma de autenticar.
+Fossem dois tipos de sessão, cada verificação teria de tratar os dois — e é
+assim que uma delas passa a tratar só um.
+
+### O que muda
+
+| Passo | Onde |
+|---|---|
+| Desligar o mock | `AUTH_MOCK=false` — **sem isto nada mais importa** (ver abaixo) |
+| Ligar o SSO | `SSO_LIGADO=true` no ambiente da API; `SSO_LIGADO = true` em `Login.tsx` |
+| Tirar o formulário de senha | `front-reputacional/src/paginas/Login.tsx` |
+| Remover a rota | `POST /api/auth/senha` em `app/api/acesso.py` |
+| Remover o caso de uso | `app/casos_de_uso/autenticar_por_senha.py` e seus testes |
+| Voltar o schema | `entra_object_id` volta a `not null`; `senha_hash` e o `check usuario_autentica_de_algum_jeito` saem |
+| Semeador | as contas locais perdem a senha, e passam a servir só ao `AUTH_MOCK` |
+
+**`AUTH_MOCK=false` é o primeiro passo, e não um detalhe.** Com o mock ligado,
+`_usuario_provisionado()` provisiona um usuário fixo a cada requisição e nem
+olha o cookie — `SSO_LIGADO=true` sozinho abriria as rotas do OIDC sem que
+ninguém precisasse passar por elas. Um ambiente assim parece autenticado e não
+está.
+
+Nada disso toca o modelo de acesso. Os papéis, as três dimensões e a barreira de
+portal ficam intactos.
+
+### ⚠ O PRIMEIRO ADMINISTRADOR — o passo que trava
+
+Este é o ponto que não é técnico, e o que falta planejar.
+
+Quem entra pelo SSO é provisionado por `provisionar()` **sem papel**:
+autenticado pelo diretório, autorizado a nada. É o comportamento certo — o
+diretório responde "quem é você", o banco responde "o que você pode".
+
+Mas na primeira subida **não há ninguém para conceder o primeiro papel**:
+
+- conceder exige `administra_acessos`, que só `plataforma_edicao` tem;
+- `conceder_acesso` **proíbe alterar o próprio acesso** (migration 0006), então
+  a primeira pessoa não consegue se promover;
+- e não existe mais ninguém.
+
+O sistema fica autenticando todo mundo e autorizando ninguém, sem nada quebrado
+e sem saída pela interface.
+
+**A saída é um `UPDATE` direto no banco, uma vez.** Precisa do `oid` do Entra ID
+da pessoa — o `sub`/`oid` do token, não o e-mail. Ele aparece em `usuario` assim
+que ela tenta entrar pela primeira vez:
+
+```sql
+-- 1. a pessoa faz login uma vez; isso cria a linha sem papel
+select id, email, entra_object_id, papel_id
+  from usuario
+ where email = 'quem.vai.administrar@aegea.com.br';
+
+-- 2. concede o papel que administra
+update usuario
+   set papel_id            = (select id from papel where codigo = 'plataforma_edicao'),
+       acesso_irrestrito   = true,
+       -- `papel_concedido_em` também, e não é enfeite: a tela de Acessos lê
+       -- esta coluna para mostrar desde quando o acesso vale, E para o controle
+       -- de concorrência (`versao_vista`) da própria tela. Nula, a linha
+       -- aparece sem data e destoa de toda concessão feita pela aplicação.
+       papel_concedido_em  = clock_timestamp()
+ where email = 'quem.vai.administrar@aegea.com.br';
+```
+
+`ativo`, `externo` e `acesso_expira_em` não precisam ser tocados: os padrões da
+tabela (`true`, `false`, nulo) já são o que se quer para quem administra.
+
+### O que este `UPDATE` deixa na trilha
+
+Ele **não passa despercebido**, e a primeira versão desta seção dizia o
+contrário — errado. O gatilho `auditar_acesso_do_usuario` (migration 0005) vigia
+`papel_id`, `acesso_irrestrito`, `externo`, `acesso_expira_em` e `ativo`, e
+dispara em qualquer escrita, venha da aplicação ou do `psql`.
+
+Verificado contra o banco: o `UPDATE` acima grava duas linhas em
+`usuario_auditoria` — uma para `papel_id`, outra para `acesso_irrestrito` —
+assim:
+
+```
+campo               concedido_por    origem
+papel_id            null             postgres
+acesso_irrestrito   null             postgres
+```
+
+O que falta é o **autor**. `concedido_por` vem de um `SET LOCAL` que a aplicação
+carimba na transação (`marcar_autor_na_sessao`), e o `psql` não carimba nada —
+daí o nulo e o `origem = postgres`, que é o próprio banco dizendo "isto não veio
+por uma tela".
+
+Ou seja: dá para saber que aconteceu, quando, e o que mudou. Não dá para saber
+QUEM fez. Por isso este é um passo único e consciente, feito por quem implanta,
+e não um atalho de rotina — daí em diante tudo passa pela tela de Acessos, que
+registra o autor.
+
+**A alternativa** é semear a linha na migration, com o `entra_object_id` real de
+quem for administrar. Some o passo manual, mas exige conhecer o `oid` antes do
+deploy — e um `oid` errado semeado é pior do que um `UPDATE` consciente, porque
+cria uma conta fantasma que ninguém entende.
+
+---
+
+## 11. O que NÃO existe
 
 Escrito explicitamente para quem for continuar.
 
