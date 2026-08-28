@@ -211,6 +211,19 @@ def callback(
             detail="O acesso pelo SSO da Microsoft ainda não está liberado.",
         )
 
+    # TODAS as recusas daqui em diante são `sobre_o_pedido=True`, e a razão é a
+    # mesma para as quatro: no meio da autenticação não há identidade
+    # resolvida, então `_e_externo()` cai no lado seguro e a política troca a
+    # frase por "Você não tem permissão para esta operação".
+    #
+    # Num login isso é enganoso. "Pedido de login expirado. Tente entrar de
+    # novo" diz o que fazer; "você não tem permissão" faz a pessoa concluir que
+    # o problema é o acesso dela e abrir um chamado. É exatamente o beco sem
+    # saída que a doutrina em `dominio/erros.py` descreve — ela nasceu de um
+    # caso igual, com a mensagem do CSRF.
+    #
+    # Nenhuma destas frases conta como o sistema decide nada, e o motivo
+    # técnico da falha continua só no log.
     ip = ip_do_cliente(requisicao, proxies_confiaveis=configuracao.proxies_confiaveis)
 
     try:
@@ -226,7 +239,10 @@ def callback(
         registrar_acesso.registrar_e_confirmar(
             sessao, resultado=registrar_acesso.NEGADO_NO_PROVEDOR, ip=ip
         )
-        raise NaoAutorizado("Pedido de login expirado. Tente entrar de novo.") from erro
+        raise NaoAutorizado(
+            "Pedido de login expirado. Tente entrar de novo.",
+            sobre_o_pedido=True,
+        ) from erro
 
     estado, nonce, verificador, redirect = pedido.csrf.split("|", 3)
 
@@ -234,7 +250,7 @@ def callback(
         registrar_acesso.registrar_e_confirmar(
             sessao, resultado=registrar_acesso.NEGADO_NO_PROVEDOR, ip=ip
         )
-        raise NaoAutorizado("O Entra ID recusou o login.")
+        raise NaoAutorizado("O Entra ID recusou o login.", sobre_o_pedido=True)
 
     if not code or not state or not secrets.compare_digest(state, estado):
         # `state` divergente é a assinatura de um CSRF no próprio login: alguém
@@ -242,7 +258,7 @@ def callback(
         registrar_acesso.registrar_e_confirmar(
             sessao, resultado=registrar_acesso.NEGADO_NO_PROVEDOR, ip=ip
         )
-        raise NaoAutorizado("Pedido de login inválido.")
+        raise NaoAutorizado("Pedido de login inválido.", sobre_o_pedido=True)
 
     cliente = cliente_entra(configuracao)
     try:
@@ -259,7 +275,9 @@ def callback(
         registrar_acesso.registrar_e_confirmar(
             sessao, resultado=registrar_acesso.NEGADO_NO_PROVEDOR, ip=ip
         )
-        raise NaoAutorizado("Não foi possível concluir o login.") from erro
+        raise NaoAutorizado(
+            "Não foi possível concluir o login.", sobre_o_pedido=True
+        ) from erro
 
     usuario = provisionar(
         sessao,
@@ -285,7 +303,21 @@ def callback(
         )
         # A pessoa é quem diz ser; só não tem acesso liberado. A mensagem pode
         # ser específica: não revela nada que ela já não saiba sobre si.
-        raise NaoAutorizado(_texto_da_recusa(usuario))
+        #
+        # `sobre_o_pedido=True` é o que TORNA isso verdade, e faltava. Sem ele,
+        # `_e_externo()` não tem identidade resolvida no meio da autenticação,
+        # cai no lado seguro — "de fora" —, e a política troca a frase por
+        # "Você não tem permissão para esta operação".
+        #
+        # A intenção estava escrita neste comentário e não estava no código: o
+        # log guardava "Seu acesso ainda não foi liberado. Peça à coordenação"
+        # e a pessoa lia um beco sem saída. A porta da senha já passava a
+        # bandeira; a do SSO, não — e é a que vai sobrar.
+        #
+        # A doutrina em `dominio/erros.py` cita esta frase pelo nome como
+        # exemplo do que é `sobre_o_pedido`: descreve o ESTADO de quem pede,
+        # que a pessoa já conhece, e é acionável.
+        raise NaoAutorizado(_texto_da_recusa(usuario), sobre_o_pedido=True)
 
     registrar_acesso.registrar(
         sessao,
@@ -563,6 +595,23 @@ def eu(
 
 
 def _motivo_da_recusa(usuario: UsuarioAtual) -> str | None:
+    """Por que esta pessoa não entra — ou `None` se entra.
+
+    As DUAS portas passam por aqui, e é o que faz a política ser uma só.
+
+    `ativo` vem primeiro de propósito: é a condição mais fundamental das três.
+    Uma conta desativada com papel e prazo em dia não deve ser recusada por
+    "sem papel" — a trilha diria a coisa errada sobre por que a pessoa não
+    entrou, e é a trilha que alguém vai ler depois de um incidente.
+
+    Ele NÃO estava aqui, e a ausência era invisível porque a porta da senha o
+    conferia por conta própria, lá dentro de `autenticar()`. O SSO nunca
+    conferiu. Enquanto as duas portas existiam, desativar parecia funcionar;
+    na virada para só-SSO, a única forma de remover alguém pararia de surtir
+    efeito no login — sem nada quebrar e sem ninguém notar.
+    """
+    if not usuario.ativo:
+        return registrar_acesso.NEGADO_INATIVO
     if usuario.sem_autorizacao:
         return registrar_acesso.NEGADO_SEM_PAPEL
     if usuario.acesso_vencido():
@@ -571,6 +620,14 @@ def _motivo_da_recusa(usuario: UsuarioAtual) -> str | None:
 
 
 def _texto_da_recusa(usuario: UsuarioAtual) -> str:
+    """O que a pessoa lê.
+
+    Específico de propósito: quem chega aqui já provou quem é — pelo Entra ID
+    ou pela senha — e dizer-lhe algo sobre a PRÓPRIA conta não revela nada que
+    ela não saiba. Vago aqui não protege ninguém e só produz um chamado a mais.
+    """
+    if not usuario.ativo:
+        return "Sua conta foi desativada. Peça à coordenação do painel."
     if usuario.sem_autorizacao:
         return "Seu acesso ainda não foi liberado. Peça à coordenação do painel."
     return (

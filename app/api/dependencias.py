@@ -191,6 +191,21 @@ def _exigir_autorizacao_valida(usuario: UsuarioAtual) -> UsuarioAtual:
     não saiba sobre si mesma — e "peça acesso à coordenação" é melhor do que
     uma tela vazia sem explicação.
     """
+    # `ativo` PRIMEIRO, e pela mesma razão da ordem em `_motivo_da_recusa`:
+    # quem foi removido não é "quem ainda não recebeu papel".
+    #
+    # Na prática `carregar()` já devolve `None` para inativo, então este ramo
+    # quase nunca dispara — exceto pelo caminho do `AUTH_MOCK`, que monta o
+    # usuário por `provisionar()` e não passa por `carregar()`. O mock é de
+    # desenvolvimento e produção o recusa, mas duas cópias da mesma política
+    # discordando é precisamente o que produziu o buraco que este commit
+    # fecha: `ativo` valia numa porta e não na outra.
+    if not usuario.ativo:
+        raise NaoAutorizado(
+            "Sua conta foi desativada. Peça à coordenação do painel.",
+            sobre_o_pedido=True,
+        )
+
     if usuario.sem_autorizacao:
         raise NaoAutorizado(
             "Seu acesso ainda não foi liberado. Peça à coordenação do painel.",

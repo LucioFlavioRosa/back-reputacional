@@ -101,7 +101,21 @@ def provisionar(
             registro.email = email
         if registro.nome != nome:
             registro.nome = nome
-        if _passou_da_folga(registro.ultimo_acesso_em, agora):
+        # CONTA DESATIVADA NÃO CARIMBA ÚLTIMO ACESSO.
+        #
+        # O login dela vai ser recusado logo adiante, mas este ponto vem antes
+        # da decisão — e sem a guarda o "último acesso" da pessoa que alguém
+        # acabou de REMOVER passava a ser agora. Na tela de acessos ela
+        # apareceria como quem entrou há um instante, sugerindo que a remoção
+        # não pegou.
+        #
+        # Tentativa não é acesso. Quem quiser saber que ela tentou tem a
+        # trilha: `acesso_log` grava a recusa, com motivo, hora e IP.
+        #
+        # Para quem está apenas SEM PAPEL o carimbo continua — essa pessoa é
+        # legítima, está esperando concessão, e "tentou entrar" é justamente o
+        # que faz quem administra saber que há alguém à espera.
+        if registro.ativo and _passou_da_folga(registro.ultimo_acesso_em, agora):
             registro.ultimo_acesso_em = agora
 
     return _montar(sessao, registro)
@@ -139,6 +153,7 @@ def _montar(sessao: Session, registro: Usuario) -> UsuarioAtual:
         escopo=_escopo_de(sessao, registro),
         externo=registro.externo,
         acesso_expira_em=registro.acesso_expira_em,
+        ativo=registro.ativo,
     )
 
 

@@ -156,6 +156,15 @@ class UsuarioAtual:
     escopo: Escopo = Escopo()
     externo: bool = False
     acesso_expira_em: date | None = None
+    #: Conta ligada. `false` é a remoção — não existe apagar pessoa, porque
+    #: `interacao.criado_por` e mais nove chaves apontam para cá e apagar o
+    #: autor apagaria a autoria.
+    #:
+    #: Está AQUI, e não só na consulta da senha, porque a decisão de deixar
+    #: entrar é a mesma para as duas portas. Enquanto `ativo` só existia dentro
+    #: de `autenticar()`, desativar alguém funcionava por senha e NÃO funcionava
+    #: pelo SSO — e a senha é justamente o que vai embora.
+    ativo: bool = True
 
     @property
     def sem_autorizacao(self) -> bool:
