@@ -119,7 +119,24 @@ class Configuracao(BaseSettings):
     # `allow_credentials=True`, o curinga transforma qualquer origem aceita numa
     # porta para qualquer verbo e qualquer cabecalho, inclusive os que a
     # aplicacao nunca usou e que uma biblioteca futura passe a interpretar.
-    metodos_permitidos: list[str] = ["GET", "POST", "PATCH", "DELETE", "OPTIONS"]
+    #: `PUT` PRECISA estar aqui, pelo mesmo motivo que `X-CSRF-Token` abaixo.
+    #:
+    #: Faltava, e a única rota `PUT` do produto — `PUT /api/acessos/{id}`, a
+    #: concessão de acesso — estava inteiramente morta pelo navegador. O
+    #: preflight voltava `400`, a requisição nunca chegava à rota, e a tela
+    #: dizia "não foi possível falar com o servidor": o sintoma aponta para a
+    #: API estar fora do ar, e ela estava de pé respondendo tudo.
+    #:
+    #: Nada apanhou isto porque o teste de HTTP usa o cliente do FastAPI, que
+    #: não faz preflight — só o navegador faz. Ver `test_cors_cobre_as_rotas`.
+    metodos_permitidos: list[str] = [
+        "GET",
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE",
+        "OPTIONS",
+    ]
     #: `X-CSRF-Token` PRECISA estar aqui.
     #:
     #: Apertar esta lista e depois criar uma proteção que usa um cabeçalho fora
