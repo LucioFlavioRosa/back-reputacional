@@ -207,6 +207,107 @@ def conceder(
     esquecer_em_todos(alvo)
 
 
+def definir_situacao(
+    sessao: Session,
+    *,
+    alvo: UUID,
+    ativa: bool,
+    solicitante: UsuarioAtual,
+) -> None:
+    """Liga e desliga uma conta. É a REMOÇÃO do produto.
+
+    Não existe apagar pessoa, e não é omissão: dez chaves estrangeiras apontam
+    para `usuario`, e `interacao.criado_por` é `not null`. O banco recusa
+    apagar quem já registrou qualquer coisa — e deve, porque apagar o autor
+    apagaria a autoria. Desligar preserva o histórico e tira o acesso.
+
+    A escrita é `update` direto, e não pela função `conceder_acesso`: `ativo`
+    não é concessão. A trilha não se perde — o gatilho
+    `auditar_acesso_do_usuario` (migration 0005) vigia `ativo` junto com
+    `papel_id`, e o autor vem do `SET LOCAL` que toda requisição autenticada já
+    carimba.
+    """
+    exigir_administrador(solicitante)
+
+    if alvo == solicitante.id:
+        # Mesma razão de `conceder`: quem se desliga não consegue se religar, e
+        # quem religa é outro administrador — que pode não existir.
+        raise RegraViolada(
+            "Ninguém desativa a própria conta. Peça a outra pessoa da coordenação."
+        )
+
+    registro = sessao.get(Usuario, alvo)
+    if registro is None:
+        raise RegraViolada("Pessoa não encontrada.")
+
+    if registro.ativo == ativa:
+        # Sem isto, dois cliques seguidos gravariam duas linhas na trilha, a
+        # segunda dizendo que `ativo` mudou de `false` para `false`.
+        return
+
+    # O CADEADO. Ver `0010_ultimo_administrador.sql` para o porquê.
+    #
+    # Eu tinha concluído que nenhuma guarda era necessária: para desativar é
+    # preciso ser administrador ativo, e ninguém desativa a própria conta, logo
+    # quem pede sempre permanece. O raciocínio está certo — e é inútil com duas
+    # transações ao mesmo tempo, porque cada uma olha antes de a outra
+    # escrever, e as duas escrevem em linhas diferentes (nada as serializa).
+    #
+    # Reproduzido: dois administradores desativando um ao outro em paralelo
+    # terminaram com ZERO ativos.
+    #
+    # Daqui em diante esta transação é a única mexendo no conjunto de
+    # administradores, e por isso contar volta a valer.
+    # SÓ QUEM ADMINISTRA MEXE NA INVARIANTE, e portanto só aí vale pagar o
+    # cadeado. Desativar um leitor não pode deixar a plataforma sem
+    # administrador, e serializar essas operações com as outras só criaria
+    # recusas sem motivo.
+    alvo_administra = bool(
+        registro.papel_id
+        and sessao.scalar(
+            select(PapelRegistro.administra_acessos).where(
+                PapelRegistro.id == registro.papel_id, PapelRegistro.ativo
+            )
+        )
+    )
+
+    if not ativa and alvo_administra:
+        # `try`, e não esperar: esperar cria deadlock. `carregar()` já carimbou
+        # `ultimo_acesso_em` de quem pede, o que TRAVA a linha dele; se as duas
+        # transações esperassem o cadeado, cada uma seguraria a linha que a
+        # outra quer. Ver o bloco DEADLOCK em `0010_ultimo_administrador.sql`.
+        if not sessao.scalar(
+            text(
+                "select pg_try_advisory_xact_lock("
+                "chave_do_cadeado_de_administradores())"
+            )
+        ):
+            raise RegraViolada(
+                "Outra alteração de acesso está em andamento. "
+                "Tente de novo em instantes."
+            )
+    registro.ativo = ativa
+    sessao.flush()
+
+    # DEPOIS da escrita, e sob o cadeado: se esta foi a última conta que
+    # administrava, a exceção desfaz tudo. Conferir antes exigiria prever qual
+    # campo importa; conferir depois pergunta direto o que se quer saber.
+    if not ativa and alvo_administra:
+        try:
+            sessao.execute(text("select exigir_administrador_restante()"))
+        except DBAPIError as erro:
+            # Sem esta tradução a recusa chega como 500. A função levanta com
+            # texto escrito para quem administra ler — o mesmo tratamento que
+            # `conceder` já dava, e que aqui faltava.
+            raise RegraViolada(_mensagem_do_banco(erro)) from erro
+
+    # A permissão antiga não pode continuar sendo servida de memória.
+    #
+    # `conceder` já fazia isto, e não fazer aqui criaria a incoerência de
+    # REBAIXAR alguém valer no ato e REMOVER a pessoa levar até o TTL do cache.
+    esquecer_em_todos(alvo)
+
+
 #: SQLSTATE de `raise exception` em PL/pgSQL.
 #:
 #: É o que a nossa função levanta, com texto escrito para gente ler: "Acesso

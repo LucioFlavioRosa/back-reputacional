@@ -813,6 +813,32 @@ def conceder(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+class SituacaoEntrada(BaseModel):
+    """Ligar ou desligar. Um campo só, e de propósito.
+
+    Não é `PUT` como a concessão: aquela é o estado completo do que alguém
+    alcança, e aplicar diferença abriria a porta para esquecer um campo. Esta é
+    uma chave — o corpo inteiro é a chave.
+    """
+
+    ativo: bool
+
+
+@rotas.patch("/acessos/{id}/situacao", status_code=status.HTTP_204_NO_CONTENT)
+def definir_situacao(
+    sessao: Sessao, usuario: UsuarioLogado, id: UUID, entrada: SituacaoEntrada
+) -> Response:
+    """Desativa ou reativa uma conta — a remoção do produto.
+
+    `PATCH` e não `DELETE`: ninguém é apagado. Ver `definir_situacao` no caso
+    de uso para o porquê — dez chaves estrangeiras e a autoria dos registros.
+    """
+    administrar_acessos.definir_situacao(
+        sessao, alvo=id, ativa=entrada.ativo, solicitante=usuario
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 class TrilhaDeAcesso(BaseModel):
     ocorrido_em: str
     campo: str
