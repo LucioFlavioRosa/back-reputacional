@@ -1143,3 +1143,99 @@ def instituicao_comitada():
         engine.dispose()
 
     yield (*dados, limpar)
+
+
+def test_agenda_sem_linha_de_participante_ainda_mostra_o_principal(
+    sessao, instituicao, autor
+):
+    """Dados que entraram POR FORA do repositorio.
+
+    O `backfill` da migration alcancou as interacoes que existiam naquele
+    momento. O semeador de desenvolvimento, a importacao de planilha e qualquer
+    `insert` de manutencao gravam `interlocutor_id` sem criar a linha de
+    participante — e a ficha diria "nenhum participante" para uma agenda que
+    tem interlocutor havia meses.
+
+    Medido num banco recriado do zero: 60 interacoes semeadas, ZERO linhas em
+    `interacao_interlocutor`. O backfill nao renasce a cada carga nova; a
+    sintese na leitura, sim.
+    """
+    from sqlalchemy import text as sql
+
+    repositorio = RepositorioSQL(sessao)
+    pessoa = _pessoa_da_outra_parte(sessao, instituicao)
+    salva = repositorio.adicionar(
+        _agenda(instituicao, autor, interlocutor_id=pessoa.id)
+    )
+    sessao.flush()
+
+    # Apaga a linha por fora, como se o registro tivesse vindo da planilha.
+    sessao.execute(
+        sql("delete from interacao_interlocutor where interacao_id = :i"),
+        {"i": salva.id},
+    )
+    sessao.flush()
+    sessao.expire_all()
+
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    assert [p.interlocutor_id for p in lida.outra_parte] == [pessoa.id], (
+        "a agenda ficou sem participante apesar de ter interlocutor"
+    )
+    assert lida.outra_parte[0].principal is True
+    assert lida.outra_parte[0].presenca is None, (
+        "inventou presenca de quem ninguem perguntou"
+    )
+
+
+def test_desdobramento_nao_pode_fechar_ciclo(sessao, instituicao, autor):
+    """`A -> B -> A` passava, e fecha um anel.
+
+    O banco barra `A -> A` com um `check` e o dominio da a mensagem, mas os
+    dois olham UMA aresta. Com duas, qualquer leitura que suba a cadeia — "de
+    onde veio esta agenda?" — roda para sempre, e a ficha que mostrar o
+    historico trava.
+
+    Enquanto nao havia como escolher a origem pela tela, o risco era teorico.
+    Com o campo na tela, virou um clique. Medido pela API antes do conserto:
+    os dois PATCH voltaram sucesso.
+    """
+    from dataclasses import replace
+
+    repositorio = RepositorioSQL(sessao)
+    primeira = repositorio.adicionar(_agenda(instituicao, autor, pauta="A"))
+    sessao.flush()
+    segunda = repositorio.adicionar(
+        _agenda(instituicao, autor, pauta="B", origem_interacao_id=primeira.id)
+    )
+    sessao.flush()
+
+    with pytest.raises(RegraViolada) as erro:
+        repositorio.atualizar(
+            replace(
+                repositorio.obter(primeira.id, escopo=IRRESTRITO),
+                origem_interacao_id=segunda.id,
+            )
+        )
+
+    assert "ciclo" in str(erro.value)
+
+
+def test_cadeia_longa_de_desdobramento_continua_valendo(sessao, instituicao, autor):
+    """A guarda nao pode barrar encadeamento legitimo.
+
+    Tres agendas em fila e o caso NORMAL — e o que transforma reunioes soltas
+    em agenda com historico. So o retorno ao inicio e proibido.
+    """
+    repositorio = RepositorioSQL(sessao)
+    a = repositorio.adicionar(_agenda(instituicao, autor, pauta="A"))
+    sessao.flush()
+    b = repositorio.adicionar(
+        _agenda(instituicao, autor, pauta="B", origem_interacao_id=a.id)
+    )
+    sessao.flush()
+    c = repositorio.adicionar(
+        _agenda(instituicao, autor, pauta="C", origem_interacao_id=b.id)
+    )
+    sessao.flush()
+
+    assert repositorio.obter(c.id, escopo=IRRESTRITO).origem_interacao_id == b.id

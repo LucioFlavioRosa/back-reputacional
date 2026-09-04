@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.banco.filtros_sql import (
@@ -168,6 +168,11 @@ class RepositorioSQL:
         )
         registro.declinado_por = interacao.declinado_por
         registro.motivo_declinio = interacao.motivo_declinio
+        if (
+            interacao.origem_interacao_id is not None
+            and interacao.origem_interacao_id != registro.origem_interacao_id
+        ):
+            self._exigir_que_nao_feche_ciclo(interacao)
         registro.origem_interacao_id = interacao.origem_interacao_id
         registro.preve_desdobramento = interacao.preve_desdobramento
 
@@ -176,6 +181,45 @@ class RepositorioSQL:
         self._aplicar_participacoes(interacao, registro)
         self._aplicar_outra_parte(interacao, registro)
         self._aplicar_materiais(interacao, registro)
+
+    def _exigir_que_nao_feche_ciclo(self, interacao: Interacao) -> None:
+        """Uma agenda não pode descender de si mesma, em nenhuma profundidade.
+
+        O banco barra `A -> A` com um `check`, e o domínio dá a mensagem. Mas
+        `A -> B -> A` passava pelos dois — medido pela API — e fecha um anel:
+        qualquer leitura que suba a cadeia ("de onde veio esta agenda?") roda
+        para sempre, e a ficha que mostrar o histórico trava.
+
+        Enquanto não havia como escolher a origem pela tela, o risco era
+        teórico. Com o campo na tela, virou um clique.
+
+        A checagem sobe a cadeia da origem PROPOSTA e recusa se encontrar esta
+        interação. `profundidade < 50` é um freio para o caso de os dados JÁ
+        estarem em anel — sem ele, a própria checagem herdaria o laço.
+        """
+        fecharia = self.sessao.scalar(
+            text(
+                """
+                with recursive cadeia(id, origem_interacao_id, profundidade) as (
+                  select id, origem_interacao_id, 1
+                    from interacao where id = :origem
+                  union all
+                  select i.id, i.origem_interacao_id, c.profundidade + 1
+                    from interacao i
+                    join cadeia c on i.id = c.origem_interacao_id
+                   where c.profundidade < 50
+                )
+                select exists (select 1 from cadeia where id = :alvo)
+                """
+            ),
+            {"origem": interacao.origem_interacao_id, "alvo": interacao.id},
+        )
+        if fecharia:
+            raise RegraViolada(
+                "Essa agenda já descende desta, direta ou indiretamente. "
+                "Apontar uma para a outra fecharia um ciclo, e o histórico "
+                "da relação deixaria de ter começo."
+            )
 
     def _aplicar_outra_parte(
         self, interacao: Interacao, registro: InteracaoRegistro
@@ -578,18 +622,7 @@ class RepositorioSQL:
             motivo_declinio=registro.motivo_declinio,
             origem_interacao_id=registro.origem_interacao_id,
             preve_desdobramento=registro.preve_desdobramento,
-            outra_parte=tuple(
-                ParticipanteDaOutraParte(
-                    interlocutor_id=vinculo.interlocutor_id,
-                    presenca=vinculo.presenca,
-                    principal=vinculo.principal,
-                )
-                # O principal primeiro: a ficha o mostra no topo, e ordenar na
-                # tela seria repetir em TypeScript uma regra que e do dominio.
-                for vinculo in sorted(
-                    registro.outra_parte, key=lambda v: (not v.principal,)
-                )
-            ),
+            outra_parte=_com_o_principal(registro),
             materiais=tuple(
                 MaterialDaAgenda(
                     id=material.id,
@@ -657,3 +690,38 @@ class RepositorioSQL:
                     data_retorno=dados.data_retorno,
                 )
         return None
+
+
+def _com_o_principal(registro: InteracaoRegistro) -> tuple[ParticipanteDaOutraParte, ...]:
+    """Os participantes da outra parte — e o principal, mesmo sem linha.
+
+    O `backfill` da migration 0011 alcancou as interacoes que EXISTIAM naquele
+    momento. Tudo que entrou depois por fora do repositorio — o semeador de
+    desenvolvimento, a importacao de planilha, um `insert` de manutencao —
+    grava `interlocutor_id` e nao cria a linha de participante.
+
+    Sem esta sintese, a ficha dessas agendas diria "nenhum participante" para
+    uma reuniao que tem interlocutor havia meses. E o mesmo defeito que o
+    backfill existe para corrigir, so que renascendo a cada carga nova.
+
+    A presenca fica NULA: ninguem perguntou a essa pessoa se compareceu.
+    O primeiro salvamento pela tela materializa a linha, e a sintese para de
+    ser necessaria para aquele registro.
+    """
+    participantes = tuple(
+        ParticipanteDaOutraParte(
+            interlocutor_id=vinculo.interlocutor_id,
+            presenca=vinculo.presenca,
+            principal=vinculo.principal,
+        )
+        # O principal primeiro: a ficha o mostra no topo, e ordenar na tela
+        # seria repetir em TypeScript uma regra que e do dominio.
+        for vinculo in sorted(registro.outra_parte, key=lambda v: (not v.principal,))
+    )
+    if participantes or registro.interlocutor_id is None:
+        return participantes
+    return (
+        ParticipanteDaOutraParte(
+            interlocutor_id=registro.interlocutor_id, principal=True
+        ),
+    )
