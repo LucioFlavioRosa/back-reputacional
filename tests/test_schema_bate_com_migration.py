@@ -33,9 +33,19 @@ BLOCO_CREATE_TABLE = re.compile(
 REMOVE_TABELA = re.compile(
     r"drop\s+table\s+(?:if\s+exists\s+)?(\w+)", re.IGNORECASE
 )
-ALTERA_COLUNA = re.compile(
-    r"alter\s+table\s+(\w+)\s+(add|drop)\s+column\s+"
-    r"(?:if\s+(?:not\s+)?exists\s+)?(\w+)",
+#: Um `alter table` inteiro, ate o `;`. O corpo e varrido depois.
+#:
+#: A versao anterior casava `alter table X add column Y` de uma vez, e por isso
+#: so via a PRIMEIRA coluna de um `alter table` com varias clausulas — que e a
+#: forma idiomatica de acrescentar cinco colunas a uma tabela. O ponto cego era
+#: silencioso na direcao que importa: colunas no DDL e ausentes no ORM passavam
+#: despercebidas, que e exatamente o que este arquivo existe para pegar.
+ALTERA_TABELA = re.compile(r"alter\s+table\s+(\w+)([^;]*);", re.IGNORECASE)
+
+#: Cada clausula `add column` / `drop column` dentro daquele corpo.
+#: `add constraint` e `owner to` nao casam, e e o que se quer.
+CLAUSULA_DE_COLUNA = re.compile(
+    r"\b(add|drop)\s+column\s+(?:if\s+(?:not\s+)?exists\s+)?(\w+)",
     re.IGNORECASE,
 )
 
@@ -146,11 +156,12 @@ def _colunas_do_sql(sql: str) -> dict[str, set[str]]:
     # A ordem importa: uma coluna acrescentada por uma migration e removida por
     # outra não deve sobrar no retrato. Como a varredura é sobre o texto
     # concatenado em ordem de arquivo, basta aplicar cada operação onde aparece.
-    for tabela, operacao, coluna in ALTERA_COLUNA.findall(sql):
-        if operacao.lower() == "add":
-            tabelas.setdefault(tabela.lower(), set()).add(coluna.lower())
-        else:
-            tabelas.get(tabela.lower(), set()).discard(coluna.lower())
+    for tabela, corpo in ALTERA_TABELA.findall(sql):
+        for operacao, coluna in CLAUSULA_DE_COLUNA.findall(corpo):
+            if operacao.lower() == "add":
+                tabelas.setdefault(tabela.lower(), set()).add(coluna.lower())
+            else:
+                tabelas.get(tabela.lower(), set()).discard(coluna.lower())
 
     # Sem tratar `drop table`, o retrato guardaria uma tabela que uma migration
     # posterior removeu — e o teste que confere "tabela do DDL existe no ORM" a

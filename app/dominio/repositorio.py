@@ -35,7 +35,9 @@ class Pagina:
 class RepositorioDeInteracoes(Protocol):
     def adicionar(self, interacao: Interacao) -> Interacao: ...
 
-    def obter(self, id: UUID, *, escopo: Escopo) -> Interacao | None:
+    def obter(
+        self, id: UUID, *, escopo: Escopo, para_edicao: bool = False
+    ) -> Interacao | None:
         """Devolve o registro se o escopo do usuário o alcança.
 
         O escopo é obrigatório aqui pelo mesmo motivo que em `listar`: a leitura

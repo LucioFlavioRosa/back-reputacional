@@ -23,6 +23,24 @@ from app.dominio.recorte import ABRANGENCIAS_VALIDAS
 FONTES = ("cadastro_manual", "importacao_planilha", "plataforma_ri")
 
 #: Papéis que uma pessoa da Aegea pode ter numa interação.
+#: PRESENÇA: o previsto e o real.
+#:
+#: `None` é NÃO INFORMADO, e é o estado de todo registro anterior a esta onda.
+#: Tratá-lo como "ausente" faria a base afirmar que ninguém compareceu a
+#: reuniões que aconteceram — e a diferença entre "não sabemos" e "não" é
+#: exatamente o que esta plataforma existe para reduzir.
+#:
+#: `ausente` é a mais valiosa das três: uma reunião em que o decisor não
+#: apareceu não é a reunião que foi pedida, ainda que conste como realizada.
+PRESENCAS = ("previsto", "presente", "ausente")
+
+#: MOMENTO DO MATERIAL. `apoio` existe antes da reunião; os outros dois, depois.
+MOMENTOS_DE_MATERIAL = ("apoio", "obtido", "produzido")
+
+#: Quem declinou. A leitura estratégica é oposta nos dois casos: declinar é
+#: escolha da Aegea; ser declinado é porta que se fechou.
+LADOS = ("aegea", "outra_parte")
+
 PAPEL_PORTA_VOZ = "porta_voz"
 PAPEL_EQUIPE = "equipe"
 PAPEIS = (PAPEL_PORTA_VOZ, PAPEL_EQUIPE)
@@ -38,11 +56,74 @@ class ParticipacaoAegea:
 
     pessoa_aegea_id: UUID
     papel: str = PAPEL_PORTA_VOZ
+    #: Nulo = não informado. Ver `PRESENCAS`.
+    presenca: str | None = None
 
     def __post_init__(self) -> None:
         if self.papel not in PAPEIS:
             raise RegraViolada(
                 f"Papel inválido: {self.papel!r}. Use {' ou '.join(PAPEIS)}."
+            )
+        _exigir_presenca_valida(self.presenca)
+
+
+def _exigir_presenca_valida(presenca: str | None) -> None:
+    """Nulo passa; qualquer outra coisa fora da lista, não.
+
+    A validação mora numa função porque os dois lados da mesa a usam, e uma
+    cópia em cada lugar é como as duas listas divergem.
+    """
+    if presenca is not None and presenca not in PRESENCAS:
+        raise RegraViolada(
+            f"Presença inválida: {presenca!r}. Use {', '.join(PRESENCAS)}."
+        )
+
+
+@dataclass(frozen=True)
+class ParticipanteDaOutraParte:
+    """Quem participou pelo outro lado — o principal INCLUSIVE.
+
+    A primeira versão guardava só os "demais", e o principal ficava apenas em
+    `interacao.interlocutor_id`. Parecia econômico e escondia um buraco: não
+    havia onde dizer se o principal compareceu. Justamente a pessoa mais
+    importante da reunião era a única sem presença.
+    """
+
+    interlocutor_id: UUID
+    presenca: str | None = None
+    principal: bool = False
+
+    def __post_init__(self) -> None:
+        _exigir_presenca_valida(self.presenca)
+
+
+@dataclass(frozen=True)
+class MaterialDaAgenda:
+    """Um documento que circula em torno da agenda.
+
+    Sem `url` e sem arquivo, um material é só um título — e um título sozinho
+    não leva ninguém ao documento. Hoje só o link funciona; o arquivo é a
+    frente seguinte, e a coluna já existe no banco esperando por ela.
+    """
+
+    momento: str
+    titulo: str
+    url: str | None = None
+    observacao: str | None = None
+    id: UUID | None = None
+
+    def __post_init__(self) -> None:
+        if self.momento not in MOMENTOS_DE_MATERIAL:
+            raise RegraViolada(
+                f"Momento inválido: {self.momento!r}. "
+                f"Use {', '.join(MOMENTOS_DE_MATERIAL)}."
+            )
+        if not self.titulo.strip():
+            raise RegraViolada("Material precisa de título.")
+        if not (self.url or "").strip():
+            raise RegraViolada(
+                f"Material {self.titulo!r} precisa de um link. "
+                "Guardar arquivo no painel ainda não existe."
             )
 
 
@@ -86,6 +167,25 @@ class Interacao:
     extensao: Extensao | None = None
     temas: tuple[int, ...] = ()
     participacoes: tuple[ParticipacaoAegea, ...] = ()
+
+    # -- o ciclo da agenda ----------------------------------------------------
+    #
+    # A interação deixou de ser só o registro do que aconteceu: ela nasce como
+    # PEDIDO, é planejada, confirmada ou declinada, realizada, e desdobra em
+    # outra. Os campos abaixo guardam o lado PREVISTO — e é a distância entre
+    # ele e `relato`/`clima` que mede se o que se promete costuma acontecer.
+    #
+    # Nulo em todos: não informado. Nunca "não".
+    expectativa: str | None = None
+    declinado_por: str | None = None
+    motivo_declinio: str | None = None
+    origem_interacao_id: UUID | None = None
+    preve_desdobramento: bool | None = None
+    outra_parte: tuple[ParticipanteDaOutraParte, ...] = ()
+    materiais: tuple[MaterialDaAgenda, ...] = ()
+    #: O clima que se ESPERAVA, na mesma escala de `clima`. É o que permite o
+    #: painel comparar previsto com realizado como número, e não como leitura.
+    clima_esperado: str | None = None
 
     # procedência e ciclo de vida
     fonte: str = "cadastro_manual"
@@ -134,6 +234,64 @@ class Interacao:
 
         self._validar_extensao()
         self._validar_participacoes()
+        self._validar_ciclo()
+
+    def _validar_ciclo(self) -> None:
+        """As invariantes da agenda como CICLO, e não como fato isolado."""
+        if self.declinado_por is not None and self.declinado_por not in LADOS:
+            raise RegraViolada(
+                f"Lado inválido: {self.declinado_por!r}. Use {' ou '.join(LADOS)}."
+            )
+
+        # MOTIVO SEM LADO É METADE DA INFORMAÇÃO.
+        #
+        # "Declinada por falta de agenda" não diz quem ficou sem agenda — e a
+        # leitura muda por inteiro: se foi a Aegea, houve escolha; se foi a
+        # outra parte, houve porta fechada. Guardar o motivo sem o lado produz
+        # uma linha que ninguém consegue interpretar depois.
+        if self.motivo_declinio and self.declinado_por is None:
+            raise RegraViolada(
+                "Informe quem declinou: o motivo sozinho não diz de que lado "
+                "veio a recusa, e é o lado que muda a leitura."
+            )
+
+        # Uma agenda não nasce de si mesma. O banco também barra o caso
+        # trivial; aqui a mensagem explica, em vez de mostrar uma violação de
+        # `check` ao usuário.
+        if self.id is not None and self.origem_interacao_id == self.id:
+            raise RegraViolada("Uma agenda não pode ter origem em si mesma.")
+
+        vistos: set[UUID] = set()
+        for participante in self.outra_parte:
+            if participante.interlocutor_id in vistos:
+                raise RegraViolada(
+                    "A mesma pessoa aparece duas vezes entre os participantes "
+                    "da outra parte."
+                )
+            vistos.add(participante.interlocutor_id)
+
+        # O PRINCIPAL AGORA MORA NA LISTA, e não fora dela.
+        #
+        # A regra anterior proibia repeti-lo aqui, e era essa proibição que o
+        # deixava sem presença. Agora ele é um participante como os outros, com
+        # uma marca — e as duas invariantes abaixo são o que mantém a marca
+        # significando alguma coisa.
+        principais = [p for p in self.outra_parte if p.principal]
+        if len(principais) > 1:
+            raise RegraViolada(
+                "Só uma pessoa da outra parte pode ser a principal."
+            )
+
+        # `interacao.interlocutor_id` continua existindo, e 67 usos dependem
+        # dele. Ele e a marca na lista precisam dizer a MESMA coisa, senão o
+        # filtro por pessoa e a ficha discordam sobre quem representa a outra
+        # parte — e ninguém saberia qual das duas está certa.
+        if principais and self.interlocutor_id is not None:
+            if principais[0].interlocutor_id != self.interlocutor_id:
+                raise RegraViolada(
+                    "O participante marcado como principal não é o mesmo "
+                    "registrado como interlocutor da agenda."
+                )
 
     def _validar_extensao(self) -> None:
         if self.extensao is None:

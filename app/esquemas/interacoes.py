@@ -26,12 +26,62 @@ from app.dominio.frentes import (
 from app.dominio.interacao import (
     Interacao,
     ParticipacaoAegea,
+    MaterialDaAgenda,
+    ParticipanteDaOutraParte,
 )
 
 
 class ParticipacaoEntrada(BaseModel):
     pessoa_aegea_id: UUID
     papel: str = "porta_voz"
+    #: Nulo = não informado. Nunca "ausente" por omissão.
+    presenca: str | None = None
+
+
+class ParticipanteDaOutraParteEntrada(BaseModel):
+    """Alguém da outra parte — o principal inclusive, com a marca."""
+
+    interlocutor_id: UUID
+    presenca: str | None = None
+    principal: bool = False
+
+
+class MaterialSaida(BaseModel):
+    """O material como sai. Tem `id` porque a tela precisa apagar um deles."""
+
+    id: UUID | None = None
+    momento: str
+    titulo: str
+    url: str | None = None
+    observacao: str | None = None
+
+
+class MaterialEntrada(BaseModel):
+    """Um documento da agenda.
+
+    `url` é obrigatório na prática — o domínio recusa material sem link —, mas
+    fica opcional aqui para a mensagem vir do domínio, em português e explicando
+    que guardar arquivo ainda não existe, em vez de um erro de validação seco.
+    """
+
+    #: O `id` DE VOLTA, e sem ele o resto não funciona.
+    #:
+    #: O repositório casa material por `id` para não trocar a identidade de
+    #: todos a cada salvamento. Isso só vale se o cliente devolver o `id` que
+    #: recebeu — e este campo não existia. O Pydantic descartava o campo em
+    #: SILÊNCIO (o `extra="forbid"` de `InteracaoEdicao` não alcança modelo
+    #: aninhado), então toda edição chegava sem `id` e recriava tudo. Medido
+    #: por HTTP: o `id` voltava diferente do enviado.
+    #:
+    #: Mandar o `id` de um material de OUTRA interação não sequestra nada: o
+    #: casamento só olha os materiais daquele registro, e um `id` desconhecido
+    #: cai no ramo de criação.
+    id: UUID | None = None
+
+    momento: str
+    titulo: str
+    url: str | None = None
+    observacao: str | None = None
 
 
 class ExtensaoEntrada(BaseModel):
@@ -134,6 +184,16 @@ class InteracaoEntrada(BaseModel):
     posicionamento: str | None = None
     relato: str | None = None
     encaminhamentos: str | None = None
+
+    # -- o ciclo da agenda ----------------------------------------------------
+    expectativa: str | None = None
+    clima_esperado: str | None = None
+    declinado_por: str | None = None
+    motivo_declinio: str | None = None
+    origem_interacao_id: UUID | None = None
+    preve_desdobramento: bool | None = None
+    outra_parte: list[ParticipanteDaOutraParteEntrada] = Field(default_factory=list)
+    materiais: list[MaterialEntrada] = Field(default_factory=list)
     pendencias: str | None = None
     observacoes: str | None = None
     registro_url: str | None = None
@@ -167,8 +227,35 @@ class InteracaoEntrada(BaseModel):
             extensao=self.extensao.para_dominio(self.frente) if self.extensao else None,
             temas=tuple(self.temas),
             participacoes=tuple(
-                ParticipacaoAegea(pessoa_aegea_id=p.pessoa_aegea_id, papel=p.papel)
+                ParticipacaoAegea(
+                    pessoa_aegea_id=p.pessoa_aegea_id,
+                    papel=p.papel,
+                    presenca=p.presenca,
+                )
                 for p in self.participacoes
+            ),
+            expectativa=self.expectativa,
+            clima_esperado=self.clima_esperado,
+            declinado_por=self.declinado_por,
+            motivo_declinio=self.motivo_declinio,
+            origem_interacao_id=self.origem_interacao_id,
+            preve_desdobramento=self.preve_desdobramento,
+            outra_parte=tuple(
+                ParticipanteDaOutraParte(
+                    interlocutor_id=p.interlocutor_id,
+                    presenca=p.presenca,
+                    principal=p.principal,
+                )
+                for p in self.outra_parte
+            ),
+            materiais=tuple(
+                MaterialDaAgenda(
+                    momento=m.momento,
+                    titulo=m.titulo,
+                    url=m.url,
+                    observacao=m.observacao,
+                )
+                for m in self.materiais
             ),
         )
 
@@ -207,6 +294,21 @@ class InteracaoEdicao(BaseModel):
     participacoes: list[ParticipacaoEntrada] | None = None
     extensao: ExtensaoEntrada | None = None
 
+    # -- o ciclo da agenda ----------------------------------------------------
+    #
+    # FALTAVAM AQUI, e a falta era invisível de um jeito perverso: dava para
+    # CRIAR uma agenda com expectativa e materiais, e não dava para editar.
+    # Como `model_config` é `extra="forbid"`, a tela receberia 422 ao tentar —
+    # e o pedido do dono do produto começava com "tudo isso editável".
+    expectativa: str | None = None
+    clima_esperado: str | None = None
+    declinado_por: str | None = None
+    motivo_declinio: str | None = None
+    origem_interacao_id: UUID | None = None
+    preve_desdobramento: bool | None = None
+    outra_parte: list[ParticipanteDaOutraParteEntrada] | None = None
+    materiais: list[MaterialEntrada] | None = None
+
     def alteracoes(self, frente_atual: Frente) -> dict[str, Any]:
         """Traduz o corpo em campos do agregado, só com o que foi enviado."""
         bruto = self.model_dump(exclude_unset=True)
@@ -225,9 +327,33 @@ class InteracaoEdicao(BaseModel):
                 case "participacoes":
                     alteracoes["participacoes"] = tuple(
                         ParticipacaoAegea(
-                            pessoa_aegea_id=p["pessoa_aegea_id"], papel=p["papel"]
+                            pessoa_aegea_id=p["pessoa_aegea_id"],
+                            papel=p["papel"],
+                            # Faltava, e o PATCH apagava a presença de quem
+                            # representou a Aegea a cada edição.
+                            presenca=p.get("presenca"),
                         )
                         for p in (valor or ())
+                    )
+                case "outra_parte":
+                    alteracoes["outra_parte"] = tuple(
+                        ParticipanteDaOutraParte(
+                            interlocutor_id=p["interlocutor_id"],
+                            presenca=p.get("presenca"),
+                            principal=p.get("principal", False),
+                        )
+                        for p in (valor or ())
+                    )
+                case "materiais":
+                    alteracoes["materiais"] = tuple(
+                        MaterialDaAgenda(
+                            momento=m["momento"],
+                            titulo=m["titulo"],
+                            url=m.get("url"),
+                            observacao=m.get("observacao"),
+                            id=m.get("id"),
+                        )
+                        for m in (valor or ())
                     )
                 case "uf":
                     alteracoes["uf"] = valor.upper() if valor else valor
@@ -258,6 +384,9 @@ class InteracaoEdicao(BaseModel):
 class ParticipacaoSaida(BaseModel):
     pessoa_aegea_id: UUID
     papel: str
+    #: Faltava. O campo existia no banco e no domínio, e morria aqui: quem
+    #: lesse a ficha nunca saberia se o porta-voz compareceu.
+    presenca: str | None = None
 
 
 class InteracaoSaida(BaseModel):
@@ -287,6 +416,17 @@ class InteracaoSaida(BaseModel):
     extensao: dict[str, Any] | None
     temas: list[int]
     participacoes: list[ParticipacaoSaida]
+
+    # -- o ciclo da agenda ----------------------------------------------------
+    expectativa: str | None = None
+    clima_esperado: str | None = None
+    declinado_por: str | None = None
+    motivo_declinio: str | None = None
+    origem_interacao_id: UUID | None = None
+    preve_desdobramento: bool | None = None
+    outra_parte: list[ParticipanteDaOutraParteEntrada] = Field(default_factory=list)
+    materiais: list[MaterialSaida] = Field(default_factory=list)
+
     fonte: str
     visivel: bool
     criado_por: UUID | None
@@ -334,6 +474,30 @@ class InteracaoSaida(BaseModel):
             pendencias=interacao.pendencias,
             observacoes=interacao.observacoes,
             registro_url=interacao.registro_url,
+            expectativa=interacao.expectativa,
+            clima_esperado=interacao.clima_esperado,
+            declinado_por=interacao.declinado_por,
+            motivo_declinio=interacao.motivo_declinio,
+            origem_interacao_id=interacao.origem_interacao_id,
+            preve_desdobramento=interacao.preve_desdobramento,
+            outra_parte=[
+                ParticipanteDaOutraParteEntrada(
+                    interlocutor_id=p.interlocutor_id,
+                    presenca=p.presenca,
+                    principal=p.principal,
+                )
+                for p in interacao.outra_parte
+            ],
+            materiais=[
+                MaterialSaida(
+                    id=m.id,
+                    momento=m.momento,
+                    titulo=m.titulo,
+                    url=m.url,
+                    observacao=m.observacao,
+                )
+                for m in interacao.materiais
+            ],
             extensao=asdict(interacao.extensao) if interacao.extensao else None,
             temas=list(interacao.temas),
             participacoes=[

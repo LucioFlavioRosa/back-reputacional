@@ -34,7 +34,9 @@ from app.banco.tabelas_interacoes import (
     RELACAO_DA_EXTENSAO,
     ImprensaRegistro,
     InstitucionalRegistro,
+    InteracaoInterlocutor,
     InteracaoPessoaAegea,
+    Material,
     InteracaoRegistro,
     InteracaoTema,
     InternaRegistro,
@@ -55,6 +57,8 @@ from app.dominio.identidade import Escopo
 from app.dominio.interacao import (
     Interacao,
     ParticipacaoAegea,
+    MaterialDaAgenda,
+    ParticipanteDaOutraParte,
 )
 from app.dominio.recorte import Recorte
 from app.dominio.repositorio import Pagina
@@ -153,9 +157,190 @@ class RepositorioSQL:
         if interacao.criado_por is not None:
             registro.criado_por = interacao.criado_por
 
+        # Os campos do ciclo sao todos anulaveis, e nulo significa NAO
+        # INFORMADO — por isso sao copiados direto, sem o `if is not None` que
+        # protege os campos acima. La, omitir preserva; aqui, mandar nulo LIMPA,
+        # e e isso que o formulario precisa poder fazer quando alguem apaga uma
+        # expectativa escrita por engano.
+        registro.expectativa = interacao.expectativa
+        registro.clima_esperado_id = self._id_de(
+            Clima, interacao.clima_esperado
+        )
+        registro.declinado_por = interacao.declinado_por
+        registro.motivo_declinio = interacao.motivo_declinio
+        registro.origem_interacao_id = interacao.origem_interacao_id
+        registro.preve_desdobramento = interacao.preve_desdobramento
+
         self._aplicar_extensao(interacao, registro)
         self._aplicar_temas(interacao, registro)
         self._aplicar_participacoes(interacao, registro)
+        self._aplicar_outra_parte(interacao, registro)
+        self._aplicar_materiais(interacao, registro)
+
+    def _aplicar_outra_parte(
+        self, interacao: Interacao, registro: InteracaoRegistro
+    ) -> None:
+        """Substitui a lista de participantes da outra parte.
+
+        Mesmo padrao de `_aplicar_temas`: mantem quem continua, acrescenta quem
+        entrou, e deixa o `delete-orphan` levar quem saiu. O gatilho
+        `auditar_interacao_interlocutor` registra as duas pontas, entao a ficha
+        consegue dizer quem entrou e quem saiu da agenda, e quando.
+
+        A PRESENCA e atualizada em quem ja estava: a pessoa que era `previsto`
+        vira `presente` depois da reuniao sem sair e voltar da lista — o que
+        deixaria dois eventos na trilha para um fato so.
+        """
+        # REBAIXA ANTES DE PROMOVER, e descarrega no meio.
+        #
+        # O indice unico parcial (`where principal`) e conferido a cada comando,
+        # e nao no fim da transacao. Indice parcial nao pode ser `deferrable`:
+        # so constraints podem, e constraint unica nao aceita `where`.
+        #
+        # Sem este passo, trocar o principal de A para B deixava os dois
+        # marcados durante o flush e o banco recusava com `duplicate key`. Dava
+        # 500 em dois caminhos reais — `PATCH` mandando lista e coluna juntas, e
+        # trocar para alguem que ja estava na lista como participante comum.
+        #
+        # So quando a marca MUDA de dono: rebaixar e repromover a mesma pessoa a
+        # cada salvamento seriam dois `UPDATE` inuteis em toda edicao.
+        novo_principal = next(
+            (p.interlocutor_id for p in interacao.outra_parte if p.principal), None
+        )
+        #
+        # Rebaixa TODOS os marcados que não são o novo principal, e não só
+        # quando "o primeiro marcado difere". A diferença aparece se o banco já
+        # tiver mais de um marcado — estado que o índice impede de nascer, mas
+        # que uma migração futura ou um `UPDATE` à mão podem produzir. Uma
+        # condição que só olha o primeiro deixaria o segundo passar, e o
+        # `duplicate key` voltaria sem explicação.
+        a_rebaixar = [
+            vinculo
+            for vinculo in registro.outra_parte
+            if vinculo.principal and vinculo.interlocutor_id != novo_principal
+        ]
+        if a_rebaixar:
+            for vinculo in a_rebaixar:
+                vinculo.principal = False
+            self.sessao.flush()
+
+        desejados = {p.interlocutor_id: p for p in interacao.outra_parte}
+        registro.outra_parte[:] = [
+            vinculo
+            for vinculo in registro.outra_parte
+            if vinculo.interlocutor_id in desejados
+        ]
+        for vinculo in registro.outra_parte:
+            pedido = desejados[vinculo.interlocutor_id]
+            vinculo.presenca = pedido.presenca
+            vinculo.principal = pedido.principal
+
+        ja_ligados = {vinculo.interlocutor_id for vinculo in registro.outra_parte}
+        registro.outra_parte.extend(
+            InteracaoInterlocutor(
+                interlocutor_id=pessoa,
+                presenca=pedido.presenca,
+                principal=pedido.principal,
+            )
+            for pessoa, pedido in desejados.items()
+            if pessoa not in ja_ligados
+        )
+
+        # A LISTA É A FONTE DA VERDADE; A COLUNA É PROJEÇÃO DELA.
+        #
+        # `interacao.interlocutor_id` existe porque 67 usos dependem dele —
+        # filtros, relatórios, exportação, diretório. Mas duas fontes só não
+        # divergem quando UMA manda e a outra segue, e aqui quem manda é a
+        # lista: é ela que a ficha mostra e que o formulário edita.
+        #
+        # A versão anterior invertia isso na ausência de marca — rederivava o
+        # principal a partir da coluna — e o efeito era uma remoção que o
+        # sistema desfazia calado: tirar o principal da lista o trazia de volta.
+        # Pior, `interlocutor_id: null` sozinho não limpava nada, porque a marca
+        # antiga vencia. Não havia como remover o principal por um caminho só, e
+        # nenhuma mensagem dizia isso.
+        principal = next(
+            (p for p in interacao.outra_parte if p.principal), None
+        )
+
+        if principal is not None:
+            registro.interlocutor_id = principal.interlocutor_id
+
+        elif not interacao.outra_parte and interacao.interlocutor_id is not None:
+            # LISTA VAZIA É "NÃO ESTOU CUIDANDO DISTO", e não "não há ninguém".
+            #
+            # É o formato de quem informa só a coluna: o `POST` de hoje, os
+            # testes antigos, e a importação de planilha. Nesses casos a coluna
+            # manda, e a linha é criada para o interlocutor não ficar de fora da
+            # própria agenda — o mesmo que a migration fez com os 60 registros.
+            alvo = next(
+                (
+                    vinculo
+                    for vinculo in registro.outra_parte
+                    if vinculo.interlocutor_id == interacao.interlocutor_id
+                ),
+                None,
+            )
+            if alvo is None:
+                alvo = InteracaoInterlocutor(
+                    interlocutor_id=interacao.interlocutor_id
+                )
+                registro.outra_parte.append(alvo)
+            alvo.principal = True
+            registro.interlocutor_id = interacao.interlocutor_id
+
+        else:
+            # LISTA COM GENTE E SEM MARCA É "ESTES SÃO OS PARTICIPANTES, E
+            # NENHUM DELES REPRESENTA A OUTRA PARTE".
+            #
+            # É assim que se REMOVE o principal, e por um caminho só: basta
+            # mandar a lista sem ele. A coluna acompanha.
+            registro.interlocutor_id = None
+            for vinculo in registro.outra_parte:
+                vinculo.principal = False
+
+    def _aplicar_materiais(
+        self, interacao: Interacao, registro: InteracaoRegistro
+    ) -> None:
+        """Casa por `id`: quem já existe é ATUALIZADO, não recriado.
+
+        A primeira versão limpava a lista e reinseria tudo, com o argumento de
+        que material não tem identidade natural. O argumento se contradizia:
+        a resposta da API devolve `id` justamente porque a tela precisa
+        apagar um material específico. Se o `id` muda a cada salvamento, ele não
+        identifica nada — e um `PATCH` de `relato` trocaria os `id`s de todos os
+        materiais da agenda, quebrando a tela aberta de quem estivesse editando.
+
+        Material NOVO chega sem `id` e ganha um. Material que ficou de fora da
+        lista some, pelo `delete-orphan`.
+
+        `criado_por` vem de quem está salvando, e só na criação: reescrevê-lo na
+        edição diria que a última pessoa a mexer na agenda cadastrou o material.
+        """
+        por_id = {m.id: m for m in registro.materiais if m.id is not None}
+        mantidos: list[Material] = []
+        autor = interacao.criado_por or registro.criado_por
+
+        for material in interacao.materiais:
+            existente = por_id.get(material.id) if material.id else None
+            if existente is not None:
+                existente.momento = material.momento
+                existente.titulo = material.titulo.strip()
+                existente.url = material.url
+                existente.observacao = material.observacao
+                mantidos.append(existente)
+            else:
+                mantidos.append(
+                    Material(
+                        momento=material.momento,
+                        titulo=material.titulo.strip(),
+                        url=material.url,
+                        observacao=material.observacao,
+                        criado_por=autor,
+                    )
+                )
+
+        registro.materiais[:] = mantidos
 
     def _aplicar_extensao(
         self, interacao: Interacao, registro: InteracaoRegistro
@@ -225,35 +410,74 @@ class RepositorioSQL:
     def _aplicar_participacoes(
         self, interacao: Interacao, registro: InteracaoRegistro
     ) -> None:
-        desejadas = {(p.pessoa_aegea_id, p.papel) for p in interacao.participacoes}
+        # A PRESENCA ENTRA NO VALOR, e nao na chave.
+        #
+        # A chave e (pessoa, papel), porque e isso que identifica a participacao.
+        # A presenca e um ATRIBUTO dela, e tratar como parte da chave faria o
+        # porta-voz sair e voltar da lista quando `previsto` virasse `presente`
+        # — dois eventos na trilha para uma confirmacao de presenca.
+        desejadas = {
+            (p.pessoa_aegea_id, p.papel): p.presenca for p in interacao.participacoes
+        }
         registro.participacoes[:] = [
             vinculo
             for vinculo in registro.participacoes
             if (vinculo.pessoa_aegea_id, vinculo.papel) in desejadas
         ]
+        for vinculo in registro.participacoes:
+            vinculo.presenca = desejadas[(vinculo.pessoa_aegea_id, vinculo.papel)]
         ja_ligadas = {
             (vinculo.pessoa_aegea_id, vinculo.papel) for vinculo in registro.participacoes
         }
         registro.participacoes.extend(
-            InteracaoPessoaAegea(pessoa_aegea_id=pessoa, papel=papel)
-            for pessoa, papel in desejadas - ja_ligadas
+            InteracaoPessoaAegea(
+                pessoa_aegea_id=pessoa, papel=papel, presenca=presenca
+            )
+            for (pessoa, papel), presenca in desejadas.items()
+            if (pessoa, papel) not in ja_ligadas
         )
 
     # -- leitura -------------------------------------------------------------
 
-    def obter(self, id: UUID, *, escopo: Escopo) -> Interacao | None:
+    def obter(
+        self, id: UUID, *, escopo: Escopo, para_edicao: bool = False
+    ) -> Interacao | None:
+        """Lê uma interação. `para_edicao` TRAVA a linha até o fim da transação.
+
+        Por que travar, e por que só na edição:
+
+        Duas pessoas editando a MESMA agenda ao mesmo tempo liam o estado
+        antigo, cada uma decidia quem é o principal e as duas gravavam. O
+        índice único parcial recusava a segunda com `duplicate key`, e a tela
+        recebia 500 — sem que ninguém tivesse feito nada errado.
+
+        Rebaixar antes de promover resolve a ordem DENTRO de uma sessão; não
+        serializa duas. Quem serializa é este `for update`: a segunda espera a
+        primeira terminar e então lê o estado NOVO, em vez de decidir sobre um
+        retrato vencido.
+
+        A leitura comum não trava — travar em toda consulta serializaria o
+        painel inteiro para proteger um caso que só existe na escrita. É o
+        mesmo desenho de `conceder_acesso` (migration 0006), que trava o alvo
+        exatamente pela mesma razão.
+        """
         # `sessao.get()` buscava pela chave primária e pulava `condicoes()`
         # inteiro — era o caminho de leitura que não respeitava filtro nenhum.
         # Um `select` com as mesmas condições da listagem fecha isso: registro
         # arquivado, invisível ou fora do escopo simplesmente não volta.
-        registro = self.sessao.scalar(
-            select(InteracaoRegistro).where(
-                InteracaoRegistro.id == id,
-                # `Recorte()` não tem `busca`, então a bandeira é inerte aqui;
-                # passar `False` mantém o padrão de negar por omissão.
-                *condicoes(Recorte(), escopo=escopo, busca_em_campos_sensiveis=False),
-            )
+        consulta = select(InteracaoRegistro).where(
+            InteracaoRegistro.id == id,
+            # `Recorte()` não tem `busca`, então a bandeira é inerte aqui;
+            # passar `False` mantém o padrão de negar por omissão.
+            *condicoes(Recorte(), escopo=escopo, busca_em_campos_sensiveis=False),
         )
+        if para_edicao:
+            # `of` limita a trava à linha de `interacao`: sem isso o Postgres
+            # tentaria travar também as tabelas trazidas pelos `join` das
+            # condições de escopo, e travar dicionário serializaria escritas
+            # que não têm nada com esta agenda.
+            consulta = consulta.with_for_update(of=InteracaoRegistro)
+        registro = self.sessao.scalar(consulta)
         return self._para_dominio(registro) if registro else None
 
     def listar(
@@ -340,9 +564,45 @@ class RepositorioSQL:
             temas=tuple(sorted(vinculo.tema_id for vinculo in registro.temas)),
             participacoes=tuple(
                 ParticipacaoAegea(
-                    pessoa_aegea_id=vinculo.pessoa_aegea_id, papel=vinculo.papel
+                    pessoa_aegea_id=vinculo.pessoa_aegea_id,
+                    papel=vinculo.papel,
+                    presenca=vinculo.presenca,
                 )
                 for vinculo in registro.participacoes
+            ),
+            expectativa=registro.expectativa,
+            clima_esperado=self._codigo_de(
+                Clima, registro.clima_esperado_id
+            ),
+            declinado_por=registro.declinado_por,
+            motivo_declinio=registro.motivo_declinio,
+            origem_interacao_id=registro.origem_interacao_id,
+            preve_desdobramento=registro.preve_desdobramento,
+            outra_parte=tuple(
+                ParticipanteDaOutraParte(
+                    interlocutor_id=vinculo.interlocutor_id,
+                    presenca=vinculo.presenca,
+                    principal=vinculo.principal,
+                )
+                # O principal primeiro: a ficha o mostra no topo, e ordenar na
+                # tela seria repetir em TypeScript uma regra que e do dominio.
+                for vinculo in sorted(
+                    registro.outra_parte, key=lambda v: (not v.principal,)
+                )
+            ),
+            materiais=tuple(
+                MaterialDaAgenda(
+                    id=material.id,
+                    momento=material.momento,
+                    titulo=material.titulo,
+                    url=material.url,
+                    observacao=material.observacao,
+                )
+                # Ordem estavel: sem ela a ficha reordena os materiais a cada
+                # leitura, e a pessoa acha que algo mudou.
+                for material in sorted(
+                    registro.materiais, key=lambda m: (m.momento, m.titulo)
+                )
             ),
             fonte=registro.fonte,
             visivel=registro.visivel,

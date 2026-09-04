@@ -81,6 +81,32 @@ class InteracaoRegistro(Tabela):
     observacoes: Mapped[str | None] = mapped_column(Text, nullable=True)
     registro_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # -- o ciclo da agenda (migration 0011) -----------------------------------
+    #
+    # Todas anuláveis, e nulo quer dizer NÃO INFORMADO. Os registros que vieram
+    # da planilha não responderam nada disto, e tratá-los como "não" inventaria
+    # história.
+    #: O que se esperava, escrito ANTES da reunião. Compare com `relato`.
+    expectativa: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: `aegea` ou `outra_parte`. Declinar é decisão, e o lado muda a leitura.
+    declinado_por: Mapped[str | None] = mapped_column(Text, nullable=True)
+    motivo_declinio: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: A agenda que deu origem a esta. É o que encadeia a evolução da relação.
+    origem_interacao_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("interacao.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    #: Só a intenção de continuidade. A próxima agenda, quando existir, aponta
+    #: para esta por `origem_interacao_id`.
+    preve_desdobramento: Mapped[bool | None] = mapped_column(
+        Boolean, nullable=True
+    )
+    #: O clima PREVISTO, na mesma escala do real (`clima_id`). Sem ele, comparar
+    #: esperado com realizado seria leitura humana de texto livre.
+    clima_esperado_id: Mapped[int | None] = mapped_column(
+        SmallInteger, ForeignKey("clima.id"), nullable=True
+    )
+
     # procedência e ciclo de vida
     fonte: Mapped[str] = mapped_column(Text, default="cadastro_manual")
     visivel: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -120,6 +146,12 @@ class InteracaoRegistro(Tabela):
         cascade="all, delete-orphan", lazy="selectin"
     )
     participacoes: Mapped[list[InteracaoPessoaAegea]] = relationship(
+        cascade="all, delete-orphan", lazy="selectin"
+    )
+    outra_parte: Mapped[list["InteracaoInterlocutor"]] = relationship(
+        cascade="all, delete-orphan", lazy="selectin"
+    )
+    materiais: Mapped[list["Material"]] = relationship(
         cascade="all, delete-orphan", lazy="selectin"
     )
 
@@ -238,6 +270,12 @@ class InteracaoPessoaAegea(Tabela):
     )
     papel: Mapped[str] = mapped_column(Text, primary_key=True)
 
+    #: Previsto, presente ou ausente — NULO é "não informado".
+    #:
+    #: Não entra na chave: a pessoa tem um papel e uma presença nesta agenda,
+    #: não uma linha por combinação.
+    presenca: Mapped[str | None] = mapped_column(Text, nullable=True)
+
 
 class Comentario(Tabela):
     __tablename__ = "comentario"
@@ -292,3 +330,53 @@ RELACAO_DA_EXTENSAO: dict[str, str] = {
     "investidores": "investidores",
     "interna": "interna",
 }
+
+
+class InteracaoInterlocutor(Tabela):
+    """Participantes da outra parte, além do principal.
+
+    O interlocutor PRINCIPAL continua em `interacao.interlocutor_id` — 67 usos
+    em filtros, relatórios e exportação dependem dele. Esta tabela guarda os
+    demais, e a API devolve os dois numa lista só.
+    """
+
+    __tablename__ = "interacao_interlocutor"
+
+    interacao_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("interacao.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    interlocutor_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("interlocutor.id"), primary_key=True
+    )
+    presenca: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Quem representa a outra parte. No maximo um por agenda — indice unico
+    #: parcial no banco garante.
+    principal: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class Material(Tabela):
+    """Documentos de uma agenda: apoio (antes), obtido e produzido (depois)."""
+
+    __tablename__ = "material"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    interacao_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("interacao.id", ondelete="CASCADE")
+    )
+    momento: Mapped[str] = mapped_column(Text)
+    titulo: Mapped[str] = mapped_column(Text)
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Reservada para quando o painel guardar arquivo. Nenhuma rota escreve.
+    arquivo_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    observacao: Mapped[str | None] = mapped_column(Text, nullable=True)
+    criado_por: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("usuario.id")
+    )
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

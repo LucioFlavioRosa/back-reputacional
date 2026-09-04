@@ -162,7 +162,25 @@ def condicoes(
     if recorte.tier is not None:
         onde.append(InteracaoRegistro.tier == recorte.tier)
     if recorte.pessoa:
-        onde.append(InteracaoRegistro.interlocutor_id == recorte.pessoa)
+        # QUALQUER participacao conta, e nao so a de interlocutor principal.
+        #
+        # A pergunta da tela e "agendas em que esta pessoa participou". Filtrar
+        # so por `interlocutor_id` respondia "agendas em que ela foi a
+        # principal" — e desde que a agenda passou a registrar todos os
+        # participantes, as duas perguntas deixaram de ter a mesma resposta.
+        #
+        # `exists` e nao `join`: um `join` multiplicaria a interacao por
+        # participante e faria a contagem do painel subir sem que nada tivesse
+        # acontecido.
+        onde.append(
+            or_(
+                InteracaoRegistro.interlocutor_id == recorte.pessoa,
+                exists().where(
+                    InteracaoInterlocutor.interacao_id == InteracaoRegistro.id,
+                    InteracaoInterlocutor.interlocutor_id == recorte.pessoa,
+                ),
+            )
+        )
 
     # -- instituição: aceita id ou nome exato --------------------------------
     if recorte.entidade:
