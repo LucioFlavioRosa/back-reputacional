@@ -46,6 +46,19 @@ class ParticipanteDaOutraParteEntrada(BaseModel):
     principal: bool = False
 
 
+class ArquivoSaida(BaseModel):
+    """O arquivo de um material, como a tela o ve.
+
+    Sem o `caminho` no blob: quem monta a ficha nao tem o que fazer com ele, e
+    dizer onde o byte mora e contar como o contenedor e organizado.
+    """
+
+    id: UUID
+    nome: str
+    tipo_conteudo: str
+    tamanho: int
+
+
 class MaterialSaida(BaseModel):
     """O material como sai. Tem `id` porque a tela precisa apagar um deles."""
 
@@ -54,15 +67,22 @@ class MaterialSaida(BaseModel):
     titulo: str
     url: str | None = None
     observacao: str | None = None
+    #: Nulo quando o material e um LINK. Os dois caminhos convivem.
+    arquivo: ArquivoSaida | None = None
 
 
 class MaterialEntrada(BaseModel):
     """Um documento da agenda.
 
-    `url` é obrigatório na prática — o domínio recusa material sem link —, mas
-    fica opcional aqui para a mensagem vir do domínio, em português e explicando
-    que guardar arquivo ainda não existe, em vez de um erro de validação seco.
+    `url` e `arquivo_id` sao ambos opcionais AQUI, e o dominio exige um dos
+    dois. A validacao fica la para a mensagem sair em portugues dizendo o que
+    fazer — "suba um arquivo ou informe um link" —, e nao como erro de campo
+    obrigatorio que nao explica a alternativa.
     """
+
+    #: O arquivo ja subido, pelo `POST .../materiais/arquivo`. A tela devolve o
+    #: id que o upload lhe deu; o byte ja esta no blob quando esta rota corre.
+    arquivo_id: UUID | None = None
 
     #: O `id` DE VOLTA, e sem ele o resto não funciona.
     #:
@@ -253,6 +273,7 @@ class InteracaoEntrada(BaseModel):
                     momento=m.momento,
                     titulo=m.titulo,
                     url=m.url,
+                    arquivo_id=m.arquivo_id,
                     observacao=m.observacao,
                 )
                 for m in self.materiais
@@ -350,6 +371,7 @@ class InteracaoEdicao(BaseModel):
                             momento=m["momento"],
                             titulo=m["titulo"],
                             url=m.get("url"),
+                            arquivo_id=m.get("arquivo_id"),
                             observacao=m.get("observacao"),
                             id=m.get("id"),
                         )
@@ -495,6 +517,19 @@ class InteracaoSaida(BaseModel):
                     titulo=m.titulo,
                     url=m.url,
                     observacao=m.observacao,
+                    # PREENCHIDO, e nao so declarado. Ver o commit da presenca
+                    # do porta-voz: campo declarado aqui e nao passado no
+                    # construtor sai `None` para sempre, com 200 na resposta.
+                    arquivo=(
+                        ArquivoSaida(
+                            id=m.arquivo.id,
+                            nome=m.arquivo.nome,
+                            tipo_conteudo=m.arquivo.tipo_conteudo,
+                            tamanho=m.arquivo.tamanho,
+                        )
+                        if m.arquivo is not None
+                        else None
+                    ),
                 )
                 for m in interacao.materiais
             ],

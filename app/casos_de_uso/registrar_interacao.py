@@ -2,6 +2,16 @@
 
 from __future__ import annotations
 
+import logging
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.armazenamento import blob
+from app.banco.repositorio_interacoes import RepositorioSQL
+from app.banco.tabelas_interacoes import Arquivo, Material
+from app.dominio.erros import NaoEncontrado
 from app.dominio.identidade import UsuarioAtual
 from app.dominio.interacao import Interacao
 from app.dominio.repositorio import (
@@ -24,3 +34,89 @@ def registrar(
     interacao.criado_por = usuario.id
     interacao.revalidar()
     return repositorio.adicionar(interacao)
+
+
+def guardar_arquivo(
+    repositorio: RepositorioSQL,
+    sessao: Session,
+    *,
+    interacao_id: UUID,
+    momento: str,
+    nome: str,
+    tipo_conteudo: str,
+    dados: bytes,
+    usuario: UsuarioAtual,
+) -> Arquivo:
+    """Grava a linha e sobe o byte, nesta ordem.
+
+    A LINHA PRIMEIRO, E O BYTE DEPOIS. É o inverso do que a intuição sugere,
+    e é o único jeito de o pior caso ser recuperável.
+
+    Byte antes, linha depois: se a gravação falhar, o byte fica no contêiner
+    sem ninguém que o conheça — invisível e pago para sempre.
+
+    Linha antes, byte depois: se o upload falhar, a transação volta atrás e a
+    linha some junto. Nada sobra.
+
+    O `id` da linha entra no caminho do blob, então ele precisa existir antes
+    de o byte subir — o que faz a ordem certa ser também a única possível.
+    """
+    arquivo = Arquivo(
+        # Caminho ainda vazio: ele depende do `id`, que o `flush` atribui.
+        caminho="",
+        nome=nome,
+        tipo_conteudo=tipo_conteudo,
+        tamanho=len(dados),
+        criado_por=usuario.id,
+    )
+    sessao.add(arquivo)
+    sessao.flush()
+
+    arquivo.caminho = blob.caminho_do_arquivo(
+        interacao_id=interacao_id,
+        momento=momento,
+        arquivo_id=arquivo.id,
+        nome=nome,
+    )
+    sessao.flush()
+
+    blob.guardar(arquivo.caminho, dados, tipo_conteudo)
+    return arquivo
+
+
+def arquivo_da_interacao(
+    repositorio: RepositorioSQL, *, interacao_id: UUID, arquivo_id: UUID
+) -> Arquivo:
+    """O arquivo, se ele for MESMO desta agenda.
+
+    Conferir o vínculo é o que impede que conhecer dois uuids baste para baixar
+    o anexo de uma agenda que a pessoa não pode ver: o escopo já foi checado
+    contra `interacao_id`, e sem esta verificação o `arquivo_id` escaparia dele.
+    """
+    arquivo = repositorio.sessao.scalars(
+        select(Arquivo)
+        .join(Material, Material.arquivo_id == Arquivo.id)
+        .where(Arquivo.id == arquivo_id, Material.interacao_id == interacao_id)
+    ).first()
+    if arquivo is None:
+        raise NaoEncontrado("Arquivo não encontrado nesta agenda.")
+    return arquivo
+
+
+def apagar_bytes_orfaos(repositorio: RepositorioSQL) -> None:
+    """Apaga do blob o que perdeu a linha. Chamada DEPOIS do commit.
+
+    Falha aqui não desfaz nada: o dado já está consistente, e o que resta é um
+    byte que ninguém alcança. Por isso engole o erro em vez de propagá-lo —
+    devolver 500 para quem acabou de salvar com sucesso seria mentir sobre o
+    que aconteceu.
+    """
+    for caminho in repositorio.caminhos_orfaos():
+        try:
+            blob.apagar(caminho)
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).warning(
+                "Byte órfão não apagado: %s. A linha já saiu do banco; "
+                "o arquivo continua ocupando espaço no contêiner.",
+                caminho,
+            )

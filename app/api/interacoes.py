@@ -10,7 +10,19 @@ from datetime import date
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from urllib.parse import quote
+
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 
 from app.api.dependencias import (
     UsuarioLogado,
@@ -22,8 +34,12 @@ from app.banco.repositorio_interacoes import (
 )
 from app.banco.sessao import SessaoDoPedido
 from app.casos_de_uso import consultar_interacoes, editar_interacao, registrar_interacao
+from app.armazenamento import blob
+from app.dominio.erros import RegraViolada
+from app.dominio.interacao import MOMENTOS_DE_MATERIAL
 from app.dominio.recorte import Recorte
 from app.esquemas.interacoes import (
+    ArquivoSaida,
     InteracaoEdicao,
     InteracaoEntrada,
     InteracaoSaida,
@@ -175,7 +191,11 @@ def obter(sessao: Sessao, usuario: UsuarioLogado, id: UUID) -> InteracaoSaida:
 
 @rotas.patch("/{id}")
 def editar(
-    sessao: Sessao, usuario: UsuarioQueEscreve, id: UUID, edicao: InteracaoEdicao
+    sessao: Sessao,
+    usuario: UsuarioQueEscreve,
+    id: UUID,
+    edicao: InteracaoEdicao,
+    tarefas: BackgroundTasks,
 ) -> InteracaoSaida:
     repositorio = RepositorioSQL(sessao)
 
@@ -185,6 +205,17 @@ def editar(
     atualizada = editar_interacao.editar(
         repositorio, sessao, id=id, alteracoes=alteracoes, usuario=usuario
     )
+
+    # O BYTE SO SOME DEPOIS DO COMMIT, e por isso vai como tarefa de fundo.
+    #
+    # O commit desta requisicao roda no teardown da dependencia da sessao,
+    # quando esta funcao ja retornou — apagar aqui seria apagar ANTES, e um
+    # rollback depois devolveria a linha apontando para o vazio. Tarefa de
+    # fundo corre depois da resposta, que e depois do commit.
+    #
+    # `caminhos_orfaos()` so le uma lista em memoria: nao toca na sessao, que
+    # a essa altura ja esta fechada.
+    tarefas.add_task(registrar_interacao.apagar_bytes_orfaos, repositorio)
     return InteracaoSaida.de_dominio(atualizada, ve_campos_sensiveis=usuario.ve_campos_sensiveis)
 
 
@@ -192,3 +223,97 @@ def editar(
 def arquivar(sessao: Sessao, usuario: UsuarioQueEscreve, id: UUID) -> None:
     """Soft delete: sai das consultas, permanece no banco."""
     editar_interacao.arquivar(RepositorioSQL(sessao), sessao, id=id, usuario=usuario)
+
+
+# -- os arquivos dos materiais ------------------------------------------------
+#
+# O UPLOAD VEM ANTES DO MATERIAL EXISTIR, e é por isso que ele tem rota própria
+# em vez de entrar no corpo do `PATCH`.
+#
+# Quem preenche o formulário acrescenta a linha do material, escolhe o arquivo e
+# só depois salva a agenda. Nesse instante o material ainda não tem `id` — não
+# existe no servidor. A rota guarda o byte, devolve um `arquivo_id`, e o `PATCH`
+# seguinte amarra os dois.
+#
+# O preço disso é um arquivo órfão quando alguém sobe e desiste de salvar. É o
+# lado certo do erro: o contrário — exigir salvar antes de subir — obrigaria a
+# gravar uma agenda pela metade só para poder anexar.
+
+
+@rotas.post("/{id}/materiais/arquivo", status_code=status.HTTP_201_CREATED)
+def subir_arquivo_de_material(
+    sessao: Sessao,
+    usuario: UsuarioQueEscreve,
+    id: UUID,
+    momento: Annotated[str, Form()],
+    arquivo: Annotated[UploadFile, File()],
+) -> ArquivoSaida:
+    """Guarda o byte e devolve o `arquivo_id` que o material vai citar."""
+    repositorio = RepositorioSQL(sessao)
+    # O ESCOPO ENTRA AQUI TAMBÉM. Sem isto, quem não enxerga uma agenda poderia
+    # escrever no armazenamento dela conhecendo só o id — e a pasta é o que dá
+    # a ligação entre arquivo e agenda.
+    consultar_interacoes.obter(repositorio, id=id, escopo=usuario.escopo)
+
+    if momento not in MOMENTOS_DE_MATERIAL:
+        raise RegraViolada(
+            f"Momento inválido: {momento!r}. Use {', '.join(MOMENTOS_DE_MATERIAL)}."
+        )
+
+    dados = arquivo.file.read()
+    blob.exigir_tipo_aceito(arquivo.content_type or "")
+    # O `Content-Type` do multipart e escrito por quem envia, e a lista de
+    # permitidos sozinha so barra quem nao tenta: medido pela API, um
+    # `programa.exe` com `Content-Type: application/pdf` era aceito e guardado.
+    blob.exigir_arquivo_coerente(
+        arquivo.filename or "", arquivo.content_type or "", dados
+    )
+    blob.exigir_tamanho_aceito(len(dados))
+
+    salvo = registrar_interacao.guardar_arquivo(
+        repositorio,
+        sessao,
+        interacao_id=id,
+        momento=momento,
+        nome=arquivo.filename or "arquivo",
+        tipo_conteudo=arquivo.content_type or "application/octet-stream",
+        dados=dados,
+        usuario=usuario,
+    )
+    return ArquivoSaida(
+        id=salvo.id,
+        nome=salvo.nome,
+        tipo_conteudo=salvo.tipo_conteudo,
+        tamanho=salvo.tamanho,
+    )
+
+
+@rotas.get("/{id}/materiais/arquivo/{arquivo_id}")
+def baixar_arquivo_de_material(
+    sessao: Sessao, usuario: UsuarioLogado, id: UUID, arquivo_id: UUID
+) -> Response:
+    """Entrega o byte, pela API e não por link direto ao blob.
+
+    Um SAS seria mais rápido e tiraria a API do caminho do download. Mas o
+    material de agenda com governo e investidores é o conteúdo mais sensível
+    deste painel, e um link de blob que vaza continua valendo depois de a
+    pessoa perder o acesso. Passando por aqui, a autorização é verificada a
+    cada download.
+    """
+    repositorio = RepositorioSQL(sessao)
+    consultar_interacoes.obter(repositorio, id=id, escopo=usuario.escopo)
+
+    registro = registrar_interacao.arquivo_da_interacao(
+        repositorio, interacao_id=id, arquivo_id=arquivo_id
+    )
+    return Response(
+        content=blob.ler(registro.caminho),
+        media_type=registro.tipo_conteudo,
+        headers={
+            # `attachment` com o nome ORIGINAL: quem baixa espera reencontrar
+            # "Nota técnica ANA.pdf", e não o uuid que serve ao armazenamento.
+            "Content-Disposition": (
+                f'attachment; filename*=UTF-8\'\'{quote(registro.nome)}'
+            )
+        },
+    )

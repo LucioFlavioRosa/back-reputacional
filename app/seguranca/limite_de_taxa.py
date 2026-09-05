@@ -14,8 +14,10 @@ embora é o escopo (`usuario_escopo`), não o limite de taxa. Qualquer teto
 frouxo o bastante para o painel funcionar é frouxo demais para conter quem
 simplesmente usa o produto.
 
-E não protege de força bruta de senha, porque não existe senha: a autenticação é
-do Entra ID.
+E JÁ EXISTE SENHA. Esta frase dizia que não existia, porque a autenticação seria
+só do Entra ID — e `POST /api/auth/senha` entrou depois. Quem protege aquela rota
+de força bruta é o balde por conta, ali mesmo; este módulo continua sendo sobre
+volume de uso, e não sobre tentativa de login.
 
 DUAS CAMADAS, PORQUE UMA SÓ NÃO SERVE
 

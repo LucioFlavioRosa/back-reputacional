@@ -28,11 +28,17 @@ praticamente irreversível e é decisão da companhia, não deste serviço.
 
 from __future__ import annotations
 
+import re
+
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-#: Um megabyte. O maior corpo legítimo é o formulário de interação — campos de
-#: texto. Nada aqui recebe arquivo: não existe `UploadFile` em rota nenhuma.
+#: Um megabyte. O maior corpo legítimo em JSON é o formulário de interação —
+#: campos de texto.
+#:
+#: JÁ EXISTE `UploadFile`: a rota de arquivo de material. Ela fica de fora deste
+#: teto, por `CAMINHOS_SEM_LIMITE_DE_CORPO`, e tem limite próprio. Este número
+#: não subiu por causa dela — subir abriria todas as rotas para consertar uma.
 TAMANHO_MAXIMO_DO_CORPO = 1_048_576
 
 #: `default-src 'none'`: nada carrega, nada executa. Uma API JSON não precisa de
@@ -109,6 +115,32 @@ class CabecalhosDeSegurancaMiddleware:
         await self.app(scope, receive, enviar)
 
 
+#: A ROTA DO ARQUIVO FICA DE FORA DO TETO GLOBAL.
+#:
+#: O teto de 1 MB protege as rotas de formulario, onde corpo grande so pode ser
+#: abuso. A rota de upload existe para receber corpo grande — e o limite dela e
+#: outro, aplicado por `blob.exigir_tamanho_aceito`, com mensagem dizendo o
+#: tamanho e o que fazer.
+#:
+#: SUBIR O TETO GLOBAL PARA 25 MB SERIA O CONSERTO ERRADO: abriria todas as
+#: rotas a corpos de 25 MB para consertar uma. O que muda e QUAL rota escapa,
+#: nao o numero.
+#:
+#: A FORMA INTEIRA DO CAMINHO, e nao um sufixo.
+#:
+#: Casar por `endswith("/materiais/arquivo")` funcionava hoje e era divida: uma
+#: rota nova qualquer terminada nesse sufixo herdaria a isencao em silencio, sem
+#: ninguem decidir isso. A expressao abaixo descreve a rota que existe, e uma
+#: rota diferente precisa ser acrescentada aqui de proposito.
+_CAMINHO_DE_UPLOAD = re.compile(
+    r"^/api/interacoes/[0-9a-fA-F-]{36}/materiais/arquivo$"
+)
+
+
+def _fora_do_limite_de_corpo(caminho: str) -> bool:
+    return bool(_CAMINHO_DE_UPLOAD.match(caminho))
+
+
 class LimiteDeCorpoMiddleware:
     """Recusa corpo acima do teto, com 413.
 
@@ -131,6 +163,10 @@ class LimiteDeCorpoMiddleware:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        if _fora_do_limite_de_corpo(scope.get("path", "")):
             await self.app(scope, receive, send)
             return
 

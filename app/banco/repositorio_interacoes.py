@@ -31,6 +31,7 @@ from app.banco.tabelas_catalogo import (
     Frente as FrenteTabela,
 )
 from app.banco.tabelas_interacoes import (
+    Arquivo,
     RELACAO_DA_EXTENSAO,
     ImprensaRegistro,
     InstitucionalRegistro,
@@ -57,6 +58,7 @@ from app.dominio.identidade import Escopo
 from app.dominio.interacao import (
     Interacao,
     ParticipacaoAegea,
+    ArquivoDoMaterial,
     MaterialDaAgenda,
     ParticipanteDaOutraParte,
 )
@@ -70,6 +72,22 @@ class RepositorioSQL:
     def __init__(self, sessao: Session) -> None:
         self.sessao = sessao
         self._cache_de_codigos: dict[tuple[str, str], int] = {}
+        #: Os bytes que perderam a linha nesta unidade de trabalho.
+        #:
+        #: O repositorio NAO fala com o blob: ele so anota o que ficou orfao. E
+        #: proposital — o repositorio vive dentro da transacao, e apagar byte
+        #: dentro dela e o jeito de destruir arquivo que um rollback vai fazer
+        #: falta. Quem le esta lista e o caso de uso, depois do commit.
+        self._caminhos_a_apagar: list[str] = []
+
+    def caminhos_orfaos(self) -> list[str]:
+        """O que apagar do blob DEPOIS que a transacao passar.
+
+        Esvazia ao ser lida: chamada duas vezes, a segunda nao tenta apagar de
+        novo o que ja foi.
+        """
+        caminhos, self._caminhos_a_apagar = self._caminhos_a_apagar, []
+        return caminhos
 
     # -- dicionários ---------------------------------------------------------
 
@@ -364,6 +382,11 @@ class RepositorioSQL:
         por_id = {m.id: m for m in registro.materiais if m.id is not None}
         mantidos: list[Material] = []
         autor = interacao.criado_por or registro.criado_por
+        #: Os arquivos que PERDERAM seu material. Um material excluido pela
+        #: tela, ou que trocou de arquivo, deixa a linha de `arquivo` e o byte
+        #: no blob sem dono — `on delete restrict` protege o arquivo de sumir
+        #: por baixo do material, e nao o contrario.
+        antes = {m.id: m.arquivo_id for m in registro.materiais if m.arquivo_id}
 
         for material in interacao.materiais:
             existente = por_id.get(material.id) if material.id else None
@@ -371,6 +394,7 @@ class RepositorioSQL:
                 existente.momento = material.momento
                 existente.titulo = material.titulo.strip()
                 existente.url = material.url
+                existente.arquivo_id = material.arquivo_id
                 existente.observacao = material.observacao
                 mantidos.append(existente)
             else:
@@ -379,12 +403,34 @@ class RepositorioSQL:
                         momento=material.momento,
                         titulo=material.titulo.strip(),
                         url=material.url,
+                        arquivo_id=material.arquivo_id,
                         observacao=material.observacao,
                         criado_por=autor,
                     )
                 )
 
         registro.materiais[:] = mantidos
+
+        # O ARQUIVO SEGUE O MATERIAL ATE O FIM.
+        #
+        # Sem isto, remover um material pela tela deixava a linha de `arquivo`
+        # e o byte no blob para sempre: o material some pelo `delete-orphan`, e
+        # nada olha para o que ele apontava. O painel passaria a pagar
+        # armazenamento por documento que ninguem alcanca mais.
+        #
+        # O BYTE NAO E APAGADO AQUI. Aqui some a LINHA, dentro da transacao;
+        # quem apaga o byte e o caso de uso, DEPOIS do commit. Na ordem
+        # inversa, um rollback devolveria a linha apontando para o vazio — e
+        # essa perda e irreversivel, enquanto um byte orfao no contenedor nao
+        # quebra nada.
+        depois = {m.arquivo_id for m in mantidos if m.arquivo_id}
+        orfaos = [aid for aid in antes.values() if aid not in depois]
+        if orfaos:
+            for arquivo in self.sessao.scalars(
+                select(Arquivo).where(Arquivo.id.in_(orfaos))
+            ):
+                self._caminhos_a_apagar.append(arquivo.caminho)
+                self.sessao.delete(arquivo)
 
     def _aplicar_extensao(
         self, interacao: Interacao, registro: InteracaoRegistro
@@ -630,6 +676,27 @@ class RepositorioSQL:
                     titulo=material.titulo,
                     url=material.url,
                     observacao=material.observacao,
+                    arquivo_id=material.arquivo_id,
+                    # O NOME, O TIPO E O TAMANHO VOLTAM JUNTO.
+                    #
+                    # Sem isto a ficha teria o id do arquivo e nada para
+                    # escrever ao lado do icone — e a tela precisaria de uma
+                    # ida ao servidor por material so para descobrir como o
+                    # arquivo se chama.
+                    #
+                    # Foi assim que a presenca do porta-voz se perdeu por tres
+                    # revisoes: o esquema de saida declarava o campo e ninguem
+                    # o preenchia. Declarar nao e preencher.
+                    arquivo=(
+                        ArquivoDoMaterial(
+                            id=material.arquivo.id,
+                            nome=material.arquivo.nome,
+                            tipo_conteudo=material.arquivo.tipo_conteudo,
+                            tamanho=material.arquivo.tamanho,
+                        )
+                        if material.arquivo is not None
+                        else None
+                    ),
                 )
                 # Ordem estavel: sem ela a ficha reordena os materiais a cada
                 # leitura, e a pessoa acha que algo mudou.

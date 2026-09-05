@@ -97,13 +97,29 @@ class ParticipanteDaOutraParte:
         _exigir_presenca_valida(self.presenca)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
+class ArquivoDoMaterial:
+    """O arquivo guardado, como o domínio o conhece.
+
+    Só o que a tela precisa mostrar sem ir ao armazenamento: nome para
+    reconhecer, tipo para o ícone, tamanho para avisar antes do download. O
+    `caminho` no blob NÃO entra aqui — é detalhe de onde o byte mora, e quem
+    monta a ficha não tem o que fazer com ele.
+    """
+
+    id: UUID
+    nome: str
+    tipo_conteudo: str
+    tamanho: int
+
+
+@dataclass(frozen=True, slots=True)
 class MaterialDaAgenda:
     """Um documento que circula em torno da agenda.
 
-    Sem `url` e sem arquivo, um material é só um título — e um título sozinho
-    não leva ninguém ao documento. Hoje só o link funciona; o arquivo é a
-    frente seguinte, e a coluna já existe no banco esperando por ela.
+    Sem link e sem arquivo, um material é só um título — e um título sozinho
+    não leva ninguém ao documento. Os DOIS caminhos valem: link para o que já
+    mora no SharePoint, arquivo para o que se sobe aqui.
     """
 
     momento: str
@@ -111,6 +127,10 @@ class MaterialDaAgenda:
     url: str | None = None
     observacao: str | None = None
     id: UUID | None = None
+    #: Preenchido na LEITURA, pelo repositório. Na escrita o que conta é
+    #: `arquivo_id`: a tela devolve o id que o upload lhe deu, e não o objeto.
+    arquivo: "ArquivoDoMaterial | None" = None
+    arquivo_id: UUID | None = None
 
     def __post_init__(self) -> None:
         if self.momento not in MOMENTOS_DE_MATERIAL:
@@ -120,10 +140,14 @@ class MaterialDaAgenda:
             )
         if not self.titulo.strip():
             raise RegraViolada("Material precisa de título.")
-        if not (self.url or "").strip():
+        #: A MESMA REGRA DO BANCO (`material_precisa_apontar_para_algo`), aqui
+        #: para dar a mensagem. O `check` protege o dado; ele não sabe dizer
+        #: qual material está pela metade nem o que fazer a respeito.
+        tem_arquivo = self.arquivo_id is not None or self.arquivo is not None
+        if not (self.url or "").strip() and not tem_arquivo:
             raise RegraViolada(
-                f"Material {self.titulo!r} precisa de um link. "
-                "Guardar arquivo no painel ainda não existe."
+                f"O material {self.titulo!r} não leva a lugar nenhum: "
+                "suba um arquivo ou informe um link."
             )
 
 

@@ -151,7 +151,12 @@ class Configuracao(BaseSettings):
     ]
 
     #: Um megabyte. O maior corpo legitimo e o formulario de interacao — campos
-    #: de texto. Nao existe `UploadFile` em rota nenhuma.
+    #: de texto.
+    #:
+    #: A FRASE "nao existe `UploadFile` em rota nenhuma" ESTAVA AQUI, e deixou
+    #: de valer quando o upload de material entrou. O limite continua valendo
+    #: para todo o resto: e a rota do arquivo que fica de fora, e nao este
+    #: numero que sobe. Ver `CAMINHOS_SEM_LIMITE_DE_CORPO`.
     tamanho_maximo_do_corpo: int = 1_048_576
 
     #: HSTS tem efeito duradouro: o navegador guarda a instrução por `max_age`
@@ -184,6 +189,28 @@ class Configuracao(BaseSettings):
     #: Vira `cloud_RoleName` no Application Insights. É o que separa este
     #: serviço do frontend quando os dois mandam para o mesmo recurso.
     nome_do_servico: str = "painel-reputacional-api"
+
+    # -- os arquivos dos materiais -------------------------------------------
+    #
+    # O material de uma agenda deixou de ser só um link: o arquivo vive num
+    # Azure Blob Storage, e localmente num Azurite, que fala a MESMA API. Não
+    # há caminho "só de teste": o mesmo SDK e o mesmo código valem nos dois.
+
+    #: Cadeia de conexão do Storage. VAZIA desliga o upload — a rota devolve
+    #: 503 dizendo que o armazenamento não está configurado, em vez de estourar
+    #: 500 na primeira tentativa de guardar um arquivo. O painel inteiro segue
+    #: funcionando: material por LINK nunca dependeu disto.
+    blob_url: str = ""
+    blob_contenedor: str = "materiais"
+
+    #: 25 MB. Vale para o que estas agendas carregam — apresentação, parecer,
+    #: nota técnica — e é baixo o bastante para que um vídeo colado por engano
+    #: seja recusado na porta, e não depois de ocupar a rede.
+    blob_tamanho_maximo: int = 25 * 1024 * 1024
+
+    @property
+    def blob_ligado(self) -> bool:
+        return bool(self.blob_url)
 
     @property
     def producao(self) -> bool:

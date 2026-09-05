@@ -1260,3 +1260,197 @@ def test_cadeia_longa_de_desdobramento_continua_valendo(sessao, instituicao, aut
     sessao.flush()
 
     assert repositorio.obter(c.id, escopo=IRRESTRITO).origem_interacao_id == b.id
+
+
+# -- o arquivo do material -----------------------------------------------------
+#
+# A 0011 criou `material.arquivo_id` inerte; a 0012 abriu a frente. O que segue
+# cobre a costura entre banco, dominio e esquema de SAIDA — as cinco camadas,
+# que este arquivo passou a vida chamando de quatro.
+
+
+def test_material_sem_link_e_sem_arquivo_e_recusado(sessao, instituicao, autor):
+    """A regra existia e NAO tinha teste.
+
+    Descobri isso mudando a mensagem dela: a suite inteira passou. O `check`
+    `material_precisa_apontar_para_algo` protege o dado no banco, mas quem diz
+    qual material esta pela metade — e o que fazer — e o dominio.
+    """
+    from app.dominio.interacao import MaterialDaAgenda
+
+    with pytest.raises(RegraViolada, match="suba um arquivo ou informe um link"):
+        MaterialDaAgenda(momento="apoio", titulo="Parecer")
+
+
+def test_material_pode_apontar_so_para_um_arquivo(sessao, instituicao, autor):
+    """Os dois caminhos valem, e um deles basta."""
+    from app.dominio.interacao import MaterialDaAgenda
+
+    material = MaterialDaAgenda(momento="apoio", titulo="Parecer", arquivo_id=uuid4())
+
+    assert material.url is None
+
+
+def _arquivo(sessao, autor, nome="Nota.pdf"):
+    from app.banco.tabelas_interacoes import Arquivo
+
+    registro = Arquivo(
+        caminho=f"interacoes/teste/{uuid4()}-{nome}",
+        nome=nome,
+        tipo_conteudo="application/pdf",
+        tamanho=1234,
+        # `autor` E O ID, e nao o objeto — a fixture devolve `registro.id`.
+        criado_por=autor,
+    )
+    sessao.add(registro)
+    sessao.flush()
+    return registro
+
+
+def test_o_arquivo_do_material_chega_ate_a_tela(sessao, instituicao, autor):
+    """Ate o ESQUEMA DE SAIDA, e nao so ate o repositorio.
+
+    E a licao do commit da presenca do porta-voz, aplicada antes de custar:
+    `ParticipacaoSaida` DECLARAVA `presenca` e o construtor nao a passava, e o
+    campo saiu nulo por tres revisoes, com 200 na resposta. Aqui o teste cruza a
+    ultima camada de proposito.
+    """
+    from app.dominio.interacao import MaterialDaAgenda
+    from app.esquemas.interacoes import InteracaoSaida
+
+    repositorio = RepositorioSQL(sessao)
+    arquivo = _arquivo(sessao, autor, "Nota tecnica ANA.pdf")
+
+    salva = repositorio.adicionar(
+        _agenda(
+            instituicao,
+            autor,
+            materiais=(
+                MaterialDaAgenda(momento="apoio", titulo="Nota", arquivo_id=arquivo.id),
+            ),
+        )
+    )
+    sessao.flush()
+
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    assert lida.materiais[0].arquivo is not None
+    assert lida.materiais[0].arquivo.nome == "Nota tecnica ANA.pdf"
+
+    saida = InteracaoSaida.de_dominio(lida, ve_campos_sensiveis=True)
+    assert saida.materiais[0].arquivo is not None
+    assert saida.materiais[0].arquivo.nome == "Nota tecnica ANA.pdf"
+    assert saida.materiais[0].arquivo.tamanho == 1234
+
+
+def test_tirar_o_material_marca_o_byte_para_apagar(sessao, instituicao, autor):
+    """A linha sai na transacao; o BYTE sai depois do commit.
+
+    Sem isto, remover um material pela tela deixava a linha de `arquivo` e o
+    byte no blob para sempre — o painel pagando armazenamento por documento que
+    ninguem alcanca mais.
+
+    O repositorio nao fala com o blob de proposito: ele vive dentro da
+    transacao, e apagar byte ali e o jeito de destruir arquivo que um rollback
+    vai fazer falta.
+    """
+    from app.dominio.interacao import MaterialDaAgenda
+
+    repositorio = RepositorioSQL(sessao)
+    arquivo = _arquivo(sessao, autor)
+
+    salva = repositorio.adicionar(
+        _agenda(
+            instituicao,
+            autor,
+            materiais=(
+                MaterialDaAgenda(momento="apoio", titulo="Sai", arquivo_id=arquivo.id),
+            ),
+        )
+    )
+    sessao.flush()
+    # O upload nao deixa nada para apagar: ninguem perdeu arquivo ainda.
+    assert repositorio.caminhos_orfaos() == []
+
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida.alterar(materiais=())
+    repositorio.atualizar(lida)
+    sessao.flush()
+
+    assert repositorio.caminhos_orfaos() == [arquivo.caminho]
+
+
+def test_trocar_o_arquivo_marca_o_ANTIGO_para_apagar(sessao, instituicao, autor):
+    """Trocar o documento e apagar um e guardar outro.
+
+    O material continua o mesmo — mesmo `id`, mesmo titulo — e so o arquivo
+    muda. Sem olhar para o que ele apontava ANTES, o byte antigo ficaria orfao
+    exatamente como na remocao, e de um jeito mais dificil de notar: a tela
+    mostra o arquivo novo, e nada denuncia o velho.
+    """
+    from app.dominio.interacao import MaterialDaAgenda
+
+    repositorio = RepositorioSQL(sessao)
+    velho = _arquivo(sessao, autor, "v1.pdf")
+    novo = _arquivo(sessao, autor, "v2.pdf")
+
+    salva = repositorio.adicionar(
+        _agenda(
+            instituicao,
+            autor,
+            materiais=(
+                MaterialDaAgenda(momento="apoio", titulo="Ata", arquivo_id=velho.id),
+            ),
+        )
+    )
+    sessao.flush()
+    repositorio.caminhos_orfaos()
+
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida.alterar(
+        materiais=(
+            MaterialDaAgenda(
+                id=lida.materiais[0].id,
+                momento="apoio",
+                titulo="Ata",
+                arquivo_id=novo.id,
+            ),
+        )
+    )
+    repositorio.atualizar(lida)
+    sessao.flush()
+
+    assert repositorio.caminhos_orfaos() == [velho.caminho]
+
+
+def test_o_material_que_fica_nao_perde_o_arquivo(sessao, instituicao, autor):
+    """A prova negativa dos dois testes acima.
+
+    Sem ela, um `_aplicar_materiais` que marcasse TODO arquivo como orfao
+    passaria nos dois — e apagaria, no primeiro salvamento de qualquer campo, o
+    anexo de todos os materiais da agenda.
+    """
+    from app.dominio.interacao import MaterialDaAgenda
+
+    repositorio = RepositorioSQL(sessao)
+    arquivo = _arquivo(sessao, autor)
+
+    salva = repositorio.adicionar(
+        _agenda(
+            instituicao,
+            autor,
+            materiais=(
+                MaterialDaAgenda(momento="apoio", titulo="Fica", arquivo_id=arquivo.id),
+            ),
+        )
+    )
+    sessao.flush()
+    repositorio.caminhos_orfaos()
+
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida.alterar(relato="Reuniao aconteceu")
+    repositorio.atualizar(lida)
+    sessao.flush()
+
+    assert repositorio.caminhos_orfaos() == []
+    lida_de_novo = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    assert lida_de_novo.materiais[0].arquivo_id == arquivo.id

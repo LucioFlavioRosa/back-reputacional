@@ -355,6 +355,37 @@ class InteracaoInterlocutor(Tabela):
     principal: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
+class Arquivo(Tabela):
+    """Um arquivo no Blob Storage.
+
+    `caminho` e a chave dentro do contenedor, e e GRAVADO em vez de derivado:
+    convencao derivada quebra em silencio no dia em que a convencao muda, e os
+    arquivos antigos ficam onde estavam enquanto o codigo passa a procura-los
+    onde nunca estiveram.
+    """
+
+    __tablename__ = "arquivo"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    caminho: Mapped[str] = mapped_column(Text)
+    nome: Mapped[str] = mapped_column(Text)
+    tipo_conteudo: Mapped[str] = mapped_column(Text)
+    tamanho: Mapped[int] = mapped_column(BigInteger)
+    criado_por: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("usuario.id")
+    )
+    #: `server_default`, como as demais tabelas deste modulo: quem carimba a
+    #: hora e o banco, e nao o relogio de quem chamou. Eu tinha escrito
+    #: `default=lambda: datetime.now(UTC)` copiando outro arquivo — e `UTC` nao
+    #: e importado aqui, entao a primeira insercao estourou `NameError` de
+    #: dentro do driver, longe da linha errada.
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class Material(Tabela):
     """Documentos de uma agenda: apoio (antes), obtido e produzido (depois)."""
 
@@ -369,10 +400,13 @@ class Material(Tabela):
     momento: Mapped[str] = mapped_column(Text)
     titulo: Mapped[str] = mapped_column(Text)
     url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    #: Reservada para quando o painel guardar arquivo. Nenhuma rota escreve.
+    #: O arquivo no Blob, quando houver. Deixou de ser reservada: a 0012 criou
+    #: `arquivo` e ligou as duas. Material por LINK segue com ela nula — o
+    #: `check` do banco exige um dos dois, nao os dois.
     arquivo_id: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), nullable=True
+        PG_UUID(as_uuid=True), ForeignKey("arquivo.id"), nullable=True
     )
+    arquivo: Mapped["Arquivo | None"] = relationship(lazy="joined")
     observacao: Mapped[str | None] = mapped_column(Text, nullable=True)
     criado_por: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("usuario.id")

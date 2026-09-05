@@ -24,6 +24,14 @@ dependencies = [
     # desenvolvimento (o TestClient usa); agora o servidor precisa dela em
     # produção.
     "httpx>=0.27",
+    # Os arquivos dos materiais. O mesmo SDK fala com o Azure Storage e com o
+    # Azurite — o emulador é o serviço de verdade rodando local, e não uma
+    # imitação com API própria.
+    "azure-storage-blob>=12.20",
+    # `UploadFile` do FastAPI depende disto. Sem a dependência declarada, a
+    # rota de upload devolve 500 na primeira chamada e nada no import — o
+    # mesmo jeito de falhar que quase deixou a telemetria de fora.
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
