@@ -450,6 +450,20 @@ def test_a_presenca_de_quem_representou_a_aegea_sobrevive(sessao, instituicao, a
     A chave da participacao e (pessoa, papel); a presenca e ATRIBUTO dela. Posta
     na chave, o porta-voz sairia e voltaria da lista quando `previsto` virasse
     `presente`.
+
+    ATE O ESQUEMA DE SAIDA, e nao so ate o repositorio.
+
+    Este teste parava em `lida.participacoes[0].presenca` e passava — enquanto
+    a API respondia `null`. Sao CINCO camadas, nao quatro: DDL, ORM, dominio,
+    esquema de ENTRADA e esquema de SAIDA. `InteracaoSaida.de_dominio` montava
+    `ParticipacaoSaida` sem passar `presenca`, e o valor-padrao do campo e
+    `None` — declarar nao e preencher.
+
+    O efeito para quem usa: o `PATCH` respondia 200, o banco guardava, e a tela
+    recarregava com o campo vazio. Indistinguivel de "o servidor ignorou".
+
+    Medido pela API, e nao por leitura: so o round-trip completo separa "nao
+    grava" de "nao devolve".
     """
     from app.banco.tabelas_stakeholders import PessoaAegea
     from app.dominio.interacao import ParticipacaoAegea
@@ -480,6 +494,13 @@ def test_a_presenca_de_quem_representou_a_aegea_sobrevive(sessao, instituicao, a
 
     lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
     assert lida.participacoes[0].presenca == "presente"
+
+    # A PORTA QUE O NAVEGADOR USA.
+    from app.esquemas.interacoes import InteracaoSaida
+
+    saida = InteracaoSaida.de_dominio(lida, ve_campos_sensiveis=True)
+    assert saida.participacoes[0].presenca == "presente"
+    assert saida.participacoes[0].papel == "porta_voz"
 
 
 def test_o_clima_esperado_e_comparavel_com_o_real(sessao, instituicao, autor):

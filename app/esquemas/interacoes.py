@@ -501,7 +501,21 @@ class InteracaoSaida(BaseModel):
             extensao=asdict(interacao.extensao) if interacao.extensao else None,
             temas=list(interacao.temas),
             participacoes=[
-                ParticipacaoSaida(pessoa_aegea_id=p.pessoa_aegea_id, papel=p.papel)
+                ParticipacaoSaida(
+                    pessoa_aegea_id=p.pessoa_aegea_id,
+                    papel=p.papel,
+                    # DECLARAR O CAMPO NÃO É PREENCHÊ-LO. `presenca` foi
+                    # acrescentada a `ParticipacaoSaida` com um comentário
+                    # dizendo que ela "morria aqui" — e continuou morrendo,
+                    # porque o construtor não a passava e o valor-padrão é
+                    # `None`. O banco gravava, o domínio carregava, e a API
+                    # respondia nulo: um PATCH com `presenca` devolvia 200 e a
+                    # tela concluía que o servidor tinha ignorado o gesto.
+                    #
+                    # Medido pela API, não por leitura: só o round-trip
+                    # completo separou "não grava" de "não devolve".
+                    presenca=p.presenca,
+                )
                 for p in interacao.participacoes
             ],
             fonte=interacao.fonte,
