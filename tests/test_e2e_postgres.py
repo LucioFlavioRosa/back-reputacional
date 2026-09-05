@@ -714,9 +714,19 @@ def test_dicionarios_vem_carregados(cliente):
     }
 
 
-def test_pauta_vazia_e_recusada_pelo_dominio(cliente, semente):
-    resposta = cliente.post("/api/interacoes", json=corpo(semente, pauta="   "))
-    assert resposta.status_code == 422
+def test_a_agenda_e_criada_sem_pauta(cliente, semente):
+    """Pela API, e nao so no dominio. Ver `test_a_agenda_vale_sem_pauta`.
+
+    Este teste exigia 422 e passou a exigir 201: a obrigatoriedade saiu do
+    banco (0013), do dominio e do esquema, e se qualquer uma das tres tivesse
+    ficado para tras a criacao continuaria sendo recusada aqui.
+    """
+    corpo_sem_pauta = corpo(semente)
+    corpo_sem_pauta.pop("pauta", None)
+
+    resposta = cliente.post("/api/interacoes", json=corpo_sem_pauta)
+    assert resposta.status_code == 201, resposta.text
+    assert resposta.json()["pauta"] is None
 
 
 def test_uf_invalida_e_recusada(cliente, semente):
@@ -1069,3 +1079,37 @@ def test_autor_carimbado_e_forjavel_e_a_origem_denuncia(cliente, semente, sessao
 
     assert linha.usuario_id == vitima.id, "a forja funcionou, como esperado"
     assert linha.origem is not None, "mas a conta de banco fica registrada"
+
+
+def test_a_agenda_nasce_solicitada_sem_ninguem_mandar_status(cliente, semente):
+    """O ESTADO INICIAL E DO BACKEND, e nao de cada cliente.
+
+    `status` era obrigatorio na criacao, o que contradizia o pedido — a agenda
+    deve nascer com o que a IDENTIFICA — e obrigava cada cliente a saber qual e
+    o primeiro estado. Medido pela API: `POST` sem status voltava 422
+    `Field required`.
+
+    `solicitado`, e nao `agendado`: "agendado" afirma que existe data marcada
+    com a outra parte, e no instante da criacao ninguem confirmou isso.
+    """
+    corpo_minimo = corpo(semente)
+    for campo in ("status", "pauta"):
+        corpo_minimo.pop(campo, None)
+
+    resposta = cliente.post("/api/interacoes", json=corpo_minimo)
+
+    assert resposta.status_code == 201, resposta.text
+    assert resposta.json()["status"] == "solicitado"
+    assert resposta.json()["pauta"] is None
+
+
+def test_o_status_enviado_vence_o_padrao(cliente, semente):
+    """A prova negativa: o padrao nao pode atropelar quem informou.
+
+    Sem ela, um `status = "solicitado"` escrito no lugar errado passaria neste
+    arquivo inteiro — e toda agenda gravada viraria solicitada.
+    """
+    resposta = cliente.post("/api/interacoes", json=corpo(semente, status="realizado"))
+
+    assert resposta.status_code == 201, resposta.text
+    assert resposta.json()["status"] == "realizado"

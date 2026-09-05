@@ -188,8 +188,21 @@ class InteracaoEntrada(BaseModel):
     data_interacao: date
     instituicao_id: UUID
     uf: str
-    status: str
-    pauta: str = Field(min_length=1)
+    #: O ESTADO EM QUE UMA AGENDA COMECA, e o backend e o dono dele.
+    #:
+    #: Era obrigatorio, e criar exigia manda-lo. Isso contradizia o proprio
+    #: pedido — a agenda deve nascer com o que a IDENTIFICA — e obrigava cada
+    #: cliente a saber qual e o estado inicial. Medido pela API: `POST` so com
+    #: frente, data, instituicao e uf voltava 422 `Field required`.
+    #:
+    #: `solicitado` e nao `agendado`: dizer "agendado" afirma que existe data
+    #: marcada com a outra parte, e no instante da criacao ninguem confirmou
+    #: isso. A distancia entre pedir e conseguir marcar e metade do que este
+    #: painel mede.
+    status: str = "solicitado"
+    #: Sem `min_length`: a agenda nasce com o que a IDENTIFICA, e o assunto em
+    #: palavras deixou de ser exigido — `temas` e `expectativa` ocupam o lugar.
+    pauta: str | None = None
 
     interlocutor_id: UUID | None = None
     unidade_negocio_id: int | None = None
@@ -229,7 +242,7 @@ class InteracaoEntrada(BaseModel):
             instituicao_id=self.instituicao_id,
             uf=self.uf.upper(),
             status=self.status,
-            pauta=self.pauta.strip(),
+            pauta=self.pauta.strip() if self.pauta else None,
             interlocutor_id=self.interlocutor_id,
             unidade_negocio_id=self.unidade_negocio_id,
             esfera_id=self.esfera_id,
@@ -428,7 +441,7 @@ class InteracaoSaida(BaseModel):
     clima: str | None
     resultado: str | None
     iniciativa: str | None
-    pauta: str
+    pauta: str | None = None
     posicionamento: str | None
     relato: str | None
     encaminhamentos: str | None

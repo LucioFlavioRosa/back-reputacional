@@ -40,9 +40,20 @@ def nova(**ajustes) -> Interacao:
 # -- invariantes -------------------------------------------------------------
 
 
-def test_pauta_vazia_e_recusada():
-    with pytest.raises(RegraViolada, match="pauta é obrigatória"):
-        nova(pauta="   ")
+def test_a_agenda_vale_sem_pauta():
+    """A REGRA MUDOU, e este teste mudou com ela.
+
+    Ele exigia pauta e estava certo enquanto ela era o que identificava o
+    registro. A pauta saiu da tela: `temas` diz o assunto de forma classificada
+    — que e o que o painel consegue somar — e `expectativa` diz o que se quer
+    dele. Criar a agenda passou a exigir o que a IDENTIFICA, e o assunto em
+    palavras deixou de ser isso.
+
+    O teste continua existindo para que a mudanca seja deliberada: voltar a
+    exigir pauta quebra esta linha, e quem quebrar vai ler o porque.
+    """
+    assert nova(pauta=None).pauta is None
+    assert nova(pauta="   ").pauta == "   "
 
 
 def test_uf_e_obrigatoria_e_validada():

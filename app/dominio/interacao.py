@@ -165,7 +165,14 @@ class Interacao:
     instituicao_id: UUID
     uf: str
     status: str
-    pauta: str
+    #: OPCIONAL desde a 0013. Saiu da tela: `temas` diz o assunto de forma
+    #: classificada — que e o que o painel consegue somar — e `expectativa` diz
+    #: o que se quer dele. A pauta era a terceira forma de dizer a mesma coisa,
+    #: e a unica que ninguem consegue agregar.
+    #:
+    #: Continua preenchida nos 60 registros que vieram da planilha, onde e a
+    #: unica descricao em palavras que existe.
+    pauta: str | None = None
 
     id: UUID | None = None
     interlocutor_id: UUID | None = None
@@ -229,9 +236,6 @@ class Interacao:
 
     def revalidar(self) -> None:
         """Garante que o agregado está íntegro. Chamado na criação e na edição."""
-        if not self.pauta or not self.pauta.strip():
-            raise RegraViolada("A pauta é obrigatória: é o que identifica o registro.")
-
         if self.uf not in ABRANGENCIAS_VALIDAS:
             raise RegraViolada(
                 f"Abrangência inválida: {self.uf!r}. Use uma das 27 UFs, "

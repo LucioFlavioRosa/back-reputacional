@@ -3,7 +3,7 @@
 --
 -- A FORMA: TABELA-MÃE + EXTENSÃO 1-1 POR FRENTE
 --
--- `interacao` guarda o que TODA frente tem — data, instituição, status, pauta,
+-- `interacao` guarda o que TODA frente tem — data, instituição, status, pauta (esta ultima deixou de ser obrigatoria na 0013),
 -- UF. O que só existe numa frente vai para uma tabela de extensão que
 -- compartilha a chave primária: `data_publicacao` só faz sentido em imprensa,
 -- `ementa` só em legislativo.

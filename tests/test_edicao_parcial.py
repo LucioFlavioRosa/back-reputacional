@@ -126,3 +126,46 @@ def test_uf_e_normalizada_para_maiuscula():
 def test_campo_desconhecido_e_recusado_na_fronteira():
     with pytest.raises(ValueError):
         InteracaoEdicao.model_validate({"campo_inventado": 1})
+
+
+def test_editar_sem_mandar_pauta_preserva_a_que_existe():
+    """O campo saiu da tela, e a tela nao pode ter opiniao sobre ele.
+
+    A pauta deixou de ser editavel pelo formulario (0013): `temas` e
+    `expectativa` ocupam o lugar dela. Mas os 60 registros vindos da planilha
+    TEM pauta, e ela e a unica descricao em palavras que eles carregam.
+
+    Eu tinha escrito `pauta: vazio` no corpo do front, seguindo a regra dos
+    demais campos — e `vazio` na edicao e `null`, que o PATCH le como APAGUE.
+    Salvar qualquer campo de uma dessas agendas teria destruido a pauta.
+
+    Ausente e o unico valor certo: `exclude_unset` le ausencia como preserve.
+    """
+    interacao = institucional(Frente.GOVERNO)
+    interacao.pauta = "Reajuste tarifario do contrato de Piracicaba"
+
+    alteracoes = InteracaoEdicao(relato="Reuniao aconteceu").alteracoes(
+        frente_atual=Frente.GOVERNO
+    )
+
+    assert "pauta" not in alteracoes
+    interacao.alterar(**alteracoes)
+    assert interacao.pauta == "Reajuste tarifario do contrato de Piracicaba"
+
+
+def test_mandar_pauta_nula_de_proposito_ainda_apaga():
+    """A prova negativa: ausencia e nulo continuam sendo coisas diferentes.
+
+    Se `exclude_unset` deixasse de distinguir, o teste acima passaria por
+    acidente — e nenhuma tela conseguiria mais limpar campo nenhum.
+    """
+    interacao = institucional(Frente.GOVERNO)
+    interacao.pauta = "Vai sumir"
+
+    alteracoes = InteracaoEdicao.model_validate({"pauta": None}).alteracoes(
+        frente_atual=Frente.GOVERNO
+    )
+
+    assert alteracoes["pauta"] is None
+    interacao.alterar(**alteracoes)
+    assert interacao.pauta is None

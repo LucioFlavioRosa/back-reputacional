@@ -73,7 +73,7 @@ class InteracaoRegistro(Tabela):
     )
 
     # conteúdo
-    pauta: Mapped[str] = mapped_column(Text)
+    pauta: Mapped[str | None] = mapped_column(Text, nullable=True)
     posicionamento: Mapped[str | None] = mapped_column(Text, nullable=True)
     relato: Mapped[str | None] = mapped_column(Text, nullable=True)
     encaminhamentos: Mapped[str | None] = mapped_column(Text, nullable=True)
