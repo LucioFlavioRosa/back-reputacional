@@ -35,6 +35,8 @@ FONTES = ("cadastro_manual", "importacao_planilha", "plataforma_ri")
 PRESENCAS = ("previsto", "presente", "ausente")
 
 #: MOMENTO DO MATERIAL. `apoio` existe antes da reunião; os outros dois, depois.
+MODALIDADES = ("presencial", "online", "hibrida")
+
 MOMENTOS_DE_MATERIAL = ("apoio", "obtido", "produzido")
 
 #: Quem declinou. A leitura estratégica é oposta nos dois casos: declinar é
@@ -129,7 +131,7 @@ class MaterialDaAgenda:
     id: UUID | None = None
     #: Preenchido na LEITURA, pelo repositório. Na escrita o que conta é
     #: `arquivo_id`: a tela devolve o id que o upload lhe deu, e não o objeto.
-    arquivo: "ArquivoDoMaterial | None" = None
+    arquivo: ArquivoDoMaterial | None = None
     arquivo_id: UUID | None = None
 
     def __post_init__(self) -> None:
@@ -193,6 +195,10 @@ class Interacao:
     pendencias: str | None = None
     observacoes: str | None = None
     registro_url: str | None = None
+    #: `presencial`, `online` ou `hibrida`. Nulo = nao informado.
+    modalidade: str | None = None
+    #: Onde, em palavras: endereco, sala, ou o link da chamada.
+    local: str | None = None
 
     # relações
     extensao: Extensao | None = None
@@ -236,6 +242,15 @@ class Interacao:
 
     def revalidar(self) -> None:
         """Garante que o agregado está íntegro. Chamado na criação e na edição."""
+        # A MESMA REGRA DO `check` DO BANCO, aqui para dar a mensagem. O banco
+        # protege o dado; ele nao sabe dizer que "remoto" nao existe e que o
+        # valor procurado e "online".
+        if self.modalidade is not None and self.modalidade not in MODALIDADES:
+            raise RegraViolada(
+                f"Modalidade invalida: {self.modalidade!r}. "
+                f"Use {', '.join(MODALIDADES)}."
+            )
+
         if self.uf not in ABRANGENCIAS_VALIDAS:
             raise RegraViolada(
                 f"Abrangência inválida: {self.uf!r}. Use uma das 27 UFs, "

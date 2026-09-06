@@ -1454,3 +1454,66 @@ def test_o_material_que_fica_nao_perde_o_arquivo(sessao, instituicao, autor):
     assert repositorio.caminhos_orfaos() == []
     lida_de_novo = repositorio.obter(salva.id, escopo=IRRESTRITO)
     assert lida_de_novo.materiais[0].arquivo_id == arquivo.id
+
+
+# -- onde a agenda acontece ----------------------------------------------------
+
+
+def test_onde_a_agenda_acontece_sobrevive_ate_a_tela(sessao, instituicao, autor):
+    """As CINCO camadas, e nao quatro. Ver o teste da presenca do porta-voz.
+
+    `modalidade` e coluna PROPRIA, e nao deducao do texto do local: ela se
+    agrega — "quantas foram presenciais neste trimestre?" — e o endereco nao.
+    """
+    from app.esquemas.interacoes import InteracaoSaida
+
+    repositorio = RepositorioSQL(sessao)
+    salva = repositorio.adicionar(
+        _agenda(
+            instituicao,
+            autor,
+            modalidade="hibrida",
+            local="Ministerio das Cidades, bloco A, 5o andar",
+        )
+    )
+    sessao.flush()
+
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    assert lida.modalidade == "hibrida"
+    assert lida.local.startswith("Ministerio")
+
+    saida = InteracaoSaida.de_dominio(lida, ve_campos_sensiveis=True)
+    assert saida.modalidade == "hibrida"
+    assert saida.local.startswith("Ministerio")
+
+
+def test_hibrida_existe_porque_acontece(sessao, instituicao, autor):
+    """Parte da mesa na sala e parte na chamada.
+
+    Forcar a escolha entre presencial e online faria a base afirmar algo falso
+    — e e justamente nessas que a presenca de quem faltou fica ambigua.
+    """
+    from app.dominio.interacao import MODALIDADES
+
+    assert set(MODALIDADES) == {"presencial", "online", "hibrida"}
+
+
+def test_modalidade_inventada_e_recusada_com_mensagem(sessao, instituicao, autor):
+    """O `check` do banco protege o dado; o dominio diz o que usar.
+
+    "remoto" e o erro provavel, e a mensagem precisa dizer que o valor e
+    "online" — senao a pessoa tenta "virtual", depois "a distancia".
+    """
+    with pytest.raises(RegraViolada, match="online"):
+        _agenda(instituicao, autor, modalidade="remoto")
+
+
+def test_nao_informado_continua_nao_informado_tambem_aqui(sessao, instituicao, autor):
+    """Supor presencial inventaria historia nos 60 registros da planilha."""
+    repositorio = RepositorioSQL(sessao)
+    salva = repositorio.adicionar(_agenda(instituicao, autor))
+    sessao.flush()
+
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    assert lida.modalidade is None
+    assert lida.local is None

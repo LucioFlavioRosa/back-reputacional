@@ -299,6 +299,25 @@ def exigir_diretorio(usuario: UsuarioLogado) -> UsuarioAtual:
     return usuario
 
 
+def exigir_administracao_de_cadastros(usuario: UsuarioLogado) -> UsuarioAtual:
+    """Quem PODE MEXER nos cadastros de instituicao e interlocutor.
+
+    Ver o diretorio e uma coisa; edita-lo e outra. Uma instituicao renomeada ou
+    desativada muda o que aparece no formulario de TODA agenda e o que a Base
+    lista — e quem cadastra agenda precisa ler esses nomes, nao reescreve-los.
+
+    `administra_dicionarios` ja existia e so `plataforma_edicao` o tem. Criar um
+    papel novo para isto multiplicaria a matriz de permissoes sem separar nada
+    que ja nao esteja separado.
+    """
+    if usuario.papel is None or not usuario.papel.administra_dicionarios:
+        raise NaoAutorizado(
+            f"Perfil {_nome_do_papel(usuario)} nao administra os cadastros. "
+            "Fale com quem administra a plataforma."
+        )
+    return usuario
+
+
 def exigir_portal_crm(usuario: UsuarioLogado) -> UsuarioAtual:
     """As rotas do CRM dos Stakeholders exigem o portal, e não só o papel.
 
@@ -349,3 +368,6 @@ def _nome_do_papel(usuario: UsuarioAtual) -> str:
 UsuarioQueEscreve = Annotated[UsuarioAtual, Depends(exigir_escrita)]
 UsuarioDoCrm = Annotated[UsuarioAtual, Depends(exigir_portal_crm)]
 UsuarioQueVeDiretorio = Annotated[UsuarioAtual, Depends(exigir_diretorio)]
+UsuarioQueAdministraCadastros = Annotated[
+    UsuarioAtual, Depends(exigir_administracao_de_cadastros)
+]

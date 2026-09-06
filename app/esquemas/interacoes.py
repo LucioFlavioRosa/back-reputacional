@@ -25,8 +25,8 @@ from app.dominio.frentes import (
 )
 from app.dominio.interacao import (
     Interacao,
-    ParticipacaoAegea,
     MaterialDaAgenda,
+    ParticipacaoAegea,
     ParticipanteDaOutraParte,
 )
 
@@ -230,6 +230,8 @@ class InteracaoEntrada(BaseModel):
     pendencias: str | None = None
     observacoes: str | None = None
     registro_url: str | None = None
+    modalidade: str | None = None
+    local: str | None = None
 
     extensao: ExtensaoEntrada | None = None
     temas: list[int] = Field(default_factory=list)
@@ -257,6 +259,8 @@ class InteracaoEntrada(BaseModel):
             pendencias=self.pendencias,
             observacoes=self.observacoes,
             registro_url=self.registro_url,
+            modalidade=self.modalidade,
+            local=self.local,
             extensao=self.extensao.para_dominio(self.frente) if self.extensao else None,
             temas=tuple(self.temas),
             participacoes=tuple(
@@ -323,6 +327,8 @@ class InteracaoEdicao(BaseModel):
     pendencias: str | None = None
     observacoes: str | None = None
     registro_url: str | None = None
+    modalidade: str | None = None
+    local: str | None = None
     visivel: bool | None = None
     temas: list[int] | None = None
     participacoes: list[ParticipacaoEntrada] | None = None
@@ -448,6 +454,9 @@ class InteracaoSaida(BaseModel):
     pendencias: str | None
     observacoes: str | None
     registro_url: str | None
+    #: `presencial` | `online` | `hibrida`. Nulo = nao informado.
+    modalidade: str | None = None
+    local: str | None = None
     extensao: dict[str, Any] | None
     temas: list[int]
     participacoes: list[ParticipacaoSaida]
@@ -509,6 +518,8 @@ class InteracaoSaida(BaseModel):
             pendencias=interacao.pendencias,
             observacoes=interacao.observacoes,
             registro_url=interacao.registro_url,
+            modalidade=interacao.modalidade,
+            local=interacao.local,
             expectativa=interacao.expectativa,
             clima_esperado=interacao.clima_esperado,
             declinado_por=interacao.declinado_por,

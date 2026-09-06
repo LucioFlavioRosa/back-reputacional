@@ -136,6 +136,32 @@ class Interna(Extensao):
             raise RegraViolada("O prazo em dias não pode ser negativo.")
 
 
+#: Que TIPO de instituição cada frente conversa.
+#:
+#: Vivia em `semear_desenvolvimento.py` — um script de desenvolvimento — e a
+#: regra é de domínio: uma agenda de imprensa fala com veículo, uma de
+#: legislativo com proposição. O seeder passou a importar daqui.
+#:
+#: `eventos` e `parceiros` compartilham `entidade`: quem promove um evento é a
+#: mesma classe de instituição com quem se faz parceria.
+TIPO_DE_INSTITUICAO: dict[Frente, str] = {
+    Frente.IMPRENSA: "veiculo",
+    Frente.GOVERNO: "orgao",
+    Frente.PARCEIROS: "entidade",
+    Frente.EVENTOS: "entidade",
+    Frente.INVESTIDORES: "investidor",
+    Frente.LEGISLATIVO: "proposicao",
+    Frente.INTERNA: "area_interna",
+}
+
+#: Os tipos que se pode cadastrar. DERIVADO do mapa acima, e nao uma segunda
+#: lista: um tipo que nenhuma frente conversa seria cadastravel e invisivel —
+#: a instituicao existiria e nunca apareceria em formulario nenhum.
+#:
+#: `escritorio` some por isso. Ele aparecia num comentario do ORM e nao tem
+#: nenhuma linha no banco: era vocabulario morto.
+TIPOS_DE_INSTITUICAO: frozenset[str] = frozenset(TIPO_DE_INSTITUICAO.values())
+
 #: A frente determina qual extensão é aceita. Uma interação de Governo com
 #: dados de imprensa é um erro de programação, não um caso de uso.
 EXTENSAO_POR_FRENTE: dict[Frente, type[Extensao]] = {

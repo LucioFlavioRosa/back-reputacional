@@ -81,6 +81,19 @@ class InteracaoRegistro(Tabela):
     observacoes: Mapped[str | None] = mapped_column(Text, nullable=True)
     registro_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # -- onde a agenda acontece (migration 0015) ------------------------------
+    #
+    #: `presencial` | `online` | `hibrida`. NULO e NAO INFORMADO: o que veio da
+    #: planilha nao respondeu isto, e supor presencial inventaria historia.
+    #:
+    #: Coluna PROPRIA, e nao deduzida do texto do local: a modalidade se agrega
+    #: ("quantas foram presenciais neste trimestre?") e o endereco nao.
+    modalidade: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Endereco, sala, ou o link da chamada. Texto livre de proposito: uma
+    #: agenda acontece em "Ministerio das Cidades, bloco A" tanto quanto em
+    #: "Teams", e estruturar exigiria decidir o que fazer com o segundo.
+    local: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # -- o ciclo da agenda (migration 0011) -----------------------------------
     #
     # Todas anuláveis, e nulo quer dizer NÃO INFORMADO. Os registros que vieram
@@ -148,10 +161,10 @@ class InteracaoRegistro(Tabela):
     participacoes: Mapped[list[InteracaoPessoaAegea]] = relationship(
         cascade="all, delete-orphan", lazy="selectin"
     )
-    outra_parte: Mapped[list["InteracaoInterlocutor"]] = relationship(
+    outra_parte: Mapped[list[InteracaoInterlocutor]] = relationship(
         cascade="all, delete-orphan", lazy="selectin"
     )
-    materiais: Mapped[list["Material"]] = relationship(
+    materiais: Mapped[list[Material]] = relationship(
         cascade="all, delete-orphan", lazy="selectin"
     )
 
@@ -406,7 +419,7 @@ class Material(Tabela):
     arquivo_id: Mapped[uuid.UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("arquivo.id"), nullable=True
     )
-    arquivo: Mapped["Arquivo | None"] = relationship(lazy="joined")
+    arquivo: Mapped[Arquivo | None] = relationship(lazy="joined")
     observacao: Mapped[str | None] = mapped_column(Text, nullable=True)
     criado_por: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("usuario.id")

@@ -109,3 +109,54 @@ def test_recorte_e_imutavel():
 def test_periodo_desconhecido_diz_o_que_e_valido():
     with pytest.raises(RegraViolada, match="ano-corrente"):
         Recorte.construir(periodo="semana-passada")
+
+
+def test_a_busca_acha_agenda_nova_pelo_tema_e_pela_expectativa():
+    """A pauta saiu da tela, e a busca procurava o assunto nela.
+
+    Agenda criada pelo formulario nao tem mais pauta: o assunto dela mora em
+    `temas` (o classificado) e em `expectativa` (o que se quer da reuniao).
+    Sem estes dois, procurar por "reajuste" acharia so os 60 registros vindos
+    da planilha — e a busca PARECERIA funcionar, o que e pior do que quebrar.
+    """
+    from app.banco.filtros_sql import condicoes
+    from app.dominio.identidade import Escopo
+    from app.dominio.recorte import Recorte
+
+    sql = " ".join(
+        str(c.compile(compile_kwargs={"literal_binds": True}))
+        for c in condicoes(
+            Recorte(busca="reajuste"),
+            escopo=Escopo(irrestrito=True),
+            busca_em_campos_sensiveis=False,
+        )
+    )
+
+    assert "expectativa" in sql, "a busca ignora a expectativa"
+    assert "interacao_tema" in sql, "a busca ignora o assunto classificado"
+    #: E continua achando o que a planilha trouxe.
+    assert "pauta" in sql
+
+
+def test_o_filtro_por_pessoa_nao_estoura():
+    """`InteracaoInterlocutor` era usada sem import, e o filtro dava 500.
+
+    Entrou com a lista de participantes (commit do ciclo da agenda) e ficou
+    quebrado desde entao: `NameError` em tempo de execucao, dentro da montagem
+    da consulta. A suite nao exercitava `pessoa=`, e o `ruff` acusava um `F821`
+    que ninguem estava lendo.
+
+    O teste MONTA a condicao, que e onde o nome e resolvido. Um teste que so
+    chamasse a rota com outro filtro passaria sem tocar nesta linha.
+    """
+    from uuid import uuid4
+
+    from app.banco.filtros_sql import condicoes
+    from app.dominio.identidade import Escopo
+    from app.dominio.recorte import Recorte
+
+    condicoes(
+        Recorte(pessoa=uuid4()),
+        escopo=Escopo(irrestrito=True),
+        busca_em_campos_sensiveis=False,
+    )

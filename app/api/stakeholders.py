@@ -7,20 +7,31 @@ poucas centenas de linhas e mudam raramente.
 
 from __future__ import annotations
 
+import unicodedata
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, Query, status
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 
-from app.api.dependencias import exigir_diretorio, exigir_portal_crm
+from app.api.dependencias import (
+    UsuarioQueAdministraCadastros,
+    UsuarioQueVeDiretorio,
+    exigir_diretorio,
+    exigir_portal_crm,
+)
 from app.banco.sessao import SessaoDoPedido
+from app.banco.tabelas_catalogo import Tema
 from app.banco.tabelas_stakeholders import (
     Instituicao,
     Interlocutor,
     PessoaAegea,
+    PessoaAegeaTema,
 )
+from app.dominio.erros import NaoEncontrado, RegraViolada
+from app.dominio.frentes import TIPOS_DE_INSTITUICAO
 
 rotas = APIRouter(
     prefix="/api",
@@ -48,6 +59,7 @@ class InstituicaoSaida(BaseModel):
     id: UUID
     nome: str
     tipo: str
+    nome_completo: str | None
     esfera_id: int | None
     uf: str | None
     ativo: bool
@@ -58,6 +70,7 @@ class InterlocutorSaida(BaseModel):
     nome: str
     instituicao_id: UUID | None
     cargo: str | None
+    email: str | None
     tipo: str | None
     ativo: bool
 
@@ -66,6 +79,7 @@ class PessoaAegeaSaida(BaseModel):
     id: UUID
     nome: str
     cargo: str | None
+    email: str | None
     eh_porta_voz: bool
     ativo: bool
 
@@ -106,3 +120,514 @@ def listar_pessoas_aegea(
     if not incluir_inativos:
         consulta = consulta.where(PessoaAegea.ativo.is_(True))
     return list(sessao.scalars(consulta))
+
+
+# -- administracao dos cadastros ----------------------------------------------
+#
+# ATE AQUI ESTE MODULO SO LIA. As instituicoes e os interlocutores entravam pela
+# planilha, e mudar um deles era `update` no banco.
+#
+# Passam a ser editaveis pela tela porque duas decisoes do formulario dependem
+# deles: a frente escolhida filtra as instituicoes pelo TIPO, e a instituicao
+# escolhida filtra quem pode representar a outra parte. Sem um lugar para
+# cadastrar, essas duas listas so teriam o que a planilha trouxe — e uma agenda
+# com um orgao novo nao teria como ser registrada.
+#
+# ESCREVER EXIGE `administra_dicionarios`, e nao `escrita`: quem cadastra agenda
+# LE estes nomes o tempo todo e nao deve reescreve-los. Renomear uma instituicao
+# muda o que aparece em toda agenda que aponta para ela.
+
+
+class RepresentanteInicial(BaseModel):
+    """A primeira pessoa da instituicao, cadastrada JUNTO com ela.
+
+    Cadastrar a instituicao e depois abrir a edicao para acrescentar quem fala
+    por ela sao dois gestos para uma decisao so — e uma instituicao sem
+    ninguem nao serve para nada: o formulario de agenda so oferece pessoas
+    depois que a instituicao e escolhida, e a lista sairia vazia.
+
+    Vem AQUI DENTRO, e nao numa segunda requisicao, porque as duas escritas
+    precisam cair ou passar juntas. Separadas, uma falha na segunda deixaria a
+    instituicao criada e sem representante, e a tela teria de explicar um
+    estado meio-feito que ninguem pediu.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    nome: str = Field(min_length=1)
+    email: str | None = None
+    cargo: str | None = None
+
+
+class InstituicaoEntrada(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    nome: str = Field(min_length=1)
+    #: `veiculo`, `orgao`, `entidade`, `investidor`, `proposicao`,
+    #: `area_interna`. E o que liga a instituicao a uma FRENTE — ver
+    #: `TIPO_DE_INSTITUICAO` no dominio.
+    tipo: str
+    #: O nome POR EXTENSO. Quem escolhe "ABCON" no formulario de agenda
+    #: precisa saber que instituicao e essa, e a sigla nao diz.
+    nome_completo: str | None = None
+    esfera_id: int | None = None
+    uf: str | None = None
+    ativo: bool = True
+    #: Opcional: da para cadastrar a instituicao e preencher quem representa
+    #: depois. So nao da para faze-lo em DUAS transacoes.
+    representante: RepresentanteInicial | None = None
+
+
+class InterlocutorEntrada(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    nome: str = Field(min_length=1)
+    #: DE QUEM esta pessoa fala. E o que faz ela aparecer — ou nao — na lista
+    #: "Pela outra parte" de uma agenda.
+    instituicao_id: UUID | None = None
+    cargo: str | None = None
+    #: Como se chega na pessoa para marcar a agenda.
+    email: str | None = None
+    tipo: str | None = None
+    ativo: bool = True
+
+
+def _gravar(sessao, registro, *, ao_colidir: str, novo: bool = False):
+    """Grava, e traduz colisao de indice unico em mensagem de gente.
+
+    ESTA FUNCAO EXISTE POR UMA ORDEM QUE E FACIL DE ERRAR, e que eu errei: o
+    `add` precisa ficar DENTRO do savepoint. Um `flush` que falha marca a
+    SESSAO INTEIRA para rollback, e o savepoint so a protege se a insercao
+    inteira estiver dentro dele. Com o `add` de fora, o comando seguinte
+    estoura `PendingRollbackError` — um erro sem relacao aparente com o que a
+    pessoa fez.
+
+    Estava copiada em SEIS rotas. Uma regra que so vale se escrita numa ordem
+    especifica, repetida seis vezes, e seis chances de a proxima edicao
+    inverte-la em uma so.
+
+    `ao_colidir` e a mensagem que a pessoa le. O banco diria "duplicate key
+    value violates unique constraint", que nao ajuda ninguem a decidir o que
+    fazer.
+    """
+    try:
+        with sessao.begin_nested():
+            if novo:
+                sessao.add(registro)
+            sessao.flush()
+    except IntegrityError as erro:
+        raise RegraViolada(ao_colidir) from erro
+    return registro
+
+
+def _normalizar(nome: str) -> str:
+    """A forma comparavel do nome, como a planilha ja gravava.
+
+    O indice unico e `(nome_normalizado, tipo)`: sem normalizar aqui, "Folha de
+    S.Paulo" e "FOLHA DE S.PAULO" entrariam como duas instituicoes, e a segunda
+    agenda apontaria para a duplicata sem ninguem notar.
+    """
+    return unicodedata.normalize("NFKD", nome.strip().lower()).encode(
+        "ascii", "ignore"
+    ).decode()
+
+
+@rotas.post(
+    "/instituicoes", response_model=InstituicaoSaida, status_code=status.HTTP_201_CREATED
+)
+def criar_instituicao(
+    sessao: Sessao, usuario: UsuarioQueAdministraCadastros, entrada: InstituicaoEntrada
+) -> Instituicao:
+    if entrada.tipo not in TIPOS_DE_INSTITUICAO:
+        raise RegraViolada(
+            f"Tipo invalido: {entrada.tipo!r}. Use {', '.join(sorted(TIPOS_DE_INSTITUICAO))}."
+        )
+    registro = Instituicao(
+        nome=entrada.nome.strip(),
+        nome_normalizado=_normalizar(entrada.nome),
+        tipo=entrada.tipo,
+        nome_completo=entrada.nome_completo,
+        esfera_id=entrada.esfera_id,
+        uf=entrada.uf,
+        ativo=entrada.ativo,
+    )
+    _gravar(
+        sessao,
+        registro,
+        novo=True,
+        ao_colidir=(
+            f"Ja existe uma instituicao chamada {entrada.nome!r} do tipo "
+            f"{entrada.tipo!r}."
+        ),
+    )
+
+    # NA MESMA TRANSACAO. Se esta insercao falhar, a excecao sobe e o commit
+    # nao acontece — a instituicao tambem nao entra. E o que evita o estado
+    # meio-feito que duas requisicoes produziriam.
+    if entrada.representante is not None:
+        # PELO `_gravar` TAMBEM. A transacao ja era atomica — medido: forcando
+        # esta escrita a falhar, a instituicao tambem nao entra —, mas o
+        # `IntegrityError` saia como 500. Atomico e certo; 500 e mentira sobre
+        # o que aconteceu, e nao diz o que fazer.
+        _gravar(
+            sessao,
+            Interlocutor(
+                nome=entrada.representante.nome.strip(),
+                nome_normalizado=_normalizar(entrada.representante.nome),
+                instituicao_id=registro.id,
+                cargo=entrada.representante.cargo,
+                email=entrada.representante.email,
+            ),
+            novo=True,
+            ao_colidir=(
+                f"{entrada.representante.nome!r} ja esta cadastrada nesta "
+                "instituicao."
+            ),
+        )
+
+    return registro
+
+
+@rotas.put("/instituicoes/{id}", response_model=InstituicaoSaida)
+def editar_instituicao(
+    sessao: Sessao,
+    usuario: UsuarioQueAdministraCadastros,
+    id: UUID,
+    entrada: InstituicaoEntrada,
+) -> Instituicao:
+    registro = sessao.get(Instituicao, id)
+    if registro is None:
+        raise NaoEncontrado("Instituicao nao encontrada.")
+    if entrada.tipo not in TIPOS_DE_INSTITUICAO:
+        raise RegraViolada(
+            f"Tipo invalido: {entrada.tipo!r}. Use {', '.join(sorted(TIPOS_DE_INSTITUICAO))}."
+        )
+    # `representante` E IGNORADO NA EDICAO, de proposito: editar a instituicao
+    # nao e o lugar de acrescentar gente — para isso existe
+    # `POST /api/interlocutores`, que diz o que faz. Aceitar aqui criaria uma
+    # pessoa nova a cada salvamento de nome.
+    registro.nome = entrada.nome.strip()
+    registro.nome_normalizado = _normalizar(entrada.nome)
+    registro.tipo = entrada.tipo
+    registro.nome_completo = entrada.nome_completo
+    registro.esfera_id = entrada.esfera_id
+    registro.uf = entrada.uf
+    registro.ativo = entrada.ativo
+    _gravar(
+        sessao,
+        registro,
+        ao_colidir=(
+            f"Ja existe outra instituicao chamada {entrada.nome!r} do tipo "
+            f"{entrada.tipo!r}."
+        ),
+    )
+    return registro
+
+
+@rotas.post(
+    "/interlocutores",
+    response_model=InterlocutorSaida,
+    status_code=status.HTTP_201_CREATED,
+)
+def criar_interlocutor(
+    sessao: Sessao, usuario: UsuarioQueAdministraCadastros, entrada: InterlocutorEntrada
+) -> Interlocutor:
+    registro = Interlocutor(
+        nome=entrada.nome.strip(),
+        nome_normalizado=_normalizar(entrada.nome),
+        instituicao_id=entrada.instituicao_id,
+        cargo=entrada.cargo,
+        email=entrada.email,
+        tipo=entrada.tipo,
+        ativo=entrada.ativo,
+    )
+    # ESTA ROTA TINHA FICADO DE FORA do `_gravar`, e era o unico ponto do
+    # cadastro que ainda devolvia 500 numa duplicata — medido pela API. O
+    # indice unico e `(nome_normalizado, instituicao_id)`: a mesma pessoa duas
+    # vezes na mesma instituicao.
+    #
+    # Criar o helper e deixar duas chamadas de fora e o mesmo defeito que ele
+    # existe para evitar, so que mais dificil de ver.
+    return _gravar(
+        sessao,
+        registro,
+        novo=True,
+        ao_colidir=f"{entrada.nome!r} ja esta cadastrada nesta instituicao.",
+    )
+
+
+@rotas.put("/interlocutores/{id}", response_model=InterlocutorSaida)
+def editar_interlocutor(
+    sessao: Sessao,
+    usuario: UsuarioQueAdministraCadastros,
+    id: UUID,
+    entrada: InterlocutorEntrada,
+) -> Interlocutor:
+    registro = sessao.get(Interlocutor, id)
+    if registro is None:
+        raise NaoEncontrado("Pessoa nao encontrada.")
+    registro.nome = entrada.nome.strip()
+    registro.nome_normalizado = _normalizar(entrada.nome)
+    registro.instituicao_id = entrada.instituicao_id
+    registro.cargo = entrada.cargo
+    registro.email = entrada.email
+    registro.tipo = entrada.tipo
+    registro.ativo = entrada.ativo
+    return _gravar(
+        sessao,
+        registro,
+        ao_colidir=(
+            f"Ja existe outra pessoa chamada {entrada.nome!r} nesta instituicao."
+        ),
+    )
+
+
+@rotas.delete("/interlocutores/{id}", status_code=status.HTTP_204_NO_CONTENT)
+def remover_interlocutor(
+    sessao: Sessao, usuario: UsuarioQueAdministraCadastros, id: UUID
+) -> None:
+    """Apaga quem entrou por engano. Recusa quem ja esteve numa agenda.
+
+    APAGAR E DESLIGAR SAO COISAS DIFERENTES, e a diferenca e o historico.
+
+    Uma pessoa cadastrada com o nome errado, ou na instituicao errada, e lixo:
+    apagar e o certo. Uma pessoa que participou de uma reuniao e um FATO — e
+    apaga-la deixaria aquela agenda sem o nome de quem esteve na sala, que e
+    justamente o que este painel existe para guardar.
+
+    O banco ja recusaria, pela chave estrangeira. Mas a mensagem seria de
+    violacao de constraint, e quem lesse nao saberia o que fazer. Aqui a recusa
+    diz quantas agendas dependem dela e qual e o gesto certo.
+    """
+    from app.banco.tabelas_interacoes import InteracaoInterlocutor, InteracaoRegistro
+    from app.banco.tabelas_stakeholders import InterlocutorTema
+
+    registro = sessao.get(Interlocutor, id)
+    if registro is None:
+        raise NaoEncontrado("Pessoa nao encontrada.")
+
+    # AS DUAS FORMAS DE ESTAR NUMA AGENDA, contadas UMA vez.
+    #
+    # A pessoa aparece na lista (`interacao_interlocutor`) e, quando e a
+    # principal, tambem na coluna (`interacao.interlocutor_id`). Sao duas
+    # representacoes do MESMO fato — e somar as duas contagens dizia "participa
+    # de 2 agendas" para uma reuniao so. A mensagem existe para orientar; um
+    # numero inflado a torna suspeita.
+    #
+    # `union` (e nao `union all`) sobre os IDs resolve: a mesma agenda vinda
+    # pelos dois caminhos vira uma linha.
+    agendas = select(InteracaoInterlocutor.interacao_id).where(
+        InteracaoInterlocutor.interlocutor_id == id
+    ).union(
+        select(InteracaoRegistro.id).where(InteracaoRegistro.interlocutor_id == id)
+    )
+    em_agendas = sessao.scalar(
+        select(func.count()).select_from(agendas.subquery())
+    ) or 0
+
+    if em_agendas:
+        raise RegraViolada(
+            f"{registro.nome} participa de {em_agendas} "
+            f"{'agenda' if em_agendas == 1 else 'agendas'} e nao pode ser "
+            "apagada: o registro delas ficaria sem o nome de quem esteve na "
+            "sala. Use Desligar — ela sai das listas e o historico fica."
+        )
+
+    # O vinculo com temas e ligacao pura, sem valor de historico: sai junto.
+    sessao.execute(
+        delete(InterlocutorTema).where(InterlocutorTema.interlocutor_id == id)
+    )
+    sessao.delete(registro)
+    sessao.flush()
+
+
+# -- porta-vozes da Aegea ------------------------------------------------------
+#
+# `pessoa_aegea` ja existia, e o docstring de `PessoaAegeaTema` ja dizia para
+# que serve: sustentar a regra de "fora do escopo" — registro cujo tema nao esta
+# na lista do porta-voz que o conduziu. O conceito estava modelado e nao havia
+# como edita-lo: os temas de cada porta-voz vinham da planilha e ficavam.
+
+
+class PessoaAegeaEntrada(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    nome: str = Field(min_length=1)
+    cargo: str | None = None
+    email: str | None = None
+    #: `false` para quem participa de agendas sem falar pela companhia. Ver
+    #: `PAPEIS`: porta-voz conta no painel de exposicao, equipe nao.
+    eh_porta_voz: bool = True
+    ativo: bool = True
+    #: SOBRE O QUE esta pessoa pode falar. A lista inteira substitui a anterior,
+    #: que e o mesmo contrato das outras listas do produto.
+    temas: list[int] = Field(default_factory=list)
+
+
+def _aplicar_temas_da_pessoa(sessao, pessoa_id: UUID, temas: list[int]) -> None:
+    """Substitui a lista inteira, casando por (pessoa, tema).
+
+    Nao apaga e recria tudo: os vinculos que permanecem ficam intocados, e a
+    trilha nao registra uma saida e uma entrada para um tema que nunca mudou.
+    """
+    atuais = {
+        v.tema_id: v
+        for v in sessao.scalars(
+            select(PessoaAegeaTema).where(PessoaAegeaTema.pessoa_aegea_id == pessoa_id)
+        )
+    }
+    desejados = set(temas)
+
+    for tema_id, vinculo in atuais.items():
+        if tema_id not in desejados:
+            sessao.delete(vinculo)
+    for tema_id in desejados - set(atuais):
+        sessao.add(PessoaAegeaTema(pessoa_aegea_id=pessoa_id, tema_id=tema_id))
+    sessao.flush()
+
+
+@rotas.post(
+    "/pessoas-aegea",
+    response_model=PessoaAegeaSaida,
+    status_code=status.HTTP_201_CREATED,
+)
+def criar_pessoa_aegea(
+    sessao: Sessao, usuario: UsuarioQueAdministraCadastros, entrada: PessoaAegeaEntrada
+) -> PessoaAegea:
+    registro = PessoaAegea(
+        nome=entrada.nome.strip(),
+        nome_normalizado=_normalizar(entrada.nome),
+        cargo=entrada.cargo,
+        email=entrada.email,
+        eh_porta_voz=entrada.eh_porta_voz,
+        ativo=entrada.ativo,
+    )
+    _gravar(
+        sessao,
+        registro,
+        novo=True,
+        ao_colidir=f"Ja existe uma pessoa chamada {entrada.nome!r} na Aegea.",
+    )
+
+    _aplicar_temas_da_pessoa(sessao, registro.id, entrada.temas)
+    return registro
+
+
+@rotas.put("/pessoas-aegea/{id}", response_model=PessoaAegeaSaida)
+def editar_pessoa_aegea(
+    sessao: Sessao,
+    usuario: UsuarioQueAdministraCadastros,
+    id: UUID,
+    entrada: PessoaAegeaEntrada,
+) -> PessoaAegea:
+    registro = sessao.get(PessoaAegea, id)
+    if registro is None:
+        raise NaoEncontrado("Pessoa nao encontrada.")
+    registro.nome = entrada.nome.strip()
+    registro.nome_normalizado = _normalizar(entrada.nome)
+    registro.cargo = entrada.cargo
+    registro.email = entrada.email
+    registro.eh_porta_voz = entrada.eh_porta_voz
+    registro.ativo = entrada.ativo
+    _gravar(
+        sessao,
+        registro,
+        ao_colidir=f"Ja existe outra pessoa chamada {entrada.nome!r} na Aegea.",
+    )
+
+    _aplicar_temas_da_pessoa(sessao, registro.id, entrada.temas)
+    return registro
+
+
+@rotas.get("/pessoas-aegea/{id}/temas", response_model=list[int])
+def temas_do_porta_voz(
+    sessao: Sessao, usuario: UsuarioQueVeDiretorio, id: UUID
+) -> list[int]:
+    """Sobre o que esta pessoa pode falar.
+
+    Fora de `PessoaAegeaSaida` de proposito: a listagem de pessoas alimenta o
+    formulario de agenda, que nao usa os temas, e carrega-los ali seria uma
+    consulta por pessoa em toda abertura de tela.
+    """
+    return list(
+        sessao.scalars(
+            select(PessoaAegeaTema.tema_id).where(
+                PessoaAegeaTema.pessoa_aegea_id == id
+            )
+        )
+    )
+
+
+# -- assuntos ------------------------------------------------------------------
+
+
+class TemaEntrada(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    nome: str = Field(min_length=1)
+    #: `estrategico` ou `livre`. O primeiro e agenda da companhia; o segundo, o
+    #: que aparece sem ter sido planejado. A distincao ja existia no dicionario.
+    nivel: str = "livre"
+    ativo: bool = True
+
+
+class TemaSaida(BaseModel):
+    id: int
+    nome: str
+    nivel: str
+    ativo: bool
+
+
+NIVEIS_DE_TEMA = ("estrategico", "livre")
+
+
+@rotas.get("/temas", response_model=list[TemaSaida])
+def listar_temas(sessao: Sessao, usuario: UsuarioQueVeDiretorio) -> list[Tema]:
+    """A lista COMPLETA, inclusive os inativos.
+
+    `/api/dicionarios` devolve so os ativos, porque e o que alimenta filtro e
+    formulario. Quem administra precisa ver o que desativou — senao o assunto
+    some da tela e reaparece como "ja existe" na proxima tentativa de criar.
+    """
+    return list(sessao.scalars(select(Tema).order_by(Tema.nome)))
+
+
+@rotas.post("/temas", response_model=TemaSaida, status_code=status.HTTP_201_CREATED)
+def criar_tema(
+    sessao: Sessao, usuario: UsuarioQueAdministraCadastros, entrada: TemaEntrada
+) -> Tema:
+    if entrada.nivel not in NIVEIS_DE_TEMA:
+        raise RegraViolada(
+            f"Nivel invalido: {entrada.nivel!r}. Use {' ou '.join(NIVEIS_DE_TEMA)}."
+        )
+    registro = Tema(nome=entrada.nome.strip(), nivel=entrada.nivel, ativo=entrada.ativo)
+    return _gravar(
+        sessao,
+        registro,
+        novo=True,
+        ao_colidir=f"Ja existe um assunto chamado {entrada.nome!r}.",
+    )
+
+
+@rotas.put("/temas/{id}", response_model=TemaSaida)
+def editar_tema(
+    sessao: Sessao,
+    usuario: UsuarioQueAdministraCadastros,
+    id: int,
+    entrada: TemaEntrada,
+) -> Tema:
+    registro = sessao.get(Tema, id)
+    if registro is None:
+        raise NaoEncontrado("Assunto nao encontrado.")
+    if entrada.nivel not in NIVEIS_DE_TEMA:
+        raise RegraViolada(
+            f"Nivel invalido: {entrada.nivel!r}. Use {' ou '.join(NIVEIS_DE_TEMA)}."
+        )
+    registro.nome = entrada.nome.strip()
+    registro.nivel = entrada.nivel
+    registro.ativo = entrada.ativo
+    return _gravar(
+        sessao,
+        registro,
+        ao_colidir=f"Ja existe outro assunto chamado {entrada.nome!r}.",
+    )

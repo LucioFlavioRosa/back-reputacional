@@ -31,18 +31,18 @@ from app.banco.tabelas_catalogo import (
     Frente as FrenteTabela,
 )
 from app.banco.tabelas_interacoes import (
-    Arquivo,
     RELACAO_DA_EXTENSAO,
+    Arquivo,
     ImprensaRegistro,
     InstitucionalRegistro,
     InteracaoInterlocutor,
     InteracaoPessoaAegea,
-    Material,
     InteracaoRegistro,
     InteracaoTema,
     InternaRegistro,
     InvestidoresRegistro,
     LegislativoRegistro,
+    Material,
 )
 from app.dominio.erros import RegraViolada
 from app.dominio.frentes import (
@@ -56,10 +56,10 @@ from app.dominio.frentes import (
 )
 from app.dominio.identidade import Escopo
 from app.dominio.interacao import (
-    Interacao,
-    ParticipacaoAegea,
     ArquivoDoMaterial,
+    Interacao,
     MaterialDaAgenda,
+    ParticipacaoAegea,
     ParticipanteDaOutraParte,
 )
 from app.dominio.recorte import Recorte
@@ -163,6 +163,8 @@ class RepositorioSQL:
         registro.pendencias = interacao.pendencias
         registro.observacoes = interacao.observacoes
         registro.registro_url = interacao.registro_url
+        registro.modalidade = interacao.modalidade
+        registro.local = interacao.local
 
         registro.fonte = interacao.fonte
         registro.visivel = interacao.visivel
@@ -650,6 +652,8 @@ class RepositorioSQL:
             pendencias=registro.pendencias,
             observacoes=registro.observacoes,
             registro_url=registro.registro_url,
+            modalidade=registro.modalidade,
+            local=registro.local,
             extensao=self._extensao_do_registro(registro, frente),
             temas=tuple(sorted(vinculo.tema_id for vinculo in registro.temas)),
             participacoes=tuple(

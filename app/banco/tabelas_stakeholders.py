@@ -23,8 +23,16 @@ class Instituicao(Tabela):
     #: junta "Radamés" e "Radames". É esta coluna que carrega a unicidade e o
     #: índice de trigrama; `nome` fica intacto para exibição.
     nome_normalizado: Mapped[str] = mapped_column(Text)
-    #: veiculo | orgao | entidade | escritorio | investidor | proposicao | area_interna
+    #: veiculo | orgao | entidade | investidor | proposicao | area_interna
+    #:
+    #: A lista vale como `TIPOS_DE_INSTITUICAO` no dominio, derivada do mapa
+    #: frente -> tipo. `escritorio` constava aqui e nao tem nenhuma linha no
+    #: banco: era vocabulario morto, e some.
     tipo: Mapped[str] = mapped_column(Text)
+    #: O nome POR EXTENSO. `nome` guarda a forma curta — "ABCON", "ANA" —, que
+    #: e como se fala e como a lista fica legivel; quem nao convive com a sigla
+    #: nao sabe o que escolheu. Nulo no que veio da planilha.
+    nome_completo: Mapped[str | None] = mapped_column(Text, nullable=True)
     esfera_id: Mapped[int | None] = mapped_column(
         SmallInteger, ForeignKey("esfera.id"), nullable=True
     )
@@ -47,6 +55,9 @@ class Interlocutor(Tabela):
         PG_UUID(as_uuid=True), ForeignKey("instituicao.id"), nullable=True
     )
     cargo: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Como se chega na pessoa. Marcar agenda comeca por escrever para alguem, e
+    #: este endereco vivia fora do sistema.
+    email: Mapped[str | None] = mapped_column(Text, nullable=True)
     tipo: Mapped[str | None] = mapped_column(Text, nullable=True)
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
     criado_em: Mapped[datetime] = mapped_column(
@@ -79,6 +90,10 @@ class PessoaAegea(Tabela):
     nome: Mapped[str] = mapped_column(Text)
     nome_normalizado: Mapped[str] = mapped_column(Text, unique=True)
     cargo: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Como se aciona a pessoa da casa para articular a agenda. Antes disto o
+    #: endereco vivia no catalogo corporativo, fora daqui, e sem garantia de
+    #: ser o certo.
+    email: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: Aparece no diretório de porta-vozes e no painel de exposição.
     eh_porta_voz: Mapped[bool] = mapped_column(Boolean, default=False)
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)

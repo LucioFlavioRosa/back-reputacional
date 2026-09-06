@@ -47,6 +47,9 @@ from app.banco.tabelas_stakeholders import (
     PessoaAegea,
 )
 from app.casos_de_uso.autenticar_por_senha import definir_senha
+from app.dominio.frentes import (
+    TIPO_DE_INSTITUICAO as _TIPO_DE_INSTITUICAO,
+)
 from app.dominio.texto import normalizar
 
 AMOSTRA = Path(__file__).with_name("amostra_de_desenvolvimento.json")
@@ -73,14 +76,12 @@ STATUS_POR_ROTULO = {
 
 CLIMA_POR_ROTULO = {"Propositivo": "propositivo", "Neutro": "neutro", "Tenso": "tenso"}
 
+#: O MAPA MORA NO DOMINIO. Ele nasceu aqui, e uma regra de dominio dentro de um
+#: script de desenvolvimento e uma regra que a aplicacao nao conhece: a tela
+#: precisava do mesmo mapa para filtrar o campo de instituicao, e teria escrito
+#: a segunda copia.
 TIPO_DE_INSTITUICAO = {
-    "imprensa": "veiculo",
-    "governo": "orgao",
-    "parceiros": "entidade",
-    "eventos": "entidade",
-    "investidores": "investidor",
-    "legislativo": "proposicao",
-    "interna": "area_interna",
+    frente.value: tipo for frente, tipo in _TIPO_DE_INSTITUICAO.items()
 }
 
 #: Porta-vozes da amostra, distribuídos por frente como no protótipo.

@@ -18,6 +18,7 @@ import os
 import uuid
 from datetime import date
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine, select, text
@@ -107,6 +108,37 @@ def sessao():
 @pytest.fixture
 def cliente(sessao):
     from fastapi.testclient import TestClient
+
+    app.dependency_overrides[obter_sessao] = lambda: sessao
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def cliente_admin(sessao, monkeypatch):
+    """O mesmo cliente, mas com perfil que administra cadastros.
+
+    O `cliente` roda como `crm_edicao` — que EDITA agenda e NAO mexe nos
+    cadastros. A separacao e o ponto: quem cadastra agenda le esses nomes o
+    tempo todo, e renomear uma instituicao muda o que aparece em toda agenda
+    que aponta para ela.
+
+    `obter_configuracao` tem `lru_cache`, entao trocar a variavel de ambiente
+    nao bastaria: o valor ja lido continuaria valendo.
+    """
+    from fastapi.testclient import TestClient
+
+    from app.configuracao import Configuracao, obter_configuracao
+
+    padrao = obter_configuracao()
+    como_admin = Configuracao(
+        **{**padrao.model_dump(), "auth_mock_perfil": "plataforma_edicao"}
+    )
+    monkeypatch.setattr(
+        "app.api.dependencias.obter_configuracao", lambda: como_admin
+    )
 
     app.dependency_overrides[obter_sessao] = lambda: sessao
     try:
@@ -1113,3 +1145,545 @@ def test_o_status_enviado_vence_o_padrao(cliente, semente):
 
     assert resposta.status_code == 201, resposta.text
     assert resposta.json()["status"] == "realizado"
+
+
+# -- administracao dos cadastros ----------------------------------------------
+#
+# Instituicoes e interlocutores so entravam pela planilha. Passaram a ser
+# editaveis porque o formulario de agenda depende dos dois: a frente filtra as
+# instituicoes pelo TIPO, e a instituicao filtra quem pode representar a outra
+# parte. Sem cadastro, uma agenda com orgao novo nao teria como ser registrada.
+
+
+def test_cadastrar_instituicao_e_ela_aparece_no_diretorio(cliente_admin, semente):
+    """Criar e ler pela mesma API, e nao so gravar.
+
+    O diretorio e o que alimenta o formulario. Uma instituicao que entra no
+    banco e nao aparece na listagem nao serve para nada — foi assim que a
+    presenca do porta-voz se perdeu por tres revisoes.
+    """
+    resposta = cliente_admin.post(
+        "/api/instituicoes",
+        json={"nome": "Agencia Nacional de Aguas", "tipo": "orgao", "uf": "NA"},
+    )
+
+    assert resposta.status_code == 201, resposta.text
+    criada = resposta.json()
+    assert criada["tipo"] == "orgao"
+
+    listagem = cliente_admin.get("/api/instituicoes").json()
+    assert any(i["id"] == criada["id"] for i in listagem)
+
+
+def test_o_nome_e_normalizado_para_a_duplicata_nao_passar(cliente_admin, semente):
+    """O indice unico e `(nome_normalizado, tipo)`.
+
+    Sem normalizar na rota, "Folha de S.Paulo" e "FOLHA DE S.PAULO" entrariam
+    como duas instituicoes, e a segunda agenda apontaria para a duplicata sem
+    ninguem notar — dois registros da mesma casa, e nenhuma contagem certa.
+    """
+    cliente_admin.post("/api/instituicoes", json={"nome": "Folha de S.Paulo", "tipo": "veiculo"})
+
+    repetida = cliente_admin.post(
+        "/api/instituicoes", json={"nome": "  FOLHA DE S.PAULO  ", "tipo": "veiculo"}
+    )
+
+    assert repetida.status_code == 422
+    assert "Ja existe" in repetida.json()["detalhe"]
+
+
+def test_o_mesmo_nome_em_tipos_diferentes_e_permitido(cliente_admin, semente):
+    """A prova negativa da normalizacao.
+
+    Uma barragem pode ser `orgao` e uma proposicao sobre ela pode ter o mesmo
+    nome. O indice e por `(nome, tipo)`, e barrar so pelo nome recusaria
+    cadastro legitimo.
+    """
+    primeira = cliente_admin.post("/api/instituicoes", json={"nome": "Sabesp", "tipo": "orgao"})
+    segunda = cliente_admin.post("/api/instituicoes", json={"nome": "Sabesp", "tipo": "entidade"})
+
+    assert primeira.status_code == 201, primeira.text
+    assert segunda.status_code == 201, segunda.text
+
+
+def test_tipo_fora_do_mapa_de_frentes_e_recusado(cliente_admin, semente):
+    """Um tipo que nenhuma frente conversa seria invisivel.
+
+    A instituicao existiria no banco e nunca apareceria em formulario nenhum,
+    porque o campo so oferece o tipo da frente escolhida. Recusar na porta e
+    melhor do que criar um cadastro inalcancavel.
+    """
+    resposta = cliente_admin.post(
+        "/api/instituicoes", json={"nome": "Escritorio X", "tipo": "escritorio"}
+    )
+
+    assert resposta.status_code == 422
+    assert "Tipo invalido" in resposta.json()["detalhe"]
+
+
+def test_editar_instituicao_muda_o_que_o_diretorio_devolve(cliente_admin, semente):
+    criada = cliente_admin.post(
+        "/api/instituicoes", json={"nome": "Agencia X", "tipo": "orgao"}
+    ).json()
+
+    resposta = cliente_admin.put(
+        f"/api/instituicoes/{criada['id']}",
+        json={"nome": "Agencia Reguladora X", "tipo": "orgao", "ativo": False},
+    )
+
+    assert resposta.status_code == 200, resposta.text
+    assert resposta.json()["nome"] == "Agencia Reguladora X"
+    assert resposta.json()["ativo"] is False
+
+
+def test_cadastrar_pessoa_ligada_a_instituicao(cliente_admin, semente):
+    """E o vinculo que decide quem aparece em "Pela outra parte".
+
+    Sem `instituicao_id`, a pessoa fica fora de toda lista da tela: o
+    formulario so oferece quem pertence a instituicao escolhida.
+    """
+    instituicao = cliente_admin.post(
+        "/api/instituicoes", json={"nome": "Ministerio Y", "tipo": "orgao"}
+    ).json()
+
+    resposta = cliente_admin.post(
+        "/api/interlocutores",
+        json={
+            "nome": "Maria Souza",
+            "instituicao_id": instituicao["id"],
+            "cargo": "Secretaria de Saneamento",
+        },
+    )
+
+    assert resposta.status_code == 201, resposta.text
+    assert resposta.json()["instituicao_id"] == instituicao["id"]
+
+    listagem = cliente_admin.get("/api/interlocutores").json()
+    assert any(p["id"] == resposta.json()["id"] for p in listagem)
+
+
+def test_mudar_a_pessoa_de_instituicao(cliente_admin, semente):
+    """Alguem troca de emprego, e a agenda antiga nao pode perder o nome.
+
+    O vinculo muda para frente; as agendas ja gravadas continuam apontando para
+    a pessoa, e a tela as mantem na lista mesmo fora da instituicao atual.
+    """
+    origem = cliente_admin.post(
+        "/api/instituicoes", json={"nome": "Orgao A", "tipo": "orgao"}
+    ).json()
+    destino = cliente_admin.post(
+        "/api/instituicoes", json={"nome": "Orgao B", "tipo": "orgao"}
+    ).json()
+    pessoa = cliente_admin.post(
+        "/api/interlocutores", json={"nome": "Joao Lima", "instituicao_id": origem["id"]}
+    ).json()
+
+    resposta = cliente_admin.put(
+        f"/api/interlocutores/{pessoa['id']}",
+        json={"nome": "Joao Lima", "instituicao_id": destino["id"]},
+    )
+
+    assert resposta.status_code == 200, resposta.text
+    assert resposta.json()["instituicao_id"] == destino["id"]
+
+
+def test_instituicao_inexistente_devolve_404_e_nao_500(cliente_admin, semente):
+    resposta = cliente_admin.put(
+        "/api/instituicoes/00000000-0000-0000-0000-000000000000",
+        json={"nome": "Nao existe", "tipo": "orgao"},
+    )
+
+    assert resposta.status_code == 404
+
+
+def test_campo_desconhecido_e_recusado(cliente_admin, semente):
+    """`extra="forbid"`: um campo com nome errado seria descartado em silencio.
+
+    A tela mandaria `instituicao` em vez de `instituicao_id`, receberia 201, e a
+    pessoa entraria sem vinculo — invisivel em toda lista do formulario.
+    """
+    resposta = cliente_admin.post(
+        "/api/interlocutores", json={"nome": "Ana", "instituicao": "algum-id"}
+    )
+
+    assert resposta.status_code == 422
+
+
+def test_quem_edita_agenda_nao_administra_cadastros(cliente, semente):
+    """A separacao de papeis, medida.
+
+    `crm_edicao` cria e edita agenda o dia inteiro, e nao pode renomear uma
+    instituicao — isso mudaria o que aparece em TODA agenda que aponta para
+    ela, e na Base de todo mundo.
+    """
+    resposta = cliente.post(
+        "/api/instituicoes", json={"nome": "Nao deveria entrar", "tipo": "orgao"}
+    )
+
+    assert resposta.status_code == 403
+    assert "administra" in resposta.json()["detalhe"]
+
+
+def test_a_sessao_sobrevive_a_duplicata_recusada(sessao, semente):
+    """O motivo do `begin_nested` na rota, provado na camada em que ele age.
+
+    Um `IntegrityError` deixa a transacao envenenada: sem isolar o `flush` num
+    savepoint, o proximo comando falha com "transaction is aborted" — um erro
+    sem relacao aparente com o que a pessoa fez.
+
+    NAO da para medir isso por duas requisicoes: neste arquivo a sessao e
+    COMPARTILHADA entre elas, e o rollback da requisicao que devolveu 422 mata
+    a transacao do proprio fixture. O teste mediria o arranjo, e nao o codigo.
+    """
+
+    from app.api.stakeholders import InstituicaoEntrada, criar_instituicao
+    from app.dominio.erros import RegraViolada
+
+    criar_instituicao(
+        sessao, None, InstituicaoEntrada(nome="Estadao", tipo="veiculo")
+    )
+
+    with pytest.raises(RegraViolada):
+        criar_instituicao(
+            sessao, None, InstituicaoEntrada(nome="ESTADAO", tipo="veiculo")
+        )
+
+    # A prova: a sessao continua aceitando comando depois da recusa.
+    depois = criar_instituicao(
+        sessao, None, InstituicaoEntrada(nome="O Globo", tipo="veiculo")
+    )
+    assert depois.id is not None
+
+
+def test_cadastrar_instituicao_com_o_primeiro_representante(cliente_admin, semente):
+    """As duas coisas numa requisicao so.
+
+    Uma instituicao sem ninguem nao serve para nada: o formulario de agenda so
+    oferece pessoas depois que a instituicao e escolhida, e a lista sairia
+    vazia. Pedir dois gestos para uma decisao so era o caminho para metade das
+    instituicoes ficarem sem representante.
+    """
+    resposta = cliente_admin.post(
+        "/api/instituicoes",
+        json={
+            "nome": "ABCON",
+            "nome_completo": "Associacao Brasileira das Concessionarias Privadas",
+            "tipo": "entidade",
+            "representante": {
+                "nome": "Percy Soares",
+                "email": "percy@abcon.example",
+                "cargo": "Diretor executivo",
+            },
+        },
+    )
+
+    assert resposta.status_code == 201, resposta.text
+    criada = resposta.json()
+    assert criada["nome_completo"].startswith("Associacao")
+
+    pessoas = [
+        p
+        for p in cliente_admin.get("/api/interlocutores").json()
+        if p["instituicao_id"] == criada["id"]
+    ]
+    assert len(pessoas) == 1
+    assert pessoas[0]["email"] == "percy@abcon.example"
+    assert pessoas[0]["cargo"] == "Diretor executivo"
+
+
+def test_a_instituicao_nao_entra_sozinha_se_o_representante_falhar(
+    cliente_admin, semente
+):
+    """As duas escritas caem ou passam JUNTAS.
+
+    Em duas requisicoes, uma falha na segunda deixaria a instituicao criada e
+    sem representante — e a tela teria de explicar um estado meio-feito que
+    ninguem pediu. Aqui o `flush` do representante estoura antes do commit, e
+    nada entra.
+    """
+    resposta = cliente_admin.post(
+        "/api/instituicoes",
+        json={
+            "nome": "Instituicao Fantasma",
+            "tipo": "orgao",
+            # `nome` vazio: `min_length=1` recusa antes de qualquer escrita.
+            "representante": {"nome": ""},
+        },
+    )
+
+    assert resposta.status_code == 422
+    achadas = [
+        i
+        for i in cliente_admin.get("/api/instituicoes").json()
+        if i["nome"] == "Instituicao Fantasma"
+    ]
+    assert achadas == [], "a instituicao entrou sem o representante"
+
+
+def test_o_representante_e_opcional(cliente_admin, semente):
+    """A prova negativa: exigir representante travaria o cadastro.
+
+    Nem toda instituicao tem contato conhecido no dia em que entra na base.
+    """
+    resposta = cliente_admin.post(
+        "/api/instituicoes", json={"nome": "Orgao Sem Contato", "tipo": "orgao"}
+    )
+
+    assert resposta.status_code == 201, resposta.text
+
+
+def test_editar_instituicao_nao_cria_pessoa(cliente_admin, semente):
+    """`representante` e ignorado na edicao, e isso e deliberado.
+
+    Aceita-lo criaria uma pessoa nova a cada salvamento de nome — e o cadastro
+    encheria de duplicatas sem ninguem entender de onde vieram.
+    """
+    criada = cliente_admin.post(
+        "/api/instituicoes", json={"nome": "Orgao Z", "tipo": "orgao"}
+    ).json()
+
+    cliente_admin.put(
+        f"/api/instituicoes/{criada['id']}",
+        json={
+            "nome": "Orgao Z",
+            "tipo": "orgao",
+            "representante": {"nome": "Nao deve ser criado"},
+        },
+    )
+
+    pessoas = [
+        p
+        for p in cliente_admin.get("/api/interlocutores").json()
+        if p["instituicao_id"] == criada["id"]
+    ]
+    assert pessoas == []
+
+
+# -- apagar e desligar sao coisas diferentes -----------------------------------
+
+
+def test_apagar_pessoa_que_entrou_por_engano(cliente_admin, semente):
+    """Nome errado, instituicao errada: e lixo, e apagar e o certo."""
+    instituicao = cliente_admin.post(
+        "/api/instituicoes", json={"nome": "Orgao W", "tipo": "orgao"}
+    ).json()
+    pessoa = cliente_admin.post(
+        "/api/interlocutores",
+        json={"nome": "Nome Digitado Errado", "instituicao_id": instituicao["id"]},
+    ).json()
+
+    resposta = cliente_admin.delete(f"/api/interlocutores/{pessoa['id']}")
+
+    assert resposta.status_code == 204, resposta.text
+    restantes = [
+        p for p in cliente_admin.get("/api/interlocutores").json() if p["id"] == pessoa["id"]
+    ]
+    assert restantes == []
+
+
+def test_nao_apaga_quem_ja_esteve_numa_agenda(cliente_admin, semente):
+    """Apagar deixaria a agenda sem o nome de quem esteve na sala.
+
+    E o que este painel existe para guardar. O banco recusaria pela chave
+    estrangeira, mas com mensagem de constraint — e quem lesse nao saberia o
+    que fazer. A recusa aqui diz quantas agendas dependem e qual e o gesto.
+    """
+    instituicao = cliente_admin.post(
+        "/api/instituicoes", json={"nome": "Orgao V", "tipo": "orgao"}
+    ).json()
+    pessoa = cliente_admin.post(
+        "/api/interlocutores",
+        json={"nome": "Esteve na reuniao", "instituicao_id": instituicao["id"]},
+    ).json()
+
+    agenda = corpo(semente)
+    agenda["instituicao_id"] = instituicao["id"]
+    agenda["outra_parte"] = [{"interlocutor_id": pessoa["id"], "principal": True}]
+    criada = cliente_admin.post("/api/interacoes", json=agenda)
+    assert criada.status_code == 201, criada.text
+
+    resposta = cliente_admin.delete(f"/api/interlocutores/{pessoa['id']}")
+
+    assert resposta.status_code == 422
+    detalhe = resposta.json()["detalhe"]
+    assert "1 agenda" in detalhe
+    #: E diz o que fazer, e nao so o que nao da.
+    assert "Desligar" in detalhe
+
+
+def test_desligar_e_o_caminho_para_quem_tem_historico(cliente_admin, semente):
+    """A prova positiva do teste acima: sai das listas, o historico fica."""
+    instituicao = cliente_admin.post(
+        "/api/instituicoes", json={"nome": "Orgao U", "tipo": "orgao"}
+    ).json()
+    pessoa = cliente_admin.post(
+        "/api/interlocutores",
+        json={"nome": "Ja participou", "instituicao_id": instituicao["id"]},
+    ).json()
+
+    resposta = cliente_admin.put(
+        f"/api/interlocutores/{pessoa['id']}",
+        json={
+            "nome": "Ja participou",
+            "instituicao_id": instituicao["id"],
+            "ativo": False,
+        },
+    )
+
+    assert resposta.status_code == 200, resposta.text
+    assert resposta.json()["ativo"] is False
+
+
+# -- porta-vozes e os assuntos que eles falam ----------------------------------
+
+
+def test_porta_voz_com_os_assuntos_que_pode_falar(cliente_admin, semente):
+    """A regra de "fora do escopo" ja estava modelada e nao era editavel.
+
+    `PessoaAegeaTema` existe desde o comeco, com o docstring dizendo para que
+    serve: registro cujo tema nao esta na lista do porta-voz que o conduziu. Os
+    temas vinham da planilha e ficavam.
+    """
+    temas = cliente_admin.get("/api/temas").json()
+    escolhidos = [t["id"] for t in temas[:2]]
+
+    resposta = cliente_admin.post(
+        "/api/pessoas-aegea",
+        json={
+            "nome": f"Porta-voz {uuid4().hex[:6]}",
+            "cargo": "Diretor de Relacoes Institucionais",
+            "email": "radames@aegea.example",
+            "temas": escolhidos,
+        },
+    )
+
+    assert resposta.status_code == 201, resposta.text
+    criada = resposta.json()
+    assert criada["email"] == "radames@aegea.example"
+
+    de_volta = cliente_admin.get(f"/api/pessoas-aegea/{criada['id']}/temas").json()
+    assert sorted(de_volta) == sorted(escolhidos)
+
+
+def test_a_lista_de_assuntos_substitui_a_anterior(cliente_admin, semente):
+    """A lista inteira manda, como nas demais listas do produto.
+
+    E o `_aplicar_temas_da_pessoa` casa por (pessoa, tema): o que permanece nao
+    sai e volta, e a trilha nao registra movimento para um tema que nao mudou.
+    """
+    temas = [t["id"] for t in cliente_admin.get("/api/temas").json()[:3]]
+    nome_unico = f"Porta-voz {uuid4().hex[:6]}"
+    pessoa = cliente_admin.post(
+        "/api/pessoas-aegea", json={"nome": nome_unico, "temas": temas[:2]}
+    ).json()
+
+    cliente_admin.put(
+        f"/api/pessoas-aegea/{pessoa['id']}",
+        json={"nome": nome_unico, "temas": temas[1:]},
+    )
+
+    de_volta = cliente_admin.get(f"/api/pessoas-aegea/{pessoa['id']}/temas").json()
+    assert sorted(de_volta) == sorted(temas[1:])
+
+
+def test_porta_voz_sem_assunto_e_permitido(cliente_admin, semente):
+    """Exigir assunto travaria o cadastro de quem ainda nao teve a lista
+    definida — e uma pessoa sem tema so significa que nada foi autorizado."""
+    resposta = cliente_admin.post("/api/pessoas-aegea", json={"nome": "Sem temas"})
+
+    assert resposta.status_code == 201, resposta.text
+    assert cliente_admin.get(f"/api/pessoas-aegea/{resposta.json()['id']}/temas").json() == []
+
+
+# -- assuntos ------------------------------------------------------------------
+
+
+def test_cadastrar_assunto(cliente_admin, semente):
+    resposta = cliente_admin.post(
+        "/api/temas", json={"nome": "Reajuste tarifario 2027", "nivel": "estrategico"}
+    )
+
+    assert resposta.status_code == 201, resposta.text
+    assert resposta.json()["nivel"] == "estrategico"
+
+
+def test_nivel_inventado_e_recusado(cliente_admin, semente):
+    resposta = cliente_admin.post(
+        "/api/temas", json={"nome": "Qualquer", "nivel": "importante"}
+    )
+
+    assert resposta.status_code == 422
+    assert "estrategico" in resposta.json()["detalhe"]
+
+
+def test_a_listagem_de_assuntos_mostra_os_inativos(cliente_admin, semente):
+    """`/api/dicionarios` devolve so os ativos, porque alimenta filtro e
+    formulario. Quem administra precisa ver o que desativou — senao o assunto
+    some da tela e reaparece como "ja existe" na proxima tentativa de criar.
+    """
+    criado = cliente_admin.post(
+        "/api/temas", json={"nome": "Assunto encerrado"}
+    ).json()
+    cliente_admin.put(
+        f"/api/temas/{criado['id']}", json={"nome": "Assunto encerrado", "ativo": False}
+    )
+
+    listagem = cliente_admin.get("/api/temas").json()
+    achado = next(t for t in listagem if t["id"] == criado["id"])
+    assert achado["ativo"] is False
+
+
+def test_quem_edita_agenda_nao_cadastra_assunto(cliente, semente):
+    """A mesma separacao de papeis das instituicoes."""
+    resposta = cliente.post("/api/temas", json={"nome": "Nao deveria entrar"})
+
+    assert resposta.status_code == 403
+
+
+def test_pessoa_repetida_na_mesma_instituicao_e_recusada_com_mensagem(
+    cliente_admin, semente
+):
+    """Medido pela API: a segunda dava 500, e nao erro de dominio.
+
+    As rotas de interlocutor tinham ficado FORA do `_gravar` — o helper que
+    existe justamente para traduzir colisao de indice unico em mensagem de
+    gente. Criar o helper e deixar duas chamadas de fora e o mesmo defeito que
+    ele evita, so que mais dificil de ver.
+    """
+    instituicao = cliente_admin.post(
+        "/api/instituicoes", json={"nome": f"Orgao {uuid4().hex[:6]}", "tipo": "orgao"}
+    ).json()
+
+    primeira = cliente_admin.post(
+        "/api/interlocutores",
+        json={"nome": "Ana Prado", "instituicao_id": instituicao["id"]},
+    )
+    repetida = cliente_admin.post(
+        "/api/interlocutores",
+        json={"nome": "  ANA PRADO  ", "instituicao_id": instituicao["id"]},
+    )
+
+    assert primeira.status_code == 201, primeira.text
+    assert repetida.status_code == 422, repetida.text
+    assert "ja esta cadastrada" in repetida.json()["detalhe"]
+
+
+def test_a_mesma_pessoa_em_instituicoes_diferentes_e_permitida(cliente_admin, semente):
+    """A prova negativa: o indice e `(nome, instituicao)`, e nao so o nome.
+
+    Homonimos existem, e a mesma pessoa pode representar duas entidades.
+    Barrar pelo nome sozinho recusaria cadastro legitimo.
+    """
+    a = cliente_admin.post(
+        "/api/instituicoes", json={"nome": f"Orgao {uuid4().hex[:6]}", "tipo": "orgao"}
+    ).json()
+    b = cliente_admin.post(
+        "/api/instituicoes", json={"nome": f"Orgao {uuid4().hex[:6]}", "tipo": "orgao"}
+    ).json()
+
+    for instituicao in (a, b):
+        resposta = cliente_admin.post(
+            "/api/interlocutores",
+            json={"nome": "Carlos Nunes", "instituicao_id": instituicao["id"]},
+        )
+        assert resposta.status_code == 201, resposta.text

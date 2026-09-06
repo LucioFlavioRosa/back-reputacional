@@ -32,6 +32,7 @@ from app.banco.tabelas_catalogo import (
     UnidadeNegocio,
 )
 from app.banco.tabelas_interacoes import (
+    InteracaoInterlocutor,
     InteracaoPessoaAegea,
     InteracaoRegistro,
     InteracaoTema,
@@ -252,8 +253,19 @@ def condicoes(
         # `relato` é o campo que `InteracaoSaida` anula para quem não tem
         # `ve_campos_sensiveis` — deixá-lo aqui devolveria por dedução o que a
         # serialização acabou de esconder.
+        # `expectativa` E OS TEMAS ENTRAM AQUI porque a pauta saiu da tela.
+        #
+        # A busca procurava o assunto em `pauta`, e agenda criada pelo
+        # formulario nao tem mais pauta: o assunto dela mora em `temas` (o
+        # classificado) e em `expectativa` (o que se quer da reuniao). Sem
+        # estes dois, procurar por "reajuste" acharia so os 60 registros
+        # vindos da planilha — e a busca pareceria funcionar, o que e pior do
+        # que quebrar.
+        #
+        # `pauta` continua na lista: e o que os registros antigos tem.
         colunas = [
             InteracaoRegistro.pauta.ilike(termo),
+            InteracaoRegistro.expectativa.ilike(termo),
             InteracaoRegistro.encaminhamentos.ilike(termo),
         ]
         if busca_em_campos_sensiveis:
@@ -276,6 +288,19 @@ def condicoes(
                         and_(
                             Interlocutor.id == InteracaoRegistro.interlocutor_id,
                             Interlocutor.nome_normalizado.ilike(termo_normalizado),
+                        )
+                    )
+                ),
+                # O ASSUNTO CLASSIFICADO. Procurar "reajuste" precisa achar a
+                # agenda marcada com o tema "Reajuste tarifario", que e como o
+                # assunto e registrado desde que a pauta saiu do formulario.
+                exists(
+                    select(InteracaoTema.tema_id).where(
+                        and_(
+                            InteracaoTema.interacao_id == InteracaoRegistro.id,
+                            InteracaoTema.tema_id.in_(
+                                select(Tema.id).where(Tema.nome.ilike(termo))
+                            ),
                         )
                     )
                 ),
