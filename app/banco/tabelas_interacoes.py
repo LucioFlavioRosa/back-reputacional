@@ -104,13 +104,55 @@ class InteracaoRegistro(Tabela):
     #: `aegea` ou `outra_parte`. Declinar é decisão, e o lado muda a leitura.
     declinado_por: Mapped[str | None] = mapped_column(Text, nullable=True)
     motivo_declinio: Mapped[str | None] = mapped_column(Text, nullable=True)
-    #: A agenda que deu origem a esta. É o que encadeia a evolução da relação.
-    origem_interacao_id: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("interacao.id", ondelete="SET NULL"),
-        nullable=True,
+    #: DE QUAIS agendas esta decorre. Plural desde a 0017: duas reunioes podem
+    #: levar juntas a uma terceira, e uma reuniao pode abrir varias frentes.
+    #:
+    #: Era `origem_interacao_id`, uma coluna — um pai so. Isso descrevia uma
+    #: arvore, e a realidade que o painel precisa mostrar e um grafo.
+    origens: Mapped[list[InteracaoOrigem]] = relationship(
+        "InteracaoOrigem",
+        foreign_keys="InteracaoOrigem.interacao_id",
+        cascade="all, delete-orphan",
+        lazy="selectin",
     )
-    #: Só a intenção de continuidade. A próxima agenda, quando existir, aponta
-    #: para esta por `origem_interacao_id`.
+    #: QUEM DECORRE DESTA. O lado inverso, e so leitura (`viewonly`): quem
+    #: escreve o elo e a agenda que descende, e ter os dois lados gravaveis
+    #: seria a mesma relacao com duas donas.
+    #:
+    #: `selectin` faz UMA consulta para a pagina inteira. Sem isto, a coluna da
+    #: Base que diz "faz parte de uma cadeia" custaria uma consulta por linha.
+    #: MEDIDO: uma pagina de 200 agendas faz DUAS consultas em
+    #: `interacao_origem`, uma por lado.
+    #:
+    #: Sem `cascade`: apagar esta agenda nao pode apagar as que decorrem dela.
+    #:
+    #: -- POR QUE NAO PASSA PELA AGENDA DO OUTRO LADO ---------------------
+    #:
+    #: A versao anterior destas duas relacoes usava `secondary="interacao_origem"`
+    #: para ja excluir as ARQUIVADAS no proprio join. Funcionou, e trouxe N+1:
+    #: 400 consultas numa pagina de 200 registros, medidas com `log_statement`.
+    #:
+    #: A causa e que `selectin` NAO carrega em lote relacao AUTORREFERENTE — e
+    #: com `secondary` os dois lados sao `InteracaoRegistro`. O SQLAlchemy cai
+    #: para carregamento por objeto sem erro nenhum: a regra fica certa e o
+    #: custo multiplica em silencio.
+    #:
+    #: Quem filtra as arquivadas agora e o repositorio, com UMA consulta por
+    #: pagina — ver `_arquivadas_entre`.
+    derivadas: Mapped[list[InteracaoOrigem]] = relationship(
+        "InteracaoOrigem",
+        foreign_keys="InteracaoOrigem.origem_id",
+        viewonly=True,
+        lazy="selectin",
+    )
+    #: So a INTENCAO de continuidade, e por isso nao e redundante com
+    #: `origens`: ela existe ANTES de haver agenda filha, e responde "achamos
+    #: que isto continua?" — enquanto `origens` responde "de onde isto veio".
+    #: Uma agenda pode prever desdobramento e nunca ter um; e o inverso tambem
+    #: acontece, e a distancia entre os dois e material para o painel.
+    #:
+    #: A proxima agenda, quando existir, aponta para esta em `interacao_origem`
+    #: — nao mais por coluna, desde a 0017.
     preve_desdobramento: Mapped[bool | None] = mapped_column(
         Boolean, nullable=True
     )
@@ -394,6 +436,30 @@ class Arquivo(Tabela):
     #: `default=lambda: datetime.now(UTC)` copiando outro arquivo — e `UTC` nao
     #: e importado aqui, entao a primeira insercao estourou `NameError` de
     #: dentro do driver, longe da linha errada.
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class InteracaoOrigem(Tabela):
+    """De qual agenda esta agenda decorre.
+
+    MUITOS para muitos. `interacao_id` e quem descende; `origem_id` e quem veio
+    antes. As duas apontam para `interacao`, e por isso toda relacao daqui
+    precisa dizer QUAL das duas chaves usa — sem `foreign_keys` explicito o
+    SQLAlchemy nao tem como escolher.
+    """
+
+    __tablename__ = "interacao_origem"
+
+    interacao_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("interacao.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    origem_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("interacao.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
     criado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

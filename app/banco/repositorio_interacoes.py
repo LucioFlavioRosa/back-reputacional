@@ -36,6 +36,7 @@ from app.banco.tabelas_interacoes import (
     ImprensaRegistro,
     InstitucionalRegistro,
     InteracaoInterlocutor,
+    InteracaoOrigem,
     InteracaoPessoaAegea,
     InteracaoRegistro,
     InteracaoTema,
@@ -188,12 +189,7 @@ class RepositorioSQL:
         )
         registro.declinado_por = interacao.declinado_por
         registro.motivo_declinio = interacao.motivo_declinio
-        if (
-            interacao.origem_interacao_id is not None
-            and interacao.origem_interacao_id != registro.origem_interacao_id
-        ):
-            self._exigir_que_nao_feche_ciclo(interacao)
-        registro.origem_interacao_id = interacao.origem_interacao_id
+        self._aplicar_origens(interacao, registro)
         registro.preve_desdobramento = interacao.preve_desdobramento
 
         self._aplicar_extensao(interacao, registro)
@@ -202,37 +198,72 @@ class RepositorioSQL:
         self._aplicar_outra_parte(interacao, registro)
         self._aplicar_materiais(interacao, registro)
 
-    def _exigir_que_nao_feche_ciclo(self, interacao: Interacao) -> None:
+    def _aplicar_origens(
+        self, interacao: Interacao, registro: InteracaoRegistro
+    ) -> None:
+        """Substitui a lista de origens, casando por (interacao, origem).
+
+        Nao apaga e recria: o elo que permanece fica intocado, e a trilha nao
+        registra uma saida e uma entrada para uma relacao que nunca mudou.
+
+        A guarda de ciclo roda so para o que ENTRA agora. Revalidar os elos que
+        ja estavam custaria uma travessia por elo a cada salvamento de qualquer
+        campo — e eles ja passaram pela guarda quando entraram.
+        """
+        atuais = {v.origem_id: v for v in registro.origens}
+        desejadas = set(interacao.origens)
+
+        for origem_id, vinculo in atuais.items():
+            if origem_id not in desejadas:
+                registro.origens.remove(vinculo)
+
+        novas = desejadas - set(atuais)
+        if novas:
+            self._exigir_que_nao_feche_ciclo(interacao.id, novas)
+            registro.origens.extend(
+                InteracaoOrigem(interacao_id=registro.id, origem_id=origem_id)
+                for origem_id in novas
+            )
+
+    def _exigir_que_nao_feche_ciclo(self, alvo, origens) -> None:
         """Uma agenda não pode descender de si mesma, em nenhuma profundidade.
 
         O banco barra `A -> A` com um `check`, e o domínio dá a mensagem. Mas
-        `A -> B -> A` passava pelos dois — medido pela API — e fecha um anel:
-        qualquer leitura que suba a cadeia ("de onde veio esta agenda?") roda
-        para sempre, e a ficha que mostrar o histórico trava.
+        `A -> B -> A` passa pelos dois e fecha um anel: qualquer leitura que
+        suba a cadeia — "de onde veio esta agenda?", que é o que o grafo faz —
+        roda para sempre, e a tela trava.
 
-        Enquanto não havia como escolher a origem pela tela, o risco era
-        teórico. Com o campo na tela, virou um clique.
+        AGORA É TRAVESSIA DE GRAFO, e não de cadeia. Com um pai só, subir era
+        seguir uma linha. Com vários, cada nó tem N antecessores e o caminho se
+        ramifica: um ciclo pode fechar por qualquer ramo, e checar só o primeiro
+        deixaria passar o resto.
 
-        A checagem sobe a cadeia da origem PROPOSTA e recusa se encontrar esta
-        interação. `profundidade < 50` é um freio para o caso de os dados JÁ
+        `union` (e não `union all`) é o que faz a travessia terminar num grafo
+        com losangos — A e B levam a C, e ambos vêm de X: sem deduplicar, X é
+        visitado uma vez por caminho, e o custo explode antes da profundidade
+        máxima.
+
+        `profundidade < 50` continua sendo o freio para o caso de os dados JÁ
         estarem em anel — sem ele, a própria checagem herdaria o laço.
         """
         fecharia = self.sessao.scalar(
             text(
                 """
-                with recursive cadeia(id, origem_interacao_id, profundidade) as (
-                  select id, origem_interacao_id, 1
-                    from interacao where id = :origem
-                  union all
-                  select i.id, i.origem_interacao_id, c.profundidade + 1
-                    from interacao i
-                    join cadeia c on i.id = c.origem_interacao_id
-                   where c.profundidade < 50
+                with recursive antecessores(id, profundidade) as (
+                  select origem_id, 1
+                    from interacao_origem
+                   where interacao_id = any(:origens)
+                  union
+                  select o.origem_id, a.profundidade + 1
+                    from interacao_origem o
+                    join antecessores a on o.interacao_id = a.id
+                   where a.profundidade < 50
                 )
-                select exists (select 1 from cadeia where id = :alvo)
+                select :alvo = any(:origens)
+                    or exists (select 1 from antecessores where id = :alvo)
                 """
             ),
-            {"origem": interacao.origem_interacao_id, "alvo": interacao.id},
+            {"origens": list(origens), "alvo": alvo},
         )
         if fecharia:
             raise RegraViolada(
@@ -601,8 +632,15 @@ class RepositorioSQL:
         )
 
         registros = self.sessao.scalars(consulta).unique().all()
+        # UMA consulta para a pagina inteira, e nao uma por linha.
+        arquivadas = self._arquivadas_entre(
+            {v.origem_id for r in registros for v in r.origens}
+            | {v.interacao_id for r in registros for v in r.derivadas}
+        )
         return Pagina(
-            itens=tuple(self._para_dominio(r) for r in registros),
+            itens=tuple(
+                self._para_dominio(r, arquivadas=arquivadas) for r in registros
+            ),
             total=total or 0,
             pagina=pagina,
             tamanho=tamanho,
@@ -628,7 +666,51 @@ class RepositorioSQL:
 
     # -- tradução para o domínio ---------------------------------------------
 
-    def _para_dominio(self, registro: InteracaoRegistro) -> Interacao:
+    def _arquivadas_entre(self, ids: set[UUID]) -> frozenset[UUID]:
+        """Quais destas agendas estao arquivadas — UMA consulta por pagina.
+
+        O `delete` da API e SOFT: `arquivado_em` recebe data e o registro sai
+        das consultas, mas a LINHA fica. Logo o `on delete cascade` da 0017
+        nunca dispara pelo fluxo real, e o elo sobrevive a agenda.
+
+        Sem este filtro, o efeito medido era: a descendente continuava dizendo
+        que decorre de uma agenda cujo `GET` responde 404, e a Base marcava
+        "levou a 1" para uma cadeia que ninguem consegue abrir.
+
+        A filtragem mora AQUI, e nao no join da relacao, porque com `secondary`
+        os dois lados sao `InteracaoRegistro` — relacao autorreferente, que
+        `selectin` nao carrega em lote. Ver o comentario em
+        `tabelas_interacoes.py`.
+        """
+        if not ids:
+            return frozenset()
+        return frozenset(
+            self.sessao.scalars(
+                select(InteracaoRegistro.id).where(
+                    InteracaoRegistro.id.in_(ids),
+                    InteracaoRegistro.arquivado_em.is_not(None),
+                )
+            )
+        )
+
+    def _arquivadas_do_registro(self, registro: InteracaoRegistro) -> frozenset[UUID]:
+        """O mesmo, para UM registro. Usado por `obter` e pela escrita."""
+        return self._arquivadas_entre(
+            {v.origem_id for v in registro.origens}
+            | {v.interacao_id for v in registro.derivadas}
+        )
+
+    def _para_dominio(
+        self,
+        registro: InteracaoRegistro,
+        *,
+        arquivadas: frozenset[UUID] | None = None,
+    ) -> Interacao:
+        fora = (
+            arquivadas
+            if arquivadas is not None
+            else self._arquivadas_do_registro(registro)
+        )
         frente = Frente(self._codigo_de(FrenteTabela, registro.frente_id))
         return Interacao(
             id=registro.id,
@@ -670,7 +752,21 @@ class RepositorioSQL:
             ),
             declinado_por=registro.declinado_por,
             motivo_declinio=registro.motivo_declinio,
-            origem_interacao_id=registro.origem_interacao_id,
+            # Ordenado para a ficha e o grafo nao reordenarem as setas a
+            # cada leitura — quem olha duas vezes acharia que algo mudou.
+            # SEM AS ARQUIVADAS. Uma agenda arquivada nao aparece em lugar
+            # nenhum, e apontar para ela desenharia seta para um no que a tela
+            # nao mostra. Quem monta `fora` e `_arquivadas_entre`, com UMA
+            # consulta por pagina.
+            origens=tuple(
+                sorted(
+                    (v.origem_id for v in registro.origens if v.origem_id not in fora),
+                    key=str,
+                )
+            ),
+            derivadas=sum(
+                1 for v in registro.derivadas if v.interacao_id not in fora
+            ),
             preve_desdobramento=registro.preve_desdobramento,
             outra_parte=_com_o_principal(registro),
             materiais=tuple(

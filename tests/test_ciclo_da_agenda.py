@@ -21,7 +21,7 @@ from datetime import date
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.orm import Session
 
 from app.banco.repositorio_interacoes import RepositorioSQL
@@ -313,12 +313,12 @@ def test_uma_agenda_desdobra_da_outra(sessao, instituicao, autor):
             autor,
             pauta="Retomada do reajuste",
             data_interacao=date(2026, 5, 4),
-            origem_interacao_id=primeira.id,
+            origens=(primeira.id,),
         )
     )
     sessao.flush()
 
-    assert repositorio.obter(segunda.id, escopo=IRRESTRITO).origem_interacao_id == primeira.id
+    assert repositorio.obter(segunda.id, escopo=IRRESTRITO).origens == (primeira.id,)
 
 
 def test_declinio_guarda_o_lado_e_o_motivo(sessao, instituicao, autor):
@@ -1226,7 +1226,7 @@ def test_desdobramento_nao_pode_fechar_ciclo(sessao, instituicao, autor):
     primeira = repositorio.adicionar(_agenda(instituicao, autor, pauta="A"))
     sessao.flush()
     segunda = repositorio.adicionar(
-        _agenda(instituicao, autor, pauta="B", origem_interacao_id=primeira.id)
+        _agenda(instituicao, autor, pauta="B", origens=(primeira.id,))
     )
     sessao.flush()
 
@@ -1234,7 +1234,7 @@ def test_desdobramento_nao_pode_fechar_ciclo(sessao, instituicao, autor):
         repositorio.atualizar(
             replace(
                 repositorio.obter(primeira.id, escopo=IRRESTRITO),
-                origem_interacao_id=segunda.id,
+                origens=(segunda.id,),
             )
         )
 
@@ -1251,15 +1251,15 @@ def test_cadeia_longa_de_desdobramento_continua_valendo(sessao, instituicao, aut
     a = repositorio.adicionar(_agenda(instituicao, autor, pauta="A"))
     sessao.flush()
     b = repositorio.adicionar(
-        _agenda(instituicao, autor, pauta="B", origem_interacao_id=a.id)
+        _agenda(instituicao, autor, pauta="B", origens=(a.id,))
     )
     sessao.flush()
     c = repositorio.adicionar(
-        _agenda(instituicao, autor, pauta="C", origem_interacao_id=b.id)
+        _agenda(instituicao, autor, pauta="C", origens=(b.id,))
     )
     sessao.flush()
 
-    assert repositorio.obter(c.id, escopo=IRRESTRITO).origem_interacao_id == b.id
+    assert repositorio.obter(c.id, escopo=IRRESTRITO).origens == (b.id,)
 
 
 # -- o arquivo do material -----------------------------------------------------
@@ -1517,3 +1517,228 @@ def test_nao_informado_continua_nao_informado_tambem_aqui(sessao, instituicao, a
     lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
     assert lida.modalidade is None
     assert lida.local is None
+
+
+# -- a linhagem e um GRAFO, e nao uma arvore -----------------------------------
+#
+# O caso que motivou a 0017: duas reunioes — uma com a agencia reguladora e
+# outra com a bancada — levaram JUNTAS a uma terceira, que abriu duas frentes
+# com bancos de fomento. Com um pai so, a terceira aponta para UMA das duas, e a
+# outra some do encadeamento.
+
+
+def test_duas_agendas_levam_juntas_a_uma_terceira(sessao, instituicao, autor):
+    """O caso que a coluna unica nao conseguia representar."""
+    repositorio = RepositorioSQL(sessao)
+
+    agencia = repositorio.adicionar(_agenda(instituicao, autor, pauta="Com a agencia"))
+    bancada = repositorio.adicionar(_agenda(instituicao, autor, pauta="Com a bancada"))
+    sessao.flush()
+
+    terceira = repositorio.adicionar(
+        _agenda(instituicao, autor, pauta="Decorrente das duas",
+                origens=(agencia.id, bancada.id))
+    )
+    sessao.flush()
+
+    lida = repositorio.obter(terceira.id, escopo=IRRESTRITO)
+    assert set(lida.origens) == {agencia.id, bancada.id}
+
+
+def test_uma_agenda_abre_varias_frentes(sessao, instituicao, autor):
+    """O outro sentido: uma reuniao gera duas.
+
+    A coluna unica ja permitia isto — o que ela nao permitia era o inverso. O
+    teste existe para o modelo novo nao perder o que o antigo fazia.
+    """
+    repositorio = RepositorioSQL(sessao)
+    raiz = repositorio.adicionar(_agenda(instituicao, autor, pauta="A que abriu"))
+    sessao.flush()
+
+    for banco in ("BNDES", "Caixa"):
+        repositorio.adicionar(
+            _agenda(instituicao, autor, pauta=f"Com o {banco}", origens=(raiz.id,))
+        )
+    sessao.flush()
+
+    from app.banco.tabelas_interacoes import InteracaoOrigem
+
+    filhas = sessao.scalars(
+        select(InteracaoOrigem.interacao_id).where(InteracaoOrigem.origem_id == raiz.id)
+    ).all()
+    assert len(filhas) == 2
+
+
+def test_o_ciclo_e_barrado_por_QUALQUER_ramo(sessao, instituicao, autor):
+    """Com varios pais, o caminho se ramifica — e o ciclo pode fechar por
+    qualquer ramo.
+
+    Checar so o primeiro deixaria passar o resto. E um anel trava a leitura do
+    grafo, que e exatamente a tela que esta linhagem existe para alimentar.
+    """
+    repositorio = RepositorioSQL(sessao)
+    a = repositorio.adicionar(_agenda(instituicao, autor, pauta="A"))
+    sessao.flush()
+    b = repositorio.adicionar(_agenda(instituicao, autor, pauta="B", origens=(a.id,)))
+    solta = repositorio.adicionar(_agenda(instituicao, autor, pauta="Solta"))
+    sessao.flush()
+
+    # `a` passaria a descender de `b`, que descende de `a`. A origem inocente
+    # (`solta`) vem PRIMEIRO na lista, para provar que a guarda nao para nela.
+    lida = repositorio.obter(a.id, escopo=IRRESTRITO)
+    lida.alterar(origens=(solta.id, b.id))
+
+    with pytest.raises(RegraViolada, match="ciclo"):
+        repositorio.atualizar(lida)
+
+
+def test_losango_nao_e_ciclo(sessao, instituicao, autor):
+    """A prova negativa, e o caso que uma guarda ingenua recusaria.
+
+    X leva a A e a B, e as duas levam a C. `C` alcanca `X` por DOIS caminhos —
+    e isso e um grafo legitimo, nao um anel. Uma travessia com `union all`
+    visitaria X duas vezes; com `union`, uma.
+    """
+    repositorio = RepositorioSQL(sessao)
+    x = repositorio.adicionar(_agenda(instituicao, autor, pauta="X"))
+    sessao.flush()
+    a = repositorio.adicionar(_agenda(instituicao, autor, pauta="A", origens=(x.id,)))
+    b = repositorio.adicionar(_agenda(instituicao, autor, pauta="B", origens=(x.id,)))
+    sessao.flush()
+
+    c = repositorio.adicionar(
+        _agenda(instituicao, autor, pauta="C", origens=(a.id, b.id))
+    )
+    sessao.flush()
+
+    assert set(repositorio.obter(c.id, escopo=IRRESTRITO).origens) == {a.id, b.id}
+
+
+def test_a_mesma_origem_duas_vezes_e_recusada(sessao, instituicao, autor):
+    """Duplicata na lista viraria duas setas iguais no grafo."""
+    repositorio = RepositorioSQL(sessao)
+    raiz = repositorio.adicionar(_agenda(instituicao, autor, pauta="Raiz"))
+    sessao.flush()
+
+    with pytest.raises(RegraViolada, match="duas vezes"):
+        _agenda(instituicao, autor, pauta="Filha", origens=(raiz.id, raiz.id))
+
+
+def test_agenda_arquivada_some_da_linhagem_dos_dois_lados(sessao, instituicao, autor):
+    """Arquivar a origem tira a seta do grafo — nos DOIS sentidos.
+
+    O `delete` da API e SOFT: `arquivado_em` recebe data e o registro sai das
+    consultas, mas a LINHA fica. Logo o `on delete cascade` da 0017 nunca
+    dispara pelo fluxo real, e o elo sobrevive a origem.
+
+    Sem este filtro o efeito medido era: a descendente continuava dizendo que
+    decorre de uma agenda cujo `GET` responde 404, e a Base marcava "levou a 1"
+    para uma cadeia que ninguem consegue abrir — o desenho apontando para um no
+    que a tela nao mostra.
+    """
+    from datetime import UTC, datetime
+
+    repositorio = RepositorioSQL(sessao)
+    origem = repositorio.adicionar(_agenda(instituicao, autor, pauta="A que veio antes"))
+    sessao.flush()
+    filha = repositorio.adicionar(
+        _agenda(instituicao, autor, pauta="A que decorreu", origens=(origem.id,))
+    )
+    sessao.flush()
+
+    assert repositorio.obter(filha.id, escopo=IRRESTRITO).origens == (origem.id,)
+    assert repositorio.obter(origem.id, escopo=IRRESTRITO).derivadas == 1
+
+    lida = repositorio.obter(origem.id, escopo=IRRESTRITO)
+    lida.arquivado_em = datetime.now(UTC)
+    repositorio.atualizar(lida)
+    sessao.flush()
+    sessao.expire_all()
+
+    # A filha deixa de apontar para quem ninguem consegue abrir...
+    assert repositorio.obter(filha.id, escopo=IRRESTRITO).origens == ()
+    # ...e o ELO continua no banco, porque soft delete nao apaga nada.
+    from app.banco.tabelas_interacoes import InteracaoOrigem
+
+    assert sessao.scalar(
+        select(func.count()).select_from(InteracaoOrigem)
+    ) == 1
+
+
+def test_arquivar_a_descendente_nao_deixa_a_origem_dizendo_que_levou_a_algo(
+    sessao, instituicao, autor
+):
+    """O outro lado da mesma moeda.
+
+    Se so o lado das origens filtrasse, a Base marcaria a origem como parte de
+    uma cadeia — e o modal abriria mostrando ela sozinha, sem explicar por que.
+    """
+    from datetime import UTC, datetime
+
+    repositorio = RepositorioSQL(sessao)
+    origem = repositorio.adicionar(_agenda(instituicao, autor, pauta="Raiz"))
+    sessao.flush()
+    filha = repositorio.adicionar(
+        _agenda(instituicao, autor, pauta="Decorrente", origens=(origem.id,))
+    )
+    sessao.flush()
+
+    lida = repositorio.obter(filha.id, escopo=IRRESTRITO)
+    lida.arquivado_em = datetime.now(UTC)
+    repositorio.atualizar(lida)
+    sessao.flush()
+    sessao.expire_all()
+
+    assert repositorio.obter(origem.id, escopo=IRRESTRITO).derivadas == 0
+
+
+def test_a_linhagem_da_pagina_nao_custa_uma_consulta_por_linha(
+    sessao, instituicao, autor
+):
+    """A REGRA CERTA PODE CUSTAR CARO EM SILENCIO.
+
+    Uma versao desta leitura filtrava as arquivadas no proprio join, com
+    `secondary`. O resultado ficava correto e o custo multiplicava sem aviso:
+    400 consultas numa pagina de 200 registros. A causa e que `selectin` nao
+    carrega em lote relacao AUTORREFERENTE, e com `secondary` os dois lados sao
+    a mesma tabela — o SQLAlchemy cai para carregamento por objeto e nao diz
+    nada.
+
+    Este teste conta consultas. E a unica forma de a regressao aparecer antes
+    de alguem abrir a Base com a base cheia.
+    """
+    from sqlalchemy import event
+
+    from app.dominio.recorte import Recorte
+
+    repositorio = RepositorioSQL(sessao)
+    raiz = repositorio.adicionar(_agenda(instituicao, autor, pauta="A raiz"))
+    sessao.flush()
+    for n in range(12):
+        repositorio.adicionar(
+            _agenda(instituicao, autor, pauta=f"Decorrente {n}", origens=(raiz.id,))
+        )
+    sessao.flush()
+    sessao.expire_all()
+
+    consultas: list[str] = []
+
+    def anotar(conn, cursor, instrucao, parametros, contexto, muitos):
+        if "interacao_origem" in instrucao:
+            consultas.append(instrucao)
+
+    event.listen(sessao.get_bind(), "before_cursor_execute", anotar)
+    try:
+        pagina = repositorio.listar(
+            Recorte(), escopo=IRRESTRITO, busca_em_campos_sensiveis=True, tamanho=50
+        )
+    finally:
+        event.remove(sessao.get_bind(), "before_cursor_execute", anotar)
+
+    assert len(pagina.itens) >= 13
+    # DUAS pelas relacoes (um lado cada) e UMA para saber quais estao
+    # arquivadas. Nunca proporcional ao tamanho da pagina.
+    assert len(consultas) <= 4, (
+        f"{len(consultas)} consultas em `interacao_origem` para "
+        f"{len(pagina.itens)} registros — voltou a ser uma por linha."
+    )

@@ -223,7 +223,7 @@ class InteracaoEntrada(BaseModel):
     clima_esperado: str | None = None
     declinado_por: str | None = None
     motivo_declinio: str | None = None
-    origem_interacao_id: UUID | None = None
+    origens: list[UUID] = Field(default_factory=list)
     preve_desdobramento: bool | None = None
     outra_parte: list[ParticipanteDaOutraParteEntrada] = Field(default_factory=list)
     materiais: list[MaterialEntrada] = Field(default_factory=list)
@@ -275,7 +275,7 @@ class InteracaoEntrada(BaseModel):
             clima_esperado=self.clima_esperado,
             declinado_por=self.declinado_por,
             motivo_declinio=self.motivo_declinio,
-            origem_interacao_id=self.origem_interacao_id,
+            origens=tuple(self.origens),
             preve_desdobramento=self.preve_desdobramento,
             outra_parte=tuple(
                 ParticipanteDaOutraParte(
@@ -344,7 +344,7 @@ class InteracaoEdicao(BaseModel):
     clima_esperado: str | None = None
     declinado_por: str | None = None
     motivo_declinio: str | None = None
-    origem_interacao_id: UUID | None = None
+    origens: list[UUID] = Field(default_factory=list)
     preve_desdobramento: bool | None = None
     outra_parte: list[ParticipanteDaOutraParteEntrada] | None = None
     materiais: list[MaterialEntrada] | None = None
@@ -466,7 +466,10 @@ class InteracaoSaida(BaseModel):
     clima_esperado: str | None = None
     declinado_por: str | None = None
     motivo_declinio: str | None = None
-    origem_interacao_id: UUID | None = None
+    origens: list[UUID] = Field(default_factory=list)
+    #: Quantas agendas decorrem desta. SO SAIDA: o lado inverso nao se
+    #: escreve — quem grava o elo e a agenda que descende.
+    derivadas: int = 0
     preve_desdobramento: bool | None = None
     outra_parte: list[ParticipanteDaOutraParteEntrada] = Field(default_factory=list)
     materiais: list[MaterialSaida] = Field(default_factory=list)
@@ -524,7 +527,8 @@ class InteracaoSaida(BaseModel):
             clima_esperado=interacao.clima_esperado,
             declinado_por=interacao.declinado_por,
             motivo_declinio=interacao.motivo_declinio,
-            origem_interacao_id=interacao.origem_interacao_id,
+            origens=list(interacao.origens),
+            derivadas=interacao.derivadas,
             preve_desdobramento=interacao.preve_desdobramento,
             outra_parte=[
                 ParticipanteDaOutraParteEntrada(

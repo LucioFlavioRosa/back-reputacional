@@ -216,7 +216,19 @@ class Interacao:
     expectativa: str | None = None
     declinado_por: str | None = None
     motivo_declinio: str | None = None
-    origem_interacao_id: UUID | None = None
+    #: DE QUAIS agendas esta decorre. Vazio = nasceu sozinha.
+    #:
+    #: Plural desde a 0017. Com um pai so, "a agencia e a bancada levaram
+    #: juntas a esta reuniao" perdia uma das duas — e era justamente o caso que
+    #: o grafo existe para mostrar.
+    origens: tuple[UUID, ...] = ()
+    #: QUANTAS agendas decorrem desta. So leitura — quem escreve o elo e a
+    #: agenda que descende.
+    #:
+    #: Vem do servidor, e nao contada na tela: a descendente pode estar fora do
+    #: recorte carregado, e contar so o que a tela ve diria "nao faz parte de
+    #: cadeia" para uma agenda que faz.
+    derivadas: int = 0
     preve_desdobramento: bool | None = None
     outra_parte: tuple[ParticipanteDaOutraParte, ...] = ()
     materiais: tuple[MaterialDaAgenda, ...] = ()
@@ -301,8 +313,17 @@ class Interacao:
         # Uma agenda não nasce de si mesma. O banco também barra o caso
         # trivial; aqui a mensagem explica, em vez de mostrar uma violação de
         # `check` ao usuário.
-        if self.id is not None and self.origem_interacao_id == self.id:
+        #
+        # PLURAL desde a 0017: basta ela aparecer entre as origens. O ciclo
+        # mais longo — A vem de B, que vem de A — não cabe aqui: exige subir o
+        # grafo, e quem faz isso é o repositório.
+        if self.id is not None and self.id in self.origens:
             raise RegraViolada("Uma agenda não pode ter origem em si mesma.")
+
+        if len(set(self.origens)) != len(self.origens):
+            raise RegraViolada(
+                "A mesma agenda aparece duas vezes entre as origens desta."
+            )
 
         vistos: set[UUID] = set()
         for participante in self.outra_parte:
