@@ -35,8 +35,8 @@ Antes de qualquer ambiente compartilhado, ela morre.
 versionados; um dump não é. Ele envelhece na primeira migration nova, e carrega
 o lixo de quem o gerou — a base de quem desenvolve acumula teste de revisão,
 upload repetido e conta descartável. Quem sobe daqui recebe a mesma base que
-todo mundo: 99 instituições, 233 agendas e 67 referências com arquivo de
-verdade no blob.
+todo mundo: 99 instituições, 293 agendas — 233 dos enredos de demonstração e
+60 da amostra de handoff — e 67 referências com arquivo de verdade no blob.
 
 Se alguma porta estiver ocupada, troque no ambiente e reconstrua:
 
@@ -283,6 +283,7 @@ próprios.
 | `GET` | `/api/acessos` | administração de acessos |
 | `GET` | `/api/acessos/papeis` | papéis disponíveis |
 | `PUT` | `/api/acessos/{id}` | concede ou revoga |
+| `PATCH` | `/api/acessos/{id}/situacao` | ativa ou desativa a conta |
 | `GET` | `/api/acessos/{id}/historico` | trilha de concessão |
 | `POST` | `/api/exportacoes` | registra uma exportação CSV da Base |
 | `GET` | `/api/exportacoes/historico` | quem exportou o quê |

@@ -1,14 +1,13 @@
 """Base de demonstração derivada da planilha real de 2026.
 
-POR QUE ESTE ARQUIVO FOI REESCRITO
-----------------------------------
-A versão anterior gerava a FORMA certa e o CONTEÚDO errado. As cadeias tinham
-losango, confluência e sete níveis — e cada nó dizia "Confluência ampla — etapa
-3", com relato "Reunião realizada; encaminhamentos registrados.". Clicar num nó
-do grafo não ensinava nada, e um grafo que não ensina nada não mostra valor
-nenhum: o desenho ficava bonito e vazio.
+FORMA CERTA NÃO BASTA; O CONTEÚDO TAMBÉM É A DEMONSTRAÇÃO
+---------------------------------------------------------
+Cadeias com losango, confluência e sete níveis, em que cada nó diz "Confluência
+ampla — etapa 3" e o relato é "Reunião realizada; encaminhamentos registrados.",
+desenham bonito e não ensinam nada — e um grafo que não ensina nada não mostra
+valor nenhum.
 
-Medido na base anterior, 235 agendas:
+O que uma base gerada por forma deixa vazio:
 
     encaminhamentos     0        posicionamento    0        observações   0
     outra parte         0        materiais         0        registro_url  0
@@ -207,10 +206,9 @@ INSTITUICOES: tuple[tuple[str, str, str], ...] = (
 
 #: Quem está do OUTRO lado da mesa. Nome, instituição, cargo.
 #:
-#: A base anterior tinha ZERO participantes da outra parte em 235 agendas — a
-#: ficha abria com o quadro "Pela outra parte" vazio em todas. São jornalistas
-#: e servidores que a planilha nomeia; sem eles o CRM não é de stakeholders,
-#: é de instituições.
+#: SEM ELES O CRM NÃO É DE STAKEHOLDERS, é de instituições: a ficha abre com o
+#: quadro "Pela outra parte" vazio, e não há a quem atribuir a conversa. São os
+#: jornalistas e servidores que a planilha nomeia.
 INTERLOCUTORES: tuple[tuple[str, str, str], ...] = (
     ("Taís Hirata", "Valor Econômico", "Repórter de infraestrutura"),
     ("Fabiana Lopes", "Valor Econômico", "Repórter"),

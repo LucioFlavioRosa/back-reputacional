@@ -18,8 +18,14 @@ banco, e o padrão é não ver nada.**
 
 ## 1. Autenticação
 
-**Microsoft Entra ID, OIDC authorization code + PKCE.** Nunca existe senha neste
-sistema — não há coluna, não há cadastro, não há redefinição.
+**Microsoft Entra ID, OIDC authorization code + PKCE.** É o destino, e é o que
+vale em produção: sem cadastro de senha e sem redefinição.
+
+**Enquanto o tenant não está disponível, existe uma segunda porta**: `POST
+/api/auth/senha`, com `usuario.senha_hash`. Ela é temporária, emite exatamente o
+mesmo cookie do SSO, e a [seção 10](#10-a-virada-para-sso) diz o que é
+preciso remover para fechá-la. Nenhuma decisão de autorização depende dela: as
+duas portas terminam no mesmo `_motivo_da_recusa`.
 
 O fluxo está em `app/api/acesso.py` e
 `app/seguranca/oidc.py`:
@@ -379,8 +385,9 @@ isso muda duas coisas nas migrations:
   da transferência. É concedido para isso e revogado logo depois, no mesmo
   arquivo — a posse permanece e a role volta a não poder criar nada.
 
-Conferido aplicando as 9 migrations num banco limpo nas versões 13, 14, 15, 16 e
-18, como superusuário e como conta comum.
+Conferido aplicando as migrations num banco limpo nas versões 15, 16, 17 e 18,
+como superusuário e como conta comum. O piso é o 15, pela razão que o README
+descreve em "Versão e privilégio".
 
 As três extensões (`pgcrypto`, `citext`, `pg_trgm`) precisam estar liberadas em
 `azure.extensions` antes da primeira migration.
