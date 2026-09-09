@@ -1,12 +1,10 @@
 """A trilha de exportação da Base: quem levou o quê, e quanto.
 
-ERA `test_relatorios.py`, e cobria duas coisas: o documento impresso pela tela
-e a exportação CSV. A tela de relatório saiu do produto; ficou o evento que
+Não há geração de documento no servidor: o que existe é o EVENTO que
 `seguranca/ARQUITETURA.md` lista como necessário para responder "o que saiu
 daqui?" depois de um incidente.
 
-Os testes de vocabulário de seções e de corte do documento saíram junto: não
-sobrou documento para cortar nem seção para escolher. Os que restam são sobre a
+Os testes são sobre a
 única coisa que a trilha promete — dizer a verdade sobre o que saiu.
 """
 

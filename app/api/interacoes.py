@@ -262,8 +262,8 @@ def subir_arquivo_de_material(
     dados = arquivo.file.read()
     blob.exigir_tipo_aceito(arquivo.content_type or "")
     # O `Content-Type` do multipart e escrito por quem envia, e a lista de
-    # permitidos sozinha so barra quem nao tenta: medido pela API, um
-    # `programa.exe` com `Content-Type: application/pdf` era aceito e guardado.
+    # permitidos sozinha so barra quem nao tenta: sem a conferencia abaixo, um
+    # `programa.exe` com `Content-Type: application/pdf` entra e fica guardado.
     blob.exigir_arquivo_coerente(
         arquivo.filename or "", arquivo.content_type or "", dados
     )

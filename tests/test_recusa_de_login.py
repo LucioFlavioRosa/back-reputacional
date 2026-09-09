@@ -11,15 +11,15 @@ a validação do token — assinatura, emissor, `nonce`, prazo — e para aí, a
 da decisão de autorizar. As referências a `NEGADO_SEM_PAPEL` no resto da suíte
 chamam a função de auditoria DIRETAMENTE, sem passar por rota.
 
-Ou seja: a garantia era verdadeira por acidente de leitura, e quebraria em
-silêncio no dia da virada — que é o pior dia possível para descobrir.
+Ou seja: sem este arquivo, a garantia seria verdadeira por acidente de
+leitura, e quebraria em silêncio no dia da virada para só-SSO — que é o pior
+dia possível para descobrir.
 
-O QUE MUDOU JUNTO
------------------
-`ativo` não era consultado na decisão. A porta da senha o conferia por conta
-própria, dentro de `autenticar()`, na própria consulta SQL. O SSO nunca
-conferiu. Enquanto as duas portas existiam, desativar alguém PARECIA funcionar
-— e a senha é justamente o que vai embora.
+`ativo` NA DECISÃO
+------------------
+A conferência é em `_motivo_da_recusa`, e não só dentro de `autenticar()`: o
+caminho do SSO não passa por lá. Confiar na porta da senha faz desativar
+alguém PARECER que funciona — e a senha é justamente o que vai embora.
 
 Como não existe apagar pessoa (`interacao.criado_por` e mais nove chaves
 apontam para `usuario`), desativar é a ÚNICA forma de remover alguém. Ela
@@ -151,9 +151,9 @@ def test_sem_papel_nao_entra():
 def test_desativado_nao_entra_mesmo_com_papel(sessao):
     """A regressão que este arquivo existe para impedir.
 
-    Antes: `ativo` só era conferido dentro de `autenticar()`, na porta da
-    senha. Uma conta desativada COM papel passava por `_motivo_da_recusa` sem
-    ser notada — e o SSO usa só essa função.
+    Conferido `ativo` só dentro de `autenticar()`, na porta da senha, uma conta
+    desativada COM papel passa por `_motivo_da_recusa` sem ser notada — e o SSO
+    usa só essa função.
     """
     papel = sessao.scalars(select(Papel).where(Papel.codigo == "crm_leitura")).first()
     desativada = _pessoa(papel=_papel_de(sessao, papel.id), ativo=False)
@@ -365,10 +365,10 @@ def _sem_acento(texto: str) -> str:
 
 # -- a recusa precisa dizer o que fazer ---------------------------------------
 #
-# Achado do Codex nesta revisão: as outras quatro recusas do callback também
-# viravam "Você não tem permissão para esta operação". Num login isso é beco
-# sem saída — a pessoa conclui que o problema é o acesso dela e abre chamado,
-# quando bastava tentar de novo.
+# Sem mensagem própria, as recusas do callback saem todas como "Você não tem
+# permissão para esta operação". Num login isso é beco sem saída — a pessoa
+# conclui que o problema é o acesso dela e abre chamado, quando bastava tentar
+# de novo.
 
 
 def test_pedido_de_login_expirado_diz_o_que_fazer(cliente):

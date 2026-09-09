@@ -128,17 +128,26 @@ class CabecalhosDeSegurancaMiddleware:
 #:
 #: A FORMA INTEIRA DO CAMINHO, e nao um sufixo.
 #:
-#: Casar por `endswith("/materiais/arquivo")` funcionava hoje e era divida: uma
-#: rota nova qualquer terminada nesse sufixo herdaria a isencao em silencio, sem
-#: ninguem decidir isso. A expressao abaixo descreve a rota que existe, e uma
-#: rota diferente precisa ser acrescentada aqui de proposito.
-_CAMINHO_DE_UPLOAD = re.compile(
-    r"^/api/interacoes/[0-9a-fA-F-]{36}/materiais/arquivo$"
+#: Casar por `endswith("/materiais/arquivo")` funcionaria e seria divida: uma
+#: rota nova terminada nesse sufixo herdaria a isencao em silencio, sem ninguem
+#: decidir isso. Cada expressao aqui descreve uma rota que existe, e uma rota
+#: nova precisa ser acrescentada de proposito.
+#:
+#: SAO TRES, e nao uma: o material da agenda, o cadastro de referencia — que
+#: nasce COM a primeira versao — e cada versao seguinte. As tres recebem
+#: arquivo, e as tres precisam do mesmo teto de 25 MB. Faltando qualquer uma,
+#: o middleware recusa com 413 generico ANTES de a rota rodar, e a mensagem
+#: que diz o tamanho aceito nunca chega a quem subiu.
+_UUID = "[0-9a-fA-F-]{36}"
+_CAMINHOS_DE_UPLOAD = (
+    re.compile(rf"^/api/interacoes/{_UUID}/materiais/arquivo$"),
+    re.compile(r"^/api/referencias$"),
+    re.compile(rf"^/api/referencias/{_UUID}/versoes$"),
 )
 
 
 def _fora_do_limite_de_corpo(caminho: str) -> bool:
-    return bool(_CAMINHO_DE_UPLOAD.match(caminho))
+    return any(padrao.match(caminho) for padrao in _CAMINHOS_DE_UPLOAD)
 
 
 class LimiteDeCorpoMiddleware:

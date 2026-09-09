@@ -325,13 +325,13 @@ def exigir_portal_crm(usuario: UsuarioLogado) -> UsuarioAtual:
     abre. Isso já filtrava os cartões da capa — e SÓ isso, o que fazia da
     separação uma decoração.
 
-    Sem esta dependência, `sintese@aegea.com.br` pedia `/api/interacoes` e
-    recebia os 60 registros. A tela escondia o cartão do CRM; a API entregava o
-    conteúdo dele a quem chamasse direto. Um `curl` bastava.
+    Sem esta dependência, `sintese@aegea.com.br` pede `/api/interacoes` e
+    recebe a Base inteira: a tela esconde o cartão do CRM, e a API entrega o
+    conteúdo dele a quem chamar direto. Um `curl` basta.
 
-    A regra vale para LEITURA também, e é aí que estava o furo: a escrita já
-    era barrada por `exigir_escrita`, porque `sintese` é somente-leitura. Quem
-    olhasse só as escritas concluiria que estava tudo protegido.
+    A regra vale para LEITURA também, e é aí que mora o risco: a escrita já é
+    barrada por `exigir_escrita`, porque `sintese` é somente-leitura, e quem
+    olhar só as escritas conclui que está tudo protegido.
 
     NÃO substitui `usuario_escopo`. São perguntas diferentes, e as três
     coexistem: o portal diz em qual MÓDULO se entra, o papel diz o que se FAZ

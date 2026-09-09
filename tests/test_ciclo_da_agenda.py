@@ -1,10 +1,9 @@
 """O ciclo da agenda sobrevive à ida e volta pelo banco.
 
-POR QUE ESTE ARQUIVO EXISTE
----------------------------
-A interação deixou de ser o registro de um fato consumado e passou a ser uma
-agenda com ciclo: pedida, planejada, confirmada ou declinada, realizada, e
-desdobrada em outra.
+O QUE ESTE ARQUIVO COBRE
+------------------------
+A interação é uma agenda com ciclo, e não o registro de um fato consumado:
+pedida, planejada, confirmada ou declinada, realizada, e desdobrada em outra.
 
 Isso acrescentou campos em quatro camadas — DDL, ORM, domínio e esquemas — e
 uma camada que esqueça um campo não quebra nada: ela simplesmente PERDE o dado,
@@ -272,12 +271,12 @@ def test_materiais_dos_tres_momentos(sessao, instituicao, autor):
                 MaterialDaAgenda(
                     momento="apoio",
                     titulo="Nota técnica do reajuste",
-                    url="https://sharepoint/nota.pdf",
+                    url="https://acervo.aegea.com.br/nota.pdf",
                 ),
                 MaterialDaAgenda(
                     momento="produzido",
                     titulo="Ata da reunião",
-                    url="https://sharepoint/ata.docx",
+                    url="https://acervo.aegea.com.br/ata.docx",
                     observacao="Assinada pelas duas partes",
                 ),
             ),
@@ -417,8 +416,8 @@ def test_a_marca_e_a_coluna_precisam_concordar(sessao, instituicao, autor):
 def test_o_principal_tem_presenca_como_qualquer_um(sessao, instituicao, autor):
     """O buraco que a revisao externa apontou.
 
-    Antes, o principal morava so em `interlocutor_id` e nao tinha onde ter
-    presenca — justamente a pessoa mais importante da reuniao era a unica sem.
+    Fora da lista, o principal nao teria onde ter presenca — justamente a
+    pessoa mais importante da reuniao seria a unica sem.
     """
     repositorio = RepositorioSQL(sessao)
     pessoa = _pessoa_da_outra_parte(sessao, instituicao)
@@ -598,14 +597,14 @@ def test_material_novo_entra_e_o_que_saiu_some(sessao, instituicao, autor):
 
 
 def test_o_id_do_material_atravessa_o_esquema_de_entrada(sessao, instituicao, autor):
-    """O conserto de identidade era INERTE, e este teste e o que o prova.
+    """O `id` do material tem de sobreviver ao esquema de ENTRADA.
 
-    O repositorio casa material por `id`, mas `MaterialEntrada` nao declarava o
-    campo — e o Pydantic o descartava em silencio, porque `extra="forbid"` de
-    `InteracaoEdicao` nao alcanca modelo aninhado. Toda edicao chegava sem `id`
-    e recriava tudo. A camada de baixo estava certa e nunca era exercitada.
+    O repositorio casa material por `id`. Se `MaterialEntrada` nao declarar o
+    campo, o Pydantic o descarta em silencio — `extra="forbid"` de
+    `InteracaoEdicao` nao alcanca modelo aninhado —, toda edicao chega sem `id`
+    e recria tudo. A camada de baixo fica certa e nunca e exercitada.
 
-    Testar so o repositorio nao pegava: e preciso passar pelo ESQUEMA.
+    Testar so o repositorio nao pega: e preciso passar pelo ESQUEMA.
     """
     from app.esquemas.interacoes import InteracaoEdicao
 
@@ -833,10 +832,9 @@ def _como_usuario(sessao, autor_id):
 def test_patch_com_lista_vazia_remove_todo_mundo(sessao, instituicao, autor):
     """Tirar TODOS os participantes nao pode ressuscitar o principal.
 
-    Era o buraco que sobrou depois de tres rodadas de revisao: a lista vazia
-    caia no ramo de compatibilidade — o mesmo que serve ao POST que informa so
-    a coluna — e o principal voltava a partir dela. A pessoa tirava todo mundo,
-    salvava, e ele estava la.
+    Lista vazia nao pode cair no ramo de compatibilidade — o mesmo que serve
+    ao POST que informa so a coluna —, ou o principal volta a partir da coluna:
+    a pessoa tira todo mundo, salva, e ele esta la.
     """
     repositorio = RepositorioSQL(sessao)
     pessoa = _pessoa_da_outra_parte(sessao, instituicao)
@@ -863,9 +861,9 @@ def test_patch_com_lista_vazia_remove_todo_mundo(sessao, instituicao, autor):
 
 
 def test_patch_so_com_interlocutor_move_a_marca(sessao, instituicao, autor):
-    """A REGRESSAO que eu causei, e que a tela de hoje sofreria.
+    """O PATCH que manda so a coluna tem de mover a marca.
 
-    O formulario atual edita o interlocutor num campo so e nao conhece a lista
+    O formulario edita o interlocutor num campo so e nao conhece a lista
     de participantes. Com a lista sempre mandando, esse PATCH virava no-op
     silencioso: 200 na resposta e nada alterado. Medido por HTTP antes do
     conserto — a resposta voltava com `interlocutor_id: null`.
@@ -989,9 +987,9 @@ def test_duas_edicoes_simultaneas_nao_estouram_no_indice(instituicao_comitada):
     O QUE ESTE TESTE PROVA, E O QUE NAO
     -----------------------------------
     Ele prova o DESFECHO: as duas edicoes concluem, nenhuma estoura, e sobra UM
-    principal. E guarda de regressao util.
+    principal.
 
-    Ele NAO e prova negativa. Verificado: tirando o `para_edicao=True` de
+    Ele NAO e prova negativa: tirando o `para_edicao=True` de
     `editar_interacao`, este teste continua passando — nem a barreira entre
     leitura e escrita nem a sincronizacao de partida produzem, neste arranjo, o
     entrelacamento que faz duas transacoes gravarem principais diferentes.
@@ -1216,9 +1214,8 @@ def test_desdobramento_nao_pode_fechar_ciclo(sessao, instituicao, autor):
     onde veio esta agenda?" — roda para sempre, e a ficha que mostrar o
     historico trava.
 
-    Enquanto nao havia como escolher a origem pela tela, o risco era teorico.
-    Com o campo na tela, virou um clique. Medido pela API antes do conserto:
-    os dois PATCH voltaram sucesso.
+    Com o campo de origem na tela, fechar o ciclo e um clique — e sem esta
+    guarda os dois PATCH voltam sucesso.
     """
     from dataclasses import replace
 
@@ -1264,9 +1261,8 @@ def test_cadeia_longa_de_desdobramento_continua_valendo(sessao, instituicao, aut
 
 # -- o arquivo do material -----------------------------------------------------
 #
-# A 0011 criou `material.arquivo_id` inerte; a 0012 abriu a frente. O que segue
-# cobre a costura entre banco, dominio e esquema de SAIDA — as cinco camadas,
-# que este arquivo passou a vida chamando de quatro.
+# O que segue cobre a costura do arquivo do material entre banco, dominio e
+# esquema de SAIDA.
 
 
 def test_material_sem_link_e_sem_arquivo_e_recusado(sessao, instituicao, autor):
@@ -1548,8 +1544,8 @@ def test_duas_agendas_levam_juntas_a_uma_terceira(sessao, instituicao, autor):
 def test_uma_agenda_abre_varias_frentes(sessao, instituicao, autor):
     """O outro sentido: uma reuniao gera duas.
 
-    A coluna unica ja permitia isto — o que ela nao permitia era o inverso. O
-    teste existe para o modelo novo nao perder o que o antigo fazia.
+    Uma coluna unica de origem ja daria conta deste sentido; o teste existe
+    para o modelo plural nao perder o que o caso simples ja fazia.
     """
     repositorio = RepositorioSQL(sessao)
     raiz = repositorio.adicionar(_agenda(instituicao, autor, pauta="A que abriu"))
@@ -1631,10 +1627,10 @@ def test_agenda_arquivada_some_da_linhagem_dos_dois_lados(sessao, instituicao, a
     consultas, mas a LINHA fica. Logo o `on delete cascade` da 0017 nunca
     dispara pelo fluxo real, e o elo sobrevive a origem.
 
-    Sem este filtro o efeito medido era: a descendente continuava dizendo que
-    decorre de uma agenda cujo `GET` responde 404, e a Base marcava "levou a 1"
-    para uma cadeia que ninguem consegue abrir — o desenho apontando para um no
-    que a tela nao mostra.
+    Sem este filtro, a descendente continua dizendo que decorre de uma agenda
+    cujo `GET` responde 404, e a Base marca "levou a 1" para uma cadeia que
+    ninguem consegue abrir — o desenho apontando para um no que a tela nao
+    mostra.
     """
     from datetime import UTC, datetime
 
@@ -1704,8 +1700,8 @@ def test_a_linhagem_da_pagina_nao_custa_uma_consulta_por_linha(
     a mesma tabela — o SQLAlchemy cai para carregamento por objeto e nao diz
     nada.
 
-    Este teste conta consultas. E a unica forma de a regressao aparecer antes
-    de alguem abrir a Base com a base cheia.
+    Este teste conta consultas. E a unica forma de o N+1 aparecer antes de
+    alguem abrir a Base cheia.
     """
     from sqlalchemy import event
 

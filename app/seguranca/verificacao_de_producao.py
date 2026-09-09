@@ -370,10 +370,9 @@ AVISOS: tuple[Verificacao, ...] = (
 def conferir(configuracao: Configuracao) -> list[Achado]:
     """Devolve os avisos; levanta se algo for grave. Só age em produção.
 
-    ERA UMA FUNÇÃO DE 186 LINHAS com catorze `if` em sequência, e o problema
-    não era o tamanho: era que a lista do que se confere só existia lendo o
-    corpo inteiro. Agora ela está escrita — em `GRAVES` e `AVISOS` —, e cada
-    verificação tem nome, motivo e correção no lugar dela.
+    A LISTA DO QUE SE CONFERE ESTÁ ESCRITA, em `GRAVES` e `AVISOS`: catorze
+    `if` em sequência aqui dentro diriam a mesma coisa e só se leriam de cabo a
+    rabo. Cada verificação tem nome, motivo e correção no lugar dela.
     """
     if not configuracao.producao:
         return []

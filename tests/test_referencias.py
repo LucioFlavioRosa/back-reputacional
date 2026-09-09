@@ -316,8 +316,7 @@ def test_a_listagem_traz_a_versao_atual_e_quantas_existem(cliente, assuntos, gua
 
 
 def test_referencia_sem_arquivo_e_recusada(cliente, assuntos):
-    """Uma referência sem arquivo é um título que não leva a lugar nenhum — e
-    era exatamente o que sobrava quando o acervo morava no SharePoint."""
+    """Uma referência sem arquivo é um título que não leva a lugar nenhum."""
     resposta = cliente.post(
         "/api/referencias",
         data={

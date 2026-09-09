@@ -110,9 +110,9 @@ def registrar_tratadores(app: FastAPI) -> None:
         externo = _e_externo(requisicao)
         publica = erro.publica(externo=externo) if isinstance(erro, ErroDeDominio) else str(erro)
 
-        # Antes daqui o erro de domínio era devolvido em JSON e desaparecia.
-        # Um 403 repetido é tentativa de acesso indevido; uma enxurrada de 422
-        # é o front mandando dado inválido. Nenhum dos dois se enxerga sem log.
+        # SEM ESTE LOG, o erro de domínio vira JSON e desaparece. Um 403
+        # repetido é tentativa de acesso indevido; uma enxurrada de 422 é o
+        # front mandando dado inválido. Nenhum dos dois se enxerga sem log.
         logger.warning(
             "%s em %s %s: %s",
             type(erro).__name__,

@@ -197,8 +197,8 @@ def test_texto_simples_nao_tem_assinatura_e_passa_pela_extensao():
 def test_a_rota_do_arquivo_fica_fora_do_limite_de_corpo():
     """O teto global e 1 MB, e o limite do upload e 25 MB.
 
-    Medido pela API: um PDF de 2 MB voltava `413` do middleware, com mensagem
-    generica, antes de a rota rodar. O limite de 25 MB era inalcancavel.
+    Sem a isencao, um PDF de 2 MB leva `413` do middleware, com mensagem
+    generica, antes de a rota rodar — e o limite de 25 MB fica inalcancavel.
 
     O conserto NAO foi subir o teto global: isso abriria todas as rotas a
     corpos de 25 MB para consertar uma.
@@ -228,9 +228,9 @@ def test_as_demais_rotas_continuam_sob_o_teto():
 def test_uma_rota_qualquer_terminada_no_mesmo_sufixo_nao_herda_a_isencao():
     """A divida que a versao por sufixo deixava.
 
-    `endswith("/materiais/arquivo")` funcionava hoje e abriria mao do teto para
-    qualquer rota futura terminada assim — sem ninguem decidir isso. A isencao
-    passou a descrever a rota inteira.
+    A isencao descreve a rota INTEIRA. Um `endswith("/materiais/arquivo")`
+    funcionaria hoje e abriria mao do teto para qualquer rota futura terminada
+    assim, sem ninguem decidir isso.
     """
     from app.seguranca.protecao_http import _fora_do_limite_de_corpo
 
@@ -240,4 +240,33 @@ def test_uma_rota_qualquer_terminada_no_mesmo_sufixo_nao_herda_a_isencao():
     assert not _fora_do_limite_de_corpo(
         "/api/interacoes/af190c19-b11d-4711-88a8-741bbf8f9816/materiais/arquivo/"
         "67c10771-4715-4a58-bc1a-5afa26342bf5"
+    )
+
+
+def test_a_biblioteca_tambem_recebe_arquivo_e_tambem_escapa_do_teto():
+    """Sao TRES rotas de upload, e nao uma.
+
+    A referencia nasce COM a primeira versao, e cada versao seguinte sobe outro
+    arquivo. Faltando a isencao, o middleware recusa com 413 generico ANTES de
+    a rota rodar — e a mensagem que diz o tamanho aceito nunca chega a quem
+    subiu. O teto delas e o mesmo dos materiais, aplicado por
+    `blob.exigir_tamanho_aceito` dentro da rota.
+    """
+    from app.seguranca.protecao_http import _fora_do_limite_de_corpo
+
+    assert _fora_do_limite_de_corpo("/api/referencias")
+    assert _fora_do_limite_de_corpo(
+        "/api/referencias/52193002-103b-4a87-8a1d-2a95059ccfc1/versoes"
+    )
+    #: A LISTAGEM de versoes e a mesma rota no metodo GET, e nao ha como o
+    #: middleware distinguir — mas GET sem corpo nao chega perto do teto.
+    #:
+    #: O DOWNLOAD de uma versao, sim, e outro caminho, e nao escapa:
+    assert not _fora_do_limite_de_corpo(
+        "/api/referencias/52193002-103b-4a87-8a1d-2a95059ccfc1/versoes/"
+        "67c10771-4715-4a58-bc1a-5afa26342bf5/arquivo"
+    )
+    #: E editar os metadados continua sob o teto de formulario:
+    assert not _fora_do_limite_de_corpo(
+        "/api/referencias/52193002-103b-4a87-8a1d-2a95059ccfc1"
     )

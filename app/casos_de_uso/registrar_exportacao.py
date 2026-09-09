@@ -1,9 +1,7 @@
 """Registra que alguém exportou a Base, e devolve a trilha.
 
-ERA `registrar_relatorio`, e servia a dois casos: o documento impresso pela
-tela e a exportação CSV. A tela de relatório saiu do produto; o que sobrou é o
-que o plano de segurança pedia desde o começo — "Export CSV: quem exportou,
-qual recorte, quantas linhas".
+É O QUE O PLANO DE SEGURANÇA PEDE: "Export CSV: quem exportou, qual recorte,
+quantas linhas". Não há geração de documento no servidor.
 
 É TRILHA, E NÃO BARREIRA. O CSV é montado no navegador a partir da listagem já
 baixada; um cliente modificado monta o arquivo sem chamar isto. O que se ganha

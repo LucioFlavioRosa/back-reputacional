@@ -206,10 +206,9 @@ class InteracaoEntrada(BaseModel):
     uf: str
     #: O ESTADO EM QUE UMA AGENDA COMECA, e o backend e o dono dele.
     #:
-    #: Era obrigatorio, e criar exigia manda-lo. Isso contradizia o proprio
-    #: pedido — a agenda deve nascer com o que a IDENTIFICA — e obrigava cada
-    #: cliente a saber qual e o estado inicial. Medido pela API: `POST` so com
-    #: frente, data, instituicao e uf voltava 422 `Field required`.
+    #: Exigi-lo na criacao contradiria o proprio desenho — a agenda nasce com o
+    #: que a IDENTIFICA — e obrigaria cada cliente a saber qual e o estado
+    #: inicial. Um `POST` so com frente, data, instituicao e uf tem de passar.
     #:
     #: `solicitado` e nao `agendado`: dizer "agendado" afirma que existe data
     #: marcada com a outra parte, e no instante da criacao ninguem confirmou
@@ -217,7 +216,7 @@ class InteracaoEntrada(BaseModel):
     #: painel mede.
     status: str = "solicitado"
     #: Sem `min_length`: a agenda nasce com o que a IDENTIFICA, e o assunto em
-    #: palavras deixou de ser exigido — `temas` e `expectativa` ocupam o lugar.
+    #: palavras nao e exigido — `temas` e `expectativa` ocupam o lugar.
     pauta: str | None = None
 
     interlocutor_id: UUID | None = None
@@ -356,10 +355,9 @@ class InteracaoEdicao(BaseModel):
 
     # -- o ciclo da agenda ----------------------------------------------------
     #
-    # FALTAVAM AQUI, e a falta era invisível de um jeito perverso: dava para
-    # CRIAR uma agenda com expectativa e materiais, e não dava para editar.
-    # Como `model_config` é `extra="forbid"`, a tela receberia 422 ao tentar —
-    # e o pedido do dono do produto começava com "tudo isso editável".
+    # TODOS EDITÁVEIS, e não só preenchíveis na criação. `model_config` é
+    # `extra="forbid"`: um campo que exista no `POST` e falte aqui devolve 422
+    # na edição, e o formulário não tem como saber por quê.
     expectativa: str | None = None
     clima_esperado: str | None = None
     declinado_por: str | None = None

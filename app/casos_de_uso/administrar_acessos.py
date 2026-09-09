@@ -247,14 +247,14 @@ def definir_situacao(
 
     # O CADEADO. Ver `0010_ultimo_administrador.sql` para o porquê.
     #
-    # Eu tinha concluído que nenhuma guarda era necessária: para desativar é
-    # preciso ser administrador ativo, e ninguém desativa a própria conta, logo
-    # quem pede sempre permanece. O raciocínio está certo — e é inútil com duas
-    # transações ao mesmo tempo, porque cada uma olha antes de a outra
-    # escrever, e as duas escrevem em linhas diferentes (nada as serializa).
+    # O ARGUMENTO SEQUENCIAL NÃO BASTA: "para desativar é preciso ser
+    # administrador ativo, e ninguém desativa a própria conta, logo quem pede
+    # sempre permanece" está certo em série e é inútil com duas transações ao
+    # mesmo tempo — cada uma olha antes de a outra escrever, e as duas escrevem
+    # em linhas diferentes, então nada as serializa.
     #
-    # Reproduzido: dois administradores desativando um ao outro em paralelo
-    # terminaram com ZERO ativos.
+    # Sem o cadeado, dois administradores desativando um ao outro em paralelo
+    # terminam com ZERO ativos.
     #
     # Daqui em diante esta transação é a única mexendo no conjunto de
     # administradores, e por isso contar volta a valer.

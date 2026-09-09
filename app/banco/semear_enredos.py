@@ -94,12 +94,11 @@ from app.dominio.texto import normalizar
 #: planilha, plataforma de RI. Inventar `sintetico` poria um termo de
 #: desenvolvimento numa lista que a aplicacao valida e a tela exibe.
 #:
-#: E `origem_aba` NAO fica vazio. A primeira versao deixou vazio de proposito,
-#: pelo argumento de que aquele campo diria "veio de uma importacao" — e o
-#: efeito era pior: os 233 registros ficavam indistinguiveis de cadastro manual
-#: de verdade, e so davam para separar por inferencia negativa contra os 60 da
-#: amostra. A propria amostra de handoff ja usa `origem_aba="amostra-handoff"`,
-#: entao o campo ja e marca de procedencia de fixture, e nao so aba importada.
+#: E `origem_aba` NAO fica vazio. Vazio, estes registros ficariam
+#: indistinguiveis de cadastro manual de verdade, e so se separariam por
+#: inferencia negativa contra a amostra. O campo e marca de procedencia de
+#: fixture, e nao so aba de planilha importada — a amostra de handoff usa
+#: `origem_aba="amostra-handoff"` pela mesma razao.
 #:
 #: `origem_linha` continua nulo: nao ha linha de planilha unica por tras de
 #: cada agenda — os enredos foram lidos e reescritos, nao copiados.
@@ -408,7 +407,7 @@ class Passo:
             )
 
 
-SHAREPOINT = "https://aegeactl.sharepoint.com/:w:/r/sites/relinst/Documentos"
+ACERVO = "https://acervo.aegea.com.br/relinst"
 
 
 def _leniencia(veiculo: str, dia: int, chave: str) -> Passo:
@@ -475,12 +474,12 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                     (
                         "apoio",
                         "Fato Relevante — Acordo de Leniência",
-                        f"{SHAREPOINT}/fato-relevante-leniencia.pdf",
+                        f"{ACERVO}/fato-relevante-leniencia.pdf",
                     ),
                     (
                         "produzido",
                         "Texto-padrão de posicionamento",
-                        f"{SHAREPOINT}/posicionamento-leniencia.docx",
+                        f"{ACERVO}/posicionamento-leniencia.docx",
                     ),
                 ),
                 extensao={
@@ -533,7 +532,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                     (
                         "obtido",
                         "Relatório de rating — S&P",
-                        f"{SHAREPOINT}/rating-sp-2026.pdf",
+                        f"{ACERVO}/rating-sp-2026.pdf",
                     ),
                 ),
             ),
@@ -831,7 +830,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                     (
                         "obtido",
                         "Minuta da revisão da Resolução 430",
-                        f"{SHAREPOINT}/minuta-conama-430.pdf",
+                        f"{ACERVO}/minuta-conama-430.pdf",
                     ),
                 ),
             ),
@@ -1127,7 +1126,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                     (
                         "produzido",
                         "Minuta de substitutivo — tarifa mínima",
-                        f"{SHAREPOINT}/substitutivo-tarifa-minima.docx",
+                        f"{ACERVO}/substitutivo-tarifa-minima.docx",
                     ),
                 ),
             ),
@@ -1279,7 +1278,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                     (
                         "produzido",
                         "Nota técnica — impacto da escala 6x1 na tarifa",
-                        f"{SHAREPOINT}/nota-tecnica-6x1.pdf",
+                        f"{ACERVO}/nota-tecnica-6x1.pdf",
                     ),
                 ),
             ),
@@ -1463,7 +1462,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                     (
                         "produzido",
                         "Nota técnica — insumos químicos",
-                        f"{SHAREPOINT}/nota-tecnica-insumos.pdf",
+                        f"{ACERVO}/nota-tecnica-insumos.pdf",
                     ),
                 ),
             ),
@@ -1623,7 +1622,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                     (
                         "obtido",
                         "Notas taquigráficas da audiência",
-                        f"{SHAREPOINT}/almg-audiencia-copasa.pdf",
+                        f"{ACERVO}/almg-audiencia-copasa.pdf",
                     ),
                 ),
             ),
@@ -1876,7 +1875,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                     (
                         "produzido",
                         "Plano de campanhas — Saneamento Salva",
-                        f"{SHAREPOINT}/saneamento-salva-plano.pptx",
+                        f"{ACERVO}/saneamento-salva-plano.pptx",
                     ),
                 ),
             ),
@@ -2069,7 +2068,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                     (
                         "produzido",
                         "Íntegra da impugnação ao edital",
-                        f"{SHAREPOINT}/impugnacao-saneago.pdf",
+                        f"{ACERVO}/impugnacao-saneago.pdf",
                     ),
                 ),
             ),
@@ -2507,10 +2506,10 @@ QUANTAS_SOLTAS: dict[Frente, int] = {
 }
 
 #: A SITUAÇÃO TEM TRÊS VALORES: `solicitado`, `confirmada` (Aceito) e
-#: `declinado` (Negado). Era onze, e os oito que saíram descreviam duas coisas
-#: ao mesmo tempo — a resposta ao pedido e se a reunião já tinha acontecido.
+#: `declinado` (Negado). Todos os três respondem ao PEDIDO, e nenhum deles diz
+#: se a reunião já aconteceu.
 #:
-#: O "já aconteceu" passou para o RELATO: só se escreve o relato de uma reunião
+#: O "já aconteceu" está no RELATO: só se escreve o relato de uma reunião
 #: que houve, e por isso este semeador preenche relato apenas nas aceitas cuja
 #: data passou. Ver `jaAconteceu` no front.
 #:
@@ -2548,7 +2547,7 @@ POSICIONAMENTOS = (
 )
 
 #: Onde o registro da agenda ficou guardado. A planilha chama de "Registro /
-#: documentação" e é quase sempre um link do SharePoint.
+#: documentação", e é quase sempre um link para o acervo da companhia.
 REGISTROS = (
     ("apoio", "Material de apoio da agenda"),
     ("apoio", "Perguntas recebidas"),
@@ -2653,15 +2652,12 @@ def _alinhar_porta_vozes_da_amostra(
 
     A amostra atribui porta-voz por RODÍZIO — `PORTA_VOZES[indice % 6]` —, o
     que é razoável para ver o painel de exposição e não tem relação nenhuma com
-    o assunto da agenda. Ela também nasceu antes de existir vínculo entre
-    pessoa e assunto.
+    o assunto da agenda. Sob a regra de "fora do escopo", dois terços daquela
+    fatia aparecem como desvio, contra um quinto das agendas que este semeador
+    cria: a exceção viraria ruído por artefato de fixture, e uma exceção
+    ruidosa é uma exceção que alguém desliga.
 
-    O efeito medido, depois que a regra de "fora do escopo" passou a existir:
-    40 das 60 agendas da amostra apareciam como desvio — 67% daquela fatia,
-    contra 19% das que este semeador cria. A exceção virava ruído por artefato
-    de fixture, e uma exceção ruidosa é uma exceção que alguém desliga.
-
-    Aqui a atribuição passa a respeitar o assunto na maioria dos casos. Os
+    Aqui a atribuição respeita o assunto na maioria dos casos. Os
     ~12% que restam são deliberados: uma base em que todo mundo fala do que lhe
     cabe nunca mostraria a regra funcionando.
     """
@@ -2810,7 +2806,7 @@ def _registro(
         MaterialDaAgenda(
             momento=momento,
             titulo=f"{titulo} — {pauta[:44]}",
-            url=f"{SHAREPOINT}/registro-{frente.value}-{indice:03d}.pdf",
+            url=f"{ACERVO}/registro-{frente.value}-{indice:03d}.pdf",
         ),
     )
 
@@ -3041,8 +3037,8 @@ def _elenco(sessao: Session) -> dict:
         sessao.flush()
 
         # OS ASSUNTOS AUTORIZADOS. Sem eles a pergunta "o especialista está
-        # falando do assunto dele?" não tem como ser respondida — e era o
-        # estado da base: doze pessoas, zero vínculos.
+        # falando do assunto dele?" não tem como ser respondida, e a regra de
+        # "fora do escopo" fica sem base para comparar.
         ja_tem = set(
             sessao.scalars(
                 select(PessoaAegeaTema.tema_id).where(

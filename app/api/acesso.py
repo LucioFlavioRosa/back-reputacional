@@ -412,9 +412,9 @@ def entrar_por_senha(
         # o SSO registra quando o token não vale.
         # `registrar_e_confirmar`, e NÃO `registrar`: quem chama levanta em
         # seguida, e `obter_sessao` desfaz a transação em qualquer exceção. Com
-        # `registrar`, a linha era gravada e descartada milissegundos depois —
-        # toda recusa de login sumia da trilha, que é justamente a linha que
-        # mais importa numa investigação.
+        # `registrar`, a linha seria gravada e descartada milissegundos depois
+        # — toda recusa de login sumiria da trilha, que é justamente a linha
+        # que mais importa numa investigação.
         registrar_acesso.registrar_e_confirmar(
             sessao,
             resultado=registrar_acesso.NEGADO_NO_PROVEDOR,
@@ -604,11 +604,10 @@ def _motivo_da_recusa(usuario: UsuarioAtual) -> str | None:
     "sem papel" — a trilha diria a coisa errada sobre por que a pessoa não
     entrou, e é a trilha que alguém vai ler depois de um incidente.
 
-    Ele NÃO estava aqui, e a ausência era invisível porque a porta da senha o
-    conferia por conta própria, lá dentro de `autenticar()`. O SSO nunca
-    conferiu. Enquanto as duas portas existiam, desativar parecia funcionar;
-    na virada para só-SSO, a única forma de remover alguém pararia de surtir
-    efeito no login — sem nada quebrar e sem ninguém notar.
+    A CONFERÊNCIA É AQUI, e não só dentro de `autenticar()`: o caminho do SSO
+    não passa por lá. Deixá-la só na porta da senha faria a única forma de
+    remover alguém parar de surtir efeito no login assim que o SSO virasse a
+    única entrada — sem nada quebrar e sem ninguém notar.
     """
     if not usuario.ativo:
         return registrar_acesso.NEGADO_INATIVO

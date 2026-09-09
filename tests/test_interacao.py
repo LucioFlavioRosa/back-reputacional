@@ -41,13 +41,11 @@ def nova(**ajustes) -> Interacao:
 
 
 def test_a_agenda_vale_sem_pauta():
-    """A REGRA MUDOU, e este teste mudou com ela.
+    """A AGENDA VALE SEM PAUTA.
 
-    Ele exigia pauta e estava certo enquanto ela era o que identificava o
-    registro. A pauta saiu da tela: `temas` diz o assunto de forma classificada
-    — que e o que o painel consegue somar — e `expectativa` diz o que se quer
-    dele. Criar a agenda passou a exigir o que a IDENTIFICA, e o assunto em
-    palavras deixou de ser isso.
+    Criar a agenda exige o que a IDENTIFICA, e o assunto em palavras nao e
+    isso: `temas` diz o assunto de forma classificada — que e o que o painel
+    consegue somar — e `expectativa` diz o que se quer dele.
 
     O teste continua existindo para que a mudanca seja deliberada: voltar a
     exigir pauta quebra esta linha, e quem quebrar vai ler o porque.
@@ -69,11 +67,10 @@ def test_uf_aceita_nacional_e_internacional():
 def test_tier_nao_positivo_e_recusado():
     """O domínio só barra o que é absurdo em qualquer configuração.
 
-    QUAIS níveis existem passou a ser decisão do banco: são linhas em
-    `relevancia`, e `interacao.tier` tem chave estrangeira para lá. Antes havia
-    QUATRO cópias da mesma lista: `not in (1, 2, 3)` aqui, outra em
-    `dominio/recorte.py`, `check between 1 and 3` no schema e as opções escritas
-    à mão no filtro do front. Nada obrigava as quatro a concordar.
+    QUAIS níveis existem é decisão do banco: são linhas em `relevancia`, e
+    `interacao.tier` tem chave estrangeira para lá. Uma lista escrita aqui
+    seria mais uma cópia — com a do `Recorte`, a do `check` no schema e as
+    opções do filtro no front — e nada obrigaria as quatro a concordar.
 
     Um nível INEXISTENTE é recusado pelo banco, e isso está coberto em
     `tests/test_dicionarios_sao_a_fonte.py`.

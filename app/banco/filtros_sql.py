@@ -95,9 +95,8 @@ def _participou(pessoa: str) -> ColumnElement[bool]:
     """A pessoa esteve na agenda — como principal ou não.
 
     A pergunta da tela é "agendas em que esta pessoa participou". Filtrar só
-    por `interlocutor_id` respondia "agendas em que ela foi a principal" — e
-    desde que a agenda passou a registrar todos os participantes, as duas
-    perguntas deixaram de ter a mesma resposta.
+    por `interlocutor_id` responderia "agendas em que ela foi a principal", e
+    a agenda registra TODOS os participantes: são duas perguntas diferentes.
 
     `exists` e não `join`: um `join` multiplicaria a interação por participante
     e faria a contagem do painel subir sem que nada tivesse acontecido.

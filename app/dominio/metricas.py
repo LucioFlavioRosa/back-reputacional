@@ -5,11 +5,11 @@ calcula hoje no navegador. A duplicação é deliberada e temporária: enquanto 
 duas existirem, a de lá é a referência, e há teste garantindo que a de cá dá o
 mesmo número.
 
-POR QUE MOVER PARA O BACKEND
+POR QUE A CONTA É DO BACKEND
 
-O painel baixa até 5.000 registros para derivar tudo no cliente. Funcionava
-enquanto todo mundo era da casa. Com acesso externo, entregar o conjunto
-completo ao navegador é o argumento mais forte contra a arquitetura atual: o
+Derivar tudo no cliente exige baixar até 5.000 registros. Com acesso externo,
+entregar o conjunto completo ao navegador é o argumento mais forte contra essa
+arquitetura: o
 externo receberia números, não registros — e isso é a única coisa que limita
 exfiltração de verdade, porque limite de taxa não limita quem simplesmente usa
 o produto.

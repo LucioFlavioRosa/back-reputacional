@@ -115,11 +115,11 @@ class InteracaoRegistro(Tabela):
     #: e um campo so para os dois faria trocar de situacao sobrescrever o texto
     #: do outro caso.
     nota_situacao: Mapped[str | None] = mapped_column(Text, nullable=True)
-    #: DE QUAIS agendas esta decorre. Plural desde a 0017: duas reunioes podem
-    #: levar juntas a uma terceira, e uma reuniao pode abrir varias frentes.
+    #: DE QUAIS agendas esta decorre. Plural: duas reunioes podem levar juntas
+    #: a uma terceira, e uma reuniao pode abrir varias frentes.
     #:
-    #: Era `origem_interacao_id`, uma coluna — um pai so. Isso descrevia uma
-    #: arvore, e a realidade que o painel precisa mostrar e um grafo.
+    #: Uma coluna `origem_interacao_id` — um pai so — descreveria uma arvore, e
+    #: a realidade que o painel precisa mostrar e um grafo.
     origens: Mapped[list[InteracaoOrigem]] = relationship(
         "InteracaoOrigem",
         foreign_keys="InteracaoOrigem.interacao_id",
@@ -139,9 +139,9 @@ class InteracaoRegistro(Tabela):
     #:
     #: -- POR QUE NAO PASSA PELA AGENDA DO OUTRO LADO ---------------------
     #:
-    #: A versao anterior destas duas relacoes usava `secondary="interacao_origem"`
-    #: para ja excluir as ARQUIVADAS no proprio join. Funcionou, e trouxe N+1:
-    #: 400 consultas numa pagina de 200 registros, medidas com `log_statement`.
+    #: Usar `secondary="interacao_origem"` para ja excluir as ARQUIVADAS no
+    #: proprio join funciona, e traz N+1: duas consultas por registro, ou 400
+    #: numa pagina de 200.
     #:
     #: A causa e que `selectin` NAO carrega em lote relacao AUTORREFERENTE — e
     #: com `secondary` os dois lados sao `InteracaoRegistro`. O SQLAlchemy cai
@@ -462,10 +462,7 @@ class Arquivo(Tabela):
         PG_UUID(as_uuid=True), ForeignKey("usuario.id")
     )
     #: `server_default`, como as demais tabelas deste modulo: quem carimba a
-    #: hora e o banco, e nao o relogio de quem chamou. Eu tinha escrito
-    #: `default=lambda: datetime.now(UTC)` copiando outro arquivo — e `UTC` nao
-    #: e importado aqui, entao a primeira insercao estourou `NameError` de
-    #: dentro do driver, longe da linha errada.
+    #: hora e o banco, e nao o relogio de quem chamou.
     criado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -509,9 +506,8 @@ class Material(Tabela):
     momento: Mapped[str] = mapped_column(Text)
     titulo: Mapped[str] = mapped_column(Text)
     url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    #: O arquivo no Blob, quando houver. Deixou de ser reservada: a 0012 criou
-    #: `arquivo` e ligou as duas. Material por LINK segue com ela nula — o
-    #: `check` do banco exige um dos dois, nao os dois.
+    #: O arquivo no Blob, quando houver. Material por LINK fica com ela nula —
+    #: o `check` do banco exige um dos dois, nao os dois.
     arquivo_id: Mapped[uuid.UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("arquivo.id"), nullable=True
     )

@@ -387,10 +387,9 @@ def test_rota_concede_pela_http(cliente, sessao):
         json={
             "papel": "score_leitura",
             # `externo` é o BOOLEANO de convidado de fora, e não o código de um
-            # papel. Os dois se chamavam parecido enquanto existia um papel
-            # `externo`, e uma troca de nomes em massa confundiu os dois: a
-            # chave virou `score` e o teste passou a mandar um campo que a rota
-            # ignora — continuava verde sem exercitar a regra do prazo.
+            # papel. Trocar esta chave por um nome de papel faz o teste
+            # mandar um campo que a rota ignora — ele continua verde sem
+            # exercitar a regra do prazo.
             "externo": True,
             "expira_em": (date.today() + timedelta(days=60)).isoformat(),
             "frentes": ["imprensa"],

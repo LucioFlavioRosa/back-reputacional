@@ -292,11 +292,10 @@ def test_rota_recusa_quem_nao_administra(cliente, sessao, marca):
 
 # -- a corrida ----------------------------------------------------------------
 #
-# O Codex barrou o commit anterior por aqui, e tinha razão. Eu havia concluído
-# que nenhuma guarda era precisa: quem desativa é administrador ativo e não
-# desativa a própria conta, logo sempre sobra. Certo sequencialmente, inútil em
-# paralelo — as duas transações leem antes de qualquer uma escrever, e escrevem
-# em linhas DIFERENTES, então nada as serializa.
+# O ARGUMENTO SEQUENCIAL NÃO BASTA. "Quem desativa é administrador ativo e não
+# desativa a própria conta, logo sempre sobra" é verdade em série e inútil em
+# paralelo: duas transações leem antes de qualquer uma escrever, e escrevem em
+# linhas DIFERENTES, então nada as serializa.
 #
 # Reproduzido no Postgres: dois administradores se desativando ao mesmo tempo
 # terminavam com ZERO ativos.
@@ -310,9 +309,9 @@ def _em_paralelo(alvos, *, com_cadeado: bool) -> tuple[int, list[str]]:
     não prova nada.
 
     A BARREIRA, no caminho SEM cadeado, é o que torna a prova determinística.
-    Sem ela o teste era intermitente: se uma transação terminasse inteira antes
-    de a outra começar, a segunda leria o mundo já atualizado, veria zero
-    administradores e se recusaria sozinha — e o teste "passava" sem nunca ter
+    Sem ela o teste seria intermitente: se uma transação terminasse inteira
+    antes de a outra começar, a segunda leria o mundo já atualizado, veria zero
+    administradores e se recusaria sozinha — e o teste "passaria" sem nunca ter
     havido corrida. Com a barreira, as duas escrevem antes de qualquer uma
     conferir, e cada uma enxerga a outra ainda ativa (a escrita alheia não está
     commitada). É exatamente a leitura enganosa que o cadeado existe para
@@ -444,8 +443,8 @@ def test_dois_administradores_simultaneos_nao_zeram_a_plataforma(dois_administra
 def test_sem_o_cadeado_a_corrida_fura(dois_administradores):
     """A PROVA NEGATIVA. Sem o cadeado, o mesmo roteiro chega a zero.
 
-    Se este teste parar de falhar-por-furar, é porque a serialização passou a
-    vir de outro lugar — e aí o teste acima deixou de provar o que diz provar.
+    Se este teste parar de falhar-por-furar, a serialização está vindo de
+    outro lugar — e aí o teste acima não prova mais o que diz provar.
     """
     a, b = dois_administradores
     sobraram, _ = _em_paralelo([b, a], com_cadeado=False)
@@ -482,7 +481,8 @@ def test_o_caso_de_uso_real_nao_da_deadlock(dois_administradores):
         try:
             with Session(bind=engine) as propria:
                 # `carregar()` é o que carimba `ultimo_acesso_em` e trava a
-                # linha de quem pede. É a peça que faltava no teste anterior.
+                # linha de quem pede — sem ele o roteiro não reproduz o
+                # entrelaçamento real.
                 solicitante = carregar(propria, quem)
                 assert solicitante is not None
                 ambas_carregaram.wait()
@@ -613,9 +613,9 @@ def _sobraram_administradores() -> int:
 
 
 def test_rebaixar_rebaixar_nao_da_deadlock(dois_administradores):
-    """O roteiro que o Codex achou e os meus testes não cobriam.
+    """Dois administradores se rebaixando ao mesmo tempo.
 
-    O deadlock aqui é ANTERIOR a este trabalho: `conceder_acesso` faz
+    O deadlock possível aqui não vem do cadeado: `conceder_acesso` faz
     `for update` no alvo desde 0006, e `carregar()` já travou a linha de quem
     pede. Dois administradores se rebaixando fecham o ciclo sem o cadeado
     participar — foi por isso que ele precisou vir ANTES do `for update`.

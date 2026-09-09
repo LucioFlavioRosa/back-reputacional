@@ -318,10 +318,9 @@ def test_o_filtro_por_grupo_acompanha_o_status(cliente, semente):
     `declinado` continha `declinado` E `cancelado`, e o teste mostrava que
     filtrar por grupo trazia mais do que filtrar por status.
 
-    A 0020 reduziu a três e a 0021 pôs cada uma no seu grupo, um para um:
-    Solicitado→aberto, Aceito→resolvido, Negado→declinado. A diferença que o
-    teste guardava deixou de existir, e insistir nela seria guardar uma
-    afirmação falsa.
+    Cada situação ativa está sozinha no seu grupo, um para um:
+    Solicitado→aberto, Aceito→resolvido, Negado→declinado. Filtrar por status
+    e filtrar por grupo devolvem, hoje, o mesmo conjunto.
 
     O que ainda precisa de guarda é o filtro por grupo NÃO SUMIR: ele é outro
     caminho no SQL, com outro `join`, e continua sendo o que as métricas usam.
@@ -417,7 +416,7 @@ def test_auditoria_grava_uma_linha_por_campo_alterado(cliente, semente, sessao):
     ).all()
     campos = {linha.campo for linha in linhas}
 
-    # `tier` já era 1: não mudou, não vira linha de auditoria.
+    # `tier` já valia 1: sem mudança, não há linha de auditoria.
     assert campos == {"clima_id", "relato"}
 
     relato = next(linha for linha in linhas if linha.campo == "relato")
@@ -765,9 +764,8 @@ def test_dicionarios_vem_carregados(cliente):
 def test_a_agenda_e_criada_sem_pauta(cliente, semente):
     """Pela API, e nao so no dominio. Ver `test_a_agenda_vale_sem_pauta`.
 
-    Este teste exigia 422 e passou a exigir 201: a obrigatoriedade saiu do
-    banco (0013), do dominio e do esquema, e se qualquer uma das tres tivesse
-    ficado para tras a criacao continuaria sendo recusada aqui.
+    Exige 201: a pauta nao e obrigatoria no banco, no dominio nem no esquema,
+    e se qualquer uma das tres a exigisse a criacao seria recusada aqui.
     """
     corpo_sem_pauta = corpo(semente)
     corpo_sem_pauta.pop("pauta", None)
@@ -907,11 +905,12 @@ def test_escopo_restringe_a_listagem(cliente, semente, sessao):
 
 
 def test_registro_fora_do_escopo_nao_e_legivel_por_id(cliente, semente, sessao):
-    """IDOR: `obter` usava `sessao.get()` e pulava o filtro inteiro.
+    """IDOR: `obter` não pode pular o filtro.
 
-    Era o caminho de leitura sem restrição nenhuma — quem descobrisse um id
-    lia o registro, estivesse ele no seu alcance ou não. A resposta é 404, e
-    não 403, porque 403 confirmaria a existência do registro.
+    Com `sessao.get()` haveria um caminho de leitura sem restrição nenhuma —
+    quem descobrisse um id leria o registro, estivesse ele no seu alcance ou
+    não. A resposta é 404, e não 403, porque 403 confirmaria a existência do
+    registro.
     """
     from app.dominio.identidade import Escopo
 
@@ -1132,10 +1131,9 @@ def test_autor_carimbado_e_forjavel_e_a_origem_denuncia(cliente, semente, sessao
 def test_a_agenda_nasce_solicitada_sem_ninguem_mandar_status(cliente, semente):
     """O ESTADO INICIAL E DO BACKEND, e nao de cada cliente.
 
-    `status` era obrigatorio na criacao, o que contradizia o pedido — a agenda
-    deve nascer com o que a IDENTIFICA — e obrigava cada cliente a saber qual e
-    o primeiro estado. Medido pela API: `POST` sem status voltava 422
-    `Field required`.
+    Exigir `status` na criacao contradiria o desenho — a agenda nasce com o
+    que a IDENTIFICA — e obrigaria cada cliente a saber qual e o primeiro
+    estado. Um `POST` sem status tem de criar, e nao devolver 422.
 
     `solicitado`, e nao `agendado`: "agendado" afirma que existe data marcada
     com a outra parte, e no instante da criacao ninguem confirmou isso.
@@ -1376,8 +1374,8 @@ def test_cadastrar_instituicao_com_o_primeiro_representante(cliente_admin, semen
 
     Uma instituicao sem ninguem nao serve para nada: o formulario de agenda so
     oferece pessoas depois que a instituicao e escolhida, e a lista sairia
-    vazia. Pedir dois gestos para uma decisao so era o caminho para metade das
-    instituicoes ficarem sem representante.
+    vazia. Pedir dois gestos para uma decisao so e o caminho para metade das
+    instituicoes ficar sem representante.
     """
     resposta = cliente_admin.post(
         "/api/instituicoes",
@@ -1554,9 +1552,9 @@ def test_desligar_e_o_caminho_para_quem_tem_historico(cliente_admin, semente):
 
 
 def test_porta_voz_com_os_assuntos_que_pode_falar(cliente_admin, semente):
-    """A regra de "fora do escopo" ja estava modelada e nao era editavel.
+    """A regra de "fora do escopo" precisa de vinculo editavel para existir.
 
-    `PessoaAegeaTema` existe desde o comeco, com o docstring dizendo para que
+    `PessoaAegeaTema` guarda o vinculo, com o docstring dizendo para que
     serve: registro cujo tema nao esta na lista do porta-voz que o conduziu. Os
     temas vinham da planilha e ficavam.
     """

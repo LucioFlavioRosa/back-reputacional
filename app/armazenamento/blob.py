@@ -80,9 +80,9 @@ ASSINATURAS: dict[str, tuple[bytes, ...]] = {
 def exigir_arquivo_coerente(nome: str, tipo_conteudo: str, dados: bytes) -> None:
     """O NOME E OS BYTES precisam concordar com o tipo declarado.
 
-    O `Content-Type` do multipart e escrito por QUEM ENVIA. Medido pela API:
-    `programa.exe` renomeado com `Content-Type: application/pdf` era aceito e
-    guardado — a lista de tipos permitidos, sozinha, so barra quem nao tenta.
+    O `Content-Type` do multipart e escrito por QUEM ENVIA: sem estas
+    conferencias, `programa.exe` renomeado com `Content-Type: application/pdf`
+    entra — a lista de tipos permitidos, sozinha, so barra quem nao tenta.
 
     Duas conferencias, porque nenhuma basta:
 

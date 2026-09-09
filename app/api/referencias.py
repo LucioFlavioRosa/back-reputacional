@@ -210,11 +210,10 @@ def _guardar_versao(
 
     # A TRAVA NA LINHA DA REFERÊNCIA, ANTES DE CONTAR.
     #
-    # `numero` era lido sem bloqueio: doze uploads simultâneos na mesma
-    # referência liam a mesma versão atual, pediam todos o mesmo número, e o
-    # `unique (referencia_id, numero)` derrubava onze — com 500 genérico na
-    # tela e, pior, o byte já gravado no blob. Medido: 12 requisições, 2
-    # gravadas, 10 blobs órfãos no Azurite.
+    # Sem o bloqueio, uploads simultâneos na mesma referência leem a mesma
+    # versão atual, pedem todos o mesmo número, e o
+    # `unique (referencia_id, numero)` derruba todos menos um — com 500
+    # genérico na tela e, pior, o byte já gravado no blob.
     #
     # `with_for_update` serializa quem escreve NESTA referência e libera no
     # commit. Duas pessoas subindo versões de referências diferentes não se
@@ -254,11 +253,11 @@ def _guardar_versao(
 
     # A LINHA PRIMEIRO, O BYTE DEPOIS.
     #
-    # Era o contrário, e o raciocínio parecia bom: se o blob falhasse, a
-    # transação não commitava e não sobrava linha apontando para arquivo
-    # inexistente. Mas a falha que acontece na prática é a do BANCO — foi ela
-    # que deixou dez bytes órfãos no Azurite —, e nessa ordem o byte já tinha
-    # ido. Com o `flush` antes, o banco recusa antes de escrevermos qualquer
+    # A ordem inversa parece defensável: se o blob falhasse, a transação não
+    # commitaria e não sobraria linha apontando para arquivo inexistente. Mas a
+    # falha que acontece na prática é a do BANCO — a numeração recusada por
+    # outro escritor —, e nessa ordem o byte já teria ido, órfão, para o
+    # contêiner. Com o `flush` antes, o banco recusa antes de escrevermos
     # coisa no armazenamento.
     sessao.flush()
     blob.guardar(linha.caminho, dados, linha.tipo_conteudo)
@@ -298,8 +297,7 @@ def criar(
     """Cadastra a referência COM a primeira versão, numa transação só.
 
     O ARQUIVO É OBRIGATÓRIO. Uma referência sem ele é um título que não leva a
-    lugar nenhum — e era exatamente o que sobrava quando o acervo morava no
-    SharePoint e o painel guardava só o link.
+    lugar nenhum.
     """
     _conferir_tipo(tipo)
     outros = {int(t) for t in temas.split(",") if t.strip()}

@@ -268,13 +268,13 @@ def test_429_carrega_cabecalho_cors():
 
 
 def test_saude_nao_e_isenta():
-    """A isenção que existia aqui era um buraco, não uma proteção.
+    """Isentar `/api/saude` seria um buraco, não uma proteção.
 
-    O raciocínio original: o App Service sonda `/api/saude` de poucos em poucos
-    segundos, e um 429 faria a plataforma concluir que o serviço caiu. O medo
-    era infundado — o balde é POR IP, e a sonda vem de um endereço da
-    infraestrutura do Azure. O efeito colateral era real: qualquer um inundava
-    aquela rota sem gastar uma ficha.
+    O argumento a favor da isenção: o App Service sonda a rota de poucos em
+    poucos segundos, e um 429 faria a plataforma concluir que o serviço caiu.
+    Ele não se sustenta — o balde é POR IP, e a sonda vem de um endereço da
+    infraestrutura do Azure. O efeito colateral, sim, é real: qualquer um
+    inundaria aquela rota sem gastar uma ficha.
     """
     cliente = TestClient(_app_com_limite(capacidade=2))
     assert cliente.get("/api/saude").status_code == 200

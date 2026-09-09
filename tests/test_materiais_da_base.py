@@ -1,7 +1,8 @@
 """A listagem dos documentos que sairam das reunioes.
 
-Duas procedencias, duas telas: a biblioteca e o acervo do SharePoint que a
-Aegea leva PARA a reuniao; isto aqui e o que VOLTA dela e mora no Blob.
+Duas procedencias, duas telas: a biblioteca e o acervo oficial que a Aegea
+leva PARA a reuniao; isto aqui e o que VOLTA dela. Os dois moram no mesmo
+blob, em arvores separadas.
 """
 
 from __future__ import annotations

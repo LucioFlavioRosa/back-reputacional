@@ -85,10 +85,10 @@ def _exigir_presenca_valida(presenca: str | None) -> None:
 class ParticipanteDaOutraParte:
     """Quem participou pelo outro lado — o principal INCLUSIVE.
 
-    A primeira versão guardava só os "demais", e o principal ficava apenas em
-    `interacao.interlocutor_id`. Parecia econômico e escondia um buraco: não
-    havia onde dizer se o principal compareceu. Justamente a pessoa mais
-    importante da reunião era a única sem presença.
+    O principal entra na lista como os outros, com uma marca — e não só em
+    `interacao.interlocutor_id`. Fora da lista ele não teria onde ter presença:
+    justamente a pessoa mais importante da reunião seria a única de quem não se
+    sabe se compareceu.
     """
 
     interlocutor_id: UUID
@@ -139,9 +139,9 @@ class MaterialDaAgenda:
     referencia_id: UUID | None = None
     #: DE QUE ASSUNTOS O DOCUMENTO TRATA.
     #:
-    #: É o que faz a busca por assunto ser a mesma nas duas procedências: o
-    #: material oficial do SharePoint já era organizado assim, e o que a equipe
-    #: sobe passou a ser também.
+    #: É o que faz a busca por assunto ser a mesma nas duas procedências: a
+    #: referência da biblioteca e o documento que sai da reunião se organizam
+    #: pelo mesmo eixo.
     temas: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
@@ -177,13 +177,13 @@ class Interacao:
     instituicao_id: UUID
     uf: str
     status: str
-    #: OPCIONAL desde a 0013. Saiu da tela: `temas` diz o assunto de forma
+    #: OPCIONAL, e fora da tela de cadastro: `temas` diz o assunto de forma
     #: classificada — que e o que o painel consegue somar — e `expectativa` diz
-    #: o que se quer dele. A pauta era a terceira forma de dizer a mesma coisa,
-    #: e a unica que ninguem consegue agregar.
+    #: o que se quer dele. A pauta seria a terceira forma de dizer a mesma
+    #: coisa, e a unica que ninguem consegue agregar.
     #:
-    #: Continua preenchida nos 60 registros que vieram da planilha, onde e a
-    #: unica descricao em palavras que existe.
+    #: Vem preenchida nos registros que nasceram da planilha, onde e a unica
+    #: descricao em palavras que existe.
     pauta: str | None = None
 
     id: UUID | None = None
@@ -217,10 +217,11 @@ class Interacao:
 
     # -- o ciclo da agenda ----------------------------------------------------
     #
-    # A interação deixou de ser só o registro do que aconteceu: ela nasce como
-    # PEDIDO, é planejada, confirmada ou declinada, realizada, e desdobra em
-    # outra. Os campos abaixo guardam o lado PREVISTO — e é a distância entre
-    # ele e `relato`/`clima` que mede se o que se promete costuma acontecer.
+    # A interação é a agenda inteira, e não só o registro do que aconteceu: ela
+    # nasce como PEDIDO, é planejada, confirmada ou declinada, realizada, e
+    # desdobra em outra. Os campos abaixo guardam o lado PREVISTO — e é a
+    # distância entre ele e `relato`/`clima` que mede se o que se promete
+    # costuma acontecer.
     #
     # Nulo em todos: não informado. Nunca "não".
     expectativa: str | None = None
@@ -230,9 +231,9 @@ class Interacao:
     nota_situacao: str | None = None
     #: DE QUAIS agendas esta decorre. Vazio = nasceu sozinha.
     #:
-    #: Plural desde a 0017. Com um pai so, "a agencia e a bancada levaram
-    #: juntas a esta reuniao" perdia uma das duas — e era justamente o caso que
-    #: o grafo existe para mostrar.
+    #: Plural: com um pai so, "a agencia e a bancada levaram juntas a esta
+    #: reuniao" perderia uma das duas — e e justamente o caso que o grafo
+    #: existe para mostrar.
     origens: tuple[UUID, ...] = ()
     #: QUANTAS agendas decorrem desta. So leitura — quem escreve o elo e a
     #: agenda que descende.
@@ -346,12 +347,11 @@ class Interacao:
                 )
             vistos.add(participante.interlocutor_id)
 
-        # O PRINCIPAL AGORA MORA NA LISTA, e não fora dela.
+        # O PRINCIPAL MORA NA LISTA, e não fora dela.
         #
-        # A regra anterior proibia repeti-lo aqui, e era essa proibição que o
-        # deixava sem presença. Agora ele é um participante como os outros, com
-        # uma marca — e as duas invariantes abaixo são o que mantém a marca
-        # significando alguma coisa.
+        # Ele é um participante como os outros, com uma marca — proibi-lo aqui
+        # é o que o deixaria sem presença. As duas invariantes abaixo são o que
+        # mantém a marca significando alguma coisa.
         principais = [p for p in self.outra_parte if p.principal]
         if len(principais) > 1:
             raise RegraViolada(

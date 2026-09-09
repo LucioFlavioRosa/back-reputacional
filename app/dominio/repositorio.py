@@ -40,9 +40,9 @@ class RepositorioDeInteracoes(Protocol):
     ) -> Interacao | None:
         """Devolve o registro se o escopo do usuário o alcança.
 
-        O escopo é obrigatório aqui pelo mesmo motivo que em `listar`: a leitura
-        por id era o caminho que escapava do filtro, e quem conhecesse o
-        identificador lia qualquer registro.
+        O escopo é obrigatório aqui pelo mesmo motivo que em `listar`: sem ele,
+        a leitura por id é o caminho que escapa do filtro, e quem conhecer o
+        identificador lê qualquer registro.
         """
         ...
 

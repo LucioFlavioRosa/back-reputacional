@@ -138,9 +138,9 @@ class Interna(Extensao):
 
 #: Que TIPO de instituição cada frente conversa.
 #:
-#: Vivia em `semear_desenvolvimento.py` — um script de desenvolvimento — e a
-#: regra é de domínio: uma agenda de imprensa fala com veículo, uma de
-#: legislativo com proposição. O seeder passou a importar daqui.
+#: É REGRA DE DOMÍNIO, e por isso mora aqui e não no semeador: uma agenda de
+#: imprensa fala com veículo, uma de legislativo com proposição. Quem precisa
+#: do mapa — inclusive os semeadores — importa daqui.
 #:
 #: `eventos` e `parceiros` compartilham `entidade`: quem promove um evento é a
 #: mesma classe de instituição com quem se faz parceria.
@@ -158,8 +158,8 @@ TIPO_DE_INSTITUICAO: dict[Frente, str] = {
 #: lista: um tipo que nenhuma frente conversa seria cadastravel e invisivel —
 #: a instituicao existiria e nunca apareceria em formulario nenhum.
 #:
-#: `escritorio` some por isso. Ele aparecia num comentario do ORM e nao tem
-#: nenhuma linha no banco: era vocabulario morto.
+#: Um tipo que nao aparece no mapa acima nao existe para a aplicacao, por mais
+#: que alguem o escreva num comentario.
 TIPOS_DE_INSTITUICAO: frozenset[str] = frozenset(TIPO_DE_INSTITUICAO.values())
 
 #: A frente determina qual extensão é aceita. Uma interação de Governo com

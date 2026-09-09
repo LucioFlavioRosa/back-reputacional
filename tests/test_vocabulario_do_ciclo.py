@@ -3,21 +3,19 @@
 POR QUE ESTE ARQUIVO EXISTE
 ---------------------------
 `presenca`, `momento` de material e `declinado_por` não são dicionários em
-tabela: são `text` com `check`, como `fonte` e `natureza` já eram. A escolha é
+tabela: são `text` com `check`, como `fonte` e `natureza`. A escolha é
 deliberada — não são opções que o negócio configura, são vocabulário estrutural,
 e não aparecem como filtro no painel.
 
 O preço é uma SEGUNDA cópia da lista, em Python, para o domínio poder recusar
 valor inválido com mensagem em português em vez de deixar o banco estourar.
 
-Duas cópias que nada obriga a concordar é exatamente como nasceu o problema do
-Tier 4: havia QUATRO listas do mesmo vocabulário — um `check` na coluna, uma no
-domínio, uma em `recorte.py` e uma escrita à mão no filtro do front. Registrar
-um Tier 4 era impossível e nenhuma delas dizia por quê.
+Duas cópias que nada obriga a concordar é como um valor novo se torna
+impossível de registrar sem que nenhuma mensagem diga por quê.
 
 Este arquivo lê o `check` DO BANCO e compara com as constantes. Acrescentar um
-valor num lado sem o outro passa a falhar aqui, e não no dia em que alguém
-tentar salvar.
+valor num lado sem o outro falha aqui, e não no dia em que alguém tentar
+salvar.
 """
 
 from __future__ import annotations

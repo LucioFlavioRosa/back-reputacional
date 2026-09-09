@@ -9,13 +9,13 @@ acompanha o prazo do trabalho.
 
 O HASH É CALCULADO EM PYTHON, E A SENHA NUNCA CHEGA AO POSTGRES
 
-A primeira versão comparava no banco, com `senha_hash = crypt($1, senha_hash)`
-do pgcrypto, e o comentário aqui afirmava que isso era mais seguro — a senha não
-passaria por variável da aplicação.
+Comparar no banco, com `senha_hash = crypt($1, senha_hash)` do pgcrypto,
+pareceria mais seguro — a senha não passaria por variável da aplicação.
 
-Estava errado, e a demonstração foi direta: com a consulta em execução,
+É o contrário, e a demonstração é direta: com a consulta em execução,
 `pg_stat_activity` mostra `crypt('a-senha-em-claro', ...)`. Ou seja, a senha
-fica visível para quem consegue ler a atividade do banco, e pode parar em log
+ficaria visível para quem consegue ler a atividade do banco, e poderia parar em
+log
 conforme `log_statement`, `log_min_duration_statement` ou a coleta de consulta
 lenta do provedor. Mandar a senha para o servidor de banco AUMENTA a superfície
 em vez de reduzir: são mais um processo, mais um log e mais um conjunto de

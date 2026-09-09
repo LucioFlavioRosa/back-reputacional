@@ -1,11 +1,10 @@
 """O portal barra no BACKEND, e não só esconde o cartão da capa.
 
-O furo que motivou este arquivo era exatamente o inverso do que a tela sugeria:
-`sintese@aegea.com.br` não abre o CRM, a capa escondia o cartão — e um `curl`
-em `/api/interacoes` devolvia os 60 registros.
+Esconder o cartão na capa não separa nada: `sintese@aegea.com.br` não abre o
+CRM, e sem esta barreira um `curl` em `/api/interacoes` devolve a Base inteira.
 
-Pior: a ESCRITA já era barrada, porque aquele papel é somente-leitura. Quem
-conferisse só os POSTs concluiria que a separação estava protegida.
+A ESCRITA já é barrada, porque aquele papel é somente-leitura — e é justamente
+por isso que conferir só os POSTs faz concluir que a separação está protegida.
 
 Três perguntas diferentes, que coexistem e não se substituem:
 
@@ -184,7 +183,7 @@ def test_a_recusa_diz_qual_modulo(cliente, sessao):
 
 @pytest.mark.parametrize("papel", ["sintese_leitura", "score_leitura"])
 def test_quem_nao_abre_o_crm_tambem_nao_escreve(cliente, sessao, papel):
-    """Já era barrado por `exigir_escrita`, e continua.
+    """Barrado por `exigir_escrita` E pelo portal.
 
     O teste existe para a proteção não depender de UMA camada: se alguém der
     permissão de escrita ao papel `sintese` amanhã, o portal ainda barra.
@@ -242,12 +241,10 @@ PREFIXOS_DO_CRM = (
 def test_toda_rota_sob_prefixo_do_crm_exige_o_portal():
     """Âncora estrutural, varrendo a APLICAÇÃO MONTADA.
 
-    A primeira versão deste teste olhava os quatro objetos `rotas` dos módulos
-    conhecidos, e por isso não provaria nada sobre uma rota registrada em outro
-    lugar — direto no `main.py`, ou num router novo que ninguém lembrou de
-    incluir na lista. Era uma âncora que só cobria o que já se sabia.
-
-    Olhar `app.routes` cobre o que EXISTE, e não o que se lembrou de listar.
+    Olhar `app.routes` cobre o que EXISTE, e não o que alguém lembrou de
+    listar. Percorrer os objetos `rotas` dos módulos conhecidos não provaria
+    nada sobre uma rota registrada em outro lugar — direto no `main.py`, ou num
+    router novo que ninguém acrescentou à lista.
     """
     from fastapi.routing import APIRoute
 

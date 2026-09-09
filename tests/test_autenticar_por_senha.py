@@ -220,9 +220,9 @@ def test_conta_sem_sso_e_sem_senha_e_recusada_pelo_banco(sessao):
 def test_a_recusa_fica_gravada_mesmo_com_a_transacao_desfeita(sessao):
     """O achado que quase passou: a recusa sumia da trilha.
 
-    A rota gravava com `registrar()` e levantava em seguida — e `obter_sessao`
-    desfaz a transação em qualquer exceção. A linha era gravada e descartada
-    milissegundos depois, então `acesso_log` só tinha SUCESSOS. Numa
+    `obter_sessao` desfaz a transação em qualquer exceção: gravar a recusa com
+    `registrar()` e levantar em seguida grava a linha e a descarta
+    milissegundos depois, deixando em `acesso_log` só os SUCESSOS. Numa
     investigação, "ninguém tentou entrar" e "todas as tentativas foram
     apagadas" são indistinguíveis.
 

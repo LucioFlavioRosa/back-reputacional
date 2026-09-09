@@ -52,10 +52,10 @@ def registrar_e_confirmar(
 ) -> None:
     """Grava a linha E CONFIRMA, porque quem chama vai levantar em seguida.
 
-    Sem o commit explícito, toda recusa de login some. `obter_sessao` desfaz a
+    Sem o commit explícito, toda recusa de login some: `obter_sessao` desfaz a
     transação em qualquer exceção — inclusive nos erros de domínio, que é
-    exatamente o que a rota levanta ao negar. A linha era gravada e descartada
-    milissegundos depois.
+    exatamente o que a rota levanta ao negar —, e a linha é gravada e
+    descartada milissegundos depois.
 
     E a recusa é a linha que mais importa: login bem-sucedido é rotina;
     sequência de negados é sinal.
@@ -139,7 +139,7 @@ def _endereco_valido(ip: str | None) -> str | None:
     """A coluna é `inet`: texto que não seja endereço faz o insert explodir.
 
     E `ip_do_cliente` devolve `"desconhecido"` quando a conexão não expõe o
-    cliente — situação real atrás de certos proxies. Como esta gravação virou
+    cliente — situação real atrás de certos proxies. Como esta gravação é
     transação própria e acontece no caminho de RECUSA, o erro transformaria uma
     negativa de login num 500: a pessoa veria "erro interno" em vez de "seu
     acesso não foi liberado", e a trilha continuaria sem a linha.

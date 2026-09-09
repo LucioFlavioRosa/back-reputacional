@@ -133,10 +133,7 @@ def listar_pessoas_aegea(
 
 # -- administracao dos cadastros ----------------------------------------------
 #
-# ATE AQUI ESTE MODULO SO LIA. As instituicoes e os interlocutores entravam pela
-# planilha, e mudar um deles era `update` no banco.
-#
-# Passam a ser editaveis pela tela porque duas decisoes do formulario dependem
+# OS CADASTROS SE EDITAM PELA TELA porque duas decisoes do formulario dependem
 # deles: a frente escolhida filtra as instituicoes pelo TIPO, e a instituicao
 # escolhida filtra quem pode representar a outra parte. Sem um lugar para
 # cadastrar, essas duas listas so teriam o que a planilha trouxe — e uma agenda
@@ -281,10 +278,10 @@ def criar_instituicao(
     # nao acontece — a instituicao tambem nao entra. E o que evita o estado
     # meio-feito que duas requisicoes produziriam.
     if entrada.representante is not None:
-        # PELO `_gravar` TAMBEM. A transacao ja era atomica — medido: forcando
-        # esta escrita a falhar, a instituicao tambem nao entra —, mas o
-        # `IntegrityError` saia como 500. Atomico e certo; 500 e mentira sobre
-        # o que aconteceu, e nao diz o que fazer.
+        # PELO `_gravar` TAMBEM. A atomicidade ja vem da transacao: se esta
+        # escrita falha, a instituicao tambem nao entra. O que `_gravar`
+        # acrescenta e a MENSAGEM — sem ele, a duplicata sai como 500, que nao
+        # diz o que aconteceu nem o que fazer.
         _gravar(
             sessao,
             Interlocutor(
@@ -382,10 +379,9 @@ def criar_interlocutor(
         tipo=entrada.tipo,
         ativo=entrada.ativo,
     )
-    # ESTA ROTA TINHA FICADO DE FORA do `_gravar`, e era o unico ponto do
-    # cadastro que ainda devolvia 500 numa duplicata — medido pela API. O
-    # indice unico e `(nome_normalizado, instituicao_id)`: a mesma pessoa duas
-    # vezes na mesma instituicao.
+    # PELO `_gravar`, como as outras rotas de cadastro: sem ele, a duplicata
+    # sai como 500. O indice unico e `(nome_normalizado, instituicao_id)` — a
+    # mesma pessoa duas vezes na mesma instituicao.
     #
     # Criar o helper e deixar duas chamadas de fora e o mesmo defeito que ele
     # existe para evitar, so que mais dificil de ver.

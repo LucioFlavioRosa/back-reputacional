@@ -407,9 +407,8 @@ def test_preflight_libera_o_cabecalho_do_csrf(cliente):
     headers`, antes de a requisição chegar à rota. Do lado do servidor não
     aparece nada, porque nada chegou.
 
-    O teste anterior mandava o cabeçalho direto pelo TestClient, que não faz
-    preflight. Provava que o token era aceito; não que o navegador o deixaria
-    sair.
+    Mandar o cabeçalho direto pelo TestClient não faz preflight: provaria que
+    o token é aceito, não que o navegador o deixaria sair.
     """
     resposta = cliente.options(
         "/api/interacoes",
@@ -427,8 +426,8 @@ def test_preflight_libera_o_cabecalho_do_csrf(cliente):
 def test_escrita_completa_com_o_token_de_api_eu(cliente, usuario, semente_minima):
     """O fluxo inteiro: `/api/eu` devolve o token, a escrita usa, e cria mesmo.
 
-    Terminar em 422 provava só que não era 403. Terminar em 201 prova que a
-    proteção deixa o trabalho acontecer — que é a metade que costuma ser
+    Termina em 201, e não em 422: um 422 provaria só que não é 403. O 201
+    prova que a proteção deixa o trabalho acontecer — a metade que costuma ser
     esquecida numa medida de segurança.
     """
     cliente.cookies.set(sessao_assinada.NOME_DO_COOKIE, cookie_de(usuario.id))
@@ -504,7 +503,7 @@ def test_endereco_ilegivel_vira_nulo_em_vez_de_explodir(bruto, sessao):
     """A coluna é `inet`, e `ip_do_cliente` nem sempre devolve um endereço.
 
     `"desconhecido"` é o que ele responde quando a conexão não expõe o cliente
-    — situação real atrás de certos proxies. Como a gravação virou transação
+    — situação real atrás de certos proxies. Como a gravação é transação
     própria e acontece no caminho de RECUSA, um insert que estoura transforma
     negativa de login em 500: a pessoa vê "erro interno" em vez de "seu acesso
     não foi liberado", e a trilha continua sem a linha.

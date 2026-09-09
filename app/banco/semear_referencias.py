@@ -610,9 +610,9 @@ def _autor(sessao: Session) -> UUID:
 def _primeira_versao(sessao, registro, *, assunto: str, atualizado_em, autor) -> None:
     """Um PDF mínimo, de verdade, no blob — e a v1 apontando para ele.
 
-    O ARQUIVO PRECISA EXISTIR. A biblioteca deixou de guardar link e passou a
-    guardar arquivo; semear uma referência sem byte devolveria o problema que a
-    0028 veio resolver — um título que não leva a lugar nenhum.
+    O ARQUIVO PRECISA EXISTIR. A biblioteca guarda arquivo, e não link:
+    semear uma referência sem byte criaria justamente o que ela não aceita —
+    um título que não leva a lugar nenhum.
 
     O conteúdo é um PDF de uma página dizendo o próprio título. Não é o
     documento real — ninguém tem o acervo da Aegea aqui —, e é honesto sobre

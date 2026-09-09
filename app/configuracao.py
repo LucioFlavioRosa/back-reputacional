@@ -162,9 +162,9 @@ class Configuracao(BaseSettings):
     #: HSTS tem efeito duradouro: o navegador guarda a instrução por `max_age`
     #: inteiro e passa a recusar http naquele domínio.
     #:
-    #: `None` significa "ligado em produção, desligado fora" — o padrão. Manter
-    #: `False` fixo era seguro e errado: HSTS desligado em produção é o
-    #: contrário do que se quer, e "depois eu ligo" nunca acontece.
+    #: `None` significa "ligado em produção, desligado fora" — o padrão. Um
+    #: `False` fixo pareceria seguro e seria o contrário: HSTS desligado em
+    #: produção, com um "depois eu ligo" que nunca chega.
     hsts_ligado_bruto: bool | None = Field(default=None, alias="HSTS_LIGADO")
 
     #: SEPARADO de propósito, e desligado por padrão.
@@ -192,9 +192,9 @@ class Configuracao(BaseSettings):
 
     # -- os arquivos dos materiais -------------------------------------------
     #
-    # O material de uma agenda deixou de ser só um link: o arquivo vive num
-    # Azure Blob Storage, e localmente num Azurite, que fala a MESMA API. Não
-    # há caminho "só de teste": o mesmo SDK e o mesmo código valem nos dois.
+    # O material de uma agenda é arquivo, e não só link: ele vive num Azure
+    # Blob Storage, e localmente num Azurite, que fala a MESMA API. Não há
+    # caminho "só de teste": o mesmo SDK e o mesmo código valem nos dois.
 
     #: Cadeia de conexão do Storage. VAZIA desliga o upload — a rota devolve
     #: 503 dizendo que o armazenamento não está configurado, em vez de estourar

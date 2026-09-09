@@ -1,12 +1,12 @@
 """Casos de uso de edição e arquivamento.
 
-A trilha de auditoria é escrita por gatilho (migration 0005). O gatilho
-`auditar_interacao` passou a ser o único escritor de `interacao_auditoria`, e
-este módulo apenas altera o agregado.
+A trilha de auditoria é escrita por gatilho (migration 0005): `auditar_interacao`
+é o ÚNICO escritor de `interacao_auditoria`, e este módulo apenas altera o
+agregado.
 
-O motivo: enquanto a aplicação escrevia a auditoria, ela só registrava o que
-passasse por ela. Um `update` no cliente SQL — "corrigir uma linha rapidinho" —
-alterava o dado e sumia do histórico. No banco, o gatilho vê as duas coisas.
+O motivo: uma auditoria escrita pela aplicação só registra o que passa por ela.
+Um `update` no cliente SQL — "corrigir uma linha rapidinho" — alteraria o dado
+e sumiria do histórico. No banco, o gatilho vê as duas coisas.
 
 Quem informa o autor é `marcar_autor_na_sessao`, chamada quando a identidade é
 resolvida. Sem ela, a alteração ainda é registrada, com autor nulo — que é

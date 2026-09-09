@@ -1,9 +1,8 @@
 """As agregações do backend batem com a tabela?
 
 Esta é a suíte que sustenta a regra central do projeto: **o número do KPI bate
-com o da tabela**. Enquanto tudo era derivado no navegador, a garantia era
-trivial — o mesmo array alimentava os dois. Com a agregação em SQL, passam a
-existir dois caminhos, e a garantia vira trabalho.
+com o da tabela**. Com a agregação em SQL e a listagem em outra consulta são
+dois caminhos até o mesmo número, e é aqui que eles se encontram.
 
 A forma do teste importa: em vez de conferir a agregação contra um valor
 escrito à mão, ela é conferida contra a CONTAGEM DAS LINHAS QUE A LISTAGEM

@@ -26,8 +26,7 @@ class Instituicao(Tabela):
     #: veiculo | orgao | entidade | investidor | proposicao | area_interna
     #:
     #: A lista vale como `TIPOS_DE_INSTITUICAO` no dominio, derivada do mapa
-    #: frente -> tipo. `escritorio` constava aqui e nao tem nenhuma linha no
-    #: banco: era vocabulario morto, e some.
+    #: frente -> tipo — e nao escrita a mao aqui.
     tipo: Mapped[str] = mapped_column(Text)
     #: O nome POR EXTENSO. `nome` guarda a forma curta — "ABCON", "ANA" —, que
     #: e como se fala e como a lista fica legivel; quem nao convive com a sigla
@@ -114,9 +113,8 @@ class PessoaAegea(Tabela):
     #: SOBRE O QUE ESTA PESSOA PODE FALAR.
     #:
     #: `selectin` carrega os vinculos de TODA a lista em uma consulta a mais —
-    #: nao uma por pessoa. Era essa a objecao registrada em
-    #: `temas_do_porta_voz`, e ela vale para carregamento preguicoso, nao para
-    #: carregamento em lote.
+    #: nao uma por pessoa. A objecao a N+1 registrada em `temas_do_porta_voz`
+    #: vale para carregamento preguicoso, nao para carregamento em lote.
     #:
     #: So leitura: quem escreve e `_aplicar_temas_da_pessoa`, na API. Ter os
     #: dois lados gravaveis seria a mesma relacao com duas donas.

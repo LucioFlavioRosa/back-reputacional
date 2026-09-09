@@ -84,10 +84,10 @@ class Recorte:
         # o pedido exigiria consultar o banco DAQUI, e este módulo não tem acesso
         # a ele de propósito — o `Recorte` é objeto de valor puro.
         #
-        # Esta era a QUARTA cópia da lista de níveis: havia esta, uma em
-        # `dominio/interacao.py`, um `check between 1 and 3` no schema e as
-        # opções escritas à mão no filtro do front. Nada obrigava as quatro a
-        # concordar, e nenhuma delas dizia por que o Tier 4 não entrava.
+        # E POR ISSO NÃO HÁ LISTA DE NÍVEIS AQUI. Cada cópia da lista — esta,
+        # a do domínio, um `check` no schema, as opções do filtro no front —
+        # é mais um lugar que precisa concordar com os outros, e nenhuma
+        # delas diria por que um nível novo não entra.
         if self.grupo_status and self.grupo_status not in GRUPOS_DE_STATUS:
             validos = ", ".join(sorted(GRUPOS_DE_STATUS))
             raise RegraViolada(

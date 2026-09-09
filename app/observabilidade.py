@@ -1,12 +1,12 @@
 """Telemetria e log estruturado.
 
-Duas coisas que o sistema não tinha e que impedem manutenção corretiva:
+Duas coisas sem as quais não há manutenção corretiva:
 
-1. **Nada era registrado.** O tratador de erro devolvia JSON e engolia a
-   exceção. Um 403, um 422 ou um 404 não deixavam rastro nenhum, e um 500
-   deixava só o stderr do uvicorn — efêmero e não consultável.
-2. **Nada correlacionava.** Sem `operation_Id` compartilhado, um erro visto
-   pelo usuário no navegador e a falha no backend eram dois eventos soltos.
+1. **Registrar.** Sem isto, o tratador de erro devolve JSON e engole a exceção:
+   um 403, um 422 ou um 404 não deixam rastro nenhum, e um 500 deixa só o
+   stderr do uvicorn — efêmero e não consultável.
+2. **Correlacionar.** Sem `operation_Id` compartilhado, o erro que o usuário vê
+   no navegador e a falha no backend são dois eventos soltos.
 
 O log estruturado funciona **sempre**, com ou sem Azure: em desenvolvimento
 sai no terminal, no App Service cai no log stream. O Application Insights é
@@ -81,12 +81,11 @@ def _configurar_log(configuracao: Configuracao) -> None:
 
     # Só a política de erro muda; o encoding do terminal fica como está.
     #
-    # Forçar UTF-8 aqui foi tentador e errado: o console do Windows abre em
-    # cp1252, que ACEITA acento — trocar para UTF-8 fazia "não" virar "nÃ£o"
-    # na saída. O que de fato estourava era um caractere fora do cp1252 (a
-    # seta "→", já removida das mensagens). Com `backslashreplace`, qualquer
-    # caractere futuro fora do encoding vira escape legível em vez de derrubar
-    # a linha inteira de log.
+    # NÃO É FORÇAR UTF-8: o console do Windows abre em cp1252, que ACEITA
+    # acento, e trocar o encoding faz "não" virar "nÃ£o" na saída. O que
+    # estoura é um caractere fora do cp1252 — uma seta "→", por exemplo. Com
+    # `backslashreplace`, ele vira escape legível em vez de derrubar a linha
+    # inteira de log.
     if hasattr(sys.stdout, "reconfigure"):
         try:
             sys.stdout.reconfigure(errors="backslashreplace")

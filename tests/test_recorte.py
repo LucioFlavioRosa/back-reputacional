@@ -139,11 +139,11 @@ def test_a_busca_acha_agenda_nova_pelo_tema_e_pela_expectativa():
 
 
 def test_o_filtro_por_pessoa_nao_estoura():
-    """`InteracaoInterlocutor` era usada sem import, e o filtro dava 500.
+    """O filtro por pessoa e montado, e nao so escrito.
 
-    Entrou com a lista de participantes (commit do ciclo da agenda) e ficou
-    quebrado desde entao: `NameError` em tempo de execucao, dentro da montagem
-    da consulta. A suite nao exercitava `pessoa=`, e o `ruff` acusava um `F821`
+    `InteracaoInterlocutor` usada sem import da `NameError` em tempo de
+    execucao, dentro da montagem da consulta — 500 na API. Sem um teste que
+    exercite `pessoa=`, o unico sinal e um `F821`
     que ninguem estava lendo.
 
     O teste MONTA a condicao, que e onde o nome e resolvido. Um teste que so

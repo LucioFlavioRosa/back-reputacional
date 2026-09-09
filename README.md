@@ -96,7 +96,7 @@ app/
 │   ├── metricas.py          as agregações do painel
 │   ├── exportacoes.py      trilha de quem exportou a Base
 │   ├── materiais.py        os documentos com arquivo, por recorte
-│   ├── referencias.py      a biblioteca do SharePoint, por assunto
+│   ├── referencias.py      a biblioteca de referências, com versões
 │   ├── stakeholders.py      diretórios
 │   ├── catalogo.py          dicionários
 │   ├── dependencias.py      quem está pedindo, e se pode
@@ -105,6 +105,7 @@ app/
 ├── dominio/               entidades, regras e vocabulário. Sem SQL, sem FastAPI
 ├── casos_de_uso/          o que a aplicação faz, um arquivo por operação
 ├── banco/                 ORM, consultas, sessão e migrations
+├── armazenamento/         o Blob: caminho, upload e download dos arquivos
 ├── seguranca/             OIDC, cookie, CSRF, limite de taxa, cabeçalhos
 ├── configuracao.py        variáveis de ambiente, com os padrões
 └── observabilidade.py     log estruturado e telemetria
@@ -135,40 +136,32 @@ de acesso vale na hora exata, e a revogação feita pela tela vale no ato. Ver
 ## Banco
 
 PostgreSQL **15 ou superior** — a razão do piso está em [Versão e
-privilégio](#versão-e-privilégio). 37 tabelas: uma tabela-mãe `interacao` com os
-campos comuns, mais cinco extensões 1-para-1 por frente.
+privilégio](#versão-e-privilégio). 46 tabelas, organizadas em seis assuntos:
 
-As migrations ficam em `app/banco/migrations/` e rodam **em ordem alfabética**:
+| Assunto | Tabelas principais |
+|---|---|
+| dicionários | `frente`, `status`, `tema`, `esfera`, `clima`, `resultado`, `formato`, … |
+| stakeholders | `instituicao`, `interlocutor`, `pessoa_aegea` |
+| acesso | `papel`, `usuario`, `escopo`, `acesso_log`, trilha de concessão |
+| agendas | `interacao` (tabela-mãe) + cinco extensões 1-para-1 por frente, `interacao_interlocutor`, `interacao_origem`, `participacao_aegea`, `material` |
+| biblioteca | `referencia`, `referencia_versao`, `referencia_tema`, `arquivo` |
+| trilhas | `auditoria`, `exportacao`, `importacao` (schema sem aplicação) |
 
-| # | Arquivo | O que cria |
-|---|---|---|
-| 0001 | `fundacao` | extensões, domínio `abrangencia`, 14 dicionários + carga |
-| 0002 | `stakeholders` | instituição, interlocutor, pessoa da Aegea |
-| 0003 | `acesso` | papel, usuário, escopo, trilha de login |
-| 0004 | `interacoes` | a tabela-mãe, as extensões, os vínculos |
-| 0005 | `auditoria` | trilhas e gatilhos |
-| 0006 | `concessao_de_acesso` | a função `conceder_acesso` |
-| 0007 | `relatorios` | registro de geração e exportação (a tabela virou `exportacao` na 0025) |
-| 0008 | `importacao` | schema da importação (sem aplicação — ver abaixo) |
-| 0009 | `papel_da_aplicacao` | os `grant` de `painel_app` |
-
-> **A 0009 concede em massa, e só alcança o que já existia.** Uma migration
-> posterior que crie tabela nasce SEM os `grant` de `painel_app` para `delete` —
-> os de `select`, `insert` e `update` vêm do `alter default privileges`. Foi o
-> que aconteceu com `referencia_tema` (0026) e `material_tema` (0027): as duas
-> precisaram de `grant delete` explícito, e sem ele a edição falharia só na hora
-> de salvar, com erro de permissão.
->
-> A tabela acima para na 0009 e o diretório vai até a 0027; a lista não foi
-> mantida. Quem precisar do histórico completo lê os arquivos, que são
-> autoexplicativos por convenção.
+As 27 migrations ficam em `app/banco/migrations/` e rodam **em ordem
+alfabética**, uma vez, na primeira subida do banco. Cada arquivo abre com um
+cabeçalho dizendo o que muda e por quê — é lá que está o histórico, e não aqui.
 
 Cada objeto é criado **uma vez**, no estado final. Não há migration que corrija
 outra.
 
+> **Migration nova precisa conceder `delete` a `painel_app`.** A 0009 concede em
+> massa e só alcança o que já existia; `select`, `insert` e `update` vêm depois
+> pelo `alter default privileges`, mas `delete` não. Sem o `grant` explícito, a
+> edição falha só na hora de salvar, com erro de permissão.
+
 ### Versão e privilégio
 
-Conferido no CI, aplicando as 9 migrations num banco limpo:
+Conferido no CI, aplicando as migrations num banco limpo:
 
 | | 15 | 16 | 17 | 18 |
 |---|---|---|---|---|
@@ -265,6 +258,7 @@ próprios.
 | `GET` | `/api/saude` | healthcheck |
 | `GET` | `/api/auth/login` | começa o fluxo OIDC |
 | `GET` | `/api/auth/callback` | volta do provedor e cria a sessão |
+| `POST` | `/api/auth/senha` | entra por e-mail e senha (só com o SSO desligado) |
 | `POST` | `/api/auth/logout` | encerra a sessão |
 | `GET` | `/api/eu` | quem sou, o que posso, e o token anti-CSRF |
 | `GET` | `/api/interacoes` | lista paginada do recorte |
@@ -276,9 +270,15 @@ próprios.
 | `GET` | `/api/metricas/resolutividade` | taxa e composição por grupo de status |
 | `GET` | `/api/metricas/serie-mensal` | volume por mês, segmentado |
 | `GET` | `/api/metricas/mapa` | total por UF |
-| `GET` | `/api/instituicoes` | diretório, com busca por semelhança |
-| `GET` | `/api/interlocutores` | diretório |
-| `GET` | `/api/pessoas-aegea` | diretório |
+| `GET`, `POST` | `/api/instituicoes` | diretório, com busca por semelhança |
+| `PUT` | `/api/instituicoes/{id}` | edita, inclusive a relevância |
+| `GET`, `POST` | `/api/interlocutores` | diretório |
+| `PUT`, `DELETE` | `/api/interlocutores/{id}` | edita e remove |
+| `GET`, `POST` | `/api/pessoas-aegea` | diretório |
+| `PUT` | `/api/pessoas-aegea/{id}` | edita |
+| `GET` | `/api/pessoas-aegea/{id}/temas` | de que assuntos a pessoa fala |
+| `GET`, `POST` | `/api/temas` | os assuntos, com nível |
+| `PUT` | `/api/temas/{id}` | edita |
 | `GET` | `/api/dicionarios` | todos os vocabulários numa chamada |
 | `GET` | `/api/acessos` | administração de acessos |
 | `GET` | `/api/acessos/papeis` | papéis disponíveis |
@@ -286,18 +286,26 @@ próprios.
 | `GET` | `/api/acessos/{id}/historico` | trilha de concessão |
 | `POST` | `/api/exportacoes` | registra uma exportação CSV da Base |
 | `GET` | `/api/exportacoes/historico` | quem exportou o quê |
-| `GET` | `/api/materiais` | os documentos com arquivo, no recorte |
-| `GET` | `/api/referencias` | a biblioteca do SharePoint |
-| `POST` | `/api/referencias` | cadastra uma referência |
-| `PUT` | `/api/referencias/{id}` | edita uma referência |
+| `GET` | `/api/materiais` | os documentos que saíram das reuniões, no recorte |
+| `POST` | `/api/interacoes/{id}/materiais/arquivo` | sobe um arquivo para a agenda |
+| `GET` | `/api/interacoes/{id}/materiais/arquivo/{arquivo_id}` | baixa (pela API, nunca por link direto) |
+| `GET`, `POST` | `/api/referencias` | a biblioteca de referências |
+| `PUT` | `/api/referencias/{id}` | edita os metadados |
+| `GET`, `POST` | `/api/referencias/{id}/versoes` | histórico e nova versão |
+| `GET` | `/api/referencias/{id}/versoes/{versao_id}/arquivo` | baixa aquela versão |
 
 `status` e `grupo` são parâmetros **separados**: `declinado` é ao mesmo tempo o
-código de um status e o nome de um grupo — que também contém `cancelado`.
+código de um status e o nome de um grupo.
+
+**Três situações ativas** — `solicitado`, `confirmada` (Aceito) e `declinado`
+(Negado). O dicionário guarda outros oito códigos com `ativo = false`, porque
+registros antigos apontam para eles; a coluna `ativo` é o que separa o que se
+oferece do que só se lê.
 
 ## Testes e qualidade
 
 ```bash
-python -m pytest        # 366 testes; precisa do Postgres no ar
+python -m pytest        # 635 testes; precisa do Postgres no ar
 ruff check .            # linter, com as regras FastAPI (FAST); passa limpo
 ```
 
@@ -312,7 +320,7 @@ criada e migrada pelo próprio módulo a cada execução.
 |---|---|
 | Lint | `ruff check` com as regras do `pyproject.toml`, FastAPI incluídas |
 | Testes | a suíte em Python 3.12 **e** 3.13, contra Postgres 18 |
-| Migrations | aplica as 9 num banco limpo, em **4 versões × 2 níveis de privilégio** |
+| Migrations | aplica todas num banco limpo, em **4 versões × 2 níveis de privilégio** |
 | Imagem Docker | constrói, sobe contra um Postgres migrado e confere 7 rotas |
 
 A matriz de migrations é a etapa que mais paga, e já provou isso duas vezes:
@@ -361,13 +369,14 @@ Escrito explicitamente para quem for continuar.
 
 - **Importação da planilha.** As tabelas existem (migration `0008`) e o desenho
   está documentado lá; não há rota nem caso de uso.
-- **Administração de dicionários.** A API só lê (`GET /api/dicionarios`). O papel
-  `administra_dicionarios` existe e não é exigido em lugar nenhum, porque não há
-  escrita para exigir.
+- **Administração dos dicionários fechados.** Frente, status, clima, resultado e
+  formato só se leem (`GET /api/dicionarios`); mudar um valor é SQL. O que TEM
+  tela e rota é o cadastro de assuntos, instituições, interlocutores e pessoas
+  da Aegea — e escrever neles exige o papel `administra_dicionarios`.
 - **Gerador de documento no servidor.** O CSV é montado no cliente, a partir da
   listagem já baixada. O que existe é o REGISTRO da exportação — trilha, não
-  barreira. (A tela de relatório foi removida do produto na 0025; a trilha
-  ficou, porque é controle de segurança e não relatório.)
+  barreira: não há tela de relatório, e a exportação é um controle de
+  segurança.
 - **Verificação de tipos.** Não há `mypy` nem `ty` configurados. Ver
   [`docs/SEGURANCA.md`](docs/SEGURANCA.md).
 - **Rate limit distribuído.** O estado é por processo. Com mais de uma instância,

@@ -1,6 +1,7 @@
 """A biblioteca de referências. Espelha `migrations/0026` + `0028`.
 
-O ARQUIVO MORA AQUI, no Blob, e não mais no SharePoint. Uma referência tem
+O ARQUIVO MORA NO BLOB, numa árvore própria: `referencias/<assunto>/<tipo>/`.
+Uma referência tem
 VERSÕES: a tela mostra a mais recente, e as anteriores respondem "o que a gente
 levou naquela reunião de março".
 

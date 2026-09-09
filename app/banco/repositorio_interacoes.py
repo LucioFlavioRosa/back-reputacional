@@ -263,10 +263,9 @@ class RepositorioSQL:
         suba a cadeia — "de onde veio esta agenda?", que é o que o grafo faz —
         roda para sempre, e a tela trava.
 
-        AGORA É TRAVESSIA DE GRAFO, e não de cadeia. Com um pai só, subir era
-        seguir uma linha. Com vários, cada nó tem N antecessores e o caminho se
-        ramifica: um ciclo pode fechar por qualquer ramo, e checar só o primeiro
-        deixaria passar o resto.
+        É TRAVESSIA DE GRAFO, e não de cadeia: com vários pais, cada nó tem N
+        antecessores e o caminho se ramifica. Um ciclo pode fechar por qualquer
+        ramo, e checar só o primeiro deixaria passar o resto.
 
         `union` (e não `union all`) é o que faz a travessia terminar num grafo
         com losangos — A e B levam a C, e ambos vêm de X: sem deduplicar, X é
@@ -312,7 +311,7 @@ class RepositorioSQL:
         `auditar_interacao_interlocutor` registra as duas pontas, entao a ficha
         consegue dizer quem entrou e quem saiu da agenda, e quando.
 
-        A PRESENCA e atualizada em quem ja estava: a pessoa que era `previsto`
+        A PRESENCA e atualizada em quem ja estava: quem esta como `previsto`
         vira `presente` depois da reuniao sem sair e voltar da lista — o que
         deixaria dois eventos na trilha para um fato so.
         """
@@ -378,12 +377,11 @@ class RepositorioSQL:
         # divergem quando UMA manda e a outra segue, e aqui quem manda é a
         # lista: é ela que a ficha mostra e que o formulário edita.
         #
-        # A versão anterior invertia isso na ausência de marca — rederivava o
-        # principal a partir da coluna — e o efeito era uma remoção que o
-        # sistema desfazia calado: tirar o principal da lista o trazia de volta.
-        # Pior, `interlocutor_id: null` sozinho não limpava nada, porque a marca
-        # antiga vencia. Não havia como remover o principal por um caminho só, e
-        # nenhuma mensagem dizia isso.
+        # Rederivar o principal a partir da coluna, na ausência de marca, faria
+        # o sistema desfazer uma remoção calado: tirar o principal da lista o
+        # traria de volta, e `interlocutor_id: null` sozinho não limparia nada.
+        # Não haveria como removê-lo por um caminho só, e nenhuma mensagem
+        # diria isso.
         principal = next(
             (p for p in interacao.outra_parte if p.principal), None
         )
@@ -609,8 +607,8 @@ class RepositorioSQL:
         mesmo desenho de `conceder_acesso` (migration 0006), que trava o alvo
         exatamente pela mesma razão.
         """
-        # `sessao.get()` buscava pela chave primária e pulava `condicoes()`
-        # inteiro — era o caminho de leitura que não respeitava filtro nenhum.
+        # NÃO É `sessao.get()`: buscar pela chave primária pularia `condicoes()`
+        # inteiro, e seria o caminho de leitura que não respeita filtro nenhum.
         # Um `select` com as mesmas condições da listagem fecha isso: registro
         # arquivado, invisível ou fora do escopo simplesmente não volta.
         consulta = select(InteracaoRegistro).where(
@@ -698,9 +696,9 @@ class RepositorioSQL:
         das consultas, mas a LINHA fica. Logo o `on delete cascade` da 0017
         nunca dispara pelo fluxo real, e o elo sobrevive a agenda.
 
-        Sem este filtro, o efeito medido era: a descendente continuava dizendo
-        que decorre de uma agenda cujo `GET` responde 404, e a Base marcava
-        "levou a 1" para uma cadeia que ninguem consegue abrir.
+        Sem este filtro, a descendente continua dizendo que decorre de uma
+        agenda cujo `GET` responde 404, e a Base marca "levou a 1" para uma
+        cadeia que ninguem consegue abrir.
 
         A filtragem mora AQUI, e nao no join da relacao, porque com `secondary`
         os dois lados sao `InteracaoRegistro` — relacao autorreferente, que

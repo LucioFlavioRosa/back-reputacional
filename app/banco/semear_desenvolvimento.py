@@ -278,10 +278,10 @@ def semear(sessao: Session) -> dict[str, int]:
             pauta=pauta,
             # RELATO SÓ EM QUEM ACONTECEU. O relato é o que diz "a reunião
             # houve" — ver `jaAconteceu` no front. Gravá-lo em toda linha
-            # produzia `solicitado` com relato, um estado que o domínio chama
-            # de incoerente, e a fila de exceções cobrava essas agendas como
+            # produz `solicitado` com relato, um estado que o domínio chama de
+            # incoerente, e a fila de exceções cobra essas agendas como
             # "sem resposta há 30 dias" enquanto o texto ao lado contava a
-            # reunião. Eram 8 registros desta amostra.
+            # reunião — 8 registros desta amostra.
             relato=(
                 None
                 if STATUS_POR_ROTULO[status] == "solicitado"

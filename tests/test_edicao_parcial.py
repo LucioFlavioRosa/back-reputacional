@@ -131,13 +131,12 @@ def test_campo_desconhecido_e_recusado_na_fronteira():
 def test_editar_sem_mandar_pauta_preserva_a_que_existe():
     """O campo saiu da tela, e a tela nao pode ter opiniao sobre ele.
 
-    A pauta deixou de ser editavel pelo formulario (0013): `temas` e
-    `expectativa` ocupam o lugar dela. Mas os 60 registros vindos da planilha
-    TEM pauta, e ela e a unica descricao em palavras que eles carregam.
+    A pauta nao e editavel pelo formulario: `temas` e `expectativa` ocupam o
+    lugar dela. Mas os registros vindos da planilha TEM pauta, e ela e a unica
+    descricao em palavras que eles carregam.
 
-    Eu tinha escrito `pauta: vazio` no corpo do front, seguindo a regra dos
-    demais campos — e `vazio` na edicao e `null`, que o PATCH le como APAGUE.
-    Salvar qualquer campo de uma dessas agendas teria destruido a pauta.
+    Mandar `pauta: vazio` no corpo, seguindo a regra dos demais campos, seria
+    destruir isso: `vazio` na edicao e `null`, que o PATCH le como APAGUE.
 
     Ausente e o unico valor certo: `exclude_unset` le ausencia como preserve.
     """

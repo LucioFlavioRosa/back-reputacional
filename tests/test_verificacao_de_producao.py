@@ -164,10 +164,10 @@ def test_telemetria_vazia_apenas_avisa():
 
 
 def test_hsts_liga_sozinho_em_producao():
-    """Manter `False` fixo era seguro e errado.
+    """Um `False` fixo pareceria seguro e seria o contrário.
 
-    HSTS desligado em produção é o contrário do que se quer, e "depois eu ligo"
-    não acontece. O padrão passou a seguir o ambiente; a variável ainda vence.
+    HSTS desligado em produção é o oposto do que se quer, e "depois eu ligo"
+    não acontece. O padrão segue o ambiente; a variável ainda vence.
     """
     assert Configuracao().hsts_ligado is False
     assert Configuracao(ambiente="producao").hsts_ligado is True
@@ -318,12 +318,10 @@ def test_configuracao_e_lida_do_ambiente_de_verdade(monkeypatch):
 
 
 def test_os_quatro_limites_invalidos_aparecem_todos():
-    """A regressao que a refatoracao introduziu, e o teste que faltava.
+    """Os quatro limites sao quatro verificacoes, e nao dois lacos.
 
-    `conferir` era uma funcao de 186 linhas; ao quebra-la em verificacoes
-    nomeadas, os dois baldes viraram duas funcoes com um laco dentro e um
-    `return` no primeiro invalido — e uma configuracao que zerava IP E USUARIO
-    passou a acusar so o IP.
+    Um laco por balde, com `return` no primeiro invalido, faz uma configuracao
+    que zera IP E USUARIO acusar so o IP.
 
     O CUSTO DISSO NAO E COSMETICO: quem corrigisse o que a mensagem apontou
     subiria de novo e levaria o segundo erro na cara, com o servico fora do ar

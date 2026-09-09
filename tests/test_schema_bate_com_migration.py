@@ -35,11 +35,11 @@ REMOVE_TABELA = re.compile(
 )
 #: Um `alter table` inteiro, ate o `;`. O corpo e varrido depois.
 #:
-#: A versao anterior casava `alter table X add column Y` de uma vez, e por isso
-#: so via a PRIMEIRA coluna de um `alter table` com varias clausulas — que e a
-#: forma idiomatica de acrescentar cinco colunas a uma tabela. O ponto cego era
-#: silencioso na direcao que importa: colunas no DDL e ausentes no ORM passavam
-#: despercebidas, que e exatamente o que este arquivo existe para pegar.
+#: Casar `alter table X add column Y` de uma vez veria so a PRIMEIRA coluna de
+#: um `alter table` com varias clausulas — que e a forma idiomatica de
+#: acrescentar cinco colunas a uma tabela. O ponto cego seria silencioso na
+#: direcao que importa: colunas no DDL e ausentes no ORM, que e exatamente o
+#: que este arquivo existe para pegar.
 #: `if exists` entra no padrao: sem ele, `alter table if exists x ...` faria o
 #: parser ler `if` como nome da tabela — e a alteracao inteira seria aplicada a
 #: uma tabela fantasma, em silencio.
@@ -105,11 +105,10 @@ REFERENCIA = re.compile(r"^\s*(\w+).*?references\s+(\w+)\s*\(", re.I | re.S)
 def chaves_estrangeiras_do_ddl(sql: str | None = None) -> dict[str, set[tuple[str, str]]]:
     """Cada tabela e os pares (coluna, tabela apontada) declarados no DDL.
 
-    Existe porque o retrato só de COLUNAS deixava passar uma regressão real: o
-    ORM perdeu a `ForeignKey` de `interacao.tier` e nada acusou — o banco
-    continuava barrando, mas o metadata do SQLAlchemy dizia que a coluna era um
-    inteiro solto, e é o metadata que gera schema em qualquer ferramenta que o
-    leia.
+    Existe porque um retrato só de COLUNAS deixa passar FK que o DDL tem e o
+    ORM não: o banco continua barrando, mas o metadata do SQLAlchemy descreve
+    a coluna como um inteiro solto — e é o metadata que gera schema em qualquer
+    ferramenta que o leia.
     """
     if sql is None:
         sql = "\n".join(
@@ -294,13 +293,13 @@ def test_toda_coluna_do_orm_existe_na_migration(ddl):
 
 
 def test_toda_chave_estrangeira_do_ddl_esta_declarada_no_orm():
-    """O retrato de COLUNAS não bastava, e a lacuna custou caro uma vez.
+    """O retrato de COLUNAS não basta.
 
-    `interacao.tier` ganhou `references relevancia(id)` na migration, e o ORM
-    ficou sem a `ForeignKey` correspondente. O banco continuava recusando um
-    nível inexistente, então nada quebrava em teste; o que mentia era o
-    metadata do SQLAlchemy — e é dele que sai qualquer schema gerado por
-    ferramenta, incluindo o que uma migração automática escreveria.
+    Uma coluna como `interacao.tier`, com `references relevancia(id)` no DDL e
+    sem `ForeignKey` no ORM, não quebra teste nenhum: o banco continua
+    recusando um nível inexistente. Quem mente é o metadata do SQLAlchemy — e é
+    dele que sai qualquer schema gerado por ferramenta, incluindo o que uma
+    migração automática escreveria.
 
     Confere só o sentido perigoso: FK no DDL e ausente no ORM. O contrário —
     FK no ORM sem estar no DDL — quebraria na aplicação da migration, que é

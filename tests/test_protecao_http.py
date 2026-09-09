@@ -291,9 +291,8 @@ def producao_valida(**ajustes) -> Configuracao:
 def test_docs_somem_em_producao(monkeypatch):
     """`/docs` desenha cada rota, cada campo e cada formato.
 
-    Enquanto o acesso era interno isso era conveniência. Com gente de fora, é
-    entregar o mapa da superfície de ataque — e esconder o link não basta: a
-    rota precisa deixar de existir.
+    Com acesso de fora, publicá-las é entregar o mapa da superfície de ataque
+    — e esconder o link não basta: a rota precisa não existir.
     """
     # Produção CONFIGURADA, e não apenas `ambiente="producao"`: a conferência
     # de subida recusa uma produção com os padrões de desenvolvimento, e o

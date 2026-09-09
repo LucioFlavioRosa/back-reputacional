@@ -1,11 +1,10 @@
 """Trilha de exportação da Base: quem levou o quê, e quanto.
 
-ERA `api/relatorios.py`, com a geração do documento impresso ao lado. A tela de
-relatório saiu do produto; sobrou o controle de segurança que o plano listava
-desde o começo — "Export CSV: quem exportou, qual recorte, quantas linhas".
+É UM CONTROLE DE SEGURANÇA, e não um gerador de documento: "quem exportou,
+qual recorte, quantas linhas".
 
-O CSV é montado no navegador a partir da listagem já baixada, e saía sem evento
-nenhum: um botão, um arquivo, o recorte inteiro.
+O CSV é montado no navegador a partir da listagem já baixada. Sem esta rota ele
+sairia sem evento nenhum: um botão, um arquivo, o recorte inteiro.
 """
 
 from __future__ import annotations
