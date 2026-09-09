@@ -8,7 +8,55 @@ Substitui a planilha `Demandas de Imprensa 2026.xlsx`, de 14 abas.
 
 O frontend fica em repositório próprio e consome esta API.
 
-## Subindo em 4 passos
+## Rodando a pilha inteira, com Docker
+
+Para **rodar o produto** — front, API, Postgres e o emulador de Blob — sem
+instalar Python nem Node. Clone os dois repositórios lado a lado:
+
+```bash
+git clone https://github.com/LucioFlavioRosa/back-reputacional
+git clone https://github.com/LucioFlavioRosa/front-reputacional
+cd back-reputacional
+
+docker compose -f docker-compose.pilha.yml up -d --build
+
+docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_desenvolvimento
+docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_referencias
+docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_enredos
+```
+
+Abra <http://localhost:8081>. O primeiro semeador imprime as oito contas e a
+senha — uma por papel, todas com a mesma senha, que o código chama de
+`SENHA_DE_DESENVOLVIMENTO` justamente porque **não é segredo e não pretende
+ser**. Ela existe para o SSO ficar desligado enquanto ninguém tem o tenant.
+Antes de qualquer ambiente compartilhado, ela morre.
+
+**Não há dump do banco, e é de propósito.** As migrations e os semeadores são
+versionados; um dump não é. Ele envelhece na primeira migration nova, e carrega
+o lixo de quem o gerou — a base de quem desenvolve acumula teste de revisão,
+upload repetido e conta descartável. Quem sobe daqui recebe a mesma base que
+todo mundo: 99 instituições, 233 agendas e 67 referências com arquivo de
+verdade no blob.
+
+Se alguma porta estiver ocupada, troque no ambiente e reconstrua:
+
+```bash
+PORTA_WEB=8082 PORTA_API=8002 PORTA_BANCO=5434 PORTA_BLOB=10002   docker compose -p painel-outro -f docker-compose.pilha.yml up -d --build
+```
+
+O `--build` não é opcional aí: o endereço da API entra no bundle do front na
+compilação, e também na CSP do nginx. Trocar a porta sem reconstruir deixa a
+tela vazia sem erro nenhum no servidor.
+
+Para derrubar tudo, inclusive o banco e os arquivos:
+
+```bash
+docker compose -f docker-compose.pilha.yml down -v
+```
+
+## Desenvolvendo a API sozinha, em 4 passos
+
+
 
 ```bash
 # 1. banco

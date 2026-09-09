@@ -540,3 +540,16 @@ class Material(Tabela):
     criado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+# QUEM DECLARA A CHAVE ESTRANGEIRA TRAZ O ALVO JUNTO.
+#
+# `material.referencia_id` aponta para `referencia`, que é declarada em
+# `tabelas_referencias`. Sem este import, qualquer processo que importe só este
+# módulo — um semeador, um script avulso — quebra na PRIMEIRA consulta com
+# `NoReferencedTableError: could not find table 'referencia'`, uma mensagem que
+# não menciona import nenhum. Aconteceu com `semear_enredos` num banco novo.
+#
+# NO FIM DO ARQUIVO, e não no topo: `tabelas_referencias` importa `Arquivo`
+# daqui. No topo, os dois módulos se esperariam.
+from app.banco import tabelas_referencias  # noqa: E402,F401

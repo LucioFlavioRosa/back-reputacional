@@ -1,0 +1,194 @@
+# A PILHA INTEIRA, a partir dos DOIS repositórios, para quem vai rodar isto pela
+# primeira vez.
+#
+# Clone os dois lado a lado — o `build` do front sobe uma pasta:
+#
+#   git clone https://github.com/LucioFlavioRosa/back-reputacional
+#   git clone https://github.com/LucioFlavioRosa/front-reputacional
+#   cd back-reputacional
+#   docker compose -f docker-compose.pilha.yml up -d --build
+#
+# Depois, para povoar o banco (as três, nesta ordem):
+#
+#   docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_desenvolvimento
+#   docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_enredos
+#   docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_referencias
+#
+# Abra http://localhost:8081 e entre com o que o primeiro semeador imprimiu.
+#
+# NÃO EXISTE DUMP, E É DE PROPÓSITO. As migrations e os semeadores são versionados;
+# um dump não é, envelhece na primeira migration nova, e carrega o lixo de quem o
+# gerou. Quem sobe daqui recebe a mesma base que todo mundo.
+#
+# Para derrubar tudo, inclusive o banco e os arquivos:
+#
+#   docker compose -f docker-compose.pilha.yml down -v
+#
+# ---------------------------------------------------------------------------
+# SE ALGUMA PORTA JÁ ESTIVER OCUPADA na sua máquina, troque no ambiente — e não
+# no arquivo. Foi essa a dor que originou este bloco: 8080 e 8000 estavam
+# tomadas por outro produto da mesma máquina, e `curl localhost:8080` RESPONDIA
+# 200 servindo a aplicação errada, o que parece a pilha certa no ar.
+#
+#   PORTA_WEB=8082 PORTA_API=8002 PORTA_BANCO=5434 PORTA_BLOB=10002 #     docker compose -p painel-outro -f docker-compose.pilha.yml up -d --build
+#
+# `PORTA_API` entra no BUILD do front, não na execução: o Vite substitui
+# `import.meta.env` na compilação, e o mesmo valor vira `connect-src` na CSP do
+# nginx. Trocar a porta sem `--build` deixa a tela vazia SEM erro no servidor.
+# ---------------------------------------------------------------------------
+# POR QUE `VITE_API_URL` É `localhost` E NÃO `http://api:8000`
+#
+# Quem chama a API é o NAVEGADOR, não o contêiner do front. O nginx só entrega
+# arquivos estáticos; o `fetch` sai da máquina de quem abriu a página, e para
+# ela `api` não resolve. O endereço tem de ser o que funciona no navegador.
+
+name: painel-reputacional
+
+services:
+  banco:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: painel_reputacional
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+      TZ: America/Sao_Paulo
+    ports:
+      # Exposto para dar para espiar com `psql` de fora, se precisar.
+      - "${PORTA_BANCO:-5433}:5432"
+    volumes:
+      # A partir do Postgres 18 a imagem guarda os dados em /var/lib/postgresql,
+      # com subpasta por versão maior. Montar no caminho antigo faz o contêiner
+      # recusar a subir.
+      - dados:/var/lib/postgresql
+      # As migrations rodam sozinhas na PRIMEIRA subida, em ordem alfabética.
+      # Não rodam de novo enquanto o volume existir — use `down -v` para recriar.
+      - ./app/banco/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # `pg_isready` responde antes de as migrations terminarem. Consultar uma
+      # tabela do schema é o que garante que a carga inicial de fato acabou.
+      test:
+        - CMD-SHELL
+        - pg_isready -U postgres -d painel_reputacional && psql -U postgres -d painel_reputacional -c 'select 1 from papel limit 1'
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  # O BLOB, LOCAL. Azurite é o emulador oficial da Microsoft: mesma API REST e
+  # mesmo SDK do Azure Storage de verdade, então o código que roda aqui é o
+  # mesmo que roda lá — não há caminho "só de teste" para divergir.
+  #
+  # A conta `devstoreaccount1` e a chave abaixo são as do emulador, publicadas
+  # na documentação da Microsoft. Não são segredo, e é justamente por isso que
+  # ficam à vista: quem ler este arquivo precisa saber, de imediato, que este
+  # armazenamento não guarda nada de verdade.
+  blob:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    # `--skipApiVersionCheck` porque o SDK manda um `x-ms-version` mais novo do
+    # que este Azurite conhece, e ele recusa com `InvalidHeaderValue` — erro que
+    # parece de credencial e não é. A alternativa seria fixar `api_version` no
+    # cliente, e isso valeria também em produção: o local passaria a ditar a
+    # versão que o Azure usa. Melhor o emulador ceder do que o código mentir.
+    command: >
+      azurite-blob --blobHost 0.0.0.0 --blobPort 10000 --location /dados
+      --skipApiVersionCheck
+    ports:
+      # 10001 do lado de fora: 10000 é a porta padrão do Azurite e costuma já
+      # estar ocupada por outra instalação na máquina de quem desenvolve.
+      - "${PORTA_BLOB:-10001}:10000"
+    volumes:
+      - blobs:/dados
+    healthcheck:
+      # A imagem não tem `curl` nem `wget`, mas tem `node` — é o que ela roda.
+      test:
+        - CMD
+        - node
+        - -e
+        - >
+          require('net').connect(10000, '127.0.0.1')
+            .on('connect', () => process.exit(0))
+            .on('error', () => process.exit(1))
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
+  api:
+    build:
+      context: .
+    depends_on:
+      banco:
+        condition: service_healthy
+      blob:
+        condition: service_healthy
+    ports:
+      - "${PORTA_API:-8001}:8000"
+    environment:
+      BANCO_URL: postgresql+psycopg2://postgres:postgres@banco:5432/painel_reputacional
+
+      # Sem Entra ID aqui. `AUTH_MOCK` provisiona um usuário fixo a cada
+      # requisição, então o painel abre direto, sem tela de login.
+      #
+      # Os quatro papéis de partida são a divisão por PORTAL:
+      #
+      # São OITO: um leitor e um editor para cada portal.
+      #
+      #   plataforma_leitura / plataforma_edicao   os três portais
+      #   crm_leitura        / crm_edicao          CRM dos Stakeholders
+      #   sintese_leitura    / sintese_edicao      Síntese (ainda sem tela)
+      #   score_leitura      / score_edicao        Score   (ainda sem tela)
+      #
+      # O prefixo diz ONDE entra; o sufixo diz o que FAZ lá dentro. Só
+      # `plataforma_edicao` administra acessos.
+      #
+      # Com `AUTH_MOCK: "false"` este perfil NÃO é usado — quem manda é o papel
+      # gravado no banco, e a entrada é pela tela de login.
+      AUTH_MOCK: "false"
+
+      # Exigidos quando `AUTH_MOCK` é falso. O SSO está desligado na tela, então
+      # estes valores não são usados — mas a configuração os pede, e recusar
+      # subir sem eles é melhor do que subir com o SSO meio configurado.
+      ENTRA_TENANT_ID: nao-usado-o-sso-esta-desligado
+      ENTRA_CLIENT_ID: nao-usado-o-sso-esta-desligado
+      ENTRA_CLIENT_SECRET: nao-usado-o-sso-esta-desligado
+      AUTH_MOCK_PERFIL: crm_edicao
+
+      SESSAO_SECRETA: teste-local-com-mais-de-trinta-e-dois-caracteres
+
+      # A origem do FRONT, não a da API. É o que o CORS libera.
+      ORIGENS_PERMITIDAS: '["http://localhost:${PORTA_WEB:-8081}"]'
+      URL_DO_FRONT: http://localhost:${PORTA_WEB:-8081}
+
+      # `desenvolvimento` mantém o cookie sem `Secure`, o que é necessário em
+      # http. Em `producao` o navegador descartaria o cookie e a sessão nunca
+      # se estabeleceria.
+      AMBIENTE: desenvolvimento
+
+      # O BLOB. `blob:10000` e o nome do servico na rede do compose, e nao
+      # `localhost:10001` — este endereco e usado DE DENTRO do conteiner da API.
+      # (O 10001 so existe para espiar de fora, com o Storage Explorer.)
+      BLOB_URL: "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://blob:10000/devstoreaccount1;"
+      BLOB_CONTENEDOR: materiais
+
+  web:
+    build:
+      context: ../front-reputacional
+      args:
+        # Ver o bloco no topo: este valor entra no bundle E na CSP.
+        VITE_API_URL: http://localhost:${PORTA_API:-8001}
+        # HSTS desligado: em http, e com certificado que o navegador não
+        # aceitaria, ligá-lo deixaria o host inacessível pelo prazo inteiro.
+        HSTS: "off"
+    depends_on:
+      - api
+    ports:
+      - "${PORTA_WEB:-8081}:80"
+
+# SEM `name:` DE PROPÓSITO: assim os volumes ficam presos ao nome do projeto
+# (`-p`), e subir uma segunda cópia da pilha não reaproveita o banco da
+# primeira. Um volume de nome fixo faz o Postgres encontrar dados de OUTRO
+# schema e PULAR as migrations — e o erro que aparece depois é "relation does
+# not exist", que não se parece em nada com a causa. Aconteceu aqui.
+volumes:
+  dados:
+  blobs:
