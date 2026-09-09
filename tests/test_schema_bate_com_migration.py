@@ -40,7 +40,24 @@ REMOVE_TABELA = re.compile(
 #: forma idiomatica de acrescentar cinco colunas a uma tabela. O ponto cego era
 #: silencioso na direcao que importa: colunas no DDL e ausentes no ORM passavam
 #: despercebidas, que e exatamente o que este arquivo existe para pegar.
-ALTERA_TABELA = re.compile(r"alter\s+table\s+(\w+)([^;]*);", re.IGNORECASE)
+#: `if exists` entra no padrao: sem ele, `alter table if exists x ...` faria o
+#: parser ler `if` como nome da tabela — e a alteracao inteira seria aplicada a
+#: uma tabela fantasma, em silencio.
+ALTERA_TABELA = re.compile(
+    r"alter\s+table\s+(?:if\s+exists\s+)?(\w+)([^;]*);", re.IGNORECASE
+)
+
+#: `alter table X rename to Y`.
+#:
+#: A 0025 renomeou `relatorio` para `exportacao` ao remover a tela de relatorio,
+#: e o parser cego para renomeacao acusou a tabela nova como "no ORM e ausente
+#: no DDL" — uma divergencia inventada, num schema correto. E o caso que o
+#: comentario de `_colunas_do_sql` previa: a proxima migration usa o que o
+#: baseline nao usava.
+RENOMEIA_TABELA = re.compile(
+    r"alter\s+table\s+(?:if\s+exists\s+)?(\w+)\s+rename\s+to\s+(\w+)",
+    re.IGNORECASE,
+)
 
 #: Cada clausula `add column` / `drop column` dentro daquele corpo.
 #: `add constraint` e `owner to` nao casam, e e o que se quer.
@@ -153,6 +170,13 @@ def _colunas_do_sql(sql: str) -> dict[str, set[str]]:
             nomes.add(candidato)
         tabelas[nome.lower()] = nomes
 
+    # A RENOMEAÇÃO VEM ANTES das cláusulas de coluna: quem renomeia costuma
+    # ajustar colunas em seguida, já pelo nome NOVO, e aplicar na ordem inversa
+    # criaria uma tabela fantasma com o nome novo e deixaria a antiga intacta.
+    for antiga, nova in RENOMEIA_TABELA.findall(sql):
+        if antiga.lower() in tabelas:
+            tabelas[nova.lower()] = tabelas.pop(antiga.lower())
+
     # A ordem importa: uma coluna acrescentada por uma migration e removida por
     # outra não deve sobrar no retrato. Como a varredura é sobre o texto
     # concatenado em ordem de arquivo, basta aplicar cada operação onde aparece.
@@ -214,8 +238,15 @@ create table descartavel (
   id int
 );
 
+create table batizada (
+  id     int,
+  sobra  text
+);
+
 alter table exemplo add column nova text;
 alter table exemplo drop column antiga;
+alter table if exists batizada rename to rebatizada;
+alter table rebatizada drop column if exists sobra;
 drop table descartavel;
 """
     )
@@ -225,6 +256,12 @@ drop table descartavel;
     # tabela e a tabela inteira sumiria do retrato — em silêncio.
     assert tabelas["opcional"] == {"codigo"}, "create table if not exists não foi lido"
     assert "descartavel" not in tabelas, "drop table não foi aplicado"
+    # A renomeação leva as colunas junto, e o nome antigo não sobra: um retrato
+    # com os dois acusaria a tabela velha como "existe no DDL e não no ORM".
+    assert "batizada" not in tabelas, "rename to deixou o nome antigo no retrato"
+    assert tabelas["rebatizada"] == {"id"}, (
+        "rename to não levou as colunas, ou o drop column pelo nome NOVO não foi aplicado"
+    )
 
 
 def test_o_retrato_das_migrations_reais_e_utilizavel():

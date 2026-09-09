@@ -8,9 +8,8 @@ from __future__ import annotations
 
 from datetime import date
 from typing import Annotated
-from uuid import UUID
-
 from urllib.parse import quote
+from uuid import UUID
 
 from fastapi import (
     APIRouter,
@@ -29,12 +28,12 @@ from app.api.dependencias import (
     UsuarioQueEscreve,
     exigir_portal_crm,
 )
+from app.armazenamento import blob
 from app.banco.repositorio_interacoes import (
     RepositorioSQL,
 )
 from app.banco.sessao import SessaoDoPedido
 from app.casos_de_uso import consultar_interacoes, editar_interacao, registrar_interacao
-from app.armazenamento import blob
 from app.dominio.erros import RegraViolada
 from app.dominio.interacao import MOMENTOS_DE_MATERIAL
 from app.dominio.recorte import Recorte

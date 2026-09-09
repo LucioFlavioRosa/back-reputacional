@@ -18,6 +18,7 @@ A régua entre recusar e avisar:
 from __future__ import annotations
 
 import ipaddress
+from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlsplit
 
@@ -116,203 +117,269 @@ class Achado:
     correcao: str
 
 
+#: Uma verificação: recebe a configuração e devolve o achado, ou `None` quando
+#: está tudo certo. Assinatura única para as catorze — é o que permite listá-las
+#: em vez de encadear catorze `if`.
+Verificacao = Callable[[Configuracao], Achado | None]
+
+
+# -- o que torna um controle inexistente --------------------------------------
+
+
+def _autenticacao_de_mentira(c: Configuracao) -> Achado | None:
+    if not c.auth_mock:
+        return None
+    return Achado(
+        "AUTH_MOCK",
+        "a autenticação de desenvolvimento devolve um usuário fixo: "
+        "qualquer pessoa que alcance a URL entra como esse usuário",
+        "AUTH_MOCK=false, com o SSO do Entra ID configurado",
+    )
+
+
+def _origem_impropria(c: Configuracao) -> Achado | None:
+    problemas = [p for p in (_problema_na_origem(o) for o in c.origens_permitidas) if p]
+    if not problemas:
+        return None
+    return Achado(
+        "ORIGENS_PERMITIDAS",
+        "origem imprópria na allowlist de produção: "
+        + "; ".join(problemas)
+        + ". Com `allow_credentials=True`, uma página servida nessa origem "
+        "lê a API com a sessão de quem estiver logado",
+        "deixar só os domínios https reais do painel",
+    )
+
+
+def _segredo_de_sessao_fraco(c: Configuracao) -> Achado | None:
+    if c.sessao_secreta == Configuracao.model_fields["sessao_secreta"].default:
+        return Achado(
+            "SESSAO_SECRETA",
+            "o segredo padrão está no Git. Quem o conhece assina o cookie de "
+            "sessão de QUALQUER pessoa — basta trocar o UUID e assinar de "
+            "novo. Não é adivinhar senha: é emitir a sessão",
+            "um valor aleatório de pelo menos 32 bytes, guardado no Key Vault",
+        )
+    if len(c.sessao_secreta) < 32:
+        return Achado(
+            "SESSAO_SECRETA",
+            f"tem {len(c.sessao_secreta)} caracteres. Segredo curto "
+            "é forçável offline: quem captura um cookie assinado testa "
+            "candidatos até a assinatura bater, sem tocar no servidor",
+            "pelo menos 32 caracteres aleatórios",
+        )
+    return None
+
+
+def _sso_sem_credencial(c: Configuracao) -> Achado | None:
+    if c.auth_mock or (c.entra_tenant_id and c.entra_client_id and c.entra_client_secret):
+        return None
+    return Achado(
+        "ENTRA_*",
+        "SSO ligado sem tenant, client id ou secret: ninguém consegue "
+        "entrar, e o erro só aparece quando a primeira pessoa tenta",
+        "preencher ENTRA_TENANT_ID, ENTRA_CLIENT_ID e ENTRA_CLIENT_SECRET",
+    )
+
+
+def _sem_limite_de_taxa(c: Configuracao) -> Achado | None:
+    if c.limite_de_taxa_ligado:
+        return None
+    return Achado(
+        "LIMITE_DE_TAXA_LIGADO",
+        "sem limite de taxa, uma única origem consome a capacidade "
+        "do serviço inteiro",
+        "LIMITE_DE_TAXA_LIGADO=true, ou a borda aplicando o teto",
+    )
+
+
+def _sql_no_log(c: Configuracao) -> Achado | None:
+    if not c.banco_echo:
+        return None
+    return Achado(
+        "BANCO_ECHO",
+        "o SQLAlchemy passa a registrar cada comando SQL COM OS "
+        "PARÂMETROS. O termo pesquisado em `q=` e o conteúdo de `relato` "
+        "vão parar no log e na telemetria — exatamente os dados que o "
+        "resto deste plano existe para proteger",
+        "BANCO_ECHO=false",
+    )
+
+
+def _banco_sem_tls(c: Configuracao) -> Achado | None:
+    tls = _problema_no_tls(c.banco_url)
+    if not tls or _banco_e_local(c.banco_url):
+        return None
+    return Achado(
+        "BANCO_URL",
+        f"{tls}. O tráfego entre o App Service e o Postgres carrega "
+        "`relato` e o conteúdo das interações",
+        "acrescentar `?sslmode=require` — ou `verify-full`, que também "
+        "confere o certificado do servidor",
+    )
+
+
+def _banco_na_propria_maquina(c: Configuracao) -> Achado | None:
+    if not _banco_e_local(c.banco_url):
+        return None
+    return Achado(
+        "BANCO_URL",
+        "aponta para a própria máquina em produção. É o valor padrão do "
+        "código: esquecer a variável no App Service não dá erro de "
+        "configuração, dá erro de conexão na primeira consulta — ou, "
+        "pior, conecta num Postgres local se houver um",
+        "a connection string do Postgres gerenciado",
+    )
+
+
+def _sem_reposicao(campo: str, por_segundo: float) -> Achado | None:
+    if por_segundo > 0:
+        return None
+    return Achado(
+        f"LIMITE_POR_{campo}_POR_SEGUNDO",
+        "reposição zero ou negativa: o balde nunca devolve ficha. "
+        "Depois da rajada inicial, quem for barrado fica barrado "
+        "para sempre — inclusive gente legítima",
+        "um valor positivo; ver os padrões em `configuracao.py`",
+    )
+
+
+def _sem_capacidade(campo: str, capacidade: int) -> Achado | None:
+    if capacidade > 0:
+        return None
+    return Achado(
+        f"LIMITE_POR_{campo}_CAPACIDADE",
+        "capacidade zero ou negativa: nenhuma requisição passa",
+        "um valor positivo; ver os padrões em `configuracao.py`",
+    )
+
+
+# QUATRO VERIFICAÇÕES, E NÃO DUAS COM UM LAÇO DENTRO.
+#
+# Foram duas por uma versão, cada uma percorrendo os dois baldes e devolvendo
+# no primeiro inválido — e com isso uma configuração que zerava IP E USUÁRIO
+# acusava só o IP. Quem corrigisse o que a mensagem apontou subiria de novo e
+# levaria o segundo erro na cara.
+#
+# São quatro porque são quatro perguntas: cada balde tem reposição e
+# capacidade, e cada uma quebra de um jeito. `Achado | None` é o contrato de
+# todas as verificações; devolver lista aqui obrigaria as outras dez a fazer o
+# mesmo para uniformizar.
+def _taxa_por_ip_zerada(c: Configuracao) -> Achado | None:
+    return _sem_reposicao("IP", c.limite_por_ip_por_segundo)
+
+
+def _capacidade_por_ip_zerada(c: Configuracao) -> Achado | None:
+    return _sem_capacidade("IP", c.limite_por_ip_capacidade)
+
+
+def _taxa_por_usuario_zerada(c: Configuracao) -> Achado | None:
+    return _sem_reposicao("USUARIO", c.limite_por_usuario_por_segundo)
+
+
+def _capacidade_por_usuario_zerada(c: Configuracao) -> Achado | None:
+    return _sem_capacidade("USUARIO", c.limite_por_usuario_capacidade)
+
+
+# -- o acoplamento que erra em silêncio ---------------------------------------
+
+
+def _proxy_nao_declarado(c: Configuracao) -> Achado | None:
+    """O achado que motivou o módulo.
+
+    Com Front Door na frente e `PROXIES_CONFIAVEIS=0`, o limitador enxerga o IP
+    do Front Door em toda requisição: o mundo inteiro passa a dividir um balde
+    só. O serviço não quebra, não loga erro, e começa a devolver 429 para gente
+    legítima enquanto o atacante gasta a cota de todos.
+
+    O contrário — `PROXIES_CONFIAVEIS=1` sem proxy nenhum — é pior: passa a
+    valer o `X-Forwarded-For` que o cliente escreve, e o limite por IP deixa de
+    existir.
+    """
+    if c.proxies_confiaveis != 0:
+        return None
+    return Achado(
+        "PROXIES_CONFIAVEIS",
+        "zero em produção. Se houver Front Door ou Application Gateway "
+        "na frente, o limite por IP agrupa TODO o tráfego num balde só",
+        "1 com Front Door; manter 0 apenas se a aplicação recebe conexão direta",
+    )
+
+
+# -- o que provavelmente não é o que se quis ----------------------------------
+
+
+def _sem_hsts(c: Configuracao) -> Achado | None:
+    if c.hsts_ligado:
+        return None
+    return Achado(
+        "HSTS_LIGADO",
+        "desligado em produção: o navegador aceita voltar a http",
+        "HSTS_LIGADO=true depois de confirmar que o HTTPS responde",
+    )
+
+
+def _docs_marcados_como_publicos(c: Configuracao) -> Achado | None:
+    if not c.docs_publicos:
+        return None
+    return Achado(
+        "DOCS_PUBLICOS",
+        "verdadeiro em produção. As rotas são removidas mesmo assim, "
+        "porque `criar_app` também exige ambiente diferente de produção",
+        "DOCS_PUBLICOS=false, para a intenção ficar explícita",
+    )
+
+
+def _telemetria_desligada(c: Configuracao) -> Achado | None:
+    if c.applicationinsights_connection_string:
+        return None
+    return Achado(
+        "APPLICATIONINSIGHTS_CONNECTION_STRING",
+        "vazia: a telemetria não sai do contêiner, e nenhum alerta de "
+        "segurança dispara",
+        "a connection string do recurso de Application Insights",
+    )
+
+
+#: AS QUE IMPEDEM A APLICAÇÃO DE SUBIR. Cada uma descreve um controle que, em
+#: produção, simplesmente não existiria.
+GRAVES: tuple[Verificacao, ...] = (
+    _autenticacao_de_mentira,
+    _origem_impropria,
+    _segredo_de_sessao_fraco,
+    _sso_sem_credencial,
+    _sem_limite_de_taxa,
+    _sql_no_log,
+    _banco_sem_tls,
+    _banco_na_propria_maquina,
+    _taxa_por_ip_zerada,
+    _capacidade_por_ip_zerada,
+    _taxa_por_usuario_zerada,
+    _capacidade_por_usuario_zerada,
+)
+
+#: AS QUE SÓ AVISAM. A aplicação sobe; o log registra.
+AVISOS: tuple[Verificacao, ...] = (
+    _proxy_nao_declarado,
+    _sem_hsts,
+    _docs_marcados_como_publicos,
+    _telemetria_desligada,
+)
+
+
 def conferir(configuracao: Configuracao) -> list[Achado]:
-    """Devolve os avisos; levanta se algo for grave. Só age em produção."""
+    """Devolve os avisos; levanta se algo for grave. Só age em produção.
+
+    ERA UMA FUNÇÃO DE 186 LINHAS com catorze `if` em sequência, e o problema
+    não era o tamanho: era que a lista do que se confere só existia lendo o
+    corpo inteiro. Agora ela está escrita — em `GRAVES` e `AVISOS` —, e cada
+    verificação tem nome, motivo e correção no lugar dela.
+    """
     if not configuracao.producao:
         return []
 
-    graves: list[Achado] = []
-    avisos: list[Achado] = []
-
-    # -- o que torna um controle inexistente ----------------------------------
-
-    if configuracao.auth_mock:
-        graves.append(
-            Achado(
-                "AUTH_MOCK",
-                "a autenticação de desenvolvimento devolve um usuário fixo: "
-                "qualquer pessoa que alcance a URL entra como esse usuário",
-                "AUTH_MOCK=false, com o SSO do Entra ID configurado",
-            )
-        )
-
-    problemas = [
-        p
-        for p in (_problema_na_origem(o) for o in configuracao.origens_permitidas)
-        if p
-    ]
-    if problemas:
-        graves.append(
-            Achado(
-                "ORIGENS_PERMITIDAS",
-                "origem imprópria na allowlist de produção: "
-                + "; ".join(problemas)
-                + ". Com `allow_credentials=True`, uma página servida nessa origem "
-                "lê a API com a sessão de quem estiver logado",
-                "deixar só os domínios https reais do painel",
-            )
-        )
-
-    if configuracao.sessao_secreta == Configuracao.model_fields["sessao_secreta"].default:
-        graves.append(
-            Achado(
-                "SESSAO_SECRETA",
-                "o segredo padrão está no Git. Quem o conhece assina o cookie de "
-                "sessão de QUALQUER pessoa — basta trocar o UUID e assinar de "
-                "novo. Não é adivinhar senha: é emitir a sessão",
-                "um valor aleatório de pelo menos 32 bytes, guardado no Key Vault",
-            )
-        )
-    elif len(configuracao.sessao_secreta) < 32:
-        graves.append(
-            Achado(
-                "SESSAO_SECRETA",
-                f"tem {len(configuracao.sessao_secreta)} caracteres. Segredo curto "
-                "é forçável offline: quem captura um cookie assinado testa "
-                "candidatos até a assinatura bater, sem tocar no servidor",
-                "pelo menos 32 caracteres aleatórios",
-            )
-        )
-
-    if not configuracao.auth_mock and not (
-        configuracao.entra_tenant_id
-        and configuracao.entra_client_id
-        and configuracao.entra_client_secret
-    ):
-        graves.append(
-            Achado(
-                "ENTRA_*",
-                "SSO ligado sem tenant, client id ou secret: ninguém consegue "
-                "entrar, e o erro só aparece quando a primeira pessoa tenta",
-                "preencher ENTRA_TENANT_ID, ENTRA_CLIENT_ID e ENTRA_CLIENT_SECRET",
-            )
-        )
-
-    if not configuracao.limite_de_taxa_ligado:
-        graves.append(
-            Achado(
-                "LIMITE_DE_TAXA_LIGADO",
-                "sem limite de taxa, uma única origem consome a capacidade "
-                "do serviço inteiro",
-                "LIMITE_DE_TAXA_LIGADO=true, ou a borda aplicando o teto",
-            )
-        )
-
-    if configuracao.banco_echo:
-        graves.append(
-            Achado(
-                "BANCO_ECHO",
-                "o SQLAlchemy passa a registrar cada comando SQL COM OS "
-                "PARÂMETROS. O termo pesquisado em `q=` e o conteúdo de `relato` "
-                "vão parar no log e na telemetria — exatamente os dados que o "
-                "resto deste plano existe para proteger",
-                "BANCO_ECHO=false",
-            )
-        )
-
-    tls = _problema_no_tls(configuracao.banco_url)
-    if tls and not _banco_e_local(configuracao.banco_url):
-        graves.append(
-            Achado(
-                "BANCO_URL",
-                f"{tls}. O tráfego entre o App Service e o Postgres carrega "
-                "`relato` e o conteúdo das interações",
-                "acrescentar `?sslmode=require` — ou `verify-full`, que também "
-                "confere o certificado do servidor",
-            )
-        )
-
-    if _banco_e_local(configuracao.banco_url):
-        graves.append(
-            Achado(
-                "BANCO_URL",
-                "aponta para a própria máquina em produção. É o valor padrão do "
-                "código: esquecer a variável no App Service não dá erro de "
-                "configuração, dá erro de conexão na primeira consulta — ou, "
-                "pior, conecta num Postgres local se houver um",
-                "a connection string do Postgres gerenciado",
-            )
-        )
-
-    # Limite ligado não é limite existente: os números precisam limitar.
-    for campo, capacidade, taxa in (
-        ("IP", configuracao.limite_por_ip_capacidade, configuracao.limite_por_ip_por_segundo),
-        (
-            "USUARIO",
-            configuracao.limite_por_usuario_capacidade,
-            configuracao.limite_por_usuario_por_segundo,
-        ),
-    ):
-        if taxa <= 0:
-            graves.append(
-                Achado(
-                    f"LIMITE_POR_{campo}_POR_SEGUNDO",
-                    "reposição zero ou negativa: o balde nunca devolve ficha. "
-                    "Depois da rajada inicial, quem for barrado fica barrado "
-                    "para sempre — inclusive gente legítima",
-                    "um valor positivo; ver os padrões em `configuracao.py`",
-                )
-            )
-        if capacidade <= 0:
-            graves.append(
-                Achado(
-                    f"LIMITE_POR_{campo}_CAPACIDADE",
-                    "capacidade zero ou negativa: nenhuma requisição passa",
-                    "um valor positivo; ver os padrões em `configuracao.py`",
-                )
-            )
-
-    # -- o acoplamento que erra em silêncio -----------------------------------
-    #
-    # Este é o achado que motivou o módulo. Com Front Door na frente e
-    # `PROXIES_CONFIAVEIS=0`, o limitador enxerga o IP do Front Door em toda
-    # requisição: o mundo inteiro passa a dividir um balde só. O serviço não
-    # quebra, não loga erro, e começa a devolver 429 para gente legítima
-    # enquanto o atacante gasta a cota de todos.
-    #
-    # O contrário — `PROXIES_CONFIAVEIS=1` sem proxy nenhum — é pior: passa a
-    # valer o `X-Forwarded-For` que o cliente escreve, e o limite por IP deixa
-    # de existir.
-    if configuracao.proxies_confiaveis == 0:
-        avisos.append(
-            Achado(
-                "PROXIES_CONFIAVEIS",
-                "zero em produção. Se houver Front Door ou Application Gateway "
-                "na frente, o limite por IP agrupa TODO o tráfego num balde só",
-                "1 com Front Door; manter 0 apenas se a aplicação recebe conexão direta",
-            )
-        )
-
-    # -- o que provavelmente não é o que se quis ------------------------------
-
-    if not configuracao.hsts_ligado:
-        avisos.append(
-            Achado(
-                "HSTS_LIGADO",
-                "desligado em produção: o navegador aceita voltar a http",
-                "HSTS_LIGADO=true depois de confirmar que o HTTPS responde",
-            )
-        )
-
-    if configuracao.docs_publicos:
-        avisos.append(
-            Achado(
-                "DOCS_PUBLICOS",
-                "verdadeiro em produção. As rotas são removidas mesmo assim, "
-                "porque `criar_app` também exige ambiente diferente de produção",
-                "DOCS_PUBLICOS=false, para a intenção ficar explícita",
-            )
-        )
-
-    if not configuracao.applicationinsights_connection_string:
-        avisos.append(
-            Achado(
-                "APPLICATIONINSIGHTS_CONNECTION_STRING",
-                "vazia: a telemetria não sai do contêiner, e nenhum alerta de "
-                "segurança dispara",
-                "a connection string do recurso de Application Insights",
-            )
-        )
+    graves = [a for verificar in GRAVES if (a := verificar(configuracao))]
+    avisos = [a for verificar in AVISOS if (a := verificar(configuracao))]
 
     for achado in avisos:
         logger.warning(

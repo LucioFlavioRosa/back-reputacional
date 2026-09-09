@@ -46,7 +46,9 @@ app/
 │   ├── acesso.py            login, sessão, administração de acessos
 │   ├── interacoes.py        CRUD do registro
 │   ├── metricas.py          as agregações do painel
-│   ├── relatorios.py        registro de geração e exportação
+│   ├── exportacoes.py      trilha de quem exportou a Base
+│   ├── materiais.py        os documentos com arquivo, por recorte
+│   ├── referencias.py      a biblioteca do SharePoint, por assunto
 │   ├── stakeholders.py      diretórios
 │   ├── catalogo.py          dicionários
 │   ├── dependencias.py      quem está pedindo, e se pode
@@ -98,12 +100,20 @@ As migrations ficam em `app/banco/migrations/` e rodam **em ordem alfabética**:
 | 0004 | `interacoes` | a tabela-mãe, as extensões, os vínculos |
 | 0005 | `auditoria` | trilhas e gatilhos |
 | 0006 | `concessao_de_acesso` | a função `conceder_acesso` |
-| 0007 | `relatorios` | registro de geração e exportação |
+| 0007 | `relatorios` | registro de geração e exportação (a tabela virou `exportacao` na 0025) |
 | 0008 | `importacao` | schema da importação (sem aplicação — ver abaixo) |
 | 0009 | `papel_da_aplicacao` | os `grant` de `painel_app` |
 
-> **0009 tem de rodar por último.** Os `grant on all tables` só alcançam o que já
-> existe; migration nova que crie tabela precisa vir antes dela.
+> **A 0009 concede em massa, e só alcança o que já existia.** Uma migration
+> posterior que crie tabela nasce SEM os `grant` de `painel_app` para `delete` —
+> os de `select`, `insert` e `update` vêm do `alter default privileges`. Foi o
+> que aconteceu com `referencia_tema` (0026) e `material_tema` (0027): as duas
+> precisaram de `grant delete` explícito, e sem ele a edição falharia só na hora
+> de salvar, com erro de permissão.
+>
+> A tabela acima para na 0009 e o diretório vai até a 0027; a lista não foi
+> mantida. Quem precisar do histórico completo lê os arquivos, que são
+> autoexplicativos por convenção.
 
 Cada objeto é criado **uma vez**, no estado final. Não há migration que corrija
 outra.
@@ -176,7 +186,7 @@ e são as que merecem atenção quando o volume subir:
 |---|---|---|
 | `interacao.stakeholder_id` | `stakeholder` | só é lida e gravada; nada filtra por ela |
 | `importacao_linha.interacao_id` | `interacao` | idem |
-| `relatorio.criado_por` | `usuario` | a listagem ordena por `criado_em`, não por autor |
+| `exportacao.criado_por` | `usuario` | a trilha ordena por `criado_em`, não por autor |
 | `importacao.criado_por` | `usuario` | idem |
 
 No dia em que aparecer uma visão "por stakeholder" ou "o que fulano exportou",
@@ -226,9 +236,12 @@ próprios.
 | `GET` | `/api/acessos/papeis` | papéis disponíveis |
 | `PUT` | `/api/acessos/{id}` | concede ou revoga |
 | `GET` | `/api/acessos/{id}/historico` | trilha de concessão |
-| `POST` | `/api/relatorios` | registra a geração de um relatório |
-| `POST` | `/api/relatorios/exportacoes` | registra uma exportação CSV |
-| `GET` | `/api/relatorios/historico` | o que já foi gerado |
+| `POST` | `/api/exportacoes` | registra uma exportação CSV da Base |
+| `GET` | `/api/exportacoes/historico` | quem exportou o quê |
+| `GET` | `/api/materiais` | os documentos com arquivo, no recorte |
+| `GET` | `/api/referencias` | a biblioteca do SharePoint |
+| `POST` | `/api/referencias` | cadastra uma referência |
+| `PUT` | `/api/referencias/{id}` | edita uma referência |
 
 `status` e `grupo` são parâmetros **separados**: `declinado` é ao mesmo tempo o
 código de um status e o nome de um grupo — que também contém `cancelado`.
@@ -303,9 +316,10 @@ Escrito explicitamente para quem for continuar.
 - **Administração de dicionários.** A API só lê (`GET /api/dicionarios`). O papel
   `administra_dicionarios` existe e não é exigido em lugar nenhum, porque não há
   escrita para exigir.
-- **Gerador de documento no servidor.** O relatório sai da impressão do navegador
-  e o CSV é montado no cliente. O que existe é o REGISTRO da geração — trilha,
-  não barreira.
+- **Gerador de documento no servidor.** O CSV é montado no cliente, a partir da
+  listagem já baixada. O que existe é o REGISTRO da exportação — trilha, não
+  barreira. (A tela de relatório foi removida do produto na 0025; a trilha
+  ficou, porque é controle de segurança e não relatório.)
 - **Verificação de tipos.** Não há `mypy` nem `ty` configurados. Ver
   [`docs/SEGURANCA.md`](docs/SEGURANCA.md).
 - **Rate limit distribuído.** O estado é por processo. Com mais de uma instância,

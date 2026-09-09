@@ -312,3 +312,50 @@ def test_configuracao_e_lida_do_ambiente_de_verdade(monkeypatch):
     assert lida.proxies_confiaveis == 1
     assert lida.hsts_ligado is False
     assert lida.banco_echo is True
+
+
+# -- os quatro baldes, e nao dois ----------------------------------------------
+
+
+def test_os_quatro_limites_invalidos_aparecem_todos():
+    """A regressao que a refatoracao introduziu, e o teste que faltava.
+
+    `conferir` era uma funcao de 186 linhas; ao quebra-la em verificacoes
+    nomeadas, os dois baldes viraram duas funcoes com um laco dentro e um
+    `return` no primeiro invalido — e uma configuracao que zerava IP E USUARIO
+    passou a acusar so o IP.
+
+    O CUSTO DISSO NAO E COSMETICO: quem corrigisse o que a mensagem apontou
+    subiria de novo e levaria o segundo erro na cara, com o servico fora do ar
+    no meio. A conferencia existe para dizer TUDO de uma vez.
+
+    Nenhum teste pegou. Este pega.
+    """
+    with pytest.raises(ConfiguracaoInsegura) as erro:
+        conferir(
+            producao(
+                limite_por_ip_por_segundo=0,
+                limite_por_ip_capacidade=0,
+                limite_por_usuario_por_segundo=0,
+                limite_por_usuario_capacidade=0,
+            )
+        )
+
+    mensagem = str(erro.value)
+    for campo in (
+        "LIMITE_POR_IP_POR_SEGUNDO",
+        "LIMITE_POR_IP_CAPACIDADE",
+        "LIMITE_POR_USUARIO_POR_SEGUNDO",
+        "LIMITE_POR_USUARIO_CAPACIDADE",
+    ):
+        assert campo in mensagem, f"{campo} sumiu da conferencia"
+
+
+def test_so_o_balde_do_usuario_invalido_e_acusado():
+    """A prova negativa: acusar os quatro sempre seria tao inutil quanto um."""
+    with pytest.raises(ConfiguracaoInsegura) as erro:
+        conferir(producao(limite_por_usuario_capacidade=0))
+
+    mensagem = str(erro.value)
+    assert "LIMITE_POR_USUARIO_CAPACIDADE" in mensagem
+    assert "LIMITE_POR_IP" not in mensagem

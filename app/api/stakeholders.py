@@ -23,7 +23,7 @@ from app.api.dependencias import (
     exigir_portal_crm,
 )
 from app.banco.sessao import SessaoDoPedido
-from app.banco.tabelas_catalogo import Tema
+from app.banco.tabelas_catalogo import Relevancia, Tema
 from app.banco.tabelas_stakeholders import (
     Instituicao,
     Interlocutor,
@@ -62,6 +62,8 @@ class InstituicaoSaida(BaseModel):
     nome_completo: str | None
     esfera_id: int | None
     uf: str | None
+    #: Tier 1 a 4. Nulo nas cadastradas antes de a coluna existir.
+    tier: int | None
     ativo: bool
 
 
@@ -82,6 +84,13 @@ class PessoaAegeaSaida(BaseModel):
     email: str | None
     eh_porta_voz: bool
     ativo: bool
+    #: SOBRE O QUE ESTA PESSOA PODE FALAR.
+    #:
+    #: Entrou aqui porque a regra de "fora do escopo" — agenda conduzida por
+    #: quem nao responde por aquele assunto — se faz na tela, cruzando estes
+    #: ids com os temas da interacao. Sem eles na listagem, a conta exigiria
+    #: uma requisicao por pessoa.
+    temas: list[int] = Field(default_factory=list)
 
 
 @rotas.get("/instituicoes", response_model=list[InstituicaoSaida])
@@ -172,6 +181,11 @@ class InstituicaoEntrada(BaseModel):
     nome_completo: str | None = None
     esfera_id: int | None = None
     uf: str | None = None
+    #: A RELEVANCIA da instituicao: 1 a 4. Opcional AQUI e obrigatoria na tela,
+    #: e a diferenca e proposital — as 98 instituicoes que existiam antes da
+    #: coluna nao tem tier, e um PUT que exigisse o campo impediria de corrigir
+    #: o nome de qualquer uma delas sem antes classifica-la.
+    tier: int | None = None
     ativo: bool = True
     #: Opcional: da para cadastrar a instituicao e preencher quem representa
     #: depois. So nao da para faze-lo em DUAS transacoes.
@@ -242,6 +256,7 @@ def criar_instituicao(
         raise RegraViolada(
             f"Tipo invalido: {entrada.tipo!r}. Use {', '.join(sorted(TIPOS_DE_INSTITUICAO))}."
         )
+    _conferir_tier(sessao, entrada.tier)
     registro = Instituicao(
         nome=entrada.nome.strip(),
         nome_normalizado=_normalizar(entrada.nome),
@@ -249,6 +264,7 @@ def criar_instituicao(
         nome_completo=entrada.nome_completo,
         esfera_id=entrada.esfera_id,
         uf=entrada.uf,
+        tier=entrada.tier,
         ativo=entrada.ativo,
     )
     _gravar(
@@ -288,6 +304,29 @@ def criar_instituicao(
     return registro
 
 
+def _conferir_tier(sessao: Sessao, tier: int | None) -> None:
+    """Recusa tier que nao existe, ou que foi desativado.
+
+    A chave estrangeira ja recusaria o inexistente — com um `IntegrityError`
+    que sai como 500, uma mensagem que nao diz o que fazer. E ela NAO recusa o
+    desativado: o dicionario continua tendo a linha. Conferir aqui e o que faz
+    a API responder a mesma coisa que a tela oferece.
+    """
+    if tier is None:
+        return
+    valido = sessao.scalar(
+        select(Relevancia.id).where(Relevancia.id == tier, Relevancia.ativo.is_(True))
+    )
+    if valido is None:
+        disponiveis = sessao.scalars(
+            select(Relevancia.id).where(Relevancia.ativo.is_(True)).order_by(Relevancia.ordem)
+        ).all()
+        raise RegraViolada(
+            f"Relevancia invalida: {tier!r}. Use "
+            f"{', '.join(str(i) for i in disponiveis)}."
+        )
+
+
 @rotas.put("/instituicoes/{id}", response_model=InstituicaoSaida)
 def editar_instituicao(
     sessao: Sessao,
@@ -306,10 +345,12 @@ def editar_instituicao(
     # nao e o lugar de acrescentar gente — para isso existe
     # `POST /api/interlocutores`, que diz o que faz. Aceitar aqui criaria uma
     # pessoa nova a cada salvamento de nome.
+    _conferir_tier(sessao, entrada.tier)
     registro.nome = entrada.nome.strip()
     registro.nome_normalizado = _normalizar(entrada.nome)
     registro.tipo = entrada.tipo
     registro.nome_completo = entrada.nome_completo
+    registro.tier = entrada.tier
     registro.esfera_id = entrada.esfera_id
     registro.uf = entrada.uf
     registro.ativo = entrada.ativo
@@ -567,7 +608,7 @@ class TemaEntrada(BaseModel):
     nome: str = Field(min_length=1)
     #: `estrategico` ou `livre`. O primeiro e agenda da companhia; o segundo, o
     #: que aparece sem ter sido planejado. A distincao ja existia no dicionario.
-    nivel: str = "livre"
+    nivel: str = "gerais"
     ativo: bool = True
 
 
@@ -578,7 +619,14 @@ class TemaSaida(BaseModel):
     ativo: bool
 
 
-NIVEIS_DE_TEMA = ("estrategico", "livre")
+#: OS TRÊS NÍVEIS, na ordem do mais restrito ao mais aberto.
+#:
+#: `sensivel` é o que exige alinhamento antes de alguém falar; `estrategico` é
+#: agenda da companhia; `gerais` é o que aparece sem ter sido planejado.
+#:
+#: `gerais` se chamava `livre` até a 0022. A migração trocou o código junto com
+#: o rótulo: rótulo novo sobre código velho vira duas escritas da mesma coisa.
+NIVEIS_DE_TEMA = ("sensivel", "estrategico", "gerais")
 
 
 @rotas.get("/temas", response_model=list[TemaSaida])

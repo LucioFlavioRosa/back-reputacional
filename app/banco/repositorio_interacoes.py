@@ -44,6 +44,7 @@ from app.banco.tabelas_interacoes import (
     InvestidoresRegistro,
     LegislativoRegistro,
     Material,
+    MaterialTema,
 )
 from app.dominio.erros import RegraViolada
 from app.dominio.frentes import (
@@ -93,7 +94,19 @@ class RepositorioSQL:
     # -- dicionários ---------------------------------------------------------
 
     def _id_de(self, tabela: type, codigo: str | None) -> int | None:
-        """Converte `codigo` em `id`, com cache por sessão."""
+        """Converte `codigo` em `id`, com cache por sessão.
+
+        SÓ ACEITA CÓDIGO ATIVO. Desativar um valor de dicionário é como esta
+        base aposenta vocabulário: a 0020 colapsou onze situações em três e
+        marcou as outras oito `ativo = false` em vez de apagá-las, porque a
+        trilha em `interacao_auditoria` ainda aponta para elas.
+
+        Sem o filtro, o formulário oferecia três e a API aceitava as onze —
+        qualquer outro cliente HTTP reintroduzia `atendido` na base, e o
+        vocabulário que a migration acabara de unificar se partia de novo. O
+        catálogo servido em `/api/dicionarios` já mostra só os ativos; a
+        escrita passa a concordar com ele.
+        """
         if codigo is None:
             return None
 
@@ -101,10 +114,26 @@ class RepositorioSQL:
         if chave in self._cache_de_codigos:
             return self._cache_de_codigos[chave]
 
-        encontrado = self.sessao.scalar(
-            select(tabela.id).where(tabela.codigo == codigo)
-        )
+        consulta = select(tabela.id).where(tabela.codigo == codigo)
+        coluna_ativo = getattr(tabela, "ativo", None)
+        if coluna_ativo is not None:
+            consulta = consulta.where(coluna_ativo.is_(True))
+
+        encontrado = self.sessao.scalar(consulta)
         if encontrado is None:
+            # Distinguir "não existe" de "foi aposentado": quem manda um código
+            # antigo precisa saber que ele existiu, senão procura erro de
+            # digitação onde houve mudança de vocabulário.
+            existe = coluna_ativo is not None and self.sessao.scalar(
+                select(tabela.id).where(tabela.codigo == codigo)
+            )
+            if existe:
+                raise RegraViolada(
+                    f"Valor desativado em {tabela.__tablename__}: {codigo!r}. "
+                    "Ele continua no catálogo para dar rótulo ao histórico, "
+                    "mas não pode ser gravado. Veja os valores em uso em "
+                    "/api/dicionarios."
+                )
             raise RegraViolada(
                 f"Valor desconhecido em {tabela.__tablename__}: {codigo!r}."
             )
@@ -189,6 +218,7 @@ class RepositorioSQL:
         )
         registro.declinado_por = interacao.declinado_por
         registro.motivo_declinio = interacao.motivo_declinio
+        registro.nota_situacao = interacao.nota_situacao
         self._aplicar_origens(interacao, registro)
         registro.preve_desdobramento = interacao.preve_desdobramento
 
@@ -428,18 +458,13 @@ class RepositorioSQL:
                 existente.titulo = material.titulo.strip()
                 existente.url = material.url
                 existente.arquivo_id = material.arquivo_id
+                existente.referencia_id = material.referencia_id
                 existente.observacao = material.observacao
+                _casar_temas(existente, material.temas)
                 mantidos.append(existente)
             else:
                 mantidos.append(
-                    Material(
-                        momento=material.momento,
-                        titulo=material.titulo.strip(),
-                        url=material.url,
-                        arquivo_id=material.arquivo_id,
-                        observacao=material.observacao,
-                        criado_por=autor,
-                    )
+                    _novo_material(material, autor=autor)
                 )
 
         registro.materiais[:] = mantidos
@@ -752,6 +777,7 @@ class RepositorioSQL:
             ),
             declinado_por=registro.declinado_por,
             motivo_declinio=registro.motivo_declinio,
+            nota_situacao=registro.nota_situacao,
             # Ordenado para a ficha e o grafo nao reordenarem as setas a
             # cada leitura — quem olha duas vezes acharia que algo mudou.
             # SEM AS ARQUIVADAS. Uma agenda arquivada nao aparece em lugar
@@ -777,6 +803,8 @@ class RepositorioSQL:
                     url=material.url,
                     observacao=material.observacao,
                     arquivo_id=material.arquivo_id,
+                    referencia_id=material.referencia_id,
+                    temas=tuple(sorted(v.tema_id for v in material.temas)),
                     # O NOME, O TIPO E O TAMANHO VOLTAM JUNTO.
                     #
                     # Sem isto a ficha teria o id do arquivo e nada para
@@ -892,3 +920,36 @@ def _com_o_principal(registro: InteracaoRegistro) -> tuple[ParticipanteDaOutraPa
             interlocutor_id=registro.interlocutor_id, principal=True
         ),
     )
+
+
+def _casar_temas(registro: Material, desejados: tuple[int, ...]) -> None:
+    """Deixa os assuntos do material iguais ao pedido, mexendo só no que mudou.
+
+    Apagar todos e reinserir seria mais curto e trocaria a identidade de linhas
+    que não mudaram — um `delete`/`insert` por salvamento mesmo quando ninguém
+    tocou nos assuntos.
+    """
+    alvo = set(desejados)
+    atuais = {vinculo.tema_id for vinculo in registro.temas}
+
+    for vinculo in list(registro.temas):
+        if vinculo.tema_id not in alvo:
+            registro.temas.remove(vinculo)
+
+    for tema_id in sorted(alvo - atuais):
+        registro.temas.append(MaterialTema(tema_id=tema_id))
+
+
+def _novo_material(material: MaterialDaAgenda, *, autor: UUID) -> Material:
+    """Um material que ainda não existe no banco, já com os assuntos dele."""
+    registro = Material(
+        momento=material.momento,
+        titulo=material.titulo.strip(),
+        url=material.url,
+        arquivo_id=material.arquivo_id,
+        referencia_id=material.referencia_id,
+        observacao=material.observacao,
+        criado_por=autor,
+    )
+    _casar_temas(registro, material.temas)
+    return registro

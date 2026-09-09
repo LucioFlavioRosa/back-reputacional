@@ -121,7 +121,7 @@ def _agenda(instituicao, autor, **ajustes) -> Interacao:
         data_interacao=date(2026, 3, 10),
         instituicao_id=instituicao.id,
         uf="SP",
-        status="agendado",
+        status="confirmada",
         pauta="Reajuste tarifário do contrato de Piracicaba",
         criado_por=autor,
     )
@@ -1133,7 +1133,7 @@ def instituicao_comitada():
                 data_interacao=date(2026, 3, 10),
                 instituicao_id=inst.id,
                 uf="SP",
-                status="agendado",
+                status="confirmada",
                 pauta=f"concorrencia {marca}",
                 criado_por=autor.id,
             )

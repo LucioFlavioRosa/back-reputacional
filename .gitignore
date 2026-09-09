@@ -10,3 +10,9 @@ venv/
 # Configuração local — nunca versionar. Ver `.env.example`.
 .env
 .env.local
+
+# `npm init` de ferramenta de assistente deixou isto para trás. Este projeto é
+# Python; um `package.json` declarando `main: index.js` aqui só confunde.
+package.json
+package-lock.json
+node_modules/

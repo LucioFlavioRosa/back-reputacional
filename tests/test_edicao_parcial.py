@@ -27,7 +27,7 @@ def institucional(frente: Frente) -> Interacao:
         data_interacao=date(2026, 4, 8),
         instituicao_id=uuid4(),
         uf="DF",
-        status="atendido",
+        status="confirmada",
         pauta="Impacto de insumos e reequilíbrio contratual",
         extensao=Institucional(
             natureza_orgao="executivo", cargo_interlocutor="Secretário"

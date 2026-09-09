@@ -173,7 +173,7 @@ def corpo(semente, **ajustes) -> dict:
         "data_interacao": "2026-05-07",
         "instituicao_id": str(semente["instituicao"].id),
         "uf": "SP",
-        "status": "atendido",
+        "status": "confirmada",
         "pauta": "Reajuste tarifário em concessões",
         "tier": 1,
         "clima": "tenso",
@@ -311,16 +311,32 @@ def test_filtros_do_recorte_no_postgres(cliente, semente):
     assert total(q="Valor Econômico") == 2
 
 
-def test_status_e_grupo_sao_filtros_distintos_no_banco(cliente, semente):
+def test_o_filtro_por_grupo_acompanha_o_status(cliente, semente):
+    """Os dois filtros existem, e hoje coincidem — de propósito.
+
+    ESTE TESTE PROVAVA O CONTRÁRIO. Quando havia onze situações, o grupo
+    `declinado` continha `declinado` E `cancelado`, e o teste mostrava que
+    filtrar por grupo trazia mais do que filtrar por status.
+
+    A 0020 reduziu a três e a 0021 pôs cada uma no seu grupo, um para um:
+    Solicitado→aberto, Aceito→resolvido, Negado→declinado. A diferença que o
+    teste guardava deixou de existir, e insistir nela seria guardar uma
+    afirmação falsa.
+
+    O que ainda precisa de guarda é o filtro por grupo NÃO SUMIR: ele é outro
+    caminho no SQL, com outro `join`, e continua sendo o que as métricas usam.
+    Se um dia um grupo voltar a ter dois status, é aqui que a igualdade abaixo
+    quebra — e o comentário acima diz o que fazer com ela.
+    """
     cliente.post("/api/interacoes", json=corpo(semente, status="declinado"))
-    cliente.post("/api/interacoes", json=corpo(semente, status="cancelado"))
+    cliente.post("/api/interacoes", json=corpo(semente, status="confirmada"))
 
     def total(**params) -> int:
         return cliente.get("/api/interacoes", params=params).json()["total"]
 
-    # O grupo "declinado" contém declinado e cancelado; o status, só um deles.
-    assert total(grupo="declinado") == 2
-    assert total(status="declinado") == 1
+    assert total(grupo="declinado") == total(status="declinado") == 1
+    assert total(grupo="resolvido") == total(status="confirmada") == 1
+    assert total(grupo="aberto") == total(status="solicitado")
 
 
 def test_filtro_invalido_responde_422(cliente):
@@ -776,7 +792,7 @@ def test_data_futura_e_aceita(cliente, semente):
     """Agenda marcada é registro legítimo — não existe trava de data futura."""
     resposta = cliente.post(
         "/api/interacoes",
-        json=corpo(semente, data_interacao="2027-01-15", status="agendado"),
+        json=corpo(semente, data_interacao="2027-01-15", status="confirmada"),
     )
     assert resposta.status_code == 201
 
@@ -1141,10 +1157,10 @@ def test_o_status_enviado_vence_o_padrao(cliente, semente):
     Sem ela, um `status = "solicitado"` escrito no lugar errado passaria neste
     arquivo inteiro — e toda agenda gravada viraria solicitada.
     """
-    resposta = cliente.post("/api/interacoes", json=corpo(semente, status="realizado"))
+    resposta = cliente.post("/api/interacoes", json=corpo(semente, status="confirmada"))
 
     assert resposta.status_code == 201, resposta.text
-    assert resposta.json()["status"] == "realizado"
+    assert resposta.json()["status"] == "confirmada"
 
 
 # -- administracao dos cadastros ----------------------------------------------

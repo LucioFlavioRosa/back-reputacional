@@ -104,6 +104,17 @@ class InteracaoRegistro(Tabela):
     #: `aegea` ou `outra_parte`. Declinar é decisão, e o lado muda a leitura.
     declinado_por: Mapped[str | None] = mapped_column(Text, nullable=True)
     motivo_declinio: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: EM QUE CONDICOES A AGENDA FOI ACEITA.
+    #:
+    #: "Aceitaram, mas so para marco" e "aceitaram com o diretor, nao com o
+    #: presidente" sao o que decide o preparo da reuniao, e nao tinham onde ser
+    #: escritos: o "por que foi negado" existia, o "em que termos foi aceito"
+    #: nao.
+    #:
+    #: Campo PROPRIO, e nao o mesmo de `motivo_declinio`: sao fatos diferentes,
+    #: e um campo so para os dois faria trocar de situacao sobrescrever o texto
+    #: do outro caso.
+    nota_situacao: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: DE QUAIS agendas esta decorre. Plural desde a 0017: duas reunioes podem
     #: levar juntas a uma terceira, e uma reuniao pode abrir varias frentes.
     #:
@@ -299,6 +310,25 @@ class InternaRegistro(Tabela):
     interacao: Mapped[InteracaoRegistro] = relationship(back_populates="interna")
 
 
+class MaterialTema(Tabela):
+    """De que assuntos um material trata.
+
+    Espelha `ReferenciaTema` de propósito: a busca por assunto precisa ser a
+    mesma nas duas procedências — o oficial que se leva para a reunião e o
+    produzido que voltou dela.
+    """
+
+    __tablename__ = "material_tema"
+
+    material_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("material.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    tema_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("tema.id"), primary_key=True
+    )
+
+
 class InteracaoTema(Tabela):
     __tablename__ = "interacao_tema"
 
@@ -486,7 +516,24 @@ class Material(Tabela):
         PG_UUID(as_uuid=True), ForeignKey("arquivo.id"), nullable=True
     )
     arquivo: Mapped[Arquivo | None] = relationship(lazy="joined")
+    #: De qual REFERÊNCIA da biblioteca este material veio.
+    #:
+    #: Nula no material escrito à mão, que é a maioria. Preenchida no que a
+    #: tela trouxe sozinha ao marcar um assunto da agenda — e é ela que permite
+    #: desmarcar o assunto tirar de volta o que ele trouxe, sem levar junto o
+    #: que a pessoa acrescentou.
+    referencia_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("referencia.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     observacao: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: DE QUE ASSUNTOS O DOCUMENTO TRATA.
+    #:
+    #: `selectin` porque a listagem da Base lê todos de uma vez; `select` faria
+    #: uma consulta por material, e a tela mostra dezenas.
+    temas: Mapped[list[MaterialTema]] = relationship(
+        cascade="all, delete-orphan", lazy="selectin"
+    )
     criado_por: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("usuario.id")
     )

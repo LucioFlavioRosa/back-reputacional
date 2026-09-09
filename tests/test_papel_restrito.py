@@ -135,7 +135,7 @@ def _interacao(sessao: Session, autor, **ajustes) -> Interacao:
         data_interacao=date(2026, 5, 7),
         instituicao_id=instituicao.id,
         uf="SP",
-        status="atendido",
+        status="confirmada",
         pauta="Sondagem do papel restrito",
         criado_por=autor.id,
     )

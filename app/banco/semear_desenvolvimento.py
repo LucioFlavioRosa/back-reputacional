@@ -64,14 +64,24 @@ FRENTE_POR_ROTULO = {
     "Interna": "interna",
 }
 
+#: OS ROTULOS DA PLANILHA, NAS TRES SITUACOES QUE O PRODUTO TEM.
+#:
+#: A planilha usa onze palavras para a coluna Status, e elas dizem duas coisas
+#: ao mesmo tempo: a resposta ao pedido e se a reuniao ja aconteceu. A situacao
+#: guarda so a primeira; a segunda passou para o RELATO — so se escreve o
+#: relato de uma reuniao que houve.
+#:
+#: "Atendido", "Realizado" e "Elaborado" viram ACEITO, e a amostra ja traz
+#: relato em todos eles. "Agendado" e "Em analise" viram SOLICITADO: sao
+#: pedidos que ainda nao tiveram resposta.
 STATUS_POR_ROTULO = {
-    "Atendido": "atendido",
+    "Atendido": "confirmada",
+    "Realizado": "confirmada",
+    "Elaborado": "confirmada",
     "Declinado": "declinado",
-    "Agendado": "agendado",
-    "Em análise": "em_analise",
-    "Realizado": "realizado",
-    "Elaborado": "elaborado",
-    "Cancelado": "cancelado",
+    "Cancelado": "declinado",
+    "Agendado": "solicitado",
+    "Em análise": "solicitado",
 }
 
 CLIMA_POR_ROTULO = {"Propositivo": "propositivo", "Neutro": "neutro", "Tenso": "tenso"}
@@ -266,7 +276,17 @@ def semear(sessao: Session) -> dict[str, int]:
             status_id=id_de_status[STATUS_POR_ROTULO[status]],
             clima_id=id_de_clima.get(CLIMA_POR_ROTULO.get(clima, "")),
             pauta=pauta,
-            relato=f"Registro de amostra para {rotulo_frente.lower()}.",
+            # RELATO SÓ EM QUEM ACONTECEU. O relato é o que diz "a reunião
+            # houve" — ver `jaAconteceu` no front. Gravá-lo em toda linha
+            # produzia `solicitado` com relato, um estado que o domínio chama
+            # de incoerente, e a fila de exceções cobrava essas agendas como
+            # "sem resposta há 30 dias" enquanto o texto ao lado contava a
+            # reunião. Eram 8 registros desta amostra.
+            relato=(
+                None
+                if STATUS_POR_ROTULO[status] == "solicitado"
+                else f"Registro de amostra para {rotulo_frente.lower()}."
+            ),
             pendencias="Acompanhar retorno." if status in ("Agendado", "Em análise") else None,
             fonte="cadastro_manual",
             origem_aba="amostra-handoff",

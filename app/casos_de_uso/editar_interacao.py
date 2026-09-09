@@ -15,6 +15,7 @@ justamente como uma alteração por SQL direto aparece.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -23,8 +24,6 @@ from sqlalchemy.orm import Session
 
 from app.dominio.erros import NaoEncontrado
 from app.dominio.identidade import UsuarioAtual
-from dataclasses import replace
-
 from app.dominio.interacao import (
     Interacao,
     ParticipanteDaOutraParte,

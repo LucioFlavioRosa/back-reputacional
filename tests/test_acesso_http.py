@@ -444,7 +444,7 @@ def test_escrita_completa_com_o_token_de_api_eu(cliente, usuario, semente_minima
             "data_interacao": "2026-05-07",
             "instituicao_id": str(semente_minima),
             "uf": "SP",
-            "status": "atendido",
+            "status": "confirmada",
             "pauta": "Escrita com token de verdade",
         },
     )

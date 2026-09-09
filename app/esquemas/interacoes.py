@@ -67,6 +67,14 @@ class MaterialSaida(BaseModel):
     titulo: str
     url: str | None = None
     observacao: str | None = None
+    #: De qual referencia da biblioteca este material veio.
+    #:
+    #: Vai e VOLTA: sem o retorno, a tela reabriria a agenda sem saber quais
+    #: linhas vieram da biblioteca — e desmarcar um assunto nao teria como
+    #: distinguir o que ele trouxe do que a pessoa acrescentou.
+    referencia_id: UUID | None = None
+    #: De que assuntos o documento trata.
+    temas: list[int] = Field(default_factory=list)
     #: Nulo quando o material e um LINK. Os dois caminhos convivem.
     arquivo: ArquivoSaida | None = None
 
@@ -102,6 +110,14 @@ class MaterialEntrada(BaseModel):
     titulo: str
     url: str | None = None
     observacao: str | None = None
+    #: De qual referencia da biblioteca este material veio.
+    #:
+    #: Vai e VOLTA: sem o retorno, reabrir a agenda perderia quais linhas vieram
+    #: da biblioteca — e desmarcar um assunto nao teria como distinguir o que
+    #: ele trouxe do que a pessoa acrescentou.
+    referencia_id: UUID | None = None
+    #: De que assuntos o documento trata. Vazio no que ninguem classificou.
+    temas: list[int] = Field(default_factory=list)
 
 
 class ExtensaoEntrada(BaseModel):
@@ -223,6 +239,7 @@ class InteracaoEntrada(BaseModel):
     clima_esperado: str | None = None
     declinado_por: str | None = None
     motivo_declinio: str | None = None
+    nota_situacao: str | None = None
     origens: list[UUID] = Field(default_factory=list)
     preve_desdobramento: bool | None = None
     outra_parte: list[ParticipanteDaOutraParteEntrada] = Field(default_factory=list)
@@ -275,6 +292,7 @@ class InteracaoEntrada(BaseModel):
             clima_esperado=self.clima_esperado,
             declinado_por=self.declinado_por,
             motivo_declinio=self.motivo_declinio,
+            nota_situacao=self.nota_situacao,
             origens=tuple(self.origens),
             preve_desdobramento=self.preve_desdobramento,
             outra_parte=tuple(
@@ -292,6 +310,8 @@ class InteracaoEntrada(BaseModel):
                     url=m.url,
                     arquivo_id=m.arquivo_id,
                     observacao=m.observacao,
+                    referencia_id=m.referencia_id,
+                    temas=tuple(m.temas),
                 )
                 for m in self.materiais
             ),
@@ -344,6 +364,7 @@ class InteracaoEdicao(BaseModel):
     clima_esperado: str | None = None
     declinado_por: str | None = None
     motivo_declinio: str | None = None
+    nota_situacao: str | None = None
     origens: list[UUID] = Field(default_factory=list)
     preve_desdobramento: bool | None = None
     outra_parte: list[ParticipanteDaOutraParteEntrada] | None = None
@@ -393,6 +414,8 @@ class InteracaoEdicao(BaseModel):
                             arquivo_id=m.get("arquivo_id"),
                             observacao=m.get("observacao"),
                             id=m.get("id"),
+                            referencia_id=m.get("referencia_id"),
+                            temas=tuple(m.get("temas") or ()),
                         )
                         for m in (valor or ())
                     )
@@ -466,6 +489,7 @@ class InteracaoSaida(BaseModel):
     clima_esperado: str | None = None
     declinado_por: str | None = None
     motivo_declinio: str | None = None
+    nota_situacao: str | None = None
     origens: list[UUID] = Field(default_factory=list)
     #: Quantas agendas decorrem desta. SO SAIDA: o lado inverso nao se
     #: escreve — quem grava o elo e a agenda que descende.
@@ -527,6 +551,7 @@ class InteracaoSaida(BaseModel):
             clima_esperado=interacao.clima_esperado,
             declinado_por=interacao.declinado_por,
             motivo_declinio=interacao.motivo_declinio,
+            nota_situacao=interacao.nota_situacao,
             origens=list(interacao.origens),
             derivadas=interacao.derivadas,
             preve_desdobramento=interacao.preve_desdobramento,
@@ -545,6 +570,8 @@ class InteracaoSaida(BaseModel):
                     titulo=m.titulo,
                     url=m.url,
                     observacao=m.observacao,
+                    referencia_id=m.referencia_id,
+                    temas=list(m.temas),
                     # PREENCHIDO, e nao so declarado. Ver o commit da presenca
                     # do porta-voz: campo declarado aqui e nao passado no
                     # construtor sai `None` para sempre, com 200 na resposta.

@@ -31,7 +31,7 @@ def nova(**ajustes) -> Interacao:
         data_interacao=date(2026, 5, 7),
         instituicao_id=uuid4(),
         uf="SP",
-        status="atendido",
+        status="confirmada",
         pauta="Reajuste tarifário em concessões",
     )
     return Interacao(**{**padroes, **ajustes})

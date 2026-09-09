@@ -144,10 +144,10 @@ def test_quem_nao_abre_o_crm_nao_le_o_crm(cliente, sessao, papel, rota):
     assert resposta.status_code == 403, f"{papel} alcançou {rota}"
 
 
-def test_o_historico_de_relatorios_e_barrado_por_DOIS_motivos(cliente, sessao):
+def test_a_trilha_de_exportacoes_e_barrada_por_DOIS_motivos(cliente, sessao):
     """A prova de que as camadas são independentes.
 
-    `/api/relatorios/historico` está sob o prefixo do CRM E exige permissão
+    `/api/exportacoes/historico` está sob o prefixo do CRM E exige permissão
     própria dentro dele. Então:
 
         sintese  403 porque não abre o MÓDULO
@@ -155,20 +155,20 @@ def test_o_historico_de_relatorios_e_barrado_por_DOIS_motivos(cliente, sessao):
 
     Duas recusas com o mesmo código e motivos diferentes. Se um dia alguém
     remover a permissão interna achando que o portal já basta, `sintese`
-    continuaria barrado — mas `crm` passaria a ler o histórico de todo mundo.
+    continuaria barrado — mas `crm` passaria a ler o que todo mundo exportou.
     """
     entra(cliente, sessao, "sintese_leitura")
-    por_portal = cliente.get("/api/relatorios/historico")
+    por_portal = cliente.get("/api/exportacoes/historico")
     assert por_portal.status_code == 403
     assert "CRM dos Stakeholders" in por_portal.json()["detalhe"]
 
     entra(cliente, sessao, "crm_edicao")
-    por_permissao = cliente.get("/api/relatorios/historico")
+    por_permissao = cliente.get("/api/exportacoes/historico")
     assert por_permissao.status_code == 403
     assert "CRM dos Stakeholders" not in por_permissao.json()["detalhe"]
 
     entra(cliente, sessao, "plataforma_edicao")
-    assert cliente.get("/api/relatorios/historico").status_code == 200
+    assert cliente.get("/api/exportacoes/historico").status_code == 200
 
 
 def test_a_recusa_diz_qual_modulo(cliente, sessao):
@@ -230,7 +230,9 @@ def test_o_vocabulario_e_a_identidade_valem_para_todos(cliente, sessao, papel, r
 PREFIXOS_DO_CRM = (
     "/api/interacoes",
     "/api/metricas",
-    "/api/relatorios",
+    "/api/materiais",
+    "/api/referencias",
+    "/api/exportacoes",
     "/api/instituicoes",
     "/api/interlocutores",
     "/api/pessoas-aegea",

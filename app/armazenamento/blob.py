@@ -136,7 +136,7 @@ def exigir_tamanho_aceito(tamanho: int) -> None:
         atual = tamanho / (1024 * 1024)
         raise RegraViolada(
             f"O arquivo tem {atual:.1f} MB e o limite é {limite} MB. "
-            "Para algo maior, guarde no SharePoint e registre o material por link."
+            "Para algo maior, registre o material por link."
         )
 
 
@@ -157,8 +157,35 @@ def _sem_acento_nem_surpresa(nome: str) -> str:
 def caminho_do_arquivo(
     *, interacao_id: UUID, momento: str, arquivo_id: UUID, nome: str
 ) -> str:
-    """Onde este arquivo nasce. Ver o cabeçalho do módulo."""
+    """Onde o arquivo de uma AGENDA nasce. Ver o cabeçalho do módulo."""
     return f"interacoes/{interacao_id}/{momento}/{arquivo_id}-{_sem_acento_nem_surpresa(nome)}"
+
+
+def caminho_da_referencia(
+    *, assunto: str, tipo: str, titulo: str, numero: int, arquivo_id: UUID, nome: str
+) -> str:
+    """Onde uma versão da biblioteca nasce.
+
+        referencias/<assunto principal>/<tipo>/<referência>/v<n>-<id>-<nome>
+
+    A ÁRVORE É NAVEGÁVEL POR GENTE. Quem abrir o contêiner encontra o acervo
+    organizado como a cabeça organiza — por assunto, depois por tipo de
+    documento —, e as versões de uma referência ficam lado a lado, na ordem.
+
+    O ASSUNTO É O PRINCIPAL, e um só. A referência pode cobrir vários, e
+    `referencia_tema` guarda todos; o byte mora num lugar. Copiá-lo para cada
+    assunto criaria duas verdades que envelhecem separado.
+
+    O `arquivo_id` continua no nome porque `guardar` grava com
+    `overwrite=False`: é ele que garante caminho novo a cada versão, mesmo que
+    duas subam com o mesmo nome de arquivo.
+    """
+    return (
+        f"referencias/{_sem_acento_nem_surpresa(assunto).lower()}"
+        f"/{_sem_acento_nem_surpresa(tipo).lower()}"
+        f"/{_sem_acento_nem_surpresa(titulo).lower()}"
+        f"/v{numero}-{arquivo_id}-{_sem_acento_nem_surpresa(nome)}"
+    )
 
 
 def _contenedor():

@@ -12,9 +12,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import (
     acesso,
     catalogo,
+    exportacoes,
     interacoes,
+    materiais,
     metricas,
-    relatorios,
+    referencias,
     stakeholders,
 )
 
@@ -30,8 +32,9 @@ from app.api.erros import registrar_tratadores
 from app.banco import (  # noqa: F401
     tabelas_acesso,
     tabelas_catalogo,
+    tabelas_exportacoes,
     tabelas_interacoes,
-    tabelas_relatorios,
+    tabelas_referencias,
     tabelas_stakeholders,
 )
 from app.configuracao import obter_configuracao
@@ -129,7 +132,9 @@ def criar_app() -> FastAPI:
     app.include_router(acesso.rotas)
     app.include_router(interacoes.rotas)
     app.include_router(metricas.rotas)
-    app.include_router(relatorios.rotas)
+    app.include_router(materiais.rotas)
+    app.include_router(exportacoes.rotas)
+    app.include_router(referencias.rotas)
     app.include_router(stakeholders.rotas)
     app.include_router(catalogo.rotas)
 

@@ -65,7 +65,12 @@ from sqlalchemy.orm import Session
 from app.banco.repositorio_interacoes import RepositorioSQL
 from app.banco.tabelas_acesso import Papel, Usuario
 from app.banco.tabelas_catalogo import Esfera, Tema, UnidadeNegocio
-from app.banco.tabelas_stakeholders import Instituicao, Interlocutor, PessoaAegea
+from app.banco.tabelas_stakeholders import (
+    Instituicao,
+    Interlocutor,
+    PessoaAegea,
+    PessoaAegeaTema,
+)
 from app.dominio.frentes import (
     TIPO_DE_INSTITUICAO,
     Frente,
@@ -303,21 +308,37 @@ INTERLOCUTORES: tuple[tuple[str, str, str], ...] = (
     ("Núcleo regulatório", "Regulatório", "Coordenação"),
 )
 
-#: Quem representa a Aegea. Os seis que já existem na base, mais os nomes que a
-#: planilha registra na coluna "Equipe Dir Institucional".
-PESSOAS_AEGEA: tuple[tuple[str, str, bool], ...] = (
-    ("Radamés Casseb", "Diretor-presidente", True),
-    ("André Pires", "Diretor financeiro e de RI", True),
-    ("Andréa Melo", "Diretora de relações institucionais", True),
-    ("Letícia Novaes", "Gerente de relações governamentais", True),
-    ("Édison Carlos", "Diretor de sustentabilidade", True),
-    ("Márcia Costa", "Gerente de comunicação", True),
-    ("Rogério Tavares", "Diretor de relações institucionais", True),
-    ("Bruna Camargo", "Analista de relações governamentais", False),
-    ("Joseane Dias", "Especialista regulatória", False),
-    ("Maíra Sugawara", "Coordenadora de projetos sociais", False),
-    ("Yaroslav Neto", "Diretor de resíduos", True),
-    ("Alexandre Perufo", "Diretor de operações", True),
+#: Quem representa a Aegea, e SOBRE O QUE responde.
+#:
+#: A última coluna é o que sustenta a regra de "fora do escopo" — agenda
+#: conduzida por quem não responde por aquele assunto. O ORM já nomeava a
+#: regra em `PessoaAegeaTema` e nada a preenchia: doze pessoas cadastradas,
+#: zero assuntos vinculados, e a conta nunca podia ser feita.
+PESSOAS_AEGEA: tuple[tuple[str, str, bool, tuple[str, ...]], ...] = (
+    ("Radamés Casseb", "Diretor-presidente", True,
+     ("Modelo de negócio", "Copasa", "IPO", "Reputação", "Universalização")),
+    ("André Pires", "Diretor financeiro e de RI", True,
+     ("Disciplina financeira", "IPO", "Tributário")),
+    ("Andréa Melo", "Diretora de relações institucionais", True,
+     ("Regulação", "Cenário político", "Universalização")),
+    ("Letícia Novaes", "Gerente de relações governamentais", True,
+     ("Tarifa", "Regulação", "Cenário político")),
+    ("Édison Carlos", "Diretor de sustentabilidade", True,
+     ("Inclusão sanitária", "Universalização", "Clima")),
+    ("Márcia Costa", "Gerente de comunicação", True,
+     ("Reputação",)),
+    ("Rogério Tavares", "Diretor de relações institucionais", True,
+     ("Regulação", "Tarifa", "Resíduos")),
+    ("Bruna Camargo", "Analista de relações governamentais", False,
+     ("Regulação", "Resíduos")),
+    ("Joseane Dias", "Especialista regulatória", False,
+     ("Regulação", "Reúso")),
+    ("Maíra Sugawara", "Coordenadora de projetos sociais", False,
+     ("Inclusão sanitária",)),
+    ("Yaroslav Neto", "Diretor de resíduos", True,
+     ("Resíduos", "Biometano", "Carbono")),
+    ("Alexandre Perufo", "Diretor de operações", True,
+     ("Reúso", "Clima")),
 )
 
 
@@ -343,7 +364,7 @@ class Passo:
     encaminhamentos: str | None = None
     posicionamento: str | None = None
     pendencias: str | None = None
-    status: str = "realizado"
+    status: str = "confirmada"
     clima: str | None = None
     resultado: str | None = None
     tier: int = 2
@@ -364,6 +385,27 @@ class Passo:
     motivo_declinio: str | None = None
     registro_url: str | None = None
     observacoes: str | None = None
+
+    def __post_init__(self) -> None:
+        """`solicitado` com relato é um estado que o domínio não reconhece.
+
+        Relato é o que diz que a reunião aconteceu — ver `jaAconteceu` no
+        front. Um pedido sem resposta não produziu reunião, então escrever os
+        dois juntos cria um registro que a fila de exceções cobra como "sem
+        resposta há 30 dias" enquanto o texto ao lado narra o encontro.
+
+        Aconteceu de verdade, num passo escrito à mão: o relato ali descrevia o
+        PEDIDO, não a reunião. `raise`, e não `assert`, porque `python -O`
+        remove asserções e uma invariante que some conforme a flag de execução
+        não é invariante.
+        """
+        if self.status == "solicitado" and (self.relato or "").strip():
+            raise ValueError(
+                f"Passo {self.chave!r}: `solicitado` não pode ter relato. "
+                "Relato é o que marca que a reunião aconteceu; se ela "
+                "aconteceu, a situação não é `solicitado`. Se o texto descreve "
+                "o pedido, ele pertence a `pauta` ou `expectativa`."
+            )
 
 
 SHAREPOINT = "https://aegeactl.sharepoint.com/:w:/r/sites/relinst/Documentos"
@@ -392,7 +434,7 @@ def _leniencia(veiculo: str, dia: int, chave: str) -> Passo:
         posicionamento="Em Fato Relevante publicado em 05/02/2026, a Companhia "
         "informou a celebração do acordo e reiterou que os fatos apurados são "
         "anteriores à atual administração.",
-        status="atendido",
+        status="confirmada",
         clima="neutro",
         resultado="mantido",
         tier=3,
@@ -422,7 +464,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 posicionamento="A Companhia informou a celebração do acordo e "
                 "reiterou que os fatos apurados são anteriores à atual "
                 "administração.",
-                status="atendido",
+                status="confirmada",
                 clima="tenso",
                 resultado="mantido",
                 tier=1,
@@ -478,7 +520,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "com o time de RI antes do mercado abrir.",
                 pendencias="Definir se haverá call com investidores após a "
                 "publicação dos resultados.",
-                status="realizado",
+                status="confirmada",
                 clima="tenso",
                 resultado="recuou",
                 tier=1,
@@ -511,7 +553,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 posicionamento="A Aegea informa que mantém fundamentos "
                 "operacionais sólidos, com crescimento consistente de receita e "
                 "plano de investimentos preservado.",
-                status="atendido",
+                status="confirmada",
                 clima="tenso",
                 resultado="mantido",
                 tier=1,
@@ -536,7 +578,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 relato="Pedido de posicionamento para leitores de crédito.",
                 encaminhamentos="Sem desdobramento imediato.",
                 posicionamento="Companhia não quis comentar além do já divulgado.",
-                status="atendido",
+                status="confirmada",
                 clima="neutro",
                 resultado="mantido",
                 tier=2,
@@ -564,7 +606,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 posicionamento="A Aegea informa que o adiamento decorre da "
                 "conclusão de procedimentos de revisão e que a nova data será "
                 "comunicada ao mercado.",
-                status="atendido",
+                status="confirmada",
                 clima="tenso",
                 resultado="recuou",
                 tier=1,
@@ -589,7 +631,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "publicação.",
                 encaminhamentos="Alinhar com o jurídico o texto a ser usado caso "
                 "a data volte a mudar.",
-                status="atendido",
+                status="confirmada",
                 clima="tenso",
                 resultado="mantido",
                 tier=2,
@@ -620,7 +662,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 posicionamento="A Aegea informa que, em caráter excepcional, "
                 "adiou a divulgação e que não há alteração em sua posição de "
                 "liquidez.",
-                status="atendido",
+                status="confirmada",
                 clima="tenso",
                 resultado="recuou",
                 tier=1,
@@ -645,7 +687,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "o aumento do endividamento.",
                 encaminhamentos="Preparar material de apoio para o encontro de "
                 "relacionamento já agendado com o veículo.",
-                status="atendido",
+                status="confirmada",
                 clima="neutro",
                 resultado="mantido",
                 tier=1,
@@ -674,7 +716,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "acumulada desde o rebaixamento.",
                 encaminhamentos="Levar o tema ao encontro com investidores e "
                 "preparar resposta para a revisão da Moody's, prevista para maio.",
-                status="atendido",
+                status="confirmada",
                 clima="tenso",
                 resultado="recuou",
                 tier=1,
@@ -696,7 +738,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 relato="Segunda agência a rebaixar a nota em cinco semanas.",
                 encaminhamentos="Marcar entrevista com porta-voz para retomar a "
                 "narrativa de capitalização.",
-                status="atendido",
+                status="confirmada",
                 clima="tenso",
                 resultado="recuou",
                 tier=1,
@@ -719,7 +761,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 relato="Entrevista com porta-voz para tratar dos três temas juntos.",
                 encaminhamentos="Consolidar a mensagem de capitalização como eixo "
                 "das próximas conversas com imprensa e investidores.",
-                status="atendido",
+                status="confirmada",
                 clima="propositivo",
                 resultado="avancou",
                 tier=1,
@@ -755,7 +797,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 encaminhamentos="Reunião do comitê de QSMS da ABCON na próxima "
                 "semana para discutir os dados e a análise de impacto.",
                 pendencias="Obter as planilhas de suporte da consulta pública.",
-                status="realizado",
+                status="confirmada",
                 clima="tenso",
                 resultado="recuou",
                 tier=1,
@@ -778,7 +820,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "minuta artigo a artigo.",
                 encaminhamentos="Distribuir a minuta às associadas para "
                 "levantamento de impacto por operação.",
-                status="realizado",
+                status="confirmada",
                 clima="tenso",
                 resultado="recuou",
                 tier=1,
@@ -806,7 +848,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "de adequação por unidade. O lodo não entra na resolução.",
                 encaminhamentos="Consolidar a planilha de impacto e enviar à "
                 "ABCON até 01/04.",
-                status="elaborado",
+                status="confirmada",
                 clima="propositivo",
                 resultado="avancou",
                 tier=2,
@@ -833,7 +875,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "levantamentos das associadas, incluindo o da Aegea.",
                 encaminhamentos="Solicitar reunião técnica com o MMA e pedir "
                 "apoio da ANA na intermediação.",
-                status="realizado",
+                status="confirmada",
                 clima="propositivo",
                 resultado="avancou",
                 tier=1,
@@ -854,7 +896,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "apoio da ANA.",
                 encaminhamentos="Nova rodada de reuniões institucionais, com "
                 "apoio da ANA, e reforço da estratégia de sensibilização.",
-                status="realizado",
+                status="confirmada",
                 clima="tenso",
                 resultado="mantido",
                 tier=1,
@@ -874,7 +916,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 relato="O tema evoluiu para fase técnica, com foco na "
                 "flexibilização de parâmetros.",
                 encaminhamentos="Agendar reunião direta com o MMA para maio.",
-                status="realizado",
+                status="confirmada",
                 clima="propositivo",
                 resultado="avancou",
                 tier=1,
@@ -895,7 +937,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 encaminhamentos="Enviar nota técnica com a proposta de "
                 "escalonamento em quinze dias.",
                 pendencias="Definir quem assina a nota técnica pelo setor.",
-                status="realizado",
+                status="confirmada",
                 clima="propositivo",
                 resultado="avancou",
                 tier=1,
@@ -922,7 +964,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "escalonado.",
                 encaminhamentos="Acompanhar a publicação da minuta final e "
                 "preparar comunicação às associadas.",
-                status="realizado",
+                status="confirmada",
                 clima="neutro",
                 resultado="avancou",
                 tier=2,
@@ -949,7 +991,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "proposta foi avaliada como potencialmente danosa.",
                 encaminhamentos="Monitoramento legislativo do projeto e "
                 "interlocução com o relator na comissão competente.",
-                status="realizado",
+                status="confirmada",
                 clima="tenso",
                 resultado="mantido",
                 tier=1,
@@ -969,7 +1011,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "faixa de consumo.",
                 encaminhamentos="Manter o diálogo com o parlamentar e enviar os "
                 "dados solicitados.",
-                status="realizado",
+                status="confirmada",
                 clima="propositivo",
                 resultado="avancou",
                 tier=1,
@@ -999,7 +1041,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "discutir texto alternativo.",
                 encaminhamentos="Elaborar substitutivo e apresentar ao autor "
                 "antes da designação do relator.",
-                status="realizado",
+                status="confirmada",
                 clima="neutro",
                 resultado="mantido",
                 tier=1,
@@ -1032,7 +1074,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 encaminhamentos="Combinar duas frentes — atuação para evitar "
                 "tramitação acelerada e desenvolvimento de substitutivo alinhado "
                 "às normas de referência.",
-                status="realizado",
+                status="confirmada",
                 clima="tenso",
                 resultado="recuou",
                 tier=1,
@@ -1052,7 +1094,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "risco regulatório.",
                 encaminhamentos="Manter a construção do substitutivo como "
                 "principal frente.",
-                status="realizado",
+                status="confirmada",
                 clima="tenso",
                 resultado="recuou",
                 tier=1,
@@ -1074,7 +1116,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 encaminhamentos="Monitorar a tramitação e manter o substitutivo "
                 "guardado como contingência.",
                 pendencias="Validar o texto com o jurídico das associadas.",
-                status="realizado",
+                status="confirmada",
                 clima="neutro",
                 resultado="mantido",
                 tier=1,
@@ -1100,7 +1142,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 relato="O substitutivo apresentado traz para o texto o art. 12 da "
                 "norma de referência da ANA, com prazo de adaptação.",
                 encaminhamentos="Sugerir nomes para a relatoria na CDC.",
-                status="realizado",
+                status="confirmada",
                 clima="propositivo",
                 resultado="avancou",
                 tier=1,
@@ -1125,7 +1167,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "também esteve presente e reforçou o pleito.",
                 encaminhamentos="Levar a minuta à consultoria legislativa da "
                 "Câmara pela liderança.",
-                status="realizado",
+                status="confirmada",
                 clima="propositivo",
                 resultado="avancou",
                 tier=1,
@@ -1155,7 +1197,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "com aumento de custo entre 9% e 12% na operação.",
                 encaminhamentos="Levantar o impacto por associada e levar o número "
                 "consolidado à CNI.",
-                status="realizado",
+                status="confirmada",
                 clima="neutro",
                 resultado="mantido",
                 tier=2,
@@ -1177,7 +1219,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "discussão.",
                 encaminhamentos="Manter o alinhamento institucional com a CNI "
                 "sobre o tema.",
-                status="realizado",
+                status="confirmada",
                 clima="propositivo",
                 resultado="avancou",
                 tier=2,
@@ -1200,7 +1242,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "associação é divergente.",
                 encaminhamentos="Estruturar dados de impacto tarifário para "
                 "subsidiar a interlocução com parlamentares.",
-                status="realizado",
+                status="confirmada",
                 clima="tenso",
                 resultado="recuou",
                 tier=1,
@@ -1226,7 +1268,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "usada como insumo técnico.",
                 encaminhamentos="Distribuir o material às associadas para uso nas "
                 "agendas parlamentares.",
-                status="realizado",
+                status="confirmada",
                 clima="propositivo",
                 resultado="avancou",
                 tier=1,
@@ -1254,7 +1296,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 encaminhamentos="Associadas devem contribuir com sugestões de "
                 "emendas.",
                 pendencias="Prazo de envio das sugestões: uma semana.",
-                status="realizado",
+                status="confirmada",
                 clima="tenso",
                 resultado="recuou",
                 tier=1,
@@ -1278,7 +1320,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 relato="Consolidadas as sugestões das associadas em três emendas.",
                 encaminhamentos="Protocolar as emendas pela liderança e acompanhar "
                 "a inclusão na ordem do dia.",
-                status="realizado",
+                status="confirmada",
                 clima="neutro",
                 resultado="mantido",
                 tier=2,
@@ -1304,7 +1346,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "insumo essencial na coagulação do tratamento de água.",
                 encaminhamentos="Estruturar atuação coordenada via comitê de "
                 "suprimentos, com avaliação de alternativas de fornecimento.",
-                status="realizado",
+                status="confirmada",
                 clima="tenso",
                 resultado="recuou",
                 tier=1,
@@ -1324,7 +1366,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "agravamento da preocupação sobre preços e risco de escassez.",
                 encaminhamentos="Reunião do comitê de suprimentos em 28 de abril "
                 "para definir medidas e articulação com o governo.",
-                status="realizado",
+                status="confirmada",
                 clima="tenso",
                 resultado="mantido",
                 tier=1,
@@ -1345,7 +1387,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "qualificação técnica e prazo de homologação.",
                 encaminhamentos="Enviar o comparativo técnico à ABCON para compor "
                 "a nota ao MDIC.",
-                status="elaborado",
+                status="confirmada",
                 clima="propositivo",
                 resultado="avancou",
                 tier=2,
@@ -1372,7 +1414,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "recuperação de três a cinco anos para o setor.",
                 encaminhamentos="Buscar posição conjunta com a ABIQUIM para levar "
                 "ao MDIC.",
-                status="realizado",
+                status="confirmada",
                 clima="neutro",
                 resultado="mantido",
                 tier=2,
@@ -1403,7 +1445,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 encaminhamentos="Ministério pediu dados de volume por operação "
                 "para avaliar medida específica.",
                 pendencias="Consolidar volumes das associadas até 30/05.",
-                status="realizado",
+                status="confirmada",
                 clima="propositivo",
                 resultado="avancou",
                 tier=1,
@@ -1438,7 +1480,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "de preços dos insumos.",
                 encaminhamentos="Formalizar o acordo e definir a periodicidade do "
                 "boletim de preços.",
-                status="realizado",
+                status="confirmada",
                 clima="propositivo",
                 resultado="avancou",
                 tier=2,
@@ -1487,7 +1529,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "o calendário provável do processo.",
                 encaminhamentos="Acompanhar a tramitação na ALMG e preparar "
                 "posição para a audiência pública.",
-                status="realizado",
+                status="confirmada",
                 clima="propositivo",
                 resultado="avancou",
                 tier=1,
@@ -1539,7 +1581,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "e o desenho do sócio de referência.",
                 encaminhamentos="Levar dúvidas sobre a cláusula de não "
                 "concorrência ao jurídico.",
-                status="realizado",
+                status="confirmada",
                 clima="neutro",
                 resultado="mantido",
                 tier=2,
@@ -1563,7 +1605,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "Houve menções à Aegea como possível interessada.",
                 encaminhamentos="Preparar porta-voz para o caso de a pauta migrar "
                 "para a imprensa nacional.",
-                status="realizado",
+                status="confirmada",
                 clima="tenso",
                 resultado="mantido",
                 tier=1,
@@ -1598,7 +1640,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "trajetória, aumento de capital e a Copasa.",
                 encaminhamentos="Enviar dados de investimento por concessão como "
                 "material de apoio.",
-                status="atendido",
+                status="confirmada",
                 clima="propositivo",
                 resultado="avancou",
                 tier=1,
@@ -1625,7 +1667,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 relato="Encontro presencial com o diretor-presidente.",
                 encaminhamentos="Manter a cadência trimestral de encontros com os "
                 "dois veículos.",
-                status="atendido",
+                status="confirmada",
                 clima="propositivo",
                 resultado="avancou",
                 tier=1,
@@ -1678,7 +1720,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "novo calendário for publicado.",
                 posicionamento="A Aegea segue todas as exigências e procedimentos "
                 "legais previstos nos processos licitatórios.",
-                status="atendido",
+                status="confirmada",
                 clima="neutro",
                 resultado="mantido",
                 tier=2,
@@ -1711,7 +1753,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "frentes de cisternas e de saúde.",
                 encaminhamentos="Definir os dois primeiros programas a serem "
                 "executados sob o acordo.",
-                status="realizado",
+                status="confirmada",
                 clima="propositivo",
                 resultado="avancou",
                 tier=1,
@@ -1734,7 +1776,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "dados de cobertura por município.",
                 encaminhamentos="Ministério encaminhará o pipeline de campanhas; "
                 "a companhia enviará a cobertura por município.",
-                status="realizado",
+                status="confirmada",
                 clima="propositivo",
                 resultado="avancou",
                 tier=1,
@@ -1765,7 +1807,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "sistemas sanitários e pediu proposta técnica.",
                 encaminhamentos="Apresentar proposta técnica de sistema sanitário "
                 "adaptado à realidade ribeirinha.",
-                status="realizado",
+                status="confirmada",
                 clima="propositivo",
                 resultado="avancou",
                 tier=1,
@@ -1796,7 +1838,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 encaminhamentos="Desenhar modelo de manutenção com a prefeitura e "
                 "trazer resposta na próxima reunião.",
                 pendencias="Definir quem responde pela manutenção após a entrega.",
-                status="realizado",
+                status="confirmada",
                 clima="neutro",
                 resultado="mantido",
                 tier=1,
@@ -1821,7 +1863,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 encaminhamentos="Ministério enviará por e-mail o levantamento das "
                 "doenças por município; a companhia responderá com o calendário "
                 "de campo.",
-                status="realizado",
+                status="confirmada",
                 clima="propositivo",
                 resultado="avancou",
                 tier=1,
@@ -1856,7 +1898,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "iniciativas funcionando.",
                 encaminhamentos="Levar o argumento à agência na celebração do Dia "
                 "Mundial da Água e preparar contribuição à consulta.",
-                status="realizado",
+                status="confirmada",
                 clima="tenso",
                 resultado="mantido",
                 tier=2,
@@ -1876,7 +1918,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "a norma de reúso e indicou o canal de contribuição.",
                 encaminhamentos="Protocolar a contribuição técnica dentro do prazo "
                 "da consulta.",
-                status="realizado",
+                status="confirmada",
                 clima="propositivo",
                 resultado="avancou",
                 tier=2,
@@ -1901,9 +1943,13 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 pauta="Reúso da água para indústrias e data centers",
                 expectativa="Posicionar o reúso como negócio, e não como "
                 "obrigação regulatória.",
-                relato="Pedido de entrevista sobre o mercado de reúso industrial.",
+                # SEM RELATO: o pedido de entrevista chegou e ainda não foi
+                # respondido. O que estava escrito aqui descrevia o PEDIDO, não
+                # a reunião — e relato, neste domínio, é o que diz que a reunião
+                # houve. A pauta acima já conta do que se trata.
+                relato=None,
                 encaminhamentos="Preparar o porta-voz com os números de Itaboraí.",
-                status="aguardando_aegea",
+                status="solicitado",
                 clima=None,
                 resultado=None,
                 tier=3,
@@ -1924,7 +1970,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "não haver pressa para deliberar.",
                 encaminhamentos="Buscar reunião com o assessor do relator para "
                 "apresentar o texto do setor.",
-                status="realizado",
+                status="confirmada",
                 clima="neutro",
                 resultado="mantido",
                 tier=2,
@@ -1951,7 +1997,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "não deliberar agora está mantido.",
                 encaminhamentos="Reavaliar em agosto, conforme o calendário da "
                 "Casa.",
-                status="realizado",
+                status="confirmada",
                 clima="propositivo",
                 resultado="mantido",
                 tier=2,
@@ -2006,7 +2052,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "questionados.",
                 encaminhamentos="Enviar a íntegra da impugnação como material de "
                 "apoio.",
-                status="atendido",
+                status="confirmada",
                 clima="neutro",
                 resultado="avancou",
                 tier=1,
@@ -2038,7 +2084,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 relato="Entrevista com a diretoria jurídica.",
                 encaminhamentos="Acompanhar a publicação nos dois veículos no "
                 "mesmo dia.",
-                status="atendido",
+                status="confirmada",
                 clima="neutro",
                 resultado="avancou",
                 tier=1,
@@ -2065,7 +2111,7 @@ ENREDOS: tuple[tuple[str, tuple[Passo, ...]], ...] = (
                 "reportagens brasileiras.",
                 encaminhamentos="Registrar a repercussão no relatório mensal de "
                 "imprensa.",
-                status="atendido",
+                status="confirmada",
                 clima="neutro",
                 resultado="mantido",
                 tier=2,
@@ -2460,19 +2506,27 @@ QUANTAS_SOLTAS: dict[Frente, int] = {
     Frente.INTERNA: 8,
 }
 
-#: Status possíveis por frente, na proporção que a planilha mostra: imprensa
-#: vive de `atendido` e `declinado`; a agenda institucional, de `realizado`.
+#: A SITUAÇÃO TEM TRÊS VALORES: `solicitado`, `confirmada` (Aceito) e
+#: `declinado` (Negado). Era onze, e os oito que saíram descreviam duas coisas
+#: ao mesmo tempo — a resposta ao pedido e se a reunião já tinha acontecido.
+#:
+#: O "já aconteceu" passou para o RELATO: só se escreve o relato de uma reunião
+#: que houve, e por isso este semeador preenche relato apenas nas aceitas cuja
+#: data passou. Ver `jaAconteceu` no front.
+#:
+#: A proporção segue a planilha: imprensa recusa mais (é o volume de demanda
+#: que não vira pauta); a agenda institucional é quase toda aceita.
 STATUS_POR_FRENTE: dict[Frente, tuple[str, ...]] = {
     Frente.IMPRENSA: (
-        "atendido", "atendido", "atendido", "atendido",
-        "declinado", "declinado", "aguardando_aegea", "aguardando_edelman",
+        "confirmada", "confirmada", "confirmada", "confirmada",
+        "declinado", "declinado", "solicitado", "solicitado",
     ),
-    Frente.GOVERNO: ("realizado", "realizado", "realizado", "agendado"),
-    Frente.PARCEIROS: ("realizado", "realizado", "realizado", "confirmada"),
-    Frente.EVENTOS: ("realizado", "realizado", "agendado"),
-    Frente.INVESTIDORES: ("realizado", "realizado", "agendado", "solicitado"),
-    Frente.LEGISLATIVO: ("realizado", "realizado", "em_analise"),
-    Frente.INTERNA: ("elaborado", "elaborado", "em_analise"),
+    Frente.GOVERNO: ("confirmada", "confirmada", "confirmada", "solicitado"),
+    Frente.PARCEIROS: ("confirmada", "confirmada", "confirmada", "confirmada"),
+    Frente.EVENTOS: ("confirmada", "confirmada", "solicitado"),
+    Frente.INVESTIDORES: ("confirmada", "confirmada", "solicitado", "solicitado"),
+    Frente.LEGISLATIVO: ("confirmada", "confirmada", "solicitado"),
+    Frente.INTERNA: ("confirmada", "confirmada", "solicitado"),
 }
 
 #: O que a companhia respondeu. Frases da própria planilha, inclusive as
@@ -2565,6 +2619,7 @@ def semear(sessao: Session) -> int:
     sorte = random.Random(SEMENTE)
     elenco = _elenco(sessao)
     autor = _autor(sessao)
+    _alinhar_porta_vozes_da_amostra(sessao, elenco, sorte)
     repositorio = RepositorioSQL(sessao)
     criadas = 0
 
@@ -2589,6 +2644,76 @@ def semear(sessao: Session) -> int:
 
     sessao.flush()
     return criadas
+
+
+def _alinhar_porta_vozes_da_amostra(
+    sessao: Session, elenco: dict, sorte: random.Random
+) -> None:
+    """Faz a amostra de handoff obedecer à regra que este semeador introduz.
+
+    A amostra atribui porta-voz por RODÍZIO — `PORTA_VOZES[indice % 6]` —, o
+    que é razoável para ver o painel de exposição e não tem relação nenhuma com
+    o assunto da agenda. Ela também nasceu antes de existir vínculo entre
+    pessoa e assunto.
+
+    O efeito medido, depois que a regra de "fora do escopo" passou a existir:
+    40 das 60 agendas da amostra apareciam como desvio — 67% daquela fatia,
+    contra 19% das que este semeador cria. A exceção virava ruído por artefato
+    de fixture, e uma exceção ruidosa é uma exceção que alguém desliga.
+
+    Aqui a atribuição passa a respeitar o assunto na maioria dos casos. Os
+    ~12% que restam são deliberados: uma base em que todo mundo fala do que lhe
+    cabe nunca mostraria a regra funcionando.
+    """
+    from app.banco.tabelas_interacoes import (
+        InteracaoPessoaAegea,
+        InteracaoRegistro,
+        InteracaoTema,
+    )
+
+    agendas = sessao.scalars(
+        select(InteracaoRegistro).where(
+            InteracaoRegistro.origem_aba == "amostra-handoff"
+        )
+    ).all()
+
+    por_pessoa = elenco["temas_por_pessoa"]
+
+    for agenda in agendas:
+        temas = set(
+            sessao.scalars(
+                select(InteracaoTema.tema_id).where(
+                    InteracaoTema.interacao_id == agenda.id
+                )
+            )
+        )
+        if not temas:
+            continue
+
+        vinculos = sessao.scalars(
+            select(InteracaoPessoaAegea).where(
+                InteracaoPessoaAegea.interacao_id == agenda.id,
+                InteracaoPessoaAegea.papel == "porta_voz",
+            )
+        ).all()
+        if not vinculos:
+            continue
+
+        ja_responde = any(por_pessoa.get(v.pessoa_aegea_id, set()) & temas for v in vinculos)
+        if ja_responde or sorte.random() < 0.12:
+            continue
+
+        donas = [pid for pid, assuntos in por_pessoa.items() if assuntos & temas]
+        if not donas:
+            continue
+
+        # Troca só o PRIMEIRO porta-voz: quem acompanhava continua na agenda.
+        escolhida = sorte.choice(donas)
+        if any(v.pessoa_aegea_id == escolhida for v in vinculos):
+            continue
+        vinculos[0].pessoa_aegea_id = escolhida
+
+    sessao.flush()
 
 
 def _do_passo(passo: Passo, elenco: dict, autor: UUID, ids: dict) -> Interacao:
@@ -2703,17 +2828,40 @@ def _uma_solta(
 
     # Espalhadas pelo ano corrente, e não amontoadas: o painel mostra série
     # mensal, e nove meses com o mesmo número não se distinguem de um erro.
+    temas_da_agenda = tuple(
+        elenco["temas"][nome]
+        for nome in sorte.sample(list(elenco["temas"]), sorte.choice([1, 2, 2, 3]))
+    )
     quando = date(2026, 1, 5) + timedelta(days=sorte.randrange(0, 245))
     ja_aconteceu = quando <= HOJE
     status = sorte.choice(STATUS_POR_FRENTE[frente])
     if not ja_aconteceu:
-        status = "agendado" if frente is not Frente.IMPRENSA else "aguardando_aegea"
+        # Agenda no futuro ainda não teve resposta.
+        status = "solicitado"
 
-    aberta = status in ("agendado", "solicitado", "confirmada", "aguardando_aegea",
-                        "aguardando_edelman", "em_analise")
+    # SEM RELATO é o que diz "ainda não aconteceu". Uma agenda aceita cuja data
+    # já passou TEM relato — é ele que a torna elegível como origem de outra.
+    aberta = status == "solicitado" or not ja_aconteceu
 
+    # QUEM CONDUZ. Escolhido entre quem responde pelo assunto — quase sempre.
+    #
+    # Uma base em que todo mundo fala do que lhe cabe nunca mostraria a regra
+    # de "fora do escopo" funcionando; uma em que ninguém fala tornaria o aviso
+    # ruído. A proporção aqui é deliberada: cerca de uma em oito foge, que é a
+    # ordem de grandeza que faz a exceção valer a pena olhar.
     pessoas = list(elenco["pessoas"].values())
-    dela = sorte.sample(pessoas, sorte.choice([1, 1, 2]))
+    donas = [
+        p
+        for p in pessoas
+        if elenco["temas_por_pessoa"].get(p.id, set()) & set(temas_da_agenda)
+    ]
+    fora_do_escopo = sorte.random() < 0.12
+    if donas and not fora_do_escopo:
+        principal = sorte.choice(donas)
+    else:
+        principal = sorte.choice([p for p in pessoas if p not in donas] or pessoas)
+    apoio = [p for p in pessoas if p is not principal]
+    dela = [principal] + sorte.sample(apoio, sorte.choice([0, 0, 1]))
     da_instituicao = [
         i for i in elenco["interlocutores"].values()
         if i.instituicao_id == instituicao.id
@@ -2755,10 +2903,7 @@ def _uma_solta(
         local=sorte.choice(
             ["Brasília, sede do órgão", "Teams", "São Paulo, sede da Aegea", None]
         ),
-        temas=tuple(
-            elenco["temas"][nome]
-            for nome in sorte.sample(list(elenco["temas"]), sorte.choice([1, 2, 2, 3]))
-        ),
+        temas=temas_da_agenda,
         participacoes=tuple(
             ParticipacaoAegea(
                 pessoa_aegea_id=pessoa.id,
@@ -2869,8 +3014,10 @@ def _elenco(sessao: Session) -> dict:
             sessao.flush()
         interlocutores[nome] = achado
 
+    temas_por_nome = {t.nome: t.id for t in sessao.scalars(select(Tema))}
+
     pessoas: dict[str, PessoaAegea] = {}
-    for nome, cargo, porta_voz in PESSOAS_AEGEA:
+    for nome, cargo, porta_voz, assuntos in PESSOAS_AEGEA:
         achada = sessao.scalar(
             select(PessoaAegea).where(
                 PessoaAegea.nome_normalizado == normalizar(nome)
@@ -2891,6 +3038,24 @@ def _elenco(sessao: Session) -> dict:
             # informação de quem representou a companhia.
             achada.cargo = cargo
         pessoas[nome] = achada
+        sessao.flush()
+
+        # OS ASSUNTOS AUTORIZADOS. Sem eles a pergunta "o especialista está
+        # falando do assunto dele?" não tem como ser respondida — e era o
+        # estado da base: doze pessoas, zero vínculos.
+        ja_tem = set(
+            sessao.scalars(
+                select(PessoaAegeaTema.tema_id).where(
+                    PessoaAegeaTema.pessoa_aegea_id == achada.id
+                )
+            )
+        )
+        for assunto in assuntos:
+            tema_id = temas_por_nome.get(assunto)
+            if tema_id is not None and tema_id not in ja_tem:
+                sessao.add(
+                    PessoaAegeaTema(pessoa_aegea_id=achada.id, tema_id=tema_id)
+                )
 
     sessao.flush()
 
@@ -2898,6 +3063,14 @@ def _elenco(sessao: Session) -> dict:
         "instituicoes": instituicoes,
         "interlocutores": interlocutores,
         "pessoas": pessoas,
+        "temas_por_pessoa": {
+            pessoa.id: {
+                temas_por_nome[a] for a in assuntos if a in temas_por_nome
+            }
+            for (nome, _cargo, _pv, assuntos), pessoa in zip(
+                PESSOAS_AEGEA, pessoas.values(), strict=True
+            )
+        },
         "temas": {t.nome: t.id for t in sessao.scalars(select(Tema))},
         "esferas": {e.codigo: e.id for e in sessao.scalars(select(Esfera))},
         "unidades": {u.nome: u.id for u in sessao.scalars(select(UnidadeNegocio))},

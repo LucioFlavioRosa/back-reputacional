@@ -64,15 +64,15 @@ def base(cliente, semente):
     from tests.test_e2e_postgres import corpo
 
     registros = [
-        dict(frente="imprensa", status="atendido", tier=1, uf="SP", data_interacao="2026-01-15"),
-        dict(frente="imprensa", status="atendido", tier=2, uf="SP", data_interacao="2026-01-20"),
+        dict(frente="imprensa", status="confirmada", tier=1, uf="SP", data_interacao="2026-01-15"),
+        dict(frente="imprensa", status="confirmada", tier=2, uf="SP", data_interacao="2026-01-20"),
         dict(frente="imprensa", status="declinado", tier=1, uf="RJ", data_interacao="2026-02-10"),
-        dict(frente="governo", status="atendido", tier=1, uf="DF", data_interacao="2026-02-11"),
-        dict(frente="parceiros", status="em_analise", tier=3, uf="MG", data_interacao="2026-03-01"),
-        dict(frente="investidores", status="atendido", tier=1, uf="IN",
+        dict(frente="governo", status="confirmada", tier=1, uf="DF", data_interacao="2026-02-11"),
+        dict(frente="parceiros", status="solicitado", tier=3, uf="MG", data_interacao="2026-03-01"),
+        dict(frente="investidores", status="confirmada", tier=1, uf="IN",
              data_interacao="2026-03-05"),
-        dict(frente="eventos", status="atendido", tier=2, uf="SP", data_interacao="2026-03-09"),
-        dict(frente="legislativo", status="em_analise", tier=1, uf="DF",
+        dict(frente="eventos", status="confirmada", tier=2, uf="SP", data_interacao="2026-03-09"),
+        dict(frente="legislativo", status="solicitado", tier=1, uf="DF",
              data_interacao="2026-04-02"),
     ]
     for registro in registros:
@@ -355,7 +355,7 @@ def test_interacao_sem_clima_nao_entra_na_serie_de_clima(cliente, semente):
     cliente.post(
         "/api/interacoes",
         json={
-            **corpo(semente, frente="governo", status="atendido", data_interacao="2026-06-01"),
+            **corpo(semente, frente="governo", status="confirmada", data_interacao="2026-06-01"),
             "clima": None,
         },
     )
@@ -379,7 +379,7 @@ def test_serie_por_tema_conta_cada_tema(cliente, semente, sessao):
     cliente.post(
         "/api/interacoes",
         json=corpo(
-            semente, frente="governo", status="atendido",
+            semente, frente="governo", status="confirmada",
             data_interacao="2026-07-01", temas=[t.id for t in temas],
         ),
     )

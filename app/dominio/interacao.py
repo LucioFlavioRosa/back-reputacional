@@ -121,7 +121,7 @@ class MaterialDaAgenda:
 
     Sem link e sem arquivo, um material é só um título — e um título sozinho
     não leva ninguém ao documento. Os DOIS caminhos valem: link para o que já
-    mora no SharePoint, arquivo para o que se sobe aqui.
+    mora fora, arquivo para o que se sobe aqui.
     """
 
     momento: str
@@ -133,6 +133,16 @@ class MaterialDaAgenda:
     #: `arquivo_id`: a tela devolve o id que o upload lhe deu, e não o objeto.
     arquivo: ArquivoDoMaterial | None = None
     arquivo_id: UUID | None = None
+    #: De qual REFERÊNCIA da biblioteca este material veio. Nulo no que a
+    #: pessoa escreveu à mão. A tela o usa para marcar a linha e para saber o
+    #: que devolver quando o assunto é desmarcado.
+    referencia_id: UUID | None = None
+    #: DE QUE ASSUNTOS O DOCUMENTO TRATA.
+    #:
+    #: É o que faz a busca por assunto ser a mesma nas duas procedências: o
+    #: material oficial do SharePoint já era organizado assim, e o que a equipe
+    #: sobe passou a ser também.
+    temas: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         if self.momento not in MOMENTOS_DE_MATERIAL:
@@ -216,6 +226,8 @@ class Interacao:
     expectativa: str | None = None
     declinado_por: str | None = None
     motivo_declinio: str | None = None
+    #: Em que condições foi aceita. Ver `motivo_declinio`, que é o outro lado.
+    nota_situacao: str | None = None
     #: DE QUAIS agendas esta decorre. Vazio = nasceu sozinha.
     #:
     #: Plural desde a 0017. Com um pai so, "a agencia e a bancada levaram

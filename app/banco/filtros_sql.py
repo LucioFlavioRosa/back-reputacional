@@ -17,6 +17,7 @@ produção.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from uuid import UUID
 
 from sqlalchemy import ColumnElement, and_, exists, false, or_, select
@@ -88,6 +89,152 @@ def _condicoes_de_escopo(escopo: Escopo) -> list[ColumnElement[bool]]:
         )
 
     return onde
+
+
+def _participou(pessoa: str) -> ColumnElement[bool]:
+    """A pessoa esteve na agenda — como principal ou não.
+
+    A pergunta da tela é "agendas em que esta pessoa participou". Filtrar só
+    por `interlocutor_id` respondia "agendas em que ela foi a principal" — e
+    desde que a agenda passou a registrar todos os participantes, as duas
+    perguntas deixaram de ter a mesma resposta.
+
+    `exists` e não `join`: um `join` multiplicaria a interação por participante
+    e faria a contagem do painel subir sem que nada tivesse acontecido.
+    """
+    return or_(
+        InteracaoRegistro.interlocutor_id == pessoa,
+        exists().where(
+            InteracaoInterlocutor.interacao_id == InteracaoRegistro.id,
+            InteracaoInterlocutor.interlocutor_id == pessoa,
+        ),
+    )
+
+
+def _da_instituicao(entidade: str) -> ColumnElement[bool]:
+    """Aceita o id ou o nome exato.
+
+    A tela manda o id; um link escrito à mão manda o nome. Tentar o UUID e cair
+    no nome é o que faz as duas formas funcionarem sem duas rotas.
+    """
+    try:
+        return InteracaoRegistro.instituicao_id == UUID(entidade)
+    except ValueError:
+        return InteracaoRegistro.instituicao_id.in_(
+            select(Instituicao.id).where(Instituicao.nome == entidade)
+        )
+
+
+def _teve_porta_voz(pessoa_aegea_id: str) -> ColumnElement[bool]:
+    return exists(
+        select(InteracaoPessoaAegea.interacao_id).where(
+            and_(
+                InteracaoPessoaAegea.interacao_id == InteracaoRegistro.id,
+                InteracaoPessoaAegea.pessoa_aegea_id == pessoa_aegea_id,
+                InteracaoPessoaAegea.papel == PAPEL_PORTA_VOZ,
+            )
+        )
+    )
+
+
+def _tratou_de_algum(nomes: Sequence[str]) -> ColumnElement[bool]:
+    """OR entre os assuntos, como manda o contrato: entra quem tiver qualquer um."""
+    return exists(
+        select(InteracaoTema.interacao_id).where(
+            and_(
+                InteracaoTema.interacao_id == InteracaoRegistro.id,
+                InteracaoTema.tema_id.in_(select(Tema.id).where(Tema.nome.in_(nomes))),
+            )
+        )
+    )
+
+
+def _do_tipo_de_investidor(codigo: str) -> ColumnElement[bool]:
+    return exists(
+        select(InvestidoresRegistro.interacao_id).where(
+            and_(
+                InvestidoresRegistro.interacao_id == InteracaoRegistro.id,
+                InvestidoresRegistro.tipo_investidor_id
+                == _id_do_codigo(TipoInvestidor, codigo),
+            )
+        )
+    )
+
+
+def _bate_com_a_busca(
+    termo_pedido: str, *, em_campos_sensiveis: bool
+) -> ColumnElement[bool]:
+    """A busca livre, num lugar só.
+
+    Os campos de texto usam ILIKE com curinga dos dois lados, servido pelos
+    índices de trigrama de `migrations/0004_interacoes.sql` — sem eles isto
+    seria varredura sequencial.
+
+    Nome de instituição e de pessoa buscam pela coluna normalizada, a mesma que
+    a importação usa para deduplicar: assim "Radames" encontra "Radamés", e
+    quem digita sem acento não fica sem resultado.
+
+    `em_campos_sensiveis` decide se `relato` entra. Esconder o campo do payload
+    e mantê-lo pesquisável seria um oráculo: sem receber o texto, a pessoa
+    descobriria o conteúdo por tentativa e erro, uma palavra por vez.
+    """
+    termo = f"%{termo_pedido.strip()}%"
+    termo_normalizado = f"%{normalizar(termo_pedido)}%"
+
+    # `relato` é o campo que `InteracaoSaida` anula para quem não tem
+    # `ve_campos_sensiveis` — deixá-lo aqui devolveria por dedução o que a
+    # serialização acabou de esconder.
+    # `expectativa` E OS TEMAS ENTRAM AQUI porque a pauta saiu da tela.
+    #
+    # A busca procurava o assunto em `pauta`, e agenda criada pelo
+    # formulario nao tem mais pauta: o assunto dela mora em `temas` (o
+    # classificado) e em `expectativa` (o que se quer da reuniao). Sem
+    # estes dois, procurar por "reajuste" acharia so os 60 registros
+    # vindos da planilha — e a busca pareceria funcionar, o que e pior do
+    # que quebrar.
+    #
+    # `pauta` continua na lista: e o que os registros antigos tem.
+    colunas = [
+        InteracaoRegistro.pauta.ilike(termo),
+        InteracaoRegistro.expectativa.ilike(termo),
+        InteracaoRegistro.encaminhamentos.ilike(termo),
+    ]
+    if em_campos_sensiveis:
+        colunas.append(InteracaoRegistro.relato.ilike(termo))
+
+    return or_(
+            *colunas,
+            InteracaoRegistro.uf.ilike(termo),
+            exists(
+                select(Instituicao.id).where(
+                    and_(
+                        Instituicao.id == InteracaoRegistro.instituicao_id,
+                        Instituicao.nome_normalizado.ilike(termo_normalizado),
+                    )
+                )
+            ),
+            exists(
+                select(Interlocutor.id).where(
+                    and_(
+                        Interlocutor.id == InteracaoRegistro.interlocutor_id,
+                        Interlocutor.nome_normalizado.ilike(termo_normalizado),
+                    )
+                )
+            ),
+            # O ASSUNTO CLASSIFICADO. Procurar "reajuste" precisa achar a
+            # agenda marcada com o tema "Reajuste tarifario", que e como o
+            # assunto e registrado desde que a pauta saiu do formulario.
+            exists(
+                select(InteracaoTema.tema_id).where(
+                    and_(
+                        InteracaoTema.interacao_id == InteracaoRegistro.id,
+                        InteracaoTema.tema_id.in_(
+                            select(Tema.id).where(Tema.nome.ilike(termo))
+                        ),
+                    )
+                )
+            ),
+        )
 
 
 def condicoes(
@@ -163,147 +310,23 @@ def condicoes(
     if recorte.tier is not None:
         onde.append(InteracaoRegistro.tier == recorte.tier)
     if recorte.pessoa:
-        # QUALQUER participacao conta, e nao so a de interlocutor principal.
-        #
-        # A pergunta da tela e "agendas em que esta pessoa participou". Filtrar
-        # so por `interlocutor_id` respondia "agendas em que ela foi a
-        # principal" — e desde que a agenda passou a registrar todos os
-        # participantes, as duas perguntas deixaram de ter a mesma resposta.
-        #
-        # `exists` e nao `join`: um `join` multiplicaria a interacao por
-        # participante e faria a contagem do painel subir sem que nada tivesse
-        # acontecido.
-        onde.append(
-            or_(
-                InteracaoRegistro.interlocutor_id == recorte.pessoa,
-                exists().where(
-                    InteracaoInterlocutor.interacao_id == InteracaoRegistro.id,
-                    InteracaoInterlocutor.interlocutor_id == recorte.pessoa,
-                ),
-            )
-        )
+        onde.append(_participou(recorte.pessoa))
 
-    # -- instituição: aceita id ou nome exato --------------------------------
     if recorte.entidade:
-        try:
-            onde.append(InteracaoRegistro.instituicao_id == UUID(recorte.entidade))
-        except ValueError:
-            onde.append(
-                InteracaoRegistro.instituicao_id.in_(
-                    select(Instituicao.id).where(Instituicao.nome == recorte.entidade)
-                )
-            )
+        onde.append(_da_instituicao(recorte.entidade))
 
-    # -- relações: exists, para não duplicar linha ---------------------------
+    # -- relações: `exists`, para não duplicar linha -------------------------
     if recorte.porta_voz:
-        onde.append(
-            exists(
-                select(InteracaoPessoaAegea.interacao_id).where(
-                    and_(
-                        InteracaoPessoaAegea.interacao_id == InteracaoRegistro.id,
-                        InteracaoPessoaAegea.pessoa_aegea_id == recorte.porta_voz,
-                        InteracaoPessoaAegea.papel == PAPEL_PORTA_VOZ,
-                    )
-                )
-            )
-        )
-
+        onde.append(_teve_porta_voz(recorte.porta_voz))
     if recorte.tags:
-        # OR entre as tags, como manda o contrato: o registro entra se tiver
-        # qualquer uma delas.
-        onde.append(
-            exists(
-                select(InteracaoTema.interacao_id).where(
-                    and_(
-                        InteracaoTema.interacao_id == InteracaoRegistro.id,
-                        InteracaoTema.tema_id.in_(
-                            select(Tema.id).where(Tema.nome.in_(recorte.tags))
-                        ),
-                    )
-                )
-            )
-        )
-
+        onde.append(_tratou_de_algum(recorte.tags))
     if recorte.subtipo:
-        onde.append(
-            exists(
-                select(InvestidoresRegistro.interacao_id).where(
-                    and_(
-                        InvestidoresRegistro.interacao_id == InteracaoRegistro.id,
-                        InvestidoresRegistro.tipo_investidor_id
-                        == _id_do_codigo(TipoInvestidor, recorte.subtipo),
-                    )
-                )
-            )
-        )
+        onde.append(_do_tipo_de_investidor(recorte.subtipo))
 
-    # -- busca livre ---------------------------------------------------------
-    #
-    # Os campos de texto usam ILIKE com curinga dos dois lados, servido pelos
-    # índices de trigrama criados em `migrations/0004_interacoes.sql` — sem eles
-    # isto seria varredura sequencial.
-    #
-    # Nome de instituição e de pessoa buscam pela coluna normalizada, a mesma
-    # que a importação usa para deduplicar: assim "Radames" encontra
-    # "Radamés", e quem digita sem acento não fica sem resultado.
     if recorte.busca:
-        termo = f"%{recorte.busca.strip()}%"
-        termo_normalizado = f"%{normalizar(recorte.busca)}%"
-
-        # `relato` é o campo que `InteracaoSaida` anula para quem não tem
-        # `ve_campos_sensiveis` — deixá-lo aqui devolveria por dedução o que a
-        # serialização acabou de esconder.
-        # `expectativa` E OS TEMAS ENTRAM AQUI porque a pauta saiu da tela.
-        #
-        # A busca procurava o assunto em `pauta`, e agenda criada pelo
-        # formulario nao tem mais pauta: o assunto dela mora em `temas` (o
-        # classificado) e em `expectativa` (o que se quer da reuniao). Sem
-        # estes dois, procurar por "reajuste" acharia so os 60 registros
-        # vindos da planilha — e a busca pareceria funcionar, o que e pior do
-        # que quebrar.
-        #
-        # `pauta` continua na lista: e o que os registros antigos tem.
-        colunas = [
-            InteracaoRegistro.pauta.ilike(termo),
-            InteracaoRegistro.expectativa.ilike(termo),
-            InteracaoRegistro.encaminhamentos.ilike(termo),
-        ]
-        if busca_em_campos_sensiveis:
-            colunas.append(InteracaoRegistro.relato.ilike(termo))
-
         onde.append(
-            or_(
-                *colunas,
-                InteracaoRegistro.uf.ilike(termo),
-                exists(
-                    select(Instituicao.id).where(
-                        and_(
-                            Instituicao.id == InteracaoRegistro.instituicao_id,
-                            Instituicao.nome_normalizado.ilike(termo_normalizado),
-                        )
-                    )
-                ),
-                exists(
-                    select(Interlocutor.id).where(
-                        and_(
-                            Interlocutor.id == InteracaoRegistro.interlocutor_id,
-                            Interlocutor.nome_normalizado.ilike(termo_normalizado),
-                        )
-                    )
-                ),
-                # O ASSUNTO CLASSIFICADO. Procurar "reajuste" precisa achar a
-                # agenda marcada com o tema "Reajuste tarifario", que e como o
-                # assunto e registrado desde que a pauta saiu do formulario.
-                exists(
-                    select(InteracaoTema.tema_id).where(
-                        and_(
-                            InteracaoTema.interacao_id == InteracaoRegistro.id,
-                            InteracaoTema.tema_id.in_(
-                                select(Tema.id).where(Tema.nome.ilike(termo))
-                            ),
-                        )
-                    )
-                ),
+            _bate_com_a_busca(
+                recorte.busca, em_campos_sensiveis=busca_em_campos_sensiveis
             )
         )
 
