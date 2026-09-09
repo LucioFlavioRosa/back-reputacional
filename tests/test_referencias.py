@@ -202,6 +202,84 @@ def test_a_segunda_versao_nao_apaga_a_primeira(cliente, assuntos, guardados):
     assert guardados[0] != guardados[1], "cada versao tem caminho proprio"
 
 
+def test_a_numeracao_da_versao_trava_a_referencia(cliente, assuntos, guardados, sessao):
+    """Duas subidas ao mesmo tempo não podem receber o mesmo número.
+
+    MEDIDO, e não imaginado: doze POSTs simultâneos na mesma referência
+    devolviam dois 201 e dez 500 de `unique (referencia_id, numero)` — e, pior,
+    os dez bytes já estavam no blob, órfãos, porque o arquivo subia antes de a
+    linha existir.
+
+    Os dois consertos deixam rastro diferente. Este teste cobre o primeiro: a
+    contagem só acontece com a LINHA DA REFERÊNCIA TRAVADA, e num teste de uma
+    conexão só isso se prova pelo SQL que sai — o `FOR UPDATE`.
+    """
+    from sqlalchemy import event
+
+    comandos: list[str] = []
+
+    def anotar(conexao, cursor, sql, parametros, contexto, muitos):
+        comandos.append(" ".join(sql.split()).upper())
+
+    criada = criar(cliente, assuntos).json()
+    event.listen(sessao.get_bind(), "before_cursor_execute", anotar)
+    try:
+        nova = cliente.post(
+            f"/api/referencias/{criada['id']}/versoes",
+            data={"atualizado_em": "2026-09-01"},
+            files={"arquivo": ("v2.pdf", PDF, "application/pdf")},
+        )
+    finally:
+        event.remove(sessao.get_bind(), "before_cursor_execute", anotar)
+
+    assert nova.status_code == 201, nova.text
+    travas = [c for c in comandos if "FOR UPDATE" in c and "REFERENCIA" in c]
+    assert travas, f"a numeracao contou versoes sem travar a referencia: {comandos}"
+
+
+def test_o_byte_so_sobe_depois_de_a_linha_ser_aceita(
+    cliente, assuntos, sessao, monkeypatch
+):
+    """O segundo conserto da corrida: a ordem da escrita.
+
+    A falha que ACONTECE é a do banco — a linha recusada pela unicidade quando
+    outro escritor chegou primeiro. Com o byte subindo antes, cada recusa
+    deixava um arquivo sem dono no contêiner; foi assim que dez POSTs perdidos
+    viraram dez blobs órfãos.
+
+    Aqui se prova a ordem, e não a exceção: o INSERT da versão tem de sair
+    ANTES da chamada ao blob.
+    """
+    from sqlalchemy import event
+
+    from app.armazenamento import blob as modulo_blob
+
+    passos: list[str] = []
+    monkeypatch.setattr(
+        modulo_blob, "guardar", lambda caminho, dados, tipo: passos.append("blob")
+    )
+
+    criada = criar(cliente, assuntos).json()
+    passos.clear()  # a criação já foi; o que se observa é a SEGUNDA versão
+
+    def anotar(conexao, cursor, sql, parametros, contexto, muitos):
+        if "INSERT INTO referencia_versao" in " ".join(sql.split()):
+            passos.append("linha")
+
+    event.listen(sessao.get_bind(), "before_cursor_execute", anotar)
+    try:
+        nova = cliente.post(
+            f"/api/referencias/{criada['id']}/versoes",
+            data={"atualizado_em": "2026-09-01"},
+            files={"arquivo": ("v2.pdf", PDF, "application/pdf")},
+        )
+    finally:
+        event.remove(sessao.get_bind(), "before_cursor_execute", anotar)
+
+    assert nova.status_code == 201, nova.text
+    assert passos == ["linha", "blob"], f"o byte subiu fora de ordem: {passos}"
+
+
 def test_o_historico_vem_da_mais_recente_para_a_mais_antiga(cliente, assuntos, guardados):
     criada = criar(cliente, assuntos).json()
     for dia in ("2026-09-01", "2026-09-05"):

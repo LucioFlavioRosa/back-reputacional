@@ -30,14 +30,13 @@ from __future__ import annotations
 
 import secrets
 from dataclasses import replace
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from uuid import uuid4
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
-
-from fastapi.testclient import TestClient
 
 from app.api import acesso
 from app.api.acesso import _motivo_da_recusa, _texto_da_recusa

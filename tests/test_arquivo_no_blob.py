@@ -17,7 +17,6 @@ import pytest
 from app.armazenamento import blob
 from app.dominio.erros import RegraViolada
 
-
 # -- a pasta é a agenda --------------------------------------------------------
 
 

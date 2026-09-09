@@ -192,7 +192,7 @@ def _guardar_versao(
     nota: str | None,
     usuario,
 ) -> ReferenciaVersao:
-    """Grava o byte no blob e a versão no banco, nessa ordem.
+    """Grava a versão no banco e o byte no blob, nessa ordem.
 
     AS MESMAS GUARDAS DO UPLOAD DE AGENDA: tipo aceito, coerência entre nome e
     conteúdo, tamanho. O `Content-Type` do multipart é escrito por quem envia —
@@ -207,6 +207,22 @@ def _guardar_versao(
     assunto = sessao.scalar(
         select(Tema.nome).where(Tema.id == registro.tema_principal_id)
     )
+
+    # A TRAVA NA LINHA DA REFERÊNCIA, ANTES DE CONTAR.
+    #
+    # `numero` era lido sem bloqueio: doze uploads simultâneos na mesma
+    # referência liam a mesma versão atual, pediam todos o mesmo número, e o
+    # `unique (referencia_id, numero)` derrubava onze — com 500 genérico na
+    # tela e, pior, o byte já gravado no blob. Medido: 12 requisições, 2
+    # gravadas, 10 blobs órfãos no Azurite.
+    #
+    # `with_for_update` serializa quem escreve NESTA referência e libera no
+    # commit. Duas pessoas subindo versões de referências diferentes não se
+    # esperam; duas na mesma entram em fila e recebem números distintos.
+    sessao.execute(
+        select(Referencia.id).where(Referencia.id == registro.id).with_for_update()
+    )
+    sessao.refresh(registro, ["versoes"])
     numero = (registro.versao_atual.numero + 1) if registro.versao_atual else 1
 
     linha = Arquivo(
@@ -227,11 +243,6 @@ def _guardar_versao(
         arquivo_id=linha.id,
         nome=linha.nome,
     )
-    # O BYTE VAI DEPOIS DA LINHA. Se o blob falhar, a transação não commita e
-    # não sobra linha apontando para arquivo que não existe. O contrário —
-    # blob primeiro — deixaria byte órfão a cada erro de banco.
-    blob.guardar(linha.caminho, dados, linha.tipo_conteudo)
-
     versao = ReferenciaVersao(
         numero=numero,
         arquivo_id=linha.id,
@@ -240,7 +251,17 @@ def _guardar_versao(
         criado_por=usuario.id,
     )
     registro.versoes.append(versao)
+
+    # A LINHA PRIMEIRO, O BYTE DEPOIS.
+    #
+    # Era o contrário, e o raciocínio parecia bom: se o blob falhasse, a
+    # transação não commitava e não sobrava linha apontando para arquivo
+    # inexistente. Mas a falha que acontece na prática é a do BANCO — foi ela
+    # que deixou dez bytes órfãos no Azurite —, e nessa ordem o byte já tinha
+    # ido. Com o `flush` antes, o banco recusa antes de escrevermos qualquer
+    # coisa no armazenamento.
     sessao.flush()
+    blob.guardar(linha.caminho, dados, linha.tipo_conteudo)
     return versao
 
 
