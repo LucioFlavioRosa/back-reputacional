@@ -376,6 +376,12 @@ Atualizar dependência é rodar isso, ler o diff e commitar — que é justament
 ponto: a atualização vira uma mudança revisada, e não um efeito colateral do
 dia em que alguém reconstruiu a imagem.
 
+## Publicar no Azure
+
+O caminho inteiro — o que a aplicação espera do ambiente, o que ainda precisa
+ser decidido na infraestrutura, a ordem dos comandos e os dois passos manuais —
+está em [`docs/DEPLOY.md`](docs/DEPLOY.md).
+
 ## Configuração
 
 Tudo em `app/configuracao.py`, lido de variável de ambiente. Ver `.env.example`,

@@ -15,6 +15,10 @@ dependencies = [
     # dependência declarada, um deploy limpo sobe sem telemetria e o único
     # sinal é uma linha de warning no log.
     "azure-monitor-opentelemetry>=1.6",
+    # A identidade do contêiner, que substitui TRÊS segredos: a senha do
+    # Postgres, a chave do Storage e o segredo do cliente do SSO. Já vinha de
+    # carona com a telemetria; declarada aqui porque o código a importa.
+    "azure-identity>=1.19",
     # SSO do Entra ID. `[crypto]` traz o `cryptography`, sem o qual o PyJWT não
     # valida assinatura RS256 — que é a única que o Entra ID emite. Declarados
     # aqui porque já estavam instalados por transitividade: contar com isso é

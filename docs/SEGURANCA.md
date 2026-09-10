@@ -1,8 +1,8 @@
 # Arquitetura de segurança
 
-> Faz parte de `back-reputacional`. O que descreve vive neste repositório;
-> os artefatos de infraestrutura (`.bicep`) e as consultas de alerta ficam no
-> repositório do painel.
+> Faz parte de `back-reputacional`. O que descreve vive neste repositório; a
+> infraestrutura que o hospeda é Terraform e mora fora dele — o caminho até o
+> deploy está em [`DEPLOY.md`](DEPLOY.md).
 
 O que a solução faz hoje, camada por camada, e o que ainda não existe.
 
@@ -41,6 +41,35 @@ O fluxo está em `app/api/acesso.py` e
 A identidade estável é o `oid` do token, e não o e-mail: e-mail corporativo muda
 (casamento, transferência entre empresas do grupo) e o `oid` não. Identificar
 pelo e-mail faria a pessoa perder o histórico ao trocar de endereço.
+
+### Em produção não há segredo para guardar
+
+Três coisas exigiriam um segredo, e as três se resolvem pela **identidade
+gerenciada** do contêiner:
+
+| O que | Como se autentica | O que deixa de existir |
+|---|---|---|
+| Postgres | token do Entra ID no lugar da senha, a cada conexão | senha no `BANCO_URL` |
+| Blob Storage | credencial da identidade, com RBAC de dados | chave da conta (`shared_access_key_enabled = false`) |
+| Troca do `code` no SSO | `client_assertion` assinada para a identidade | `ENTRA_CLIENT_SECRET` |
+
+Segredo que não existe não vaza, não vence e não precisa ser rotacionado — e
+some junto o processo de rotação, que é onde essas coisas costumam envelhecer.
+
+O código está em `app/seguranca/identidade_azure.py`, e a credencial é
+**determinística** no contêiner (`ManagedIdentityCredential`, escolhida pela
+identidade que a plataforma injeta). A cadeia do `DefaultAzureCredential` fica
+para a máquina de quem desenvolve e para um CI com service principal: em
+produção ela custaria latência a cada elo que falha antes do certo, esconderia
+a causa da falha no fim da cadeia, e poderia autenticar como OUTRA identidade
+se sobrasse variável de ambiente.
+
+O token do Postgres vale cerca de uma hora, e por isso não vai na URL: entra na
+conexão, e `pool_pre_ping` cuida do resto — o token só é conferido no login, e
+conexão que já está no pool continua válida.
+
+**Enquanto o SSO não está ligado, a senha é a exceção a tudo isto** — ver a
+seção 10.
 
 ### A sessão
 
@@ -336,9 +365,19 @@ Por isso o `Dockerfile` **não** usa `--proxy-headers`: o uvicorn
 reescreveria `request.client.host` pela primeira entrada do XFF, que é a que o
 cliente controla.
 
-**Estado em memória, por processo.** Com mais de um worker o teto passa a valer
-N vezes o configurado. Em produção quem dá o teto de verdade é a borda; um
-worker mantém o comportamento local igual ao que os testes descrevem.
+**Estado em memória, por processo.** Com mais de um worker — ou mais de uma
+réplica — o teto passa a valer N vezes o configurado. Em produção quem dá o teto
+de verdade é a borda; um worker mantém o comportamento local igual ao que os
+testes descrevem.
+
+**O número precisa ser MEDIDO no ambiente, e não deduzido.** Atrás de front e
+API em contêineres, o cabeçalho chega com uma entrada por salto — ingress do
+front, nginx, ingress do back — e `PROXIES_CONFIAVEIS` é a posição do cliente
+contada da direita. Errar para menos faz a chave do balde virar o IP do proxy, e
+aí **todos os usuários dividem o mesmo balde**: um cliente barulhento devolve 429
+para os outros. Errar para mais cai no endereço da conexão, que é o mesmo proxy —
+o mesmo estrago. Registre o cabeçalho cru numa requisição depois do primeiro
+deploy e fixe o valor pelo que aparecer.
 
 ---
 
@@ -352,6 +391,11 @@ Nada disso impede injeção de SQL. O que muda é o TETO do estrago: com
 superusuário, uma connection string vazada entrega o servidor (`copy ... to
 program`, leitura de arquivo, `drop table`).
 
+**`painel_app` nasce `nologin`**: é recipiente de permissão, não conta. Quem se
+torna membro dele é a identidade gerenciada da aplicação — o passo é do script
+que aplica as migrations, e o admin do Postgres é uma identidade separada, com
+prazo de vida de um job. Nenhuma senha é criada em lugar nenhum desse caminho.
+
 Dois pontos que parecem detalhe e não são:
 
 - **`delete` nas linhas FILHAS é obrigatório.** As relações do ORM usam
@@ -363,12 +407,21 @@ Dois pontos que parecem detalhe e não são:
   revogações de auditoria precisam ser explícitas: uma trilha nova nasceria
   gravável.
 
-A conta de login é criada pela infraestrutura, com senha do Key Vault:
+Quem entra no banco é a IDENTIDADE, e não uma conta com senha. O script que
+aplica as migrations registra o principal do Entra da identidade da aplicação e
+o torna membro do papel:
 
 ```sql
-create role painel_api login password '<do Key Vault>';
-grant painel_app to painel_api;
+select pgaadauth_create_principal_with_oid('<id-back-…>', '<object id>', 'service', false, false);
+grant painel_app to "<id-back-…>";
 ```
+
+**Pelo object id, e não pelo nome.** A variante por nome resolve o principal no
+Microsoft Graph, e essa consulta é bloqueada por acesso condicional no tenant —
+o passo falharia justamente onde dá acesso à aplicação.
+
+Uma conta com senha guardada em cofre também funcionaria, e seria um segredo a
+mais para rotacionar. Não há nenhuma.
 
 ### Aplicar as migrations sem superusuário
 
@@ -447,7 +500,16 @@ insegura quando `AMBIENTE=producao`:
 - `BANCO_ECHO` ligado (o log vaporizaria os parâmetros das consultas)
 - banco local, ou sem `sslmode`
 - `SESSAO_SECRETA` ausente ou no valor padrão
-- `ENTRA_*` incompletos
+- `ENTRA_TENANT_ID` ou `ENTRA_CLIENT_ID` ausentes — sem eles não há para onde
+  mandar ninguém
+- nenhuma forma de provar que somos o cliente registrado: **nem** segredo do
+  App Registration **nem** identidade gerenciada
+
+A falta do segredo, sozinha, **não** bloqueia: é o desenho de produção, e sai
+como aviso no log dizendo que o SSO entra por credencial federada. Quem lê o log
+precisa distinguir "sem segredo porque é federado" de "sem segredo porque
+alguém esqueceu" — e a segunda hipótese é a primeira que ocorre a quem investiga
+um login quebrado.
 
 É o teste mais barato da pilha local: se a API sobe, a configuração passou.
 
@@ -573,24 +635,22 @@ Escrito explicitamente para quem for continuar.
 
 ### Definido mas nunca aplicado
 
-Os dois arquivos `.bicep` **não estão neste repositório** — ficam no repositório
-do painel, em `seguranca/borda/` e `seguranca/dados/`. São definição de
-infraestrutura que **não foi aplicada em nenhum ambiente**:
+**Não há WAF nem rate limit de borda.** O Terraform do deploy provisiona rede,
+banco, storage, contêineres e identidades — não provisiona Front Door. Enquanto
+isso for verdade, o único teto de requisições é o do processo, com as ressalvas
+da seção 6.
 
-| Arquivo | O que define |
-|---|---|
-| `waf-limite-de-taxa.bicep` | Front Door + WAF: rate limit de borda, conjunto gerenciado |
-| `postgres-e-segredos.bicep` | Postgres gerenciado com TLS obrigatório, Key Vault, PITR |
-
-Enquanto não forem aplicados: não há WAF, não há rate limit de borda, e os
-segredos são variável de ambiente.
+Existem dois `.bicep` antigos, fora destes repositórios, que definiam Front Door
+com WAF e um Postgres com Key Vault. **Nenhum dos dois foi aplicado**, e o
+segundo descreve um desenho que o atual substituiu: os três segredos que ele
+guardaria não existem mais.
 
 ### Não implementado
 
-- **Administração de dicionários.** `papel.administra_dicionarios` existe e é
-  devolvido em `/api/eu`, mas **nada o exige**: a API de catálogo só lê. É uma
-  permissão sem barreira correspondente, e quem for implementar a escrita precisa
-  passar a exigi-la.
+- **Administração dos dicionários fechados.** Frente, status, clima, resultado e
+  formato só se leem; mudar um valor é SQL. O que tem tela e rota é o cadastro de
+  assuntos, instituições, interlocutores e pessoas da Aegea — e escrever neles
+  exige `papel.administra_dicionarios`, que só `plataforma_edicao` tem.
 - **Importação da planilha.** As tabelas existem (migration
   `app/banco/migrations/0008_importacao.sql`) e o desenho está documentado lá; não há rota, caso de
   uso nem tela.

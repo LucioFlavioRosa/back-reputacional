@@ -188,6 +188,25 @@ def caminho_da_referencia(
     )
 
 
+def _servico(endereco: str) -> BlobServiceClient:
+    """O cliente do Storage, pelo caminho que o ambiente oferece.
+
+    DUAS PROCEDÊNCIAS, E O ENDEREÇO DIZ QUAL. No Azure a conta tem a chave de
+    acesso DESLIGADA — não existe cadeia de conexão para montar, e quem prova
+    quem somos é a identidade do contêiner. Localmente o Azurite só entende
+    cadeia de conexão, e a dele é pública na documentação da Microsoft.
+
+    Escolher pelo formato do endereço, e não por uma variável a mais, é o que
+    evita um ambiente configurado pela metade: `https://` só existe do lado que
+    tem identidade.
+    """
+    if endereco.startswith("https://"):
+        from app.seguranca.identidade_azure import credencial
+
+        return BlobServiceClient(account_url=endereco, credential=credencial())
+    return BlobServiceClient.from_connection_string(endereco)
+
+
 def _contenedor():
     configuracao = obter_configuracao()
     if not configuracao.blob_ligado:
@@ -197,7 +216,7 @@ def _contenedor():
             "O armazenamento de arquivos não está configurado neste ambiente. "
             "Registre o material por link, ou fale com quem administra."
         )
-    servico = BlobServiceClient.from_connection_string(configuracao.blob_url)
+    servico = _servico(configuracao.blob_url)
     contenedor = servico.get_container_client(configuracao.blob_contenedor)
     try:
         #: PRIVADO por padrão (sem `public_access`). Um contêiner público

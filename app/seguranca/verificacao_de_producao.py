@@ -171,14 +171,53 @@ def _segredo_de_sessao_fraco(c: Configuracao) -> Achado | None:
     return None
 
 
-def _sso_sem_credencial(c: Configuracao) -> Achado | None:
-    if c.auth_mock or (c.entra_tenant_id and c.entra_client_id and c.entra_client_secret):
+def _sso_sem_porta(c: Configuracao) -> Achado | None:
+    """Sem tenant e client id não há para onde mandar ninguém."""
+    if c.auth_mock or (c.entra_tenant_id and c.entra_client_id):
         return None
     return Achado(
-        "ENTRA_*",
-        "SSO ligado sem tenant, client id ou secret: ninguém consegue "
-        "entrar, e o erro só aparece quando a primeira pessoa tenta",
-        "preencher ENTRA_TENANT_ID, ENTRA_CLIENT_ID e ENTRA_CLIENT_SECRET",
+        "ENTRA_TENANT_ID / ENTRA_CLIENT_ID",
+        "SSO ligado sem tenant ou sem client id: ninguém consegue entrar, "
+        "e o erro só aparece quando a primeira pessoa tenta",
+        "preencher ENTRA_TENANT_ID e ENTRA_CLIENT_ID, do App Registration",
+    )
+
+
+def _sso_sem_como_provar_quem_e(c: Configuracao) -> Achado | None:
+    """DUAS FORMAS DE PROVAR, e é preciso ter uma.
+
+    O segredo do App Registration é uma. A credencial federada da identidade
+    gerenciada é a outra, e é a de produção — não há segredo para vazar,
+    expirar ou rotacionar.
+
+    Faltando as duas, a troca do `code` por `id_token` é recusada pelo tenant.
+    O login quebra no meio, depois de a pessoa já ter digitado a senha dela.
+    """
+    if c.auth_mock or c.entra_client_secret or c.azure_client_id:
+        return None
+    return Achado(
+        "ENTRA_CLIENT_SECRET / AZURE_CLIENT_ID",
+        "SSO ligado sem segredo do cliente e sem identidade gerenciada: não "
+        "há como provar ao tenant que esta aplicação é o cliente registrado",
+        "AZURE_CLIENT_ID da identidade do contêiner, com a credencial "
+        "federada apontando para ela — ou ENTRA_CLIENT_SECRET, fora do Azure",
+    )
+
+
+def _sso_por_identidade_gerenciada(c: Configuracao) -> Achado | None:
+    """Não é problema: é o desenho. O log diz por qual caminho o SSO entra.
+
+    Quem lê o log da subida precisa conseguir distinguir "sem segredo porque é
+    federado" de "sem segredo porque alguém esqueceu" — e a segunda hipótese é
+    a primeira que passa pela cabeça de quem investiga um login quebrado.
+    """
+    if c.auth_mock or c.entra_client_secret or not c.azure_client_id:
+        return None
+    return Achado(
+        "ENTRA_CLIENT_SECRET",
+        "ausente de propósito: o cliente do SSO se prova pela credencial "
+        "federada da identidade gerenciada, e não por segredo",
+        "nada a fazer — é o desenho de produção",
     )
 
 
@@ -347,7 +386,8 @@ GRAVES: tuple[Verificacao, ...] = (
     _autenticacao_de_mentira,
     _origem_impropria,
     _segredo_de_sessao_fraco,
-    _sso_sem_credencial,
+    _sso_sem_porta,
+    _sso_sem_como_provar_quem_e,
     _sem_limite_de_taxa,
     _sql_no_log,
     _banco_sem_tls,
@@ -360,6 +400,7 @@ GRAVES: tuple[Verificacao, ...] = (
 
 #: AS QUE SÓ AVISAM. A aplicação sobe; o log registra.
 AVISOS: tuple[Verificacao, ...] = (
+    _sso_por_identidade_gerenciada,
     _proxy_nao_declarado,
     _sem_hsts,
     _docs_marcados_como_publicos,

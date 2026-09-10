@@ -89,11 +89,11 @@ _clientes: dict[tuple[str, str, str, str], ClienteEntraId] = {}
 
 def cliente_entra(configuracao: Configuracao) -> ClienteEntraId:
     """Uma instância por credencial, para reaproveitar o cache de chaves."""
-    if not (
-        configuracao.entra_tenant_id
-        and configuracao.entra_client_id
-        and configuracao.entra_client_secret
-    ):
+    #: O SEGREDO NÃO ENTRA NA EXIGÊNCIA. Em produção ele não existe: quem prova
+    #: a identidade do cliente é a credencial federada da identidade gerenciada
+    #: (ver `ClienteEntraId._credencial_do_cliente`). O que não pode faltar é a
+    #: PORTA — tenant e client id —, sem a qual não há para onde mandar ninguém.
+    if not (configuracao.entra_tenant_id and configuracao.entra_client_id):
         raise NaoAutorizado("SSO do Entra ID não configurado.")
 
     chave = (

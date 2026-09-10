@@ -16,13 +16,15 @@
 --
 -- SEM SENHA AQUI, DE PROPÓSITO
 --
--- `painel_app` nasce `nologin`: é recipiente de permissão, não conta. A conta de
--- login é criada pela infraestrutura, com a senha vinda do Key Vault:
+-- `painel_app` nasce `nologin`: é recipiente de permissão, não conta. Quem se
+-- torna membro dele é a IDENTIDADE GERENCIADA da aplicação, registrada no banco
+-- pelo script que aplica as migrations:
 --
---     create role painel_api login password '<do Key Vault>';
---     grant painel_app to painel_api;
+--     select pgaadauth_create_principal_with_oid('<id-back-…>', '<oid>', 'service', false, false);
+--     grant painel_app to "<id-back-…>";
 --
--- Senha em arquivo de migration entra no histórico do Git e não sai mais.
+-- Não há senha em lugar nenhum desse caminho — e senha em arquivo de migration
+-- entraria no histórico do Git e não sairia mais.
 --
 -- DOIS PONTOS QUE PARECEM DETALHE E NÃO SÃO
 --

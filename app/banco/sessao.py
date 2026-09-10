@@ -7,7 +7,7 @@ from functools import lru_cache
 from typing import Annotated
 
 from fastapi import Depends
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.configuracao import obter_configuracao
@@ -18,15 +18,54 @@ class Tabela(DeclarativeBase):
     cada contexto — este módulo só oferece o ponto de ancoragem comum."""
 
 
+#: O sufixo dos servidores gerenciados do Azure. É o que separa "sem senha
+#: porque a identidade autentica" de "sem senha porque o Postgres local não
+#: pede uma".
+HOSPEDEIRO_DO_AZURE = ".postgres.database.azure.com"
+
+
+def _e_postgres_do_azure(url) -> bool:
+    """Autentica por Entra ID: usuário, sem senha, num servidor do Azure."""
+    return bool(
+        url.username
+        and url.password is None
+        and (url.host or "").lower().endswith(HOSPEDEIRO_DO_AZURE)
+    )
+
+
 @lru_cache
 def obter_engine() -> Engine:
     configuracao = obter_configuracao()
-    return create_engine(
+    engine = create_engine(
         configuracao.banco_url,
         echo=configuracao.banco_echo,
         pool_pre_ping=True,
         future=True,
     )
+
+    # NO POSTGRES DO AZURE, SEM SENHA NA URL, O TOKEN É A SENHA.
+    #
+    # A identidade do contêiner entra como usuário e o token do Entra ID entra
+    # como senha. Ele vale cerca de uma hora, então não pode ir fixo na URL:
+    # quem o busca é este ouvinte, no momento de abrir cada conexão.
+    #
+    # `pool_pre_ping` é o que faz o resto funcionar: uma conexão que já está no
+    # pool continua válida depois de o token vencer, porque o token só é
+    # conferido no LOGIN. Quem pega token novo é a conexão nova.
+    #
+    # O HOSPEDEIRO ENTRA NA CONDIÇÃO, e não só a ausência de senha. Uma URL
+    # local sem senha é legítima e comum — `trust`, autenticação por par,
+    # `.pgpass` — e cair aqui faria a aplicação buscar um token de identidade
+    # gerenciada que não existe, para mandá-lo a um Postgres que não o entende.
+    # O erro apareceria como "autenticação falhou", longe da causa.
+    if _e_postgres_do_azure(engine.url):
+        from app.seguranca.identidade_azure import token_para_postgres
+
+        @event.listens_for(engine, "do_connect")
+        def _token_no_lugar_da_senha(dialeto, registro, args, parametros):  # noqa: ANN001
+            parametros["password"] = token_para_postgres()
+
+    return engine
 
 
 @lru_cache

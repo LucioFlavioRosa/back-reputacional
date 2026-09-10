@@ -42,7 +42,16 @@ class Configuracao(BaseSettings):
 
     entra_tenant_id: str | None = None
     entra_client_id: str | None = None
+    #: VAZIO em produção, e não é esquecimento: lá quem prova a identidade do
+    #: cliente é a credencial federada da identidade gerenciada. Continua
+    #: existindo para o desenvolvimento e para o provedor falso dos testes.
     entra_client_secret: str | None = None
+
+    #: A IDENTIDADE GERENCIADA do contêiner. Quem define é a plataforma do
+    #: Azure, e o SDK a lê direto do ambiente — a aplicação não passa este
+    #: valor a lugar nenhum. Está aqui só para a conferência de subida
+    #: conseguir responder "existe outra forma de provar quem somos?".
+    azure_client_id: str | None = None
 
     #: Precisa bater EXATAMENTE com o registrado no app do Entra ID. Divergência
     #: aqui não dá erro de configuração: dá `AADSTS50011` na cara do usuário,
@@ -196,7 +205,10 @@ class Configuracao(BaseSettings):
     # Blob Storage, e localmente num Azurite, que fala a MESMA API. Não há
     # caminho "só de teste": o mesmo SDK e o mesmo código valem nos dois.
 
-    #: Cadeia de conexão do Storage. VAZIA desliga o upload — a rota devolve
+    #: ONDE FICAM OS ARQUIVOS. Duas formas, e o formato diz qual: `https://…`
+    #: é o endereço da conta no Azure, e quem autentica é a identidade do
+    #: contêiner; qualquer outra coisa é cadeia de conexão, que é o que o
+    #: Azurite entende. VAZIA desliga o upload — a rota devolve
     #: 503 dizendo que o armazenamento não está configurado, em vez de estourar
     #: 500 na primeira tentativa de guardar um arquivo. O painel inteiro segue
     #: funcionando: material por LINK nunca dependeu disto.

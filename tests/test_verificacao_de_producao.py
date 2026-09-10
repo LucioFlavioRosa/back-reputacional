@@ -43,13 +43,59 @@ def producao(**ajustes) -> Configuracao:
         # Segredo próprio: o padrão do código está no Git, e a conferência
         # de subida recusa produção com ele.
         sessao_secreta="x" * 48,
-        # SSO ligado exige as três: sem elas ninguém entra, e o erro só
-        # apareceria quando a primeira pessoa tentasse.
+        # Sem tenant e client id ninguém entra, e o erro só apareceria quando
+        # a primeira pessoa tentasse. O segredo é UMA das duas formas de provar
+        # que somos o cliente registrado; a outra é a identidade gerenciada.
         entra_tenant_id="tenant",
         entra_client_id="cliente",
         entra_client_secret="segredo",
     )
     return Configuracao(**{**padrao, **ajustes})
+
+
+# -- as duas formas de provar quem é o cliente do SSO --------------------------
+
+
+def test_sem_tenant_nao_sobe():
+    """Sem a porta, não há para onde mandar ninguém."""
+    with pytest.raises(ConfiguracaoInsegura) as erro:
+        conferir(producao(entra_tenant_id=None))
+
+    assert "ENTRA_TENANT_ID" in str(erro.value)
+
+
+def test_sem_segredo_e_sem_identidade_gerenciada_nao_sobe():
+    """As duas formas de provar ausentes é login quebrado no meio.
+
+    O tenant recusa a troca do `code` por `id_token`, e a pessoa descobre
+    DEPOIS de já ter digitado a senha dela.
+    """
+    with pytest.raises(ConfiguracaoInsegura) as erro:
+        conferir(producao(entra_client_secret=None, azure_client_id=None))
+
+    assert "AZURE_CLIENT_ID" in str(erro.value)
+
+
+def test_identidade_gerenciada_dispensa_o_segredo():
+    """O desenho de produção: nenhum segredo para vazar, expirar ou rotacionar.
+
+    A aplicação SOBE, e o log diz por qual caminho o SSO entra — sem isso,
+    quem investigar um login quebrado vai supor que alguém esqueceu a variável.
+    """
+    avisos = conferir(
+        producao(entra_client_secret=None, azure_client_id="id-da-identidade")
+    )
+
+    assert any("credencial" in aviso.problema for aviso in avisos), (
+        "a subida por identidade gerenciada precisa aparecer no log"
+    )
+
+
+def test_com_segredo_nao_avisa_de_identidade_gerenciada():
+    """Fora do Azure o segredo é o caminho certo, e não merece ruído."""
+    avisos = conferir(producao(azure_client_id="id-da-identidade"))
+
+    assert not any("credencial federada" in aviso.problema for aviso in avisos)
 
 
 # -- fora de produção, nada acontece -------------------------------------------

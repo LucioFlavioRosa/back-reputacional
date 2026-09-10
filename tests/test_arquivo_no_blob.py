@@ -270,3 +270,59 @@ def test_a_biblioteca_tambem_recebe_arquivo_e_tambem_escapa_do_teto():
     assert not _fora_do_limite_de_corpo(
         "/api/referencias/52193002-103b-4a87-8a1d-2a95059ccfc1"
     )
+
+
+# -- de onde vem a credencial do Storage ---------------------------------------
+
+
+def test_endereco_https_autentica_pela_identidade(monkeypatch):
+    """No Azure a conta tem a chave de acesso DESLIGADA.
+
+    Não existe cadeia de conexão para montar: quem prova quem somos é a
+    identidade do contêiner. Montar `from_connection_string` com um endereço
+    `https://` falharia dizendo que a cadeia é inválida — erro que não tem
+    relação nenhuma com a causa.
+    """
+    from app.armazenamento import blob
+
+    chamadas = {}
+
+    class ServicoFalso:
+        def __init__(self, account_url=None, credential=None):
+            chamadas["account_url"] = account_url
+            chamadas["credential"] = credential
+
+        @classmethod
+        def from_connection_string(cls, cadeia):
+            chamadas["cadeia"] = cadeia
+            return cls()
+
+    monkeypatch.setattr(blob, "BlobServiceClient", ServicoFalso)
+    monkeypatch.setattr(
+        "app.seguranca.identidade_azure.credencial", lambda: "a-identidade"
+    )
+
+    blob._servico("https://stpainel.blob.core.windows.net/")
+
+    assert chamadas["account_url"] == "https://stpainel.blob.core.windows.net/"
+    assert chamadas["credential"] == "a-identidade"
+    assert "cadeia" not in chamadas
+
+
+def test_cadeia_de_conexao_continua_valendo(monkeypatch):
+    """O Azurite só entende cadeia de conexão, e é o que o compose oferece."""
+    from app.armazenamento import blob
+
+    chamadas = {}
+
+    class ServicoFalso:
+        @classmethod
+        def from_connection_string(cls, cadeia):
+            chamadas["cadeia"] = cadeia
+            return cls()
+
+    monkeypatch.setattr(blob, "BlobServiceClient", ServicoFalso)
+
+    blob._servico("DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;")
+
+    assert chamadas["cadeia"].startswith("DefaultEndpointsProtocol=")

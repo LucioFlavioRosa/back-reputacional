@@ -110,7 +110,10 @@ class ClienteEntraId:
         *,
         tenant_id: str,
         client_id: str,
-        client_secret: str,
+        #: VAZIO em produção, e de propósito: lá quem prova a identidade deste
+        #: cliente é a credencial federada da identidade gerenciada, e não um
+        #: segredo guardado em algum lugar. Ver `trocar_codigo`.
+        client_secret: str = "",
         autoridade: str = AUTORIDADE_PADRAO,
         tempo_limite: float = 10.0,
     ) -> None:
@@ -131,6 +134,29 @@ class ClienteEntraId:
             f"{self.autoridade}/{self.tenant_id}"
             "/v2.0/.well-known/openid-configuration"
         )
+
+    def _credencial_do_cliente(self) -> dict[str, str]:
+        """Como este cliente prova ao tenant que é ele mesmo.
+
+        COM SEGREDO, o segredo. É o caminho do desenvolvimento e o do provedor
+        falso da suíte de testes.
+
+        SEM SEGREDO, uma ASSERÇÃO assinada pelo Entra ID para a identidade
+        gerenciada do contêiner. O App Registration confia nessa identidade por
+        uma credencial federada, e é isso que permite um ambiente sem nenhum
+        segredo para vazar, expirar ou rotacionar.
+        """
+        if self.client_secret:
+            return {"client_secret": self.client_secret}
+
+        from app.seguranca.identidade_azure import token_para_troca
+
+        return {
+            "client_assertion_type": (
+                "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+            ),
+            "client_assertion": token_para_troca(),
+        }
 
     def descoberta(self) -> dict:
         """Os endpoints do tenant, em cache com prazo."""
@@ -181,9 +207,9 @@ class ClienteEntraId:
         try:
             resposta = httpx.post(
                 self.descoberta()["token_endpoint"],
-                data={
+                data=self._credencial_do_cliente()
+                | {
                     "client_id": self.client_id,
-                    "client_secret": self.client_secret,
                     "grant_type": "authorization_code",
                     "code": codigo,
                     "redirect_uri": redirect_uri,

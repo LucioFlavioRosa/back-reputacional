@@ -253,3 +253,34 @@ def test_recusa_do_provedor_nao_vaza_o_corpo(entra, monkeypatch):
     with pytest.raises(FalhaNoLogin) as erro:
         entra.trocar_codigo(codigo="x", redirect_uri="y", verificador="z")
     assert "segredo-que-nao-deve-vazar" not in str(erro.value)
+
+
+# -- as duas formas de provar que somos o cliente registrado -------------------
+
+
+def test_com_segredo_o_segredo_vai_no_corpo(entra):
+    """O caminho de fora do Azure, e o do provedor falso desta suíte."""
+    assert entra._credencial_do_cliente() == {"client_secret": entra.client_secret}
+
+
+def test_sem_segredo_vai_a_assercao_da_identidade(entra, monkeypatch):
+    """O caminho de produção: nenhum segredo existe para ser mandado.
+
+    O App Registration confia na identidade gerenciada do contêiner por uma
+    credencial federada, e o que viaja é um token que o proprio Entra ID
+    assinou para ela. Sem isto, a troca do `code` e recusada pelo tenant — e a
+    pessoa descobre DEPOIS de ja ter digitado a senha dela.
+    """
+    monkeypatch.setattr(entra, "client_secret", "")
+    monkeypatch.setattr(
+        "app.seguranca.identidade_azure.token_para_troca",
+        lambda: "assercao-assinada-pelo-entra",
+    )
+
+    credencial = entra._credencial_do_cliente()
+
+    assert "client_secret" not in credencial, "não há segredo para mandar"
+    assert credencial["client_assertion"] == "assercao-assinada-pelo-entra"
+    assert credencial["client_assertion_type"] == (
+        "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+    )
