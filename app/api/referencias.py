@@ -264,7 +264,7 @@ def _guardar_versao(
     return versao
 
 
-@rotas.get("", response_model=list[ReferenciaSaida])
+@rotas.get("")
 def listar(sessao: Sessao, usuario: UsuarioLogado) -> list[ReferenciaSaida]:
     """A biblioteca inteira, ativas e inativas.
 
@@ -279,7 +279,7 @@ def listar(sessao: Sessao, usuario: UsuarioLogado) -> list[ReferenciaSaida]:
     return [_para_saida(registro, nomes) for registro in registros]
 
 
-@rotas.post("", response_model=ReferenciaSaida, status_code=status.HTTP_201_CREATED)
+@rotas.post("", status_code=status.HTTP_201_CREATED)
 def criar(
     sessao: Sessao,
     usuario: UsuarioQueAdministraCadastros,
@@ -330,7 +330,7 @@ def criar(
     return _para_saida(registro, _nomes_de_quem_subiu(sessao, registro.versoes))
 
 
-@rotas.put("/{id}", response_model=ReferenciaSaida)
+@rotas.put("/{id}")
 def editar(
     sessao: Sessao,
     usuario: UsuarioQueAdministraCadastros,
@@ -364,7 +364,7 @@ def editar(
     return _para_saida(registro, _nomes_de_quem_subiu(sessao, registro.versoes))
 
 
-@rotas.get("/{id}/versoes", response_model=list[VersaoSaida])
+@rotas.get("/{id}/versoes")
 def historico(sessao: Sessao, usuario: UsuarioLogado, id: UUID) -> list[VersaoSaida]:
     """Todas as versões, da mais recente para a mais antiga."""
     registro = sessao.get(Referencia, id)
@@ -377,9 +377,7 @@ def historico(sessao: Sessao, usuario: UsuarioLogado, id: UUID) -> list[VersaoSa
     ]
 
 
-@rotas.post(
-    "/{id}/versoes", response_model=ReferenciaSaida, status_code=status.HTTP_201_CREATED
-)
+@rotas.post("/{id}/versoes", status_code=status.HTTP_201_CREATED)
 def nova_versao(
     sessao: Sessao,
     usuario: UsuarioQueAdministraCadastros,

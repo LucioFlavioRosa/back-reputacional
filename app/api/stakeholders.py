@@ -576,7 +576,7 @@ def editar_pessoa_aegea(
     return registro
 
 
-@rotas.get("/pessoas-aegea/{id}/temas", response_model=list[int])
+@rotas.get("/pessoas-aegea/{id}/temas")
 def temas_do_porta_voz(
     sessao: Sessao, usuario: UsuarioQueVeDiretorio, id: UUID
 ) -> list[int]:
