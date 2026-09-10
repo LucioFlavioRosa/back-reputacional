@@ -175,7 +175,7 @@ jobs:
           fi
 
       # `USUARIO` e `PGPASSWORD` vêm do passo anterior, por `$GITHUB_ENV`.
-      - name: Aplica as 9 migrations em ordem
+      - name: Aplica as migrations em ordem
         run: |
           set -euo pipefail
           for arquivo in app/banco/migrations/*.sql; do
@@ -190,9 +190,22 @@ jobs:
           set -euo pipefail
           consulta() { psql -h localhost -U "$USUARIO" -d alvo -tAc "$1"; }
 
+          # AS TABELAS-ÂNCORA, e não uma contagem exata.
+          #
+          # Um número fixo aqui envelhece na migration seguinte, e o CI passa a
+          # falhar por estar desatualizado — que é ruído, não defeito. Estas
+          # cinco vêm de migrations diferentes: se todas existem, a sequência
+          # inteira rodou. O piso pega o caso de uma migration parar no meio
+          # sem erro visível.
+          for tabela in frente instituicao papel interacao referencia_versao; do
+            existe=$(consulta "select to_regclass('public.$tabela') is not null")
+            echo "$tabela: $existe"
+            test "$existe" = "t"
+          done
+
           tabelas=$(consulta "select count(*) from information_schema.tables where table_schema='public'")
           echo "tabelas: $tabelas"
-          test "$tabelas" -eq 37
+          test "$tabelas" -ge 46
 
           donos=$(consulta "select string_agg(distinct proowner::regrole::text, ',' order by proowner::regrole::text)
                               from pg_proc p join pg_namespace n on n.oid = p.pronamespace

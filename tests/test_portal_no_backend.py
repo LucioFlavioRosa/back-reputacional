@@ -238,6 +238,35 @@ PREFIXOS_DO_CRM = (
 )
 
 
+def _rotas_montadas(aplicacao) -> list:
+    """Toda `APIRoute` da aplicacao, em qualquer profundidade.
+
+    NAO BASTA OLHAR `app.routes`. Ate o FastAPI 0.140, `include_router` COPIAVA
+    cada rota para a lista da aplicacao; da 0.141 em diante ele insere um
+    objeto que guarda o router dentro de si, em `original_router`, e a lista de
+    primeiro nivel passa a ter oito entradas opacas no lugar de 45 rotas.
+
+    Uma varredura que so olha o primeiro nivel encontra ZERO rotas de negocio —
+    e uma ancora que nao encontra nada passa sem provar nada. Foi exatamente
+    isso que uma atualizacao de dependencia produziu aqui.
+
+    Descer por `original_router` funciona nas duas geracoes: onde a rota ja
+    esta no primeiro nivel, ela e colhida direto.
+    """
+    from fastapi.routing import APIRoute
+
+    encontradas: list = []
+    pilha = list(aplicacao.routes)
+    while pilha:
+        item = pilha.pop()
+        if isinstance(item, APIRoute):
+            encontradas.append(item)
+            continue
+        interno = getattr(item, "original_router", None) or item
+        pilha.extend(getattr(interno, "routes", ()))
+    return encontradas
+
+
 def test_toda_rota_sob_prefixo_do_crm_exige_o_portal():
     """Âncora estrutural, varrendo a APLICAÇÃO MONTADA.
 
@@ -251,7 +280,7 @@ def test_toda_rota_sob_prefixo_do_crm_exige_o_portal():
     from app.api.dependencias import exigir_portal_crm
 
     desprotegidas = []
-    for rota in app.routes:
+    for rota in _rotas_montadas(app):
         if not isinstance(rota, APIRoute):
             continue
         if not rota.path.startswith(PREFIXOS_DO_CRM):
@@ -278,7 +307,7 @@ def test_a_varredura_enxerga_as_rotas_de_verdade():
 
     sob_crm = [
         r
-        for r in app.routes
+        for r in _rotas_montadas(app)
         if isinstance(r, APIRoute) and r.path.startswith(PREFIXOS_DO_CRM)
     ]
     assert len(sob_crm) >= 12, f"só {len(sob_crm)} rotas sob prefixo do CRM"
