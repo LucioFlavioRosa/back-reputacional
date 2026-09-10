@@ -51,7 +51,9 @@ jobs:
           python-version: ${{ env.PYTHON_PRODUCAO }}
           cache: pip
 
-      - run: pip install --upgrade ruff
+      # DO LOCK, como todo o resto: um ruff mais novo traz regra nova, e o
+      # lint passaria a falhar num commit que não mexeu em nada.
+      - run: pip install --require-hashes -r requirements-dev.txt
 
       # As regras estão em `pyproject.toml`: E, F, I, UP, B e FAST — a última é
       # o conjunto específico de FastAPI.
@@ -103,7 +105,11 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
 
-      - run: pip install -e ".[dev]"
+      # DO LOCK. O CI precisa provar a MESMA combinação de versões que a
+      # imagem publica; instalar pelas faixas provaria outra.
+      - run: pip install --require-hashes -r requirements-dev.txt
+      # O projeto em si, sem tocar nas dependências já travadas.
+      - run: pip install --no-deps -e .
 
       # `-p no:randomly` não é usado: a suíte não depende de ordem, e queremos
       # saber se algum dia passar a depender.

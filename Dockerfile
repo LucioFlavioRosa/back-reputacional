@@ -17,12 +17,33 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /instalacao
+
+# AS DEPENDÊNCIAS VÊM DO LOCK, e não da resolução do dia.
+#
+# `pyproject.toml` declara faixas — o que a aplicação ACEITA. `requirements.txt`
+# declara versões exatas com hash — o que ela RODA. Sem o segundo, cada build
+# resolve o que houver de mais novo, e a imagem que se validou não é a que se
+# publica: uma atualização de terceiro entra sozinha, sem commit e sem revisão.
+#
+# `--require-hashes` recusa qualquer artefato que não bata com o hash gravado,
+# o que também fecha a porta para um pacote adulterado no caminho.
+#
+# E é a primeira camada de propósito: ela só muda quando o lock muda, então
+# editar o código não reinstala nada.
+COPY requirements.txt ./
+RUN pip install --no-cache-dir --require-hashes --prefix=/dependencias \
+    -r requirements.txt
+
 COPY pyproject.toml ./
 COPY app ./app
 COPY main.py ./
 
+# `--no-deps` porque as dependências já entraram acima, travadas. Sem ele, o
+# pip resolveria as faixas do `pyproject.toml` de novo e poderia SUBSTITUIR uma
+# versão do lock — desfazendo em silêncio o que a linha de cima garantiu.
+#
 # `--prefix` para copiar a árvore inteira na etapa seguinte com um `COPY` só.
-RUN pip install --no-cache-dir --prefix=/dependencias .
+RUN pip install --no-cache-dir --no-deps --prefix=/dependencias .
 
 
 FROM python:3.13-slim AS aplicacao

@@ -345,6 +345,37 @@ configuração do repositório.
 | `test_protecao_http.py` | CORS, CSRF, cabeçalhos, limite de corpo |
 | `test_schema_bate_com_migration.py` | compara o ORM com o DDL, coluna por coluna |
 
+## As versões são travadas
+
+`pyproject.toml` declara **faixas** — o que a aplicação aceita.
+`requirements.txt` declara **versões exatas com hash** — o que ela roda. **A
+imagem e o CI instalam do segundo**, e é por isso que o que se testa é o que se
+publica.
+
+O LOCK É DE LINUX, e do par de Pythons que a aplicação suporta (3.12 e 3.13).
+Ele traz `uvloop`, que não existe para Windows, e rodas que não existem para
+3.14. Quem desenvolve fora disso instala pelas faixas — `pip install -e
+".[dev]"`, como nos 4 passos acima — sabendo que as versões da sua máquina
+podem não ser as de produção. Quem decide é o CI, que roda nas duas versões
+travadas.
+
+Os dois arquivos são gerados, e o comando é este:
+
+```bash
+docker run --rm -v "$PWD:/repo" -w /repo python:3.12-slim bash -c "
+  pip install -q pip-tools
+  pip-compile --generate-hashes -o requirements.txt pyproject.toml
+  pip-compile --generate-hashes --extra dev -o requirements-dev.txt pyproject.toml"
+```
+
+**No 3.12, que é o piso** — e não no 3.13 da imagem: resolver na versão mais
+baixa produz um lock que serve às duas, e o contrário quebra no piso
+declarado. Em contêiner Linux, que é onde a imagem roda.
+
+Atualizar dependência é rodar isso, ler o diff e commitar — que é justamente o
+ponto: a atualização vira uma mudança revisada, e não um efeito colateral do
+dia em que alguém reconstruiu a imagem.
+
 ## Configuração
 
 Tudo em `app/configuracao.py`, lido de variável de ambiente. Ver `.env.example`,
