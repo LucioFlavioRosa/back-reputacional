@@ -106,6 +106,13 @@ class Stakeholder(_Dicionario, Tabela):
     __tablename__ = "stakeholder"
 
 
+class AreaPessoa(_Dicionario, Tabela):
+    """A área de quem representa a Aegea — Comunicação, Relações
+    Institucionais etc. Ver `0029_area_do_representante.sql`."""
+
+    __tablename__ = "area_pessoa"
+
+
 class UnidadeNegocio(Tabela):
     __tablename__ = "unidade_negocio"
 
@@ -144,6 +151,7 @@ DICIONARIOS: dict[str, type[Tabela]] = {
     "tramitacoes": Tramitacao,
     "tipos_investidor": TipoInvestidor,
     "stakeholders": Stakeholder,
+    "areas_pessoa": AreaPessoa,
     "unidades_negocio": UnidadeNegocio,
     "temas": Tema,
 }

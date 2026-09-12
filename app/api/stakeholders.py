@@ -83,6 +83,8 @@ class PessoaAegeaSaida(BaseModel):
     cargo: str | None
     email: str | None
     eh_porta_voz: bool
+    #: Comunicação, Relações Institucionais etc. Ver `AreaPessoa`.
+    area_id: int | None
     ativo: bool
     #: SOBRE O QUE ESTA PESSOA PODE FALAR.
     #:
@@ -495,6 +497,8 @@ class PessoaAegeaEntrada(BaseModel):
     #: `false` para quem participa de agendas sem falar pela companhia. Ver
     #: `PAPEIS`: porta-voz conta no painel de exposicao, equipe nao.
     eh_porta_voz: bool = True
+    #: De onde esta pessoa fala. Vem de `GET /api/dicionarios` (`areas_pessoa`).
+    area_id: int | None = None
     ativo: bool = True
     #: SOBRE O QUE esta pessoa pode falar. A lista inteira substitui a anterior,
     #: que e o mesmo contrato das outras listas do produto.
@@ -537,6 +541,7 @@ def criar_pessoa_aegea(
         cargo=entrada.cargo,
         email=entrada.email,
         eh_porta_voz=entrada.eh_porta_voz,
+        area_id=entrada.area_id,
         ativo=entrada.ativo,
     )
     _gravar(
@@ -565,6 +570,7 @@ def editar_pessoa_aegea(
     registro.cargo = entrada.cargo
     registro.email = entrada.email
     registro.eh_porta_voz = entrada.eh_porta_voz
+    registro.area_id = entrada.area_id
     registro.ativo = entrada.ativo
     _gravar(
         sessao,
