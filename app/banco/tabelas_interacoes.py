@@ -414,6 +414,9 @@ RELACAO_DA_EXTENSAO: dict[str, str] = {
     "legislativo": "legislativo",
     "investidores": "investidores",
     "interna": "interna",
+    #: Mesma relação de Governo/Parceiros/Eventos — reaproveita `Institucional`
+    #: em vez de ganhar tabela própria. Ver `app/dominio/frentes.py`.
+    "bancos_credores": "institucional",
 }
 
 
