@@ -67,6 +67,9 @@ class Recorte:
     porta_voz: UUID | None = None
     pessoa: UUID | None = None
     tags: tuple[str, ...] = ()
+    #: Áreas internas da Aegea envolvidas — ids de `area`, não nomes. Mesmo
+    #: comportamento de `tags`: OR entre as escolhidas.
+    areas: tuple[int, ...] = ()
     busca: str | None = None
 
     def __post_init__(self) -> None:
@@ -114,6 +117,8 @@ class Recorte:
         if not self.periodo.aberto:
             ativos += 1
         if self.tags:
+            ativos += 1
+        if self.areas:
             ativos += 1
         return ativos
 
@@ -164,6 +169,24 @@ class Recorte:
         if isinstance(tags, str):
             tags = tuple(t.strip() for t in tags.split(",") if t.strip())
 
-        # Ordenadas para que dois Recortes com as mesmas tags sejam iguais,
-        # independentemente da ordem em que o usuário clicou nelas.
-        return cls(periodo=intervalo, tags=tuple(sorted(tags)), **filtros)  # type: ignore[arg-type]
+        # MESMO CONTRATO DE `tags` NA QUERY STRING — "1,2,3" —, mas os ids de
+        # área são NÚMEROS, e não nomes: convertê-los aqui é o que faz o
+        # `exists` de `filtros_sql._de_alguma_area` comparar inteiro com
+        # inteiro, em vez de precisar de outra volta ao banco para casar texto.
+        areas = filtros.pop("areas", ()) or ()
+        if isinstance(areas, str):
+            try:
+                areas = tuple(int(a.strip()) for a in areas.split(",") if a.strip())
+            except ValueError as erro:
+                raise RegraViolada(
+                    f"Área inválida: {areas!r}. Use ids separados por vírgula."
+                ) from erro
+
+        # Ordenadas para que dois Recortes com as mesmas tags/áreas sejam
+        # iguais, independentemente da ordem em que o usuário clicou nelas.
+        return cls(
+            periodo=intervalo,
+            tags=tuple(sorted(tags)),
+            areas=tuple(sorted(areas)),
+            **filtros,
+        )  # type: ignore[arg-type]

@@ -213,6 +213,10 @@ class Interacao:
     # relações
     extensao: Extensao | None = None
     temas: tuple[int, ...] = ()
+    #: DE QUAIS ÁREAS INTERNAS DA AEGEA esta interação trata — Comunicação,
+    #: Relações Institucionais etc. Mesmo papel de `temas`, num vocabulário
+    #: diferente: o de onde, e não o sobre o quê.
+    areas: tuple[int, ...] = ()
     participacoes: tuple[ParticipacaoAegea, ...] = ()
 
     # -- o ciclo da agenda ----------------------------------------------------

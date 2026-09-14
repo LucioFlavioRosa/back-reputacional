@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from app.banco.sessao import obter_fabrica_de_sessao
 from app.banco.tabelas_acesso import Usuario
 from app.banco.tabelas_catalogo import (
+    Area,
     Clima,
     Esfera,
     Frente,
@@ -35,6 +36,7 @@ from app.banco.tabelas_catalogo import (
 from app.banco.tabelas_interacoes import (
     ImprensaRegistro,
     InstitucionalRegistro,
+    InteracaoArea,
     InteracaoPessoaAegea,
     InteracaoRegistro,
     InteracaoTema,
@@ -206,12 +208,21 @@ def semear(sessao: Session) -> dict[str, int]:
     id_de_clima = {c.codigo: c.id for c in sessao.scalars(select(Clima))}
     id_de_esfera = {e.codigo: e.id for e in sessao.scalars(select(Esfera))}
     id_de_tema = {t.nome: t.id for t in sessao.scalars(select(Tema))}
+    areas = list(sessao.scalars(select(Area).order_by(Area.nome)))
     unidades = list(sessao.scalars(select(UnidadeNegocio)))
 
     # -- pessoas da Aegea ----------------------------------------------------
+    #
+    # DE ONDE cada porta-voz fala: distribuída pelas áreas semeadas na 0029, uma
+    # por pessoa, para o cadastro de porta-vozes não abrir com a coluna vazia.
     pessoas: dict[str, PessoaAegea] = {}
-    for nome in PORTA_VOZES:
-        pessoa = PessoaAegea(nome=nome, nome_normalizado=normalizar(nome), eh_porta_voz=True)
+    for indice, nome in enumerate(PORTA_VOZES):
+        pessoa = PessoaAegea(
+            nome=nome,
+            nome_normalizado=normalizar(nome),
+            eh_porta_voz=True,
+            area_id=areas[indice % len(areas)].id if areas else None,
+        )
         sessao.add(pessoa)
         pessoas[nome] = pessoa
     sessao.flush()
@@ -300,6 +311,15 @@ def semear(sessao: Session) -> dict[str, int]:
             tema_id = id_de_tema.get(nome_do_tema.strip())
             if tema_id:
                 sessao.add(InteracaoTema(interacao_id=interacao.id, tema_id=tema_id))
+
+        # Uma área a cada três registros — o suficiente para o filtro "Área" do
+        # painel ter o que mostrar sem marcar a amostra inteira.
+        if areas and indice % 3 == 0:
+            sessao.add(
+                InteracaoArea(
+                    interacao_id=interacao.id, area_id=areas[indice % len(areas)].id
+                )
+            )
 
         # Um porta-voz por registro, e a cada cinco registros dois — para que o
         # painel de exposição mostre o caso de aparição múltipla.

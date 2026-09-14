@@ -251,6 +251,8 @@ class InteracaoEntrada(BaseModel):
 
     extensao: ExtensaoEntrada | None = None
     temas: list[int] = Field(default_factory=list)
+    #: De quais áreas internas da Aegea trata. Mesmo contrato de `temas`.
+    areas: list[int] = Field(default_factory=list)
     participacoes: list[ParticipacaoEntrada] = Field(default_factory=list)
 
     def para_dominio(self) -> Interacao:
@@ -279,6 +281,7 @@ class InteracaoEntrada(BaseModel):
             local=self.local,
             extensao=self.extensao.para_dominio(self.frente) if self.extensao else None,
             temas=tuple(self.temas),
+            areas=tuple(self.areas),
             participacoes=tuple(
                 ParticipacaoAegea(
                     pessoa_aegea_id=p.pessoa_aegea_id,
@@ -350,6 +353,7 @@ class InteracaoEdicao(BaseModel):
     local: str | None = None
     visivel: bool | None = None
     temas: list[int] | None = None
+    areas: list[int] | None = None
     participacoes: list[ParticipacaoEntrada] | None = None
     extensao: ExtensaoEntrada | None = None
 
@@ -383,6 +387,8 @@ class InteracaoEdicao(BaseModel):
                     )
                 case "temas":
                     alteracoes["temas"] = tuple(valor or ())
+                case "areas":
+                    alteracoes["areas"] = tuple(valor or ())
                 case "participacoes":
                     alteracoes["participacoes"] = tuple(
                         ParticipacaoAegea(
@@ -480,6 +486,7 @@ class InteracaoSaida(BaseModel):
     local: str | None = None
     extensao: dict[str, Any] | None
     temas: list[int]
+    areas: list[int]
     participacoes: list[ParticipacaoSaida]
 
     # -- o ciclo da agenda ----------------------------------------------------
@@ -588,6 +595,7 @@ class InteracaoSaida(BaseModel):
             ],
             extensao=asdict(interacao.extensao) if interacao.extensao else None,
             temas=list(interacao.temas),
+            areas=list(interacao.areas),
             participacoes=[
                 ParticipacaoSaida(
                     pessoa_aegea_id=p.pessoa_aegea_id,

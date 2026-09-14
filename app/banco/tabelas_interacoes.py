@@ -211,6 +211,9 @@ class InteracaoRegistro(Tabela):
     temas: Mapped[list[InteracaoTema]] = relationship(
         cascade="all, delete-orphan", lazy="selectin"
     )
+    areas: Mapped[list[InteracaoArea]] = relationship(
+        cascade="all, delete-orphan", lazy="selectin"
+    )
     participacoes: Mapped[list[InteracaoPessoaAegea]] = relationship(
         cascade="all, delete-orphan", lazy="selectin"
     )
@@ -338,6 +341,20 @@ class InteracaoTema(Tabela):
     )
     tema_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("tema.id"), primary_key=True
+    )
+
+
+class InteracaoArea(Tabela):
+    """De quais áreas internas da Aegea a interação trata. Espelha `InteracaoTema`."""
+
+    __tablename__ = "interacao_area"
+
+    interacao_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("interacao.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    area_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("area.id"), primary_key=True
     )
 
 

@@ -33,6 +33,7 @@ from app.banco.tabelas_catalogo import (
     UnidadeNegocio,
 )
 from app.banco.tabelas_interacoes import (
+    InteracaoArea,
     InteracaoInterlocutor,
     InteracaoPessoaAegea,
     InteracaoRegistro,
@@ -143,6 +144,22 @@ def _tratou_de_algum(nomes: Sequence[str]) -> ColumnElement[bool]:
             and_(
                 InteracaoTema.interacao_id == InteracaoRegistro.id,
                 InteracaoTema.tema_id.in_(select(Tema.id).where(Tema.nome.in_(nomes))),
+            )
+        )
+    )
+
+
+def _de_alguma_area(ids: Sequence[int]) -> ColumnElement[bool]:
+    """OR entre as áreas internas: entra quem tiver qualquer uma.
+
+    Mais simples que `_tratou_de_algum`: aqui o filtro já chega como id — não
+    há nome para resolver, então dispensa a subconsulta em `area`.
+    """
+    return exists(
+        select(InteracaoArea.interacao_id).where(
+            and_(
+                InteracaoArea.interacao_id == InteracaoRegistro.id,
+                InteracaoArea.area_id.in_(ids),
             )
         )
     )
@@ -319,6 +336,8 @@ def condicoes(
         onde.append(_teve_porta_voz(recorte.porta_voz))
     if recorte.tags:
         onde.append(_tratou_de_algum(recorte.tags))
+    if recorte.areas:
+        onde.append(_de_alguma_area(recorte.areas))
     if recorte.subtipo:
         onde.append(_do_tipo_de_investidor(recorte.subtipo))
 

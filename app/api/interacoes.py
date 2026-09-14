@@ -102,6 +102,10 @@ def obter_recorte(
     porta_voz: Annotated[UUID | None, Query(alias="portaVoz")] = None,
     pessoa: Annotated[UUID | None, Query()] = None,
     tags: Annotated[str | None, Query(description="separadas por vírgula; OR entre elas")] = None,
+    areas: Annotated[
+        str | None,
+        Query(description="ids de área interna, separados por vírgula; OR entre elas"),
+    ] = None,
     q: Annotated[str | None, Query(description="busca livre")] = None,
 ) -> Recorte:
     """Monta o Recorte a partir da query string.
@@ -128,6 +132,7 @@ def obter_recorte(
         porta_voz=porta_voz,
         pessoa=pessoa,
         tags=tags,
+        areas=areas,
         busca=q,
     )
 

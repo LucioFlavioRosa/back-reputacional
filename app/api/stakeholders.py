@@ -23,7 +23,7 @@ from app.api.dependencias import (
     exigir_portal_crm,
 )
 from app.banco.sessao import SessaoDoPedido
-from app.banco.tabelas_catalogo import Relevancia, Tema
+from app.banco.tabelas_catalogo import Area, Relevancia, Tema
 from app.banco.tabelas_stakeholders import (
     Instituicao,
     Interlocutor,
@@ -83,6 +83,9 @@ class PessoaAegeaSaida(BaseModel):
     cargo: str | None
     email: str | None
     eh_porta_voz: bool
+    #: DE ONDE esta pessoa fala. Nulo em quem foi cadastrado antes de a coluna
+    #: existir, ou em quem é equipe (o campo só faz sentido para porta-voz).
+    area_id: int | None
     ativo: bool
     #: SOBRE O QUE ESTA PESSOA PODE FALAR.
     #:
@@ -495,6 +498,9 @@ class PessoaAegeaEntrada(BaseModel):
     #: `false` para quem participa de agendas sem falar pela companhia. Ver
     #: `PAPEIS`: porta-voz conta no painel de exposicao, equipe nao.
     eh_porta_voz: bool = True
+    #: DE ONDE esta pessoa fala — id de `area`. Opcional: nem toda pessoa
+    #: cadastrada tem área classificada.
+    area_id: int | None = None
     ativo: bool = True
     #: SOBRE O QUE esta pessoa pode falar. A lista inteira substitui a anterior,
     #: que e o mesmo contrato das outras listas do produto.
@@ -523,6 +529,28 @@ def _aplicar_temas_da_pessoa(sessao, pessoa_id: UUID, temas: list[int]) -> None:
     sessao.flush()
 
 
+def _conferir_area(sessao: Sessao, area_id: int | None) -> None:
+    """Recusa área que não existe, ou que foi desativada.
+
+    Mesmo papel de `_conferir_tier`: a chave estrangeira já recusaria o
+    inexistente, com um `IntegrityError` que sai como 500. Conferir aqui é o
+    que faz a API responder a mesma coisa que a tela oferece.
+    """
+    if area_id is None:
+        return
+    valida = sessao.scalar(
+        select(Area.id).where(Area.id == area_id, Area.ativo.is_(True))
+    )
+    if valida is None:
+        disponiveis = sessao.scalars(
+            select(Area.id).where(Area.ativo.is_(True)).order_by(Area.nome)
+        ).all()
+        raise RegraViolada(
+            f"Area invalida: {area_id!r}. Use "
+            f"{', '.join(str(i) for i in disponiveis)}."
+        )
+
+
 @rotas.post(
     "/pessoas-aegea",
     response_model=PessoaAegeaSaida,
@@ -531,12 +559,14 @@ def _aplicar_temas_da_pessoa(sessao, pessoa_id: UUID, temas: list[int]) -> None:
 def criar_pessoa_aegea(
     sessao: Sessao, usuario: UsuarioQueAdministraCadastros, entrada: PessoaAegeaEntrada
 ) -> PessoaAegea:
+    _conferir_area(sessao, entrada.area_id)
     registro = PessoaAegea(
         nome=entrada.nome.strip(),
         nome_normalizado=_normalizar(entrada.nome),
         cargo=entrada.cargo,
         email=entrada.email,
         eh_porta_voz=entrada.eh_porta_voz,
+        area_id=entrada.area_id,
         ativo=entrada.ativo,
     )
     _gravar(
@@ -560,11 +590,13 @@ def editar_pessoa_aegea(
     registro = sessao.get(PessoaAegea, id)
     if registro is None:
         raise NaoEncontrado("Pessoa nao encontrada.")
+    _conferir_area(sessao, entrada.area_id)
     registro.nome = entrada.nome.strip()
     registro.nome_normalizado = _normalizar(entrada.nome)
     registro.cargo = entrada.cargo
     registro.email = entrada.email
     registro.eh_porta_voz = entrada.eh_porta_voz
+    registro.area_id = entrada.area_id
     registro.ativo = entrada.ativo
     _gravar(
         sessao,
