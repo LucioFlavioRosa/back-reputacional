@@ -21,6 +21,11 @@ class AtalhoDePeriodo(StrEnum):
     ULTIMOS_30 = "ultimos-30"
     ULTIMOS_90 = "ultimos-90"
     ULTIMOS_180 = "ultimos-180"
+    #: PARA A FRENTE: agendas ainda por vir, não as que já aconteceram — a
+    #: mesma janela dos "últimos", olhando para o outro lado do calendário.
+    PROXIMOS_30 = "proximos-30"
+    PROXIMOS_90 = "proximos-90"
+    PROXIMOS_180 = "proximos-180"
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +55,12 @@ class Periodo:
                 return cls(de=referencia - timedelta(days=90), ate=referencia)
             case AtalhoDePeriodo.ULTIMOS_180:
                 return cls(de=referencia - timedelta(days=180), ate=referencia)
+            case AtalhoDePeriodo.PROXIMOS_30:
+                return cls(de=referencia, ate=referencia + timedelta(days=30))
+            case AtalhoDePeriodo.PROXIMOS_90:
+                return cls(de=referencia, ate=referencia + timedelta(days=90))
+            case AtalhoDePeriodo.PROXIMOS_180:
+                return cls(de=referencia, ate=referencia + timedelta(days=180))
         raise RegraViolada(f"Atalho de período desconhecido: {atalho}")
 
 
