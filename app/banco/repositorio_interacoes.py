@@ -36,6 +36,7 @@ from app.banco.tabelas_interacoes import (
     ImprensaRegistro,
     InstitucionalRegistro,
     InteracaoInterlocutor,
+    InteracaoArea,
     InteracaoOrigem,
     InteracaoPessoaAegea,
     InteracaoRegistro,
@@ -224,6 +225,7 @@ class RepositorioSQL:
 
         self._aplicar_extensao(interacao, registro)
         self._aplicar_temas(interacao, registro)
+        self._aplicar_areas(interacao, registro)
         self._aplicar_participacoes(interacao, registro)
         self._aplicar_outra_parte(interacao, registro)
         self._aplicar_materiais(interacao, registro)
@@ -553,6 +555,16 @@ class RepositorioSQL:
             InteracaoTema(tema_id=tema_id) for tema_id in desejados - ja_ligados
         )
 
+    def _aplicar_areas(self, interacao: Interacao, registro: InteracaoRegistro) -> None:
+        desejadas = set(interacao.areas)
+        registro.areas[:] = [
+            vinculo for vinculo in registro.areas if vinculo.area_id in desejadas
+        ]
+        ja_ligadas = {vinculo.area_id for vinculo in registro.areas}
+        registro.areas.extend(
+            InteracaoArea(area_id=area_id) for area_id in desejadas - ja_ligadas
+        )
+
     def _aplicar_participacoes(
         self, interacao: Interacao, registro: InteracaoRegistro
     ) -> None:
@@ -761,6 +773,7 @@ class RepositorioSQL:
             local=registro.local,
             extensao=self._extensao_do_registro(registro, frente),
             temas=tuple(sorted(vinculo.tema_id for vinculo in registro.temas)),
+            areas=tuple(sorted(vinculo.area_id for vinculo in registro.areas)),
             participacoes=tuple(
                 ParticipacaoAegea(
                     pessoa_aegea_id=vinculo.pessoa_aegea_id,

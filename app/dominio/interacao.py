@@ -213,6 +213,10 @@ class Interacao:
     # relações
     extensao: Extensao | None = None
     temas: tuple[int, ...] = ()
+    #: Áreas internas da Aegea que participaram da interação. Mesmo dicionário
+    #: de `PessoaAegea.area_id` (`area_pessoa`), aplicado aqui à interação em
+    #: vez de à pessoa — ver `0032_interacao_area.sql`.
+    areas: tuple[int, ...] = ()
     participacoes: tuple[ParticipacaoAegea, ...] = ()
 
     # -- o ciclo da agenda ----------------------------------------------------
