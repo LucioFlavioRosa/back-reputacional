@@ -23,7 +23,7 @@ from app.api.dependencias import (
     exigir_portal_crm,
 )
 from app.banco.sessao import SessaoDoPedido
-from app.banco.tabelas_catalogo import Area, Relevancia, Tema
+from app.banco.tabelas_catalogo import AreaPessoa, Relevancia, Tema
 from app.banco.tabelas_stakeholders import (
     Instituicao,
     Interlocutor,
@@ -539,11 +539,11 @@ def _conferir_area(sessao: Sessao, area_id: int | None) -> None:
     if area_id is None:
         return
     valida = sessao.scalar(
-        select(Area.id).where(Area.id == area_id, Area.ativo.is_(True))
+        select(AreaPessoa.id).where(AreaPessoa.id == area_id, AreaPessoa.ativo.is_(True))
     )
     if valida is None:
         disponiveis = sessao.scalars(
-            select(Area.id).where(Area.ativo.is_(True)).order_by(Area.nome)
+            select(AreaPessoa.id).where(AreaPessoa.ativo.is_(True)).order_by(AreaPessoa.nome)
         ).all()
         raise RegraViolada(
             f"Area invalida: {area_id!r}. Use "

@@ -1,5 +1,5 @@
 -- =============================================================================
--- 0032 — Conteúdo entra na versão; arquivo deixa de ser a única forma dela.
+-- 0034 — Conteúdo entra na versão; arquivo deixa de ser a única forma dela.
 --
 -- Até aqui toda versão de referência exigia um arquivo no Blob. Agora o
 -- Resumo (fixo na referência, inalterado nesta migration — já era nullable)

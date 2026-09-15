@@ -63,7 +63,7 @@ from sqlalchemy.orm import Session
 
 from app.banco.repositorio_interacoes import RepositorioSQL
 from app.banco.tabelas_acesso import Papel, Usuario
-from app.banco.tabelas_catalogo import Area, Esfera, Tema, UnidadeNegocio
+from app.banco.tabelas_catalogo import AreaPessoa, Esfera, Tema, UnidadeNegocio
 from app.banco.tabelas_catalogo import Frente as FrenteTabela
 from app.banco.tabelas_interacoes import InteracaoArea, InteracaoRegistro
 from app.banco.tabelas_stakeholders import (
@@ -3094,12 +3094,14 @@ def _autor(sessao: Session) -> UUID:
 #: ter número de verdade nas 5 áreas — não é regra do domínio. Numa agenda
 #: real a área é escolha de quem cadastra, e mais de uma por agenda é comum;
 #: aqui, uma por frente já basta para exercitar o gráfico com dado plausível.
-#: PELO NOME, que é a chave natural de `area` — o dicionário não tem código.
+#: PELO NOME: `area_pessoa` tem `codigo`, mas o vínculo já nasceu assim e
+#: trocar a chave aqui não muda o resultado.
 #:
-#: Só as frentes cuja área existe no vocabulário. Investidores, bancos e a
-#: frente interna ficam sem área na amostra: não há "Relações com Investidores"
-#: nem "Operações Financeiras" entre as cinco áreas cadastradas, e inventar uma
-#: aqui poria no dicionário um valor que ninguém decidiu.
+#: Só as frentes mapeadas abaixo. Investidores, bancos e a frente interna
+#: ficam de fora da amostra por decisão de produto anterior — não porque a
+#: área não exista: `area_pessoa` já tem "Relações com Investidores" e
+#: "Operações Financeiras". Estender a amostra a essas frentes é decisão de
+#: produto, não corrigida aqui.
 AREA_POR_FRENTE: dict[str, str] = {
     "imprensa": "Comunicação",
     "eventos": "Comunicação",
@@ -3121,7 +3123,7 @@ def vincular_areas(sessao: Session) -> int:
     rodar de novo não duplica, e não sobrescreve uma área escolhida à mão
     pela tela.
     """
-    id_da_area = {a.nome: a.id for a in sessao.scalars(select(Area))}
+    id_da_area = {a.nome: a.id for a in sessao.scalars(select(AreaPessoa))}
     codigo_da_frente = {f.id: f.codigo for f in sessao.scalars(select(FrenteTabela))}
     ja_ligadas = {v.interacao_id for v in sessao.scalars(select(InteracaoArea.interacao_id))}
 

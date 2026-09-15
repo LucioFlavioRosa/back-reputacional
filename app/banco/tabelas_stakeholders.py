@@ -105,11 +105,10 @@ class PessoaAegea(Tabela):
     email: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: Aparece no diretório de porta-vozes e no painel de exposição.
     eh_porta_voz: Mapped[bool] = mapped_column(Boolean, default=False)
-    #: DE ONDE esta pessoa fala — Comunicação, Relações Institucionais etc.
-    #: Nula em quem foi cadastrado antes da coluna existir, ou em quem é
-    #: equipe: o campo só faz sentido para porta-voz.
+    #: De onde esta pessoa fala — Comunicação, Relações Institucionais etc.
+    #: Nula em quem foi cadastrado antes de a coluna existir (0029).
     area_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("area.id"), nullable=True
+        SmallInteger, ForeignKey("area_pessoa.id"), nullable=True
     )
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
     criado_em: Mapped[datetime] = mapped_column(

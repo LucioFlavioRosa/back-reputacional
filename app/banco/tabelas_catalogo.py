@@ -129,21 +129,11 @@ class Tema(Tabela):
     )
 
 
-class Area(Tabela):
-    """De onde quem representa a Aegea fala — Comunicação, Jurídico etc.
+class AreaPessoa(_Dicionario, Tabela):
+    """A área de quem representa a Aegea — Comunicação, Relações
+    Institucionais etc. Ver `0029_area_do_representante.sql`."""
 
-    Espelha `Tema`: outro vocabulário fechado, administrado por `insert`, e
-    não por `check` na coluna.
-    """
-
-    __tablename__ = "area"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    nome: Mapped[str] = mapped_column(Text, unique=True)
-    ativo: Mapped[bool] = mapped_column(Boolean, default=True)
-    criado_em: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    __tablename__ = "area_pessoa"
 
 
 #: Ordem em que os dicionários aparecem em `GET /api/dicionarios`.
@@ -163,8 +153,5 @@ DICIONARIOS: dict[str, type[Tabela]] = {
     "stakeholders": Stakeholder,
     "unidades_negocio": UnidadeNegocio,
     "temas": Tema,
-    #: De onde quem representa a Aegea fala. Rótulo com o sufixo `_pessoa`
-    #: porque `PessoaAegea.area_id` é quem aponta para cá — sem ele o nome
-    #: colidiria, em conversa, com uma futura "área" de outro sentido.
-    "areas_pessoa": Area,
+    "areas_pessoa": AreaPessoa,
 }
