@@ -63,7 +63,9 @@ from sqlalchemy.orm import Session
 
 from app.banco.repositorio_interacoes import RepositorioSQL
 from app.banco.tabelas_acesso import Papel, Usuario
-from app.banco.tabelas_catalogo import Esfera, Tema, UnidadeNegocio
+from app.banco.tabelas_catalogo import Area, Esfera, Tema, UnidadeNegocio
+from app.banco.tabelas_catalogo import Frente as FrenteTabela
+from app.banco.tabelas_interacoes import InteracaoArea, InteracaoRegistro
 from app.banco.tabelas_stakeholders import (
     Instituicao,
     Interlocutor,
@@ -3088,16 +3090,67 @@ def _autor(sessao: Session) -> UUID:
     return usuario.id
 
 
+#: Vínculo de DEMONSTRAÇÃO entre frente e área, só para o Termômetro por área
+#: ter número de verdade nas 5 áreas — não é regra do domínio. Numa agenda
+#: real a área é escolha de quem cadastra, e mais de uma por agenda é comum;
+#: aqui, uma por frente já basta para exercitar o gráfico com dado plausível.
+#: PELO NOME, que é a chave natural de `area` — o dicionário não tem código.
+#:
+#: Só as frentes cuja área existe no vocabulário. Investidores, bancos e a
+#: frente interna ficam sem área na amostra: não há "Relações com Investidores"
+#: nem "Operações Financeiras" entre as cinco áreas cadastradas, e inventar uma
+#: aqui poria no dicionário um valor que ninguém decidiu.
+AREA_POR_FRENTE: dict[str, str] = {
+    "imprensa": "Comunicação",
+    "eventos": "Comunicação",
+    "governo": "Relações Institucionais",
+    "parceiros": "Relações Institucionais",
+    "legislativo": "Relações Institucionais",
+}
+
+
+def vincular_areas(sessao: Session) -> int:
+    """Liga cada interação já existente a uma área, pela frente dela.
+
+    Roda sobre TODA interação da base — as da amostra-handoff e as dos
+    enredos —, não só as que este módulo acabou de criar: o vínculo
+    `interacao_area` nasceu depois das duas, e sem isto nenhuma agenda
+    antiga teria área nenhuma.
+
+    Idempotente por interação: quem já tem alguma área ligada não é tocado —
+    rodar de novo não duplica, e não sobrescreve uma área escolhida à mão
+    pela tela.
+    """
+    id_da_area = {a.nome: a.id for a in sessao.scalars(select(Area))}
+    codigo_da_frente = {f.id: f.codigo for f in sessao.scalars(select(FrenteTabela))}
+    ja_ligadas = {v.interacao_id for v in sessao.scalars(select(InteracaoArea.interacao_id))}
+
+    ligadas = 0
+    for interacao in sessao.scalars(select(InteracaoRegistro)):
+        if interacao.id in ja_ligadas:
+            continue
+        codigo = codigo_da_frente.get(interacao.frente_id)
+        nome_da_area = AREA_POR_FRENTE.get(codigo) if codigo else None
+        if nome_da_area is None:
+            continue
+        sessao.add(InteracaoArea(interacao_id=interacao.id, area_id=id_da_area[nome_da_area]))
+        ligadas += 1
+
+    return ligadas
+
+
 def principal() -> None:
     from app.banco.sessao import obter_fabrica_de_sessao
 
     sessao = obter_fabrica_de_sessao()()
     try:
         criadas = semear(sessao)
+        ligadas = vincular_areas(sessao)
         sessao.commit()
         print(f"Agendas criadas: {criadas}")
         if criadas == 0:
             print("A base já tinha linhagem. Nada a fazer.")
+        print(f"Áreas vinculadas: {ligadas}")
     finally:
         sessao.close()
 

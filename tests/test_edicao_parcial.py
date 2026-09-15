@@ -128,6 +128,17 @@ def test_campo_desconhecido_e_recusado_na_fronteira():
         InteracaoEdicao.model_validate({"campo_inventado": 1})
 
 
+def test_areas_viram_tupla_nas_alteracoes():
+    edicao = InteracaoEdicao.model_validate({"areas": [1, 2]})
+    assert edicao.alteracoes(frente_atual=Frente.IMPRENSA) == {"areas": (1, 2)}
+
+
+def test_areas_omitidas_preservam_as_existentes():
+    edicao = InteracaoEdicao.model_validate({"tier": 1})
+    alteracoes = edicao.alteracoes(frente_atual=Frente.IMPRENSA)
+    assert "areas" not in alteracoes
+
+
 def test_editar_sem_mandar_pauta_preserva_a_que_existe():
     """O campo saiu da tela, e a tela nao pode ter opiniao sobre ele.
 

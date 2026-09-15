@@ -25,6 +25,11 @@ class Frente(StrEnum):
     INVESTIDORES = "investidores"
     LEGISLATIVO = "legislativo"
     INTERNA = "interna"
+    #: "Bancos/Credores" na tela — ver `0031_frente_bancos_credores.sql`. O
+    #: MEMBRO fica em português técnico (como os demais), e não como o rótulo
+    #: exibido: `GOVERNO`/`LEGISLATIVO` também não viraram `ENTIDADES`/
+    #: `AGENTES_PUBLICOS` quando só o `nome` do dicionário mudou.
+    BANCOS_CREDORES = "bancos_credores"
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,7 +66,17 @@ class Imprensa(Extensao):
 
 @dataclass(frozen=True, slots=True)
 class Institucional(Extensao):
-    """Governo, Parceiros e Eventos."""
+    """Governo, Parceiros, Eventos e Bancos/Credores.
+
+    BANCOS/CREDORES ENTROU AQUI, e não numa extensão própria: o cadastro (ver
+    `Cadastro.tsx`, "Os campos extras por frente NÃO estão mais na tela")
+    parou de expor esses campos por formulário — sobrevivem só ao reeditar um
+    registro que já os tinha. Uma extensão nova, com uma tabela
+    `interacao_bancos_credores` só para isso, pagaria o preço de uma tabela e
+    uma migration para um campo que hoje ninguém preenche pela tela. Se um dia
+    precisar de campo próprio (ex.: linha de crédito, instituição garantidora),
+    é quando ganha a classe dela.
+    """
 
     natureza_orgao: str | None = None
     cargo_interlocutor: str | None = None
@@ -71,7 +86,9 @@ class Institucional(Extensao):
 
     @classmethod
     def frentes_atendidas(cls) -> frozenset[Frente]:
-        return frozenset({Frente.GOVERNO, Frente.PARCEIROS, Frente.EVENTOS})
+        return frozenset(
+            {Frente.GOVERNO, Frente.PARCEIROS, Frente.EVENTOS, Frente.BANCOS_CREDORES}
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +169,10 @@ TIPO_DE_INSTITUICAO: dict[Frente, str] = {
     Frente.INVESTIDORES: "investidor",
     Frente.LEGISLATIVO: "proposicao",
     Frente.INTERNA: "area_interna",
+    #: NÃO é "investidor": a relação com um banco credor é de dívida, não de
+    #: mercado de capitais — misturar as duas faria o filtro de instituições
+    #: de Investidores oferecer bancos de crédito, e vice-versa.
+    Frente.BANCOS_CREDORES: "credor",
 }
 
 #: Os tipos que se pode cadastrar. DERIVADO do mapa acima, e nao uma segunda

@@ -754,7 +754,9 @@ def test_dicionarios_vem_carregados(cliente):
     assert resposta.status_code == 200
 
     dicionarios = resposta.json()
-    assert len(dicionarios["frentes"]) == 7
+    # 8, e nao 7: Bancos/Credores entrou como oitava frente
+    # (0031_frente_bancos_credores.sql).
+    assert len(dicionarios["frentes"]) == 8
     assert len(dicionarios["unidades_negocio"]) == 29
     assert {f["codigo"] for f in dicionarios["resultados"]} == {
         "avancou", "mantido", "recuou", "sem_definicao"
