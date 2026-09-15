@@ -59,6 +59,13 @@ def test_uf_e_obrigatoria_e_validada():
         nova(uf="ZZ")
 
 
+def test_areas_aceita_varias_e_comeca_vazia():
+    """Mesmo padrão de `temas`: tupla de ids, vazia por padrão, várias por
+    interação — ver `0029_area_interna.sql`."""
+    assert nova().areas == ()
+    assert nova(areas=(1, 2)).areas == (1, 2)
+
+
 def test_uf_aceita_nacional_e_internacional():
     assert nova(uf="NA").uf == "NA"
     assert nova(uf="IN").uf == "IN"

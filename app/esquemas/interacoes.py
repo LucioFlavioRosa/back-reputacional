@@ -167,7 +167,7 @@ class ExtensaoEntrada(BaseModel):
                     link_materia=self.link_materia,
                     mensagens_chave=tuple(self.mensagens_chave),
                 )
-            case Frente.GOVERNO | Frente.PARCEIROS | Frente.EVENTOS:
+            case Frente.GOVERNO | Frente.PARCEIROS | Frente.EVENTOS | Frente.BANCOS_CREDORES:
                 return Institucional(
                     natureza_orgao=self.natureza_orgao,
                     cargo_interlocutor=self.cargo_interlocutor,
