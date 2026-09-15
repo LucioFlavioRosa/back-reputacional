@@ -11,6 +11,18 @@ e nenhuma resposta carrega permissão para ser guardada no caminho.
 POR HTTP, e não pelo repositório: é a porta por onde o front entra, e é nela
 que um cache, um cabeçalho errado ou um esquema que descarta um campo se
 esconderia.
+
+DUAS COISAS QUE ESTA GARANTIA PRESSUPÕE, e que não estão no código:
+
+  1. O commit acontece ANTES de a resposta sair. É o que `obter_sessao` faz
+     no caminho feliz, e o que `test_sessao_do_pedido` prova — sem isso, o
+     front recarregaria o catálogo antes de a escrita estar visível.
+
+  2. NÃO HÁ RÉPLICA DE LEITURA. Um Postgres só, e toda leitura vê o último
+     commit. Uma réplica no Terraform — que ninguém precisa mexer em código
+     para acrescentar — traria atraso de replicação, e esta suíte passaria a
+     falhar de forma intermitente. É o sinal certo: a garantia teria de ser
+     redesenhada, e não o teste afrouxado.
 """
 
 from __future__ import annotations
