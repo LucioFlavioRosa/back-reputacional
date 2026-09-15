@@ -40,16 +40,24 @@ def sessao():
 
 
 @pytest.fixture
-def cliente(sessao, monkeypatch):
+def cliente(sessao):
     """Quem administra cadastros E agendas: cria a instituição, a pessoa e as
-    agendas pela mesma porta que o front usa."""
+    agendas pela mesma porta que o front usa.
+
+    SOBRESCREVE `obter_configuracao()` VIA `app.dependency_overrides`, e não
+    `monkeypatch.setattr("app.api.dependencias.obter_configuracao", ...)`: o
+    `Depends(obter_configuracao)` já foi resolvido, na importação do módulo,
+    com uma referência direta à função original — trocar o nome no módulo
+    depois não alcança quem já guardou o objeto.
+    """
     from app.configuracao import Configuracao, obter_configuracao
 
     padrao = obter_configuracao()
-    como_admin = Configuracao(**{**padrao.model_dump(), "auth_mock_perfil": "plataforma_edicao"})
-    monkeypatch.setattr("app.api.dependencias.obter_configuracao", lambda: como_admin)
-
+    como_admin = Configuracao(
+        **{**padrao.model_dump(), "auth_mock": True, "auth_mock_perfil": "plataforma_edicao"}
+    )
     app.dependency_overrides[obter_sessao] = lambda: sessao
+    app.dependency_overrides[obter_configuracao] = lambda: como_admin
     try:
         yield TestClient(app)
     finally:

@@ -117,7 +117,7 @@ def cliente(sessao):
 
 
 @pytest.fixture
-def cliente_admin(sessao, monkeypatch):
+def cliente_admin(sessao):
     """O mesmo cliente, mas com perfil que administra cadastros.
 
     O `cliente` roda como `crm_edicao` — que EDITA agenda e NAO mexe nos
@@ -125,8 +125,13 @@ def cliente_admin(sessao, monkeypatch):
     tempo todo, e renomear uma instituicao muda o que aparece em toda agenda
     que aponta para ela.
 
-    `obter_configuracao` tem `lru_cache`, entao trocar a variavel de ambiente
-    nao bastaria: o valor ja lido continuaria valendo.
+    SOBRESCREVE `obter_configuracao()` VIA `app.dependency_overrides`, e nao
+    `monkeypatch.setattr("app.api.dependencias.obter_configuracao", ...)`: o
+    `Depends(obter_configuracao)` ja foi resolvido, na importacao do modulo,
+    com uma referencia direta a funcao original - trocar o nome no modulo
+    depois nao alcanca quem ja guardou o objeto. (O comentario anterior sobre
+    `lru_cache` estava certo sobre o sintoma - trocar so a variavel de
+    ambiente nao bastaria - mas a causa raiz era essa, nao o cache.)
     """
     from fastapi.testclient import TestClient
 
@@ -134,13 +139,10 @@ def cliente_admin(sessao, monkeypatch):
 
     padrao = obter_configuracao()
     como_admin = Configuracao(
-        **{**padrao.model_dump(), "auth_mock_perfil": "plataforma_edicao"}
+        **{**padrao.model_dump(), "auth_mock": True, "auth_mock_perfil": "plataforma_edicao"}
     )
-    monkeypatch.setattr(
-        "app.api.dependencias.obter_configuracao", lambda: como_admin
-    )
-
     app.dependency_overrides[obter_sessao] = lambda: sessao
+    app.dependency_overrides[obter_configuracao] = lambda: como_admin
     try:
         yield TestClient(app)
     finally:
