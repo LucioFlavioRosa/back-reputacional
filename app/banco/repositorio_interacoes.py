@@ -75,6 +75,8 @@ class RepositorioSQL:
     def __init__(self, sessao: Session) -> None:
         self.sessao = sessao
         self._cache_de_codigos: dict[tuple[str, str], int] = {}
+        #: id -> codigo, tabela por tabela, carregada INTEIRA na primeira leitura.
+        self._codigos_por_id: dict[str, dict[int, str]] = {}
         #: Os bytes que perderam a linha nesta unidade de trabalho.
         #:
         #: O repositorio NAO fala com o blob: ele so anota o que ficou orfao. E
@@ -143,9 +145,27 @@ class RepositorioSQL:
         return encontrado
 
     def _codigo_de(self, tabela: type, id_: int | None) -> str | None:
+        """Converte `id` em `codigo` — sem ir ao banco por linha.
+
+        A LEITURA DE UMA PAGINA PASSAVA AQUI MIL VEZES. Cada agenda tem seis
+        ou sete codigos (frente, status, clima, resultado, iniciativa, clima
+        esperado, os da extensao), e uma pagina tem duzentas: eram mais de mil
+        `SELECT` de uma linha por pagina, e a Base levava mais de um segundo
+        para abrir. As tabelas de dicionario tem dezenas de linhas — cabem
+        inteiras numa leitura por tabela, uma vez por repositorio.
+
+        INCLUI OS DESATIVADOS, de proposito: quem le e o historico, e o
+        historico aponta para vocabulario aposentado (ver `_id_de`). A
+        escrita, essa, continua recusando o que foi aposentado.
+        """
         if id_ is None:
             return None
-        return self.sessao.scalar(select(tabela.codigo).where(tabela.id == id_))
+        nome = tabela.__tablename__
+        codigos = self._codigos_por_id.get(nome)
+        if codigos is None:
+            codigos = dict(self.sessao.execute(select(tabela.id, tabela.codigo)).all())
+            self._codigos_por_id[nome] = codigos
+        return codigos.get(id_)
 
     # -- escrita -------------------------------------------------------------
 
