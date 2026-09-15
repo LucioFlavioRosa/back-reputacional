@@ -58,10 +58,13 @@ class VersaoSaida(BaseModel):
     numero: int
     atualizado_em: date
     nota: str | None
-    arquivo_id: UUID
-    arquivo_nome: str
-    arquivo_tipo: str
-    arquivo_tamanho: int
+    #: O texto desta versão. `None` nas versões de antes deste campo existir.
+    conteudo: str | None
+    #: Os quatro nulos juntos: uma versão sem arquivo (vive só do Conteúdo).
+    arquivo_id: UUID | None
+    arquivo_nome: str | None
+    arquivo_tipo: str | None
+    arquivo_tamanho: int | None
     criado_em: str
     criado_por: str | None
 
@@ -90,6 +93,13 @@ class ReferenciaEdicao(BaseModel):
 
     titulo: str = Field(min_length=1)
     tipo: str
+    #: Continua opcional AQUI no schema — igual sempre foi — porque esta rota
+    #: também atende a referências de antes de o Resumo virar obrigatório
+    #: (ex.: o botão de Desativar/Reativar reenvia os metadados como estão,
+    #: sem passar pelo formulário). A OBRIGATORIEDADE NOVA é imposta em
+    #: `criar()`, para toda referência NASCIDA daqui pra frente, e na tela, no
+    #: formulário de edição — não aqui, para não travar a leitura nem as ações
+    #: rápidas sobre uma referência antiga que nunca teve resumo.
     resumo: str | None = None
     tema_principal_id: int
     #: Os demais assuntos que esta referência cobre. O principal entra sozinho.
@@ -136,15 +146,17 @@ def _aplicar_temas(registro: Referencia, temas: set[int]) -> None:
 
 
 def _versao_para_saida(versao: ReferenciaVersao, autor: str | None) -> VersaoSaida:
+    arquivo = versao.arquivo
     return VersaoSaida(
         id=versao.id,
         numero=versao.numero,
         atualizado_em=versao.atualizado_em,
         nota=versao.nota,
-        arquivo_id=versao.arquivo.id,
-        arquivo_nome=versao.arquivo.nome,
-        arquivo_tipo=versao.arquivo.tipo_conteudo,
-        arquivo_tamanho=versao.arquivo.tamanho,
+        conteudo=versao.conteudo,
+        arquivo_id=arquivo.id if arquivo else None,
+        arquivo_nome=arquivo.nome if arquivo else None,
+        arquivo_tipo=arquivo.tipo_conteudo if arquivo else None,
+        arquivo_tamanho=arquivo.tamanho if arquivo else None,
         criado_em=versao.criado_em.isoformat(),
         criado_por=autor,
     )
@@ -187,22 +199,28 @@ def _guardar_versao(
     sessao: Session,
     registro: Referencia,
     *,
-    arquivo: UploadFile,
+    arquivo: UploadFile | None,
+    conteudo: str,
     atualizado_em: date,
     nota: str | None,
     usuario,
 ) -> ReferenciaVersao:
-    """Grava a versão no banco e o byte no blob, nessa ordem.
+    """Grava a versão no banco e, se veio arquivo, o byte no blob, nessa ordem.
 
-    AS MESMAS GUARDAS DO UPLOAD DE AGENDA: tipo aceito, coerência entre nome e
-    conteúdo, tamanho. O `Content-Type` do multipart é escrito por quem envia —
-    sem a conferência de coerência, um `programa.exe` com `Content-Type` de PDF
-    entrava e ficava guardado.
+    O ARQUIVO É OPCIONAL: quando não vem, a versão vive só do Conteúdo, e as
+    guardas do Blob abaixo nem entram em ação — não há byte para validar.
+
+    QUANDO VEM, AS MESMAS GUARDAS DO UPLOAD DE AGENDA: tipo aceito, coerência
+    entre nome e conteúdo, tamanho. O `Content-Type` do multipart é escrito
+    por quem envia — sem a conferência de coerência, um `programa.exe` com
+    `Content-Type` de PDF entrava e ficava guardado.
     """
-    dados = arquivo.file.read()
-    blob.exigir_tipo_aceito(arquivo.content_type or "")
-    blob.exigir_arquivo_coerente(arquivo.filename or "", arquivo.content_type or "", dados)
-    blob.exigir_tamanho_aceito(len(dados))
+    dados: bytes | None = None
+    if arquivo is not None:
+        dados = arquivo.file.read()
+        blob.exigir_tipo_aceito(arquivo.content_type or "")
+        blob.exigir_arquivo_coerente(arquivo.filename or "", arquivo.content_type or "", dados)
+        blob.exigir_tamanho_aceito(len(dados))
 
     assunto = sessao.scalar(
         select(Tema.nome).where(Tema.id == registro.tema_principal_id)
@@ -224,27 +242,30 @@ def _guardar_versao(
     sessao.refresh(registro, ["versoes"])
     numero = (registro.versao_atual.numero + 1) if registro.versao_atual else 1
 
-    linha = Arquivo(
-        caminho="",
-        nome=arquivo.filename or "arquivo",
-        tipo_conteudo=arquivo.content_type or "application/octet-stream",
-        tamanho=len(dados),
-        criado_por=usuario.id,
-    )
-    sessao.add(linha)
-    sessao.flush()
+    linha: Arquivo | None = None
+    if arquivo is not None:
+        linha = Arquivo(
+            caminho="",
+            nome=arquivo.filename or "arquivo",
+            tipo_conteudo=arquivo.content_type or "application/octet-stream",
+            tamanho=len(dados or b""),
+            criado_por=usuario.id,
+        )
+        sessao.add(linha)
+        sessao.flush()
 
-    linha.caminho = blob.caminho_da_referencia(
-        assunto=assunto or "sem-assunto",
-        tipo=registro.tipo,
-        titulo=registro.titulo,
-        numero=numero,
-        arquivo_id=linha.id,
-        nome=linha.nome,
-    )
+        linha.caminho = blob.caminho_da_referencia(
+            assunto=assunto or "sem-assunto",
+            tipo=registro.tipo,
+            titulo=registro.titulo,
+            numero=numero,
+            arquivo_id=linha.id,
+            nome=linha.nome,
+        )
     versao = ReferenciaVersao(
         numero=numero,
-        arquivo_id=linha.id,
+        arquivo_id=linha.id if linha else None,
+        conteudo=conteudo,
         atualizado_em=atualizado_em,
         nota=nota,
         criado_por=usuario.id,
@@ -260,7 +281,8 @@ def _guardar_versao(
     # contêiner. Com o `flush` antes, o banco recusa antes de escrevermos
     # coisa no armazenamento.
     sessao.flush()
-    blob.guardar(linha.caminho, dados, linha.tipo_conteudo)
+    if linha is not None:
+        blob.guardar(linha.caminho, dados, linha.tipo_conteudo)
     return versao
 
 
@@ -287,8 +309,9 @@ def criar(
     tipo: Annotated[str, Form()],
     tema_principal_id: Annotated[int, Form()],
     atualizado_em: Annotated[date, Form()],
-    arquivo: Annotated[UploadFile, File()],
-    resumo: Annotated[str | None, Form()] = None,
+    resumo: Annotated[str, Form()],
+    conteudo: Annotated[str, Form()],
+    arquivo: Annotated[UploadFile | None, File()] = None,
     #: Os demais assuntos, separados por vírgula — o multipart não carrega
     #: lista, e um campo repetido complicaria o cliente mais do que resolve.
     temas: Annotated[str, Form()] = "",
@@ -296,8 +319,9 @@ def criar(
 ) -> ReferenciaSaida:
     """Cadastra a referência COM a primeira versão, numa transação só.
 
-    O ARQUIVO É OBRIGATÓRIO. Uma referência sem ele é um título que não leva a
-    lugar nenhum.
+    O ARQUIVO É OPCIONAL — a versão pode viver só do Conteúdo, texto direto,
+    sem passar pelo Blob. O CONTEÚDO É OBRIGATÓRIO: uma versão sem arquivo e
+    sem conteúdo não leva a lugar nenhum.
     """
     _conferir_tipo(tipo)
     outros = {int(t) for t in temas.split(",") if t.strip()}
@@ -323,6 +347,7 @@ def criar(
         sessao,
         registro,
         arquivo=arquivo,
+        conteudo=conteudo,
         atualizado_em=atualizado_em,
         nota=nota,
         usuario=usuario,
@@ -383,10 +408,14 @@ def nova_versao(
     usuario: UsuarioQueAdministraCadastros,
     id: UUID,
     atualizado_em: Annotated[date, Form()],
-    arquivo: Annotated[UploadFile, File()],
+    conteudo: Annotated[str, Form()],
+    arquivo: Annotated[UploadFile | None, File()] = None,
     nota: Annotated[str | None, Form()] = None,
 ) -> ReferenciaSaida:
-    """Acrescenta uma versão. A anterior CONTINUA — é o histórico."""
+    """Acrescenta uma versão. A anterior CONTINUA — é o histórico.
+
+    MESMA REGRA DE `criar()`: arquivo opcional, conteúdo obrigatório.
+    """
     registro = sessao.get(Referencia, id)
     if registro is None:
         raise NaoEncontrado("Referencia nao encontrada.")
@@ -395,6 +424,7 @@ def nova_versao(
         sessao,
         registro,
         arquivo=arquivo,
+        conteudo=conteudo,
         atualizado_em=atualizado_em,
         nota=nota,
         usuario=usuario,
@@ -414,7 +444,7 @@ def baixar(
     verificada a cada download.
     """
     versao = sessao.get(ReferenciaVersao, versao_id)
-    if versao is None or versao.referencia_id != id:
+    if versao is None or versao.referencia_id != id or versao.arquivo is None:
         raise NaoEncontrado("Versao nao encontrada.")
 
     dados = blob.ler(versao.arquivo.caminho)
