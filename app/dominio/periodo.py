@@ -26,6 +26,7 @@ class AtalhoDePeriodo(StrEnum):
     PROXIMOS_30 = "proximos-30"
     PROXIMOS_90 = "proximos-90"
     PROXIMOS_180 = "proximos-180"
+    PROXIMOS_365 = "proximos-365"
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +62,8 @@ class Periodo:
                 return cls(de=referencia, ate=referencia + timedelta(days=90))
             case AtalhoDePeriodo.PROXIMOS_180:
                 return cls(de=referencia, ate=referencia + timedelta(days=180))
+            case AtalhoDePeriodo.PROXIMOS_365:
+                return cls(de=referencia, ate=referencia + timedelta(days=365))
         raise RegraViolada(f"Atalho de período desconhecido: {atalho}")
 
 
