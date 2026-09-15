@@ -94,6 +94,21 @@ class CabecalhosDeSegurancaMiddleware:
 
                 cabecalhos.setdefault("Content-Security-Policy", CSP_DE_API)
 
+                # NADA DESTA API PODE SER GUARDADO por navegador, proxy ou CDN.
+                #
+                # Duas razões, e cada uma bastaria. A primeira é sincronização:
+                # o catálogo — temas, instituições, pessoas, referências — é a
+                # opção de todo formulário e filtro, e uma cópia guardada em
+                # algum ponto do caminho faria um cadastro feito na
+                # Administração não aparecer, para todo mundo, até a cópia
+                # vencer. A segunda é sigilo: a resposta é de UMA sessão, e um
+                # cache compartilhado a entregaria a outra.
+                #
+                # `no-store` é o único valor que proíbe guardar em qualquer
+                # lugar; `no-cache` ainda permite guardar e só obriga a
+                # revalidar.
+                cabecalhos.setdefault("Cache-Control", "no-store")
+
                 # Desliga recursos que uma API jamais usa. Se o navegador chegar
                 # a interpretar uma resposta como documento, nada disso abre.
                 cabecalhos.setdefault(
