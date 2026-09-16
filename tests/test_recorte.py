@@ -33,9 +33,15 @@ def test_datas_explicitas_vencem_o_atalho_de_periodo():
 
 
 def test_atalho_resolve_para_intervalo_de_datas():
-    periodo = Periodo.do_atalho(AtalhoDePeriodo.ANO_CORRENTE, hoje=date(2026, 8, 24))
-    assert periodo.de == date(2026, 1, 1)
+    periodo = Periodo.do_atalho(AtalhoDePeriodo.ULTIMOS_360, hoje=date(2026, 8, 24))
+    assert periodo.de == date(2025, 8, 29)
     assert periodo.ate == date(2026, 8, 24)
+
+
+def test_atalho_futuro_resolve_para_intervalo_de_datas():
+    periodo = Periodo.do_atalho(AtalhoDePeriodo.PROXIMOS_360, hoje=date(2026, 8, 24))
+    assert periodo.de == date(2026, 8, 24)
+    assert periodo.ate == date(2027, 8, 19)
 
 
 def test_tags_chegam_como_texto_separado_por_virgula():
@@ -107,7 +113,7 @@ def test_recorte_e_imutavel():
 
 
 def test_periodo_desconhecido_diz_o_que_e_valido():
-    with pytest.raises(RegraViolada, match="ano-corrente"):
+    with pytest.raises(RegraViolada, match="ultimos-30"):
         Recorte.construir(periodo="semana-passada")
 
 

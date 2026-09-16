@@ -15,17 +15,26 @@ from app.dominio.erros import RegraViolada
 
 
 class AtalhoDePeriodo(StrEnum):
-    """Atalhos que a barra de filtros oferece."""
+    """Atalhos que a barra de filtros oferece.
 
-    ANO_CORRENTE = "ano-corrente"
+    PASSADO E FUTURO NA MESMA ESCALA, de propósito: 30/60/90/180/360 dias dos
+    dois lados do calendário. "Ano corrente" saiu daqui — não tinha um espelho
+    para a frente, e a barra de filtros passou a tratar as duas direções de
+    forma simétrica.
+    """
+
     ULTIMOS_30 = "ultimos-30"
+    ULTIMOS_60 = "ultimos-60"
     ULTIMOS_90 = "ultimos-90"
     ULTIMOS_180 = "ultimos-180"
+    ULTIMOS_360 = "ultimos-360"
     #: PARA A FRENTE: agendas ainda por vir, não as que já aconteceram — a
     #: mesma janela dos "últimos", olhando para o outro lado do calendário.
     PROXIMOS_30 = "proximos-30"
+    PROXIMOS_60 = "proximos-60"
     PROXIMOS_90 = "proximos-90"
     PROXIMOS_180 = "proximos-180"
+    PROXIMOS_360 = "proximos-360"
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,20 +56,26 @@ class Periodo:
     def do_atalho(cls, atalho: AtalhoDePeriodo, hoje: date | None = None) -> Periodo:
         referencia = hoje or date.today()
         match atalho:
-            case AtalhoDePeriodo.ANO_CORRENTE:
-                return cls(de=date(referencia.year, 1, 1), ate=referencia)
             case AtalhoDePeriodo.ULTIMOS_30:
                 return cls(de=referencia - timedelta(days=30), ate=referencia)
+            case AtalhoDePeriodo.ULTIMOS_60:
+                return cls(de=referencia - timedelta(days=60), ate=referencia)
             case AtalhoDePeriodo.ULTIMOS_90:
                 return cls(de=referencia - timedelta(days=90), ate=referencia)
             case AtalhoDePeriodo.ULTIMOS_180:
                 return cls(de=referencia - timedelta(days=180), ate=referencia)
+            case AtalhoDePeriodo.ULTIMOS_360:
+                return cls(de=referencia - timedelta(days=360), ate=referencia)
             case AtalhoDePeriodo.PROXIMOS_30:
                 return cls(de=referencia, ate=referencia + timedelta(days=30))
+            case AtalhoDePeriodo.PROXIMOS_60:
+                return cls(de=referencia, ate=referencia + timedelta(days=60))
             case AtalhoDePeriodo.PROXIMOS_90:
                 return cls(de=referencia, ate=referencia + timedelta(days=90))
             case AtalhoDePeriodo.PROXIMOS_180:
                 return cls(de=referencia, ate=referencia + timedelta(days=180))
+            case AtalhoDePeriodo.PROXIMOS_360:
+                return cls(de=referencia, ate=referencia + timedelta(days=360))
         raise RegraViolada(f"Atalho de período desconhecido: {atalho}")
 
 

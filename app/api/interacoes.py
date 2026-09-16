@@ -72,7 +72,12 @@ Sessao = SessaoDoPedido
 def obter_recorte(
     periodo: Annotated[
         str | None,
-        Query(description="ano-corrente | ultimos-30 | ultimos-90 | ultimos-180"),
+        Query(
+            description=(
+                "ultimos-30 | ultimos-60 | ultimos-90 | ultimos-180 | ultimos-360 | "
+                "proximos-30 | proximos-60 | proximos-90 | proximos-180 | proximos-360"
+            )
+        ),
     ] = None,
     de: Annotated[date | None, Query()] = None,
     ate: Annotated[date | None, Query()] = None,
