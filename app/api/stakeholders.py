@@ -23,7 +23,13 @@ from app.api.dependencias import (
     exigir_portal_crm,
 )
 from app.banco.sessao import SessaoDoPedido
-from app.banco.tabelas_catalogo import Area, Relevancia, Tema
+from app.banco.tabelas_catalogo import (
+    AreaPessoa,
+    CategoriaPublico,
+    Relevancia,
+    SubcategoriaPublico,
+    Tema,
+)
 from app.banco.tabelas_stakeholders import (
     Instituicao,
     Interlocutor,
@@ -64,6 +70,10 @@ class InstituicaoSaida(BaseModel):
     uf: str | None
     #: Tier 1 a 4. Nulo nas cadastradas antes de a coluna existir.
     tier: int | None
+    #: A taxonomia de publicos (10 categorias) e sua subdivisao. Nulos em quem
+    #: ainda nao foi reclassificado — ver `0036_categoria_de_publico.sql`.
+    categoria_publico_id: int | None
+    subcategoria_publico_id: int | None
     ativo: bool
 
 
@@ -186,6 +196,14 @@ class InstituicaoEntrada(BaseModel):
     #: coluna nao tem tier, e um PUT que exigisse o campo impediria de corrigir
     #: o nome de qualquer uma delas sem antes classifica-la.
     tier: int | None = None
+    #: A NOVA TAXONOMIA DE PUBLICOS. Opcional pelo mesmo motivo do `tier`: as
+    #: instituicoes que existiam antes desta coluna nao tem categoria, e um PUT
+    #: que a exigisse impediria de corrigir qualquer uma delas sem antes
+    #: classifica-la.
+    categoria_publico_id: int | None = None
+    #: So faz sentido junto de `categoria_publico_id`, e so quando a categoria
+    #: tem `padrao_de_quebra != sem_quebra` — ver `_conferir_categoria_publico`.
+    subcategoria_publico_id: int | None = None
     ativo: bool = True
     #: Opcional: da para cadastrar a instituicao e preencher quem representa
     #: depois. So nao da para faze-lo em DUAS transacoes.
@@ -257,11 +275,16 @@ def criar_instituicao(
             f"Tipo invalido: {entrada.tipo!r}. Use {', '.join(sorted(TIPOS_DE_INSTITUICAO))}."
         )
     _conferir_tier(sessao, entrada.tier)
+    _conferir_categoria_publico(
+        sessao, entrada.categoria_publico_id, entrada.subcategoria_publico_id
+    )
     registro = Instituicao(
         nome=entrada.nome.strip(),
         nome_normalizado=_normalizar(entrada.nome),
         tipo=entrada.tipo,
         nome_completo=entrada.nome_completo,
+        categoria_publico_id=entrada.categoria_publico_id,
+        subcategoria_publico_id=entrada.subcategoria_publico_id,
         esfera_id=entrada.esfera_id,
         uf=entrada.uf,
         tier=entrada.tier,
@@ -327,6 +350,46 @@ def _conferir_tier(sessao: Sessao, tier: int | None) -> None:
         )
 
 
+def _conferir_categoria_publico(
+    sessao: Sessao,
+    categoria_publico_id: int | None,
+    subcategoria_publico_id: int | None,
+) -> None:
+    """Recusa categoria/subcategoria inexistente ou desativada, e recusa uma
+    subcategoria que nao pertence a categoria informada.
+
+    Mesmo raciocinio de `_conferir_tier`: a chave estrangeira ja recusa o id
+    que nao existe, mas nao o desativado, e nunca o cruzamento
+    categoria x subcategoria — esse pareamento e regra de dominio, nao algo
+    que uma FK sozinha expresse.
+    """
+    if categoria_publico_id is not None:
+        valida = sessao.scalar(
+            select(CategoriaPublico.id).where(
+                CategoriaPublico.id == categoria_publico_id,
+                CategoriaPublico.ativo.is_(True),
+            )
+        )
+        if valida is None:
+            raise RegraViolada(f"Categoria de publico invalida: {categoria_publico_id!r}.")
+
+    if subcategoria_publico_id is None:
+        return
+    categoria_dona = sessao.scalar(
+        select(SubcategoriaPublico.categoria_publico_id).where(
+            SubcategoriaPublico.id == subcategoria_publico_id,
+            SubcategoriaPublico.ativo.is_(True),
+        )
+    )
+    if categoria_dona is None:
+        raise RegraViolada(f"Subcategoria de publico invalida: {subcategoria_publico_id!r}.")
+    if categoria_dona != categoria_publico_id:
+        raise RegraViolada(
+            f"Subcategoria {subcategoria_publico_id!r} nao pertence a categoria "
+            f"{categoria_publico_id!r}."
+        )
+
+
 @rotas.put("/instituicoes/{id}", response_model=InstituicaoSaida)
 def editar_instituicao(
     sessao: Sessao,
@@ -346,11 +409,16 @@ def editar_instituicao(
     # `POST /api/interlocutores`, que diz o que faz. Aceitar aqui criaria uma
     # pessoa nova a cada salvamento de nome.
     _conferir_tier(sessao, entrada.tier)
+    _conferir_categoria_publico(
+        sessao, entrada.categoria_publico_id, entrada.subcategoria_publico_id
+    )
     registro.nome = entrada.nome.strip()
     registro.nome_normalizado = _normalizar(entrada.nome)
     registro.tipo = entrada.tipo
     registro.nome_completo = entrada.nome_completo
     registro.tier = entrada.tier
+    registro.categoria_publico_id = entrada.categoria_publico_id
+    registro.subcategoria_publico_id = entrada.subcategoria_publico_id
     registro.esfera_id = entrada.esfera_id
     registro.uf = entrada.uf
     registro.ativo = entrada.ativo
@@ -539,11 +607,11 @@ def _conferir_area(sessao: Sessao, area_id: int | None) -> None:
     if area_id is None:
         return
     valida = sessao.scalar(
-        select(Area.id).where(Area.id == area_id, Area.ativo.is_(True))
+        select(AreaPessoa.id).where(AreaPessoa.id == area_id, AreaPessoa.ativo.is_(True))
     )
     if valida is None:
         disponiveis = sessao.scalars(
-            select(Area.id).where(Area.ativo.is_(True)).order_by(Area.nome)
+            select(AreaPessoa.id).where(AreaPessoa.ativo.is_(True)).order_by(AreaPessoa.nome)
         ).all()
         raise RegraViolada(
             f"Area invalida: {area_id!r}. Use "

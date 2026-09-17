@@ -345,7 +345,8 @@ class InteracaoTema(Tabela):
 
 
 class InteracaoArea(Tabela):
-    """De quais áreas internas da Aegea a interação trata. Espelha `InteracaoTema`."""
+    """Quais áreas internas participaram da interação. Espelha `InteracaoTema`
+    — mesmo vínculo N:N puro, sem atributo próprio."""
 
     __tablename__ = "interacao_area"
 
@@ -354,7 +355,7 @@ class InteracaoArea(Tabela):
         primary_key=True,
     )
     area_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("area.id"), primary_key=True
+        SmallInteger, ForeignKey("area_pessoa.id"), primary_key=True
     )
 
 

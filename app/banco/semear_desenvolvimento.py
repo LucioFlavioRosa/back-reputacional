@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 from app.banco.sessao import obter_fabrica_de_sessao
 from app.banco.tabelas_acesso import Usuario
 from app.banco.tabelas_catalogo import (
-    Area,
+    AreaPessoa,
     Clima,
     Esfera,
     Frente,
@@ -208,7 +208,9 @@ def semear(sessao: Session) -> dict[str, int]:
     id_de_clima = {c.codigo: c.id for c in sessao.scalars(select(Clima))}
     id_de_esfera = {e.codigo: e.id for e in sessao.scalars(select(Esfera))}
     id_de_tema = {t.nome: t.id for t in sessao.scalars(select(Tema))}
-    areas = list(sessao.scalars(select(Area).order_by(Area.nome)))
+    areas = list(
+        sessao.scalars(select(AreaPessoa).where(AreaPessoa.ativo).order_by(AreaPessoa.ordem))
+    )
     unidades = list(sessao.scalars(select(UnidadeNegocio)))
 
     # -- pessoas da Aegea ----------------------------------------------------

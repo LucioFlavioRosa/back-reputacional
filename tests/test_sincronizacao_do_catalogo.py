@@ -59,17 +59,25 @@ def sessao():
 
 @pytest.fixture
 def admin(sessao, monkeypatch):
-    """Quem administra cadastros — o papel que a Administração exige."""
+    """Quem administra cadastros — o papel que a Administração exige.
+
+    SOBRESCREVE `obter_configuracao()` VIA `app.dependency_overrides`, e não
+    `monkeypatch.setattr("app.api.dependencias.obter_configuracao", ...)`: o
+    `Depends(obter_configuracao)` já foi resolvido, na importação do módulo,
+    com uma referência direta à função original — trocar o nome no módulo
+    depois não alcança quem já guardou o objeto (mesmo defeito encontrado e
+    corrigido em `tests/test_referencias.py`).
+    """
     from app.configuracao import Configuracao, obter_configuracao
 
     padrao = obter_configuracao()
     como_admin = Configuracao(
-        **{**padrao.model_dump(), "auth_mock_perfil": "plataforma_edicao"}
+        **{**padrao.model_dump(), "auth_mock": True, "auth_mock_perfil": "plataforma_edicao"}
     )
-    monkeypatch.setattr("app.api.dependencias.obter_configuracao", lambda: como_admin)
     monkeypatch.setattr(blob, "guardar", lambda caminho, dados, tipo: None)
 
     app.dependency_overrides[obter_sessao] = lambda: sessao
+    app.dependency_overrides[obter_configuracao] = lambda: como_admin
     try:
         yield TestClient(app)
     finally:
@@ -199,6 +207,7 @@ def test_referencia_nova_esta_na_biblioteca_e_desativada_continua_listada(admin)
             "tema_principal_id": str(tema["id"]),
             "atualizado_em": "2026-09-01",
             "resumo": "O que responder.",
+            "conteudo": "O texto desta versão.",
         },
         files={"arquivo": ("qa.pdf", PDF, "application/pdf")},
     )

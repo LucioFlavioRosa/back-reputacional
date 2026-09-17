@@ -55,21 +55,29 @@ def guardados(monkeypatch):
 
 
 @pytest.fixture
-def cliente(sessao, monkeypatch):
+def cliente(sessao):
     """Roda como quem ADMINISTRA cadastros.
 
     O perfil padrão do cliente de teste é `crm_edicao`, que edita agenda e não
     mexe nos cadastros — e escrever na biblioteca é cadastro.
+
+    SOBRESCREVE `obter_configuracao()` VIA `app.dependency_overrides`, e não
+    via `monkeypatch.setattr("app.api.dependencias.obter_configuracao", ...)`.
+    O `Depends(obter_configuracao)` de `_usuario_provisionado` foi montado, na
+    importação do módulo, com uma referência direta à função original — trocar
+    o nome no módulo depois não alcança quem já guardou o objeto. E o padrão
+    real do ambiente é `auth_mock=False` (a postura segura por padrão), então
+    sem isto o cliente de teste caía no caminho de cookie de produção e via
+    "Sessão ausente" em toda escrita.
     """
     from app.configuracao import Configuracao, obter_configuracao
 
     padrao = obter_configuracao()
     como_admin = Configuracao(
-        **{**padrao.model_dump(), "auth_mock_perfil": "plataforma_edicao"}
+        **{**padrao.model_dump(), "auth_mock": True, "auth_mock_perfil": "plataforma_edicao"}
     )
-    monkeypatch.setattr("app.api.dependencias.obter_configuracao", lambda: como_admin)
-
     app.dependency_overrides[obter_sessao] = lambda: sessao
+    app.dependency_overrides[obter_configuracao] = lambda: como_admin
     try:
         yield TestClient(app)
     finally:
@@ -78,8 +86,16 @@ def cliente(sessao, monkeypatch):
 
 @pytest.fixture
 def cliente_sem_cadastros(sessao):
-    """O perfil padrão — `crm_edicao`. Lê a biblioteca, não escreve nela."""
+    """O perfil padrão — `crm_edicao`. Lê a biblioteca, não escreve nela.
+
+    Mesma correção de `cliente`: só liga `auth_mock`, sem elevar o perfil.
+    """
+    from app.configuracao import Configuracao, obter_configuracao
+
+    padrao = obter_configuracao()
+    como_mock = Configuracao(**{**padrao.model_dump(), "auth_mock": True})
     app.dependency_overrides[obter_sessao] = lambda: sessao
+    app.dependency_overrides[obter_configuracao] = lambda: como_mock
     try:
         yield TestClient(app)
     finally:
@@ -120,6 +136,7 @@ def criar(cliente, assuntos, **campos):
         "tema_principal_id": str(assuntos[0].id),
         "atualizado_em": "2026-08-12",
         "resumo": "O que responder sobre o reajuste.",
+        "conteudo": "O texto desta versao, por extenso.",
     }
     dados.update({k: str(v) for k, v in campos.items()})
     return cliente.post(
@@ -186,7 +203,11 @@ def test_a_segunda_versao_nao_apaga_a_primeira(cliente, assuntos, guardados):
 
     nova = cliente.post(
         f"/api/referencias/{criada['id']}/versoes",
-        data={"atualizado_em": "2026-09-01", "nota": "Atualizado apos o reajuste."},
+        data={
+            "atualizado_em": "2026-09-01",
+            "nota": "Atualizado apos o reajuste.",
+            "conteudo": "O texto da versao 2.",
+        },
         files={"arquivo": ("qa-tarifa-v2.pdf", PDF, "application/pdf")},
     )
     assert nova.status_code == 201, nova.text
@@ -226,7 +247,7 @@ def test_a_numeracao_da_versao_trava_a_referencia(cliente, assuntos, guardados, 
     try:
         nova = cliente.post(
             f"/api/referencias/{criada['id']}/versoes",
-            data={"atualizado_em": "2026-09-01"},
+            data={"atualizado_em": "2026-09-01", "conteudo": "O texto da versao 2."},
             files={"arquivo": ("v2.pdf", PDF, "application/pdf")},
         )
     finally:
@@ -270,7 +291,7 @@ def test_o_byte_so_sobe_depois_de_a_linha_ser_aceita(
     try:
         nova = cliente.post(
             f"/api/referencias/{criada['id']}/versoes",
-            data={"atualizado_em": "2026-09-01"},
+            data={"atualizado_em": "2026-09-01", "conteudo": "O texto da versao 2."},
             files={"arquivo": ("v2.pdf", PDF, "application/pdf")},
         )
     finally:
@@ -285,7 +306,7 @@ def test_o_historico_vem_da_mais_recente_para_a_mais_antiga(cliente, assuntos, g
     for dia in ("2026-09-01", "2026-09-05"):
         cliente.post(
             f"/api/referencias/{criada['id']}/versoes",
-            data={"atualizado_em": dia},
+            data={"atualizado_em": dia, "conteudo": f"O texto de {dia}."},
             files={"arquivo": ("v.pdf", PDF, "application/pdf")},
         )
 
@@ -299,7 +320,7 @@ def test_a_listagem_traz_a_versao_atual_e_quantas_existem(cliente, assuntos, gua
     criada = criar(cliente, assuntos).json()
     cliente.post(
         f"/api/referencias/{criada['id']}/versoes",
-        data={"atualizado_em": "2026-09-01"},
+        data={"atualizado_em": "2026-09-01", "conteudo": "O texto da versao 2."},
         files={"arquivo": ("v2.pdf", PDF, "application/pdf")},
     )
 
@@ -315,18 +336,135 @@ def test_a_listagem_traz_a_versao_atual_e_quantas_existem(cliente, assuntos, gua
 # -- o que a rota recusa -------------------------------------------------------
 
 
-def test_referencia_sem_arquivo_e_recusada(cliente, assuntos):
-    """Uma referência sem arquivo é um título que não leva a lugar nenhum."""
+def test_referencia_sem_arquivo_mas_com_conteudo_e_aceita(cliente, assuntos, guardados):
+    """O arquivo virou opcional: a versão pode viver só do texto."""
     resposta = cliente.post(
         "/api/referencias",
         data={
-            "titulo": "Sem arquivo",
+            "titulo": "So conteudo, sem arquivo",
             "tipo": "qa",
             "tema_principal_id": str(assuntos[0].id),
             "atualizado_em": "2026-08-12",
+            "resumo": "Um resumo qualquer.",
+            "conteudo": "O texto completo, sem arquivo nenhum.",
+        },
+    )
+    assert resposta.status_code == 201, resposta.text
+    assert not guardados, "sem arquivo, nada sobe ao blob"
+
+    versao = resposta.json()["versao"]
+    assert versao["conteudo"] == "O texto completo, sem arquivo nenhum."
+    assert versao["arquivo_id"] is None
+    assert versao["arquivo_nome"] is None
+    assert versao["arquivo_tamanho"] is None
+
+
+def test_referencia_sem_arquivo_e_sem_conteudo_e_recusada(cliente, assuntos):
+    """Uma versão sem arquivo E sem conteúdo não leva a lugar nenhum."""
+    resposta = cliente.post(
+        "/api/referencias",
+        data={
+            "titulo": "Sem arquivo nem conteudo",
+            "tipo": "qa",
+            "tema_principal_id": str(assuntos[0].id),
+            "atualizado_em": "2026-08-12",
+            "resumo": "Um resumo qualquer.",
         },
     )
     assert resposta.status_code == 422
+
+
+def test_referencia_com_arquivo_mas_sem_conteudo_e_recusada(cliente, assuntos):
+    """O conteúdo é obrigatório mesmo quando o arquivo vem junto."""
+    resposta = cliente.post(
+        "/api/referencias",
+        data={
+            "titulo": "Com arquivo, sem conteudo",
+            "tipo": "qa",
+            "tema_principal_id": str(assuntos[0].id),
+            "atualizado_em": "2026-08-12",
+            "resumo": "Um resumo qualquer.",
+        },
+        files={"arquivo": ("qa.pdf", PDF, "application/pdf")},
+    )
+    assert resposta.status_code == 422
+
+
+def test_referencia_sem_resumo_e_recusada(cliente, assuntos):
+    """O resumo é obrigatório daqui para a frente."""
+    resposta = cliente.post(
+        "/api/referencias",
+        data={
+            "titulo": "Sem resumo",
+            "tipo": "qa",
+            "tema_principal_id": str(assuntos[0].id),
+            "atualizado_em": "2026-08-12",
+            "conteudo": "Texto qualquer.",
+        },
+        files={"arquivo": ("qa.pdf", PDF, "application/pdf")},
+    )
+    assert resposta.status_code == 422
+
+
+def test_editar_sem_resumo_continua_aceito(cliente, assuntos, guardados):
+    """O resumo obrigatório é regra de TELA (formulário), não do schema de edição.
+
+    Uma referência de antes desta feature pode não ter resumo nenhum — e a
+    ação rápida de Desativar/Reativar reenvia os metadados como estão, sem
+    passar pelo formulário. Travar isso aqui quebraria essa ação para toda
+    referência antiga sem resumo, que é exatamente o cenário que a
+    retrocompatibilidade promete não quebrar.
+    """
+    criada = criar(cliente, assuntos).json()
+    resposta = cliente.put(
+        f"/api/referencias/{criada['id']}",
+        json={
+            "titulo": criada["titulo"],
+            "tipo": criada["tipo"],
+            # `None` explícito — simula a referência antiga sem resumo, cujo
+            # valor a tela reenvia como está.
+            "resumo": None,
+            "tema_principal_id": criada["tema_principal_id"],
+            "temas": criada["temas"],
+            "ativo": False,
+        },
+    )
+    assert resposta.status_code == 200, resposta.text
+    assert resposta.json()["resumo"] is None
+    assert resposta.json()["ativo"] is False
+
+
+def test_nova_versao_sem_arquivo_mas_com_conteudo_e_aceita(cliente, assuntos, guardados):
+    """Mesma regra de `criar()`: uma versão seguinte também pode viver só do texto."""
+    criada = criar(cliente, assuntos).json()
+
+    nova = cliente.post(
+        f"/api/referencias/{criada['id']}/versoes",
+        data={"atualizado_em": "2026-09-01", "conteudo": "Texto da versao 2, sem arquivo."},
+    )
+    assert nova.status_code == 201, nova.text
+    assert len(guardados) == 1, "so a v1 (com arquivo) subiu ao blob"
+
+    versao = nova.json()["versao"]
+    assert versao["numero"] == 2
+    assert versao["arquivo_id"] is None
+    assert versao["conteudo"] == "Texto da versao 2, sem arquivo."
+
+
+def test_baixar_versao_sem_arquivo_devolve_404_e_nao_quebra(cliente, assuntos, guardados):
+    """Sem a guarda, `versao.arquivo.caminho` estouraria em `AttributeError`."""
+    criada = criar(cliente, assuntos).json()
+    cliente.post(
+        f"/api/referencias/{criada['id']}/versoes",
+        data={"atualizado_em": "2026-09-01", "conteudo": "So texto, sem arquivo."},
+    )
+    versoes = cliente.get(f"/api/referencias/{criada['id']}/versoes").json()
+    sem_arquivo = next(v for v in versoes if v["numero"] == 2)
+
+    resposta = cliente.get(
+        f"/api/referencias/{criada['id']}/versoes/{sem_arquivo['id']}/arquivo"
+    )
+    assert resposta.status_code == 404
 
 
 def test_o_mesmo_titulo_nao_entra_duas_vezes(cliente, assuntos, guardados):

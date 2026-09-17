@@ -113,8 +113,12 @@ class ReferenciaVersao(Tabela):
     #: 1, 2, 3… na ordem em que entraram. Ordena o histórico sem depender de
     #: data: duas versões subidas no mesmo dia continuam tendo ordem.
     numero: Mapped[int] = mapped_column(Integer)
-    arquivo_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("arquivo.id")
+    #: Nulo quando a versão vive só do Conteúdo, abaixo — desde que o arquivo
+    #: virou opcional. Uma versão sempre tem UM dos dois, nunca nenhum; quem
+    #: garante isso é a rota, não esta coluna, para não travar a leitura das
+    #: versões de antes deste campo existir.
+    arquivo_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("arquivo.id"), nullable=True
     )
     #: A data DO DOCUMENTO, e não a do upload: o arquivo pode ser de março e
     #: entrar aqui em agosto.
@@ -122,6 +126,9 @@ class ReferenciaVersao(Tabela):
     #: O que mudou nesta versão. É o que responde "por que trocaram" quando
     #: alguém compara duas.
     nota: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: O texto desta versão. Nulo nas versões de antes deste campo existir —
+    #: não há valor real para inventar ali.
+    conteudo: Mapped[str | None] = mapped_column(Text, nullable=True)
     criado_por: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("usuario.id")
     )
@@ -131,5 +138,6 @@ class ReferenciaVersao(Tabela):
 
     referencia: Mapped[Referencia] = relationship(back_populates="versoes")
     #: O nome, o tipo e o tamanho vêm junto: a tela mostra "v3 · ata.pdf ·
-    #: 190 KB" sem uma segunda ida ao servidor.
-    arquivo: Mapped[Arquivo] = relationship(lazy="joined")
+    #: 190 KB" sem uma segunda ida ao servidor. Nulo quando a versão não tem
+    #: arquivo.
+    arquivo: Mapped[Arquivo | None] = relationship(lazy="joined")
