@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 from app.banco.repositorio_interacoes import RepositorioSQL
 from app.banco.tabelas_stakeholders import Instituicao, Interlocutor
 from app.dominio.erros import RegraViolada
-from app.dominio.frentes import Frente
+from app.dominio.frentes import Frente, Institucional
 from app.dominio.identidade import Escopo
 from app.dominio.interacao import (
     Interacao,
@@ -168,6 +168,48 @@ def test_nao_informado_continua_nao_informado(sessao, instituicao, autor):
     assert lida.preve_desdobramento is None, "nulo virou decisão"
     assert lida.expectativa is None
     assert lida.declinado_por is None
+
+
+def test_agenda_nova_nao_grava_natureza_orgao(sessao, instituicao, autor):
+    """A categoria de público em `instituicao` substitui este campo — ver
+    `0036_categoria_de_publico.sql`. Aposentadoria gradual: agenda NOVA nunca
+    mais grava `natureza_orgao`, mesmo que o cliente ainda mande o valor.
+    """
+    repositorio = RepositorioSQL(sessao)
+
+    salva = repositorio.adicionar(
+        _agenda(
+            instituicao,
+            autor,
+            extensao=Institucional(natureza_orgao="executivo", cargo_interlocutor="Secretário"),
+        )
+    )
+    sessao.flush()
+
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    assert lida.extensao.natureza_orgao is None
+    # SÓ `natureza_orgao` é ignorado — o resto da extensão grava normalmente.
+    assert lida.extensao.cargo_interlocutor == "Secretário"
+
+
+def test_editar_agenda_existente_ainda_grava_natureza_orgao(sessao, instituicao, autor):
+    """A aposentadoria é só para agenda NOVA — editar uma já existente
+    continua podendo corrigir `natureza_orgao`, sem mexer no histórico.
+    """
+    from dataclasses import replace
+
+    repositorio = RepositorioSQL(sessao)
+    salva = repositorio.adicionar(_agenda(instituicao, autor))
+    sessao.flush()
+
+    antes = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    repositorio.atualizar(
+        replace(antes, extensao=Institucional(natureza_orgao="executivo"))
+    )
+    sessao.flush()
+
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    assert lida.extensao.natureza_orgao == "executivo"
 
 
 def test_participantes_da_outra_parte_e_a_presenca(sessao, instituicao, autor):

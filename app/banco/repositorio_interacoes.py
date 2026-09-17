@@ -171,7 +171,7 @@ class RepositorioSQL:
 
     def adicionar(self, interacao: Interacao) -> Interacao:
         registro = InteracaoRegistro()
-        self._aplicar_no_registro(interacao, registro)
+        self._aplicar_no_registro(interacao, registro, novo=True)
         self.sessao.add(registro)
         self.sessao.flush()
         return self._para_dominio(registro)
@@ -190,7 +190,7 @@ class RepositorioSQL:
         return self._para_dominio(registro)
 
     def _aplicar_no_registro(
-        self, interacao: Interacao, registro: InteracaoRegistro
+        self, interacao: Interacao, registro: InteracaoRegistro, *, novo: bool = False
     ) -> None:
         registro.frente_id = self._id_de(FrenteTabela, interacao.frente.value)
         registro.data_interacao = interacao.data_interacao
@@ -243,7 +243,7 @@ class RepositorioSQL:
         self._aplicar_origens(interacao, registro)
         registro.preve_desdobramento = interacao.preve_desdobramento
 
-        self._aplicar_extensao(interacao, registro)
+        self._aplicar_extensao(interacao, registro, novo=novo)
         self._aplicar_temas(interacao, registro)
         self._aplicar_areas(interacao, registro)
         self._aplicar_participacoes(interacao, registro)
@@ -511,7 +511,7 @@ class RepositorioSQL:
                 self.sessao.delete(arquivo)
 
     def _aplicar_extensao(
-        self, interacao: Interacao, registro: InteracaoRegistro
+        self, interacao: Interacao, registro: InteracaoRegistro, *, novo: bool = False
     ) -> None:
         """Grava a extensão da frente e zera as das outras.
 
@@ -538,7 +538,15 @@ class RepositorioSQL:
                 atual.mensagens_chave = list(dados.mensagens_chave) or None
             case Institucional() as dados:
                 atual = atual or InstitucionalRegistro()
-                atual.natureza_orgao_id = self._id_de(NaturezaOrgao, dados.natureza_orgao)
+                # APOSENTADORIA GRADUAL: a categoria de público em
+                # `instituicao` (0036_categoria_de_publico.sql) substitui este
+                # campo. Interação NOVA nunca mais grava `natureza_orgao_id`,
+                # mesmo que o cliente ainda mande o valor — sem tirar a coluna
+                # nem o dicionário, e sem mexer no histórico já gravado: editar
+                # uma interação antiga continua podendo corrigir o campo dela.
+                atual.natureza_orgao_id = (
+                    None if novo else self._id_de(NaturezaOrgao, dados.natureza_orgao)
+                )
                 atual.cargo_interlocutor = dados.cargo_interlocutor
                 atual.nome_evento = dados.nome_evento
             case Legislativo() as dados:

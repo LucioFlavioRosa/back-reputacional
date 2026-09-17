@@ -11,6 +11,7 @@ from datetime import datetime
 from sqlalchemy import (
     Boolean,
     DateTime,
+    ForeignKey,
     Integer,
     SmallInteger,
     String,
@@ -136,6 +137,46 @@ class AreaPessoa(_Dicionario, Tabela):
     __tablename__ = "area_pessoa"
 
 
+class CategoriaPublico(_Dicionario, Tabela):
+    """A taxonomia de públicos — 10 categorias (Poder Executivo, Imprensa e
+    Formadores de Opinião...). Vive em `instituicao`, não em `interacao`: ver
+    `0036_categoria_de_publico.sql`."""
+
+    __tablename__ = "categoria_publico"
+    #: esfera | logica_de_relacao | posicao_de_capital | logica_editorial | sem_quebra
+    #: — como esta categoria se subdivide, não uma entidade que se cadastra.
+    padrao_de_quebra: Mapped[str] = mapped_column(Text)
+    #: Nula só em "Parceiros e Cadeia de Valor": ali a área responsável é quem
+    #: demandou a interação, variável por instituição — não fixa por categoria
+    #: como nas outras nove.
+    area_dona_id: Mapped[int | None] = mapped_column(
+        SmallInteger, ForeignKey("area_pessoa.id"), nullable=True
+    )
+
+
+class SubcategoriaPublico(Tabela):
+    """A subdivisão dentro de uma `CategoriaPublico` — Federal/Estadual/
+    Municipal, por exemplo. Só existe para quem tem `padrao_de_quebra` !=
+    `sem_quebra`.
+
+    NÃO HERDA `_Dicionario`: lá `codigo` é `unique` sozinho, mas aqui "federal"
+    se repete de propósito em Poder Executivo, Poder Legislativo e Reguladores
+    — a unicidade real é `(categoria_publico_id, codigo)`, ver a migration.
+    Herdar a mixin faria o ORM declarar uma constraint que a migration não tem.
+    """
+
+    __tablename__ = "subcategoria_publico"
+
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, autoincrement=True)
+    categoria_publico_id: Mapped[int] = mapped_column(
+        SmallInteger, ForeignKey("categoria_publico.id")
+    )
+    codigo: Mapped[str] = mapped_column(Text)
+    nome: Mapped[str] = mapped_column(Text)
+    ordem: Mapped[int] = mapped_column(SmallInteger)
+    ativo: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
 #: Ordem em que os dicionários aparecem em `GET /api/dicionarios`.
 DICIONARIOS: dict[str, type[Tabela]] = {
     "frentes": Frente,
@@ -154,4 +195,6 @@ DICIONARIOS: dict[str, type[Tabela]] = {
     "unidades_negocio": UnidadeNegocio,
     "temas": Tema,
     "areas_pessoa": AreaPessoa,
+    "categorias_publico": CategoriaPublico,
+    "subcategorias_publico": SubcategoriaPublico,
 }
