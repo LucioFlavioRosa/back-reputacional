@@ -190,6 +190,10 @@ class Interacao:
     interlocutor_id: UUID | None = None
     unidade_negocio_id: int | None = None
     esfera_id: int | None = None
+    #: Que tipo de encontro foi (Mídia, Reunião, Evento...) — ortogonal a
+    #: `frente` (quem é a contraparte), não substitui. Ver
+    #: `0038_formato_interacao.sql`.
+    formato_interacao_id: int | None = None
     tier: int | None = None
     stakeholder_id: int | None = None
 

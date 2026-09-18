@@ -46,6 +46,12 @@ class InteracaoRegistro(Tabela):
     esfera_id: Mapped[int | None] = mapped_column(
         SmallInteger, ForeignKey("esfera.id"), nullable=True
     )
+    #: Que tipo de ENCONTRO foi (Mídia, Reunião, Evento...) — ortogonal a
+    #: `frente_id` (quem é a contraparte), não substitui. Ver
+    #: `0038_formato_interacao.sql`.
+    formato_interacao_id: Mapped[int | None] = mapped_column(
+        SmallInteger, ForeignKey("formato_interacao.id"), nullable=True
+    )
     #: Obrigatória: o mapa do painel depende dela.
     uf: Mapped[str] = mapped_column(String(2))
     #: O NÚMERO do tier, e a chave estrangeira aponta para `relevancia`, onde

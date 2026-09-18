@@ -198,6 +198,7 @@ class RepositorioSQL:
         registro.interlocutor_id = interacao.interlocutor_id
         registro.unidade_negocio_id = interacao.unidade_negocio_id
         registro.esfera_id = interacao.esfera_id
+        registro.formato_interacao_id = interacao.formato_interacao_id
         registro.uf = interacao.uf
         registro.tier = interacao.tier
         registro.stakeholder_id = interacao.stakeholder_id
@@ -785,6 +786,7 @@ class RepositorioSQL:
             interlocutor_id=registro.interlocutor_id,
             unidade_negocio_id=registro.unidade_negocio_id,
             esfera_id=registro.esfera_id,
+            formato_interacao_id=registro.formato_interacao_id,
             uf=registro.uf,
             tier=registro.tier,
             stakeholder_id=registro.stakeholder_id,
