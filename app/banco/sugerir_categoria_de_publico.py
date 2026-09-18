@@ -1,10 +1,16 @@
 """Sugestão de categoria de público para as instituições sem classificação.
 
     python -m app.banco.sugerir_categoria_de_publico [caminho-do-csv]
+    python -m app.banco.sugerir_categoria_de_publico --aplicar [caminho-do-csv]
 
-SÓ LÊ O BANCO. Nenhum `insert`/`update`/`commit` — é seguro rodar em qualquer
-ambiente, quantas vezes quiser. O caminho do CSV é opcional; sem ele, grava
-`categoria_publico_sugerida.csv` no diretório atual.
+SEM `--aplicar`, SÓ LÊ O BANCO. Nenhum `insert`/`update`/`commit` — é seguro
+rodar em qualquer ambiente, quantas vezes quiser. O caminho do CSV é
+opcional; sem ele, grava `categoria_publico_sugerida.csv` no diretório atual.
+
+COM `--aplicar`, além do CSV, GRAVA no banco as sugestões de CONFIANÇA ALTA
+— ver `aplicar_sugestoes` mais abaixo. Confiança baixa nunca é gravada: fica
+`null`, honesto sobre o que a heurística não sabe de verdade, e continua
+aparecendo no CSV para revisão humana.
 
 O QUE ESTE SCRIPT NÃO É
 ------------------------
@@ -58,7 +64,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.banco.sessao import obter_fabrica_de_sessao
-from app.banco.tabelas_catalogo import NaturezaOrgao
+from app.banco.tabelas_catalogo import CategoriaPublico, NaturezaOrgao, SubcategoriaPublico
 from app.banco.tabelas_interacoes import InstitucionalRegistro, InteracaoRegistro
 from app.banco.tabelas_stakeholders import Instituicao
 
@@ -267,11 +273,72 @@ def gerar_sugestoes(sessao: Session) -> list[dict[str, str]]:
     return linhas
 
 
+def aplicar_sugestoes(sessao: Session, linhas: list[dict[str, str]]) -> dict[str, int]:
+    """Grava no banco só as linhas de `confianca_categoria == "alta"` — e,
+    dentro dessas, só marca `subcategoria_publico_id` onde
+    `confianca_subcategoria` também é alta. O restante (baixa confiança nos
+    dois, ou só na subcategoria) fica como já estava: `null`.
+
+    RECEBE `linhas` já prontas (as mesmas que viram CSV), em vez de chamar
+    `gerar_sugestoes` de novo — assim o que se grava no banco é EXATAMENTE o
+    que a planilha desta mesma execução mostrou, nunca uma segunda leitura
+    que poderia (em tese) enxergar o banco de outro jeito.
+
+    Devolve quantas instituições ganharam categoria, e quantas dessas também
+    ganharam subcategoria — os mesmos dois números que o CSV já resume."""
+    categoria_id_por_nome = {
+        categoria.nome: categoria.id
+        for categoria in sessao.scalars(select(CategoriaPublico)).all()
+    }
+    subcategoria_id_por_categoria_e_nome = {
+        (subcategoria.categoria_publico_id, subcategoria.nome): subcategoria.id
+        for subcategoria in sessao.scalars(select(SubcategoriaPublico)).all()
+    }
+
+    ids_da_planilha = [linha["instituicao_id"] for linha in linhas]
+    instituicao_por_id = {
+        str(instituicao.id): instituicao
+        for instituicao in sessao.scalars(
+            select(Instituicao).where(Instituicao.id.in_(ids_da_planilha))
+        ).all()
+    }
+
+    aplicadas_categoria = 0
+    aplicadas_subcategoria = 0
+    for linha in linhas:
+        if linha["confianca_categoria"] != "alta":
+            continue
+        categoria_id = categoria_id_por_nome.get(linha["categoria_sugerida"])
+        if categoria_id is None:
+            # Não deveria acontecer (o nome vem do mesmo dicionário que
+            # `sugerir` conhece) — mas gravar um id incerto é pior do que
+            # deixar de fora, então pula em vez de arriscar.
+            continue
+
+        instituicao_por_id[linha["instituicao_id"]].categoria_publico_id = categoria_id
+        aplicadas_categoria += 1
+
+        if linha["confianca_subcategoria"] == "alta" and linha["subcategoria_sugerida"]:
+            subcategoria_id = subcategoria_id_por_categoria_e_nome.get(
+                (categoria_id, linha["subcategoria_sugerida"])
+            )
+            if subcategoria_id is not None:
+                instituicao = instituicao_por_id[linha["instituicao_id"]]
+                instituicao.subcategoria_publico_id = subcategoria_id
+                aplicadas_subcategoria += 1
+
+    sessao.commit()
+    return {"categoria": aplicadas_categoria, "subcategoria": aplicadas_subcategoria}
+
+
 def main() -> int:
-    destino = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(CSV_PADRAO)
+    aplicar = "--aplicar" in sys.argv
+    argumentos_posicionais = [a for a in sys.argv[1:] if not a.startswith("--")]
+    destino = Path(argumentos_posicionais[0]) if argumentos_posicionais else Path(CSV_PADRAO)
 
     with obter_fabrica_de_sessao()() as sessao:
         linhas = gerar_sugestoes(sessao)
+        resultado = aplicar_sugestoes(sessao, linhas) if aplicar else None
 
     with destino.open("w", newline="", encoding="utf-8-sig") as arquivo:
         escritor = csv.DictWriter(arquivo, fieldnames=CABECALHO)
@@ -288,7 +355,14 @@ def main() -> int:
     print(f"  {altas_categoria} com categoria de confiança alta")
     print(f"  {altas_ambas} dessas também com subcategoria de confiança alta")
     print(f"Planilha gravada em {destino.resolve()}")
-    print("\nÉ um primeiro palpite para revisão, não uma classificação — confira cada linha.")
+    if resultado is not None:
+        print(
+            f"\nGravado no banco: {resultado['categoria']} instituições com categoria, "
+            f"{resultado['subcategoria']} dessas também com subcategoria."
+        )
+    else:
+        print("\nÉ um primeiro palpite para revisão, não uma classificação — confira cada linha.")
+        print("Rode de novo com --aplicar para gravar no banco as sugestões de confiança alta.")
     return 0
 
 
