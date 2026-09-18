@@ -63,6 +63,14 @@ class Status(_Dicionario, Tabela):
     grupo: Mapped[str] = mapped_column(Text)
 
 
+class FormatoInteracao(_Dicionario, Tabela):
+    """Mídia, Agenda de mercado, Agenda pública, Manifestação formal, Evento,
+    Visita, Reunião — que TIPO DE ENCONTRO foi, não quem é a contraparte
+    (isso é `Frente`). Ver `0038_formato_interacao.sql`."""
+
+    __tablename__ = "formato_interacao"
+
+
 class Esfera(_Dicionario, Tabela):
     __tablename__ = "esfera"
 
@@ -182,6 +190,7 @@ DICIONARIOS: dict[str, type[Tabela]] = {
     "frentes": Frente,
     "relevancias": Relevancia,
     "status": Status,
+    "formatos_interacao": FormatoInteracao,
     "esferas": Esfera,
     "climas": Clima,
     "resultados": Resultado,

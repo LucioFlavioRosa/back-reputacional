@@ -222,6 +222,7 @@ class InteracaoEntrada(BaseModel):
     interlocutor_id: UUID | None = None
     unidade_negocio_id: int | None = None
     esfera_id: int | None = None
+    formato_interacao_id: int | None = None
     tier: int | None = None
     stakeholder_id: int | None = None
 
@@ -266,6 +267,7 @@ class InteracaoEntrada(BaseModel):
             interlocutor_id=self.interlocutor_id,
             unidade_negocio_id=self.unidade_negocio_id,
             esfera_id=self.esfera_id,
+            formato_interacao_id=self.formato_interacao_id,
             tier=self.tier,
             stakeholder_id=self.stakeholder_id,
             clima=self.clima,
@@ -335,6 +337,7 @@ class InteracaoEdicao(BaseModel):
     interlocutor_id: UUID | None = None
     unidade_negocio_id: int | None = None
     esfera_id: int | None = None
+    formato_interacao_id: int | None = None
     uf: str | None = None
     tier: int | None = None
     stakeholder_id: int | None = None
@@ -467,6 +470,7 @@ class InteracaoSaida(BaseModel):
     interlocutor_id: UUID | None
     unidade_negocio_id: int | None
     esfera_id: int | None
+    formato_interacao_id: int | None
     uf: str
     tier: int | None
     stakeholder_id: int | None
@@ -536,6 +540,7 @@ class InteracaoSaida(BaseModel):
             interlocutor_id=interacao.interlocutor_id,
             unidade_negocio_id=interacao.unidade_negocio_id,
             esfera_id=interacao.esfera_id,
+            formato_interacao_id=interacao.formato_interacao_id,
             uf=interacao.uf,
             tier=interacao.tier,
             stakeholder_id=interacao.stakeholder_id,

@@ -340,10 +340,19 @@ def main() -> int:
         linhas = gerar_sugestoes(sessao)
         resultado = aplicar_sugestoes(sessao, linhas) if aplicar else None
 
-    with destino.open("w", newline="", encoding="utf-8-sig") as arquivo:
-        escritor = csv.DictWriter(arquivo, fieldnames=CABECALHO)
-        escritor.writeheader()
-        escritor.writerows(linhas)
+    # A PLANILHA É SÓ AUDITORIA — o que importa (o `commit()` de `aplicar_sugestoes`,
+    # se `--aplicar`) já aconteceu no bloco acima. Um filesystem somente-leitura
+    # (comum em contêiner de produção) não pode transformar "não consegui
+    # escrever um arquivo de apoio" em "a gravação no banco falhou": as duas
+    # coisas não têm nada a ver uma com a outra.
+    try:
+        with destino.open("w", newline="", encoding="utf-8-sig") as arquivo:
+            escritor = csv.DictWriter(arquivo, fieldnames=CABECALHO)
+            escritor.writeheader()
+            escritor.writerows(linhas)
+        print(f"Planilha gravada em {destino.resolve()}")
+    except OSError as erro:
+        print(f"Não deu para gravar a planilha em '{destino}' ({erro}) — seguindo sem ela.")
 
     altas_categoria = sum(1 for linha in linhas if linha["confianca_categoria"] == "alta")
     altas_ambas = sum(
@@ -354,7 +363,6 @@ def main() -> int:
     print(f"{len(linhas)} instituições sem categoria.")
     print(f"  {altas_categoria} com categoria de confiança alta")
     print(f"  {altas_ambas} dessas também com subcategoria de confiança alta")
-    print(f"Planilha gravada em {destino.resolve()}")
     if resultado is not None:
         print(
             f"\nGravado no banco: {resultado['categoria']} instituições com categoria, "

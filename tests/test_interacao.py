@@ -71,6 +71,16 @@ def test_uf_aceita_nacional_e_internacional():
     assert nova(uf="IN").uf == "IN"
 
 
+def test_formato_interacao_id_e_opcional_e_editavel():
+    """Ortogonal a `frente` — ver `0038_formato_interacao.sql`. Nasce sem
+    valor, e uma agenda continua valendo sem ele."""
+    interacao = nova()
+    assert interacao.formato_interacao_id is None
+
+    interacao.alterar(formato_interacao_id=3)
+    assert interacao.formato_interacao_id == 3
+
+
 def test_tier_nao_positivo_e_recusado():
     """O domínio só barra o que é absurdo em qualquer configuração.
 
