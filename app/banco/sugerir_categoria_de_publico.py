@@ -105,7 +105,7 @@ REGRAS_POR_PALAVRA_CHAVE: list[tuple[re.Pattern[str], str, str | None]] = [
         None, "Federal"),
     (re.compile(r"\b(abcon|aesbe|abdib|\bcni\b|fiesp|sindicato|federação|confederação|"
                 r"instituto\b|associação brasileira)", re.I),
-        "Entidades Setoriais e Representativas", None),
+        "Entidades Setoriais e Representativas", "Institutos e Associações"),
     (re.compile(r"\bong\b|organização não governamental|associação de moradores|"
                 r"conselho comunitário|comitê de bacia", re.I),
         "Sociedade Civil e Comunidade", "Comunidade e lideranças locais"),

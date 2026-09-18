@@ -37,6 +37,20 @@ def test_palavra_chave_de_controle_e_fiscalizacao():
     )
 
 
+def test_palavra_chave_de_entidade_setorial_sugere_a_subcategoria_tambem():
+    # "Entidades Setoriais e Representativas" deixou de ser sem_quebra
+    # (0037_ajusta_taxonomia_de_publicos.sql) — a palavra-chave que já
+    # identificava a categoria agora identifica a subcategoria junto.
+    assert sugerir("orgao", "associacao", "Sindicato dos Trabalhadores") == (
+        "Entidades Setoriais e Representativas", "alta",
+        "Institutos e Associações", "alta",
+    )
+    assert sugerir("entidade", None, "CNI") == (
+        "Entidades Setoriais e Representativas", "alta",
+        "Institutos e Associações", "alta",
+    )
+
+
 def test_esfera_por_palavra_chave_mais_natureza_orgao_decide_a_categoria():
     # "Câmara Municipal" só diz a ESFERA — falta natureza_orgao para saber se
     # é Executivo ou Legislativo. Com natureza_orgao presente, as duas saem
