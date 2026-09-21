@@ -13,7 +13,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.dependencias import (
@@ -122,9 +122,23 @@ def listar_interlocutores(
     sessao: Sessao,
     incluir_inativos: Annotated[bool, Query()] = False,
 ) -> list[Interlocutor]:
+    """Quem fala pelas instituicoes.
+
+    DISPONIVEL = a pessoa esta ativa E a instituicao dela esta ativa. Desativar
+    a instituicao nao reescreve o `ativo` de cada pessoa — e o que permite
+    reativa-la depois sem "religar" quem foi desligada individualmente —, mas
+    a listagem padrao, que alimenta quem oferece escolha, aplica os dois
+    niveis. `incluir_inativos` devolve tudo, para a administracao.
+    """
     consulta = select(Interlocutor).order_by(Interlocutor.nome)
     if not incluir_inativos:
-        consulta = consulta.where(Interlocutor.ativo.is_(True))
+        # `outerjoin`: `instituicao_id` e anulavel, e uma pessoa sem
+        # instituicao nao tem instituicao desativada — continua disponivel.
+        consulta = (
+            consulta.outerjoin(Instituicao, Instituicao.id == Interlocutor.instituicao_id)
+            .where(Interlocutor.ativo.is_(True))
+            .where(or_(Instituicao.id.is_(None), Instituicao.ativo.is_(True)))
+        )
     return list(sessao.scalars(consulta))
 
 

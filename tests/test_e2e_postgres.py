@@ -1651,6 +1651,38 @@ def test_desativar_instituicao_a_tira_da_listagem_padrao_mas_nao_da_administraca
     assert achada["ativo"] is False
 
 
+def test_desativar_instituicao_tira_as_pessoas_dela_da_listagem_padrao(
+    cliente_admin, semente
+):
+    """A mesma regra, um nivel abaixo: a pessoa de uma instituicao desativada
+    nao e oferecida — sem reescrever o `ativo` dela, que continua `true` e
+    volta a valer sozinho quando a instituicao for reativada."""
+    instituicao = cliente_admin.post(
+        "/api/instituicoes", json={"nome": "Orgao Que Fecha", "tipo": "orgao"}
+    ).json()
+    pessoa = cliente_admin.post(
+        "/api/interlocutores",
+        json={"nome": "Pessoa Do Orgao Que Fecha", "instituicao_id": instituicao["id"]},
+    ).json()
+    assert pessoa["id"] in {p["id"] for p in cliente_admin.get("/api/interlocutores").json()}
+
+    cliente_admin.put(
+        f"/api/instituicoes/{instituicao['id']}",
+        json={"nome": "Orgao Que Fecha", "tipo": "orgao", "ativo": False},
+    )
+
+    padrao = {p["id"] for p in cliente_admin.get("/api/interlocutores").json()}
+    assert pessoa["id"] not in padrao
+    com_inativos = cliente_admin.get("/api/interlocutores?incluir_inativos=1").json()
+    achada = next(p for p in com_inativos if p["id"] == pessoa["id"])
+    assert achada["ativo"] is True, "desativar a instituicao nao reescreve a pessoa"
+
+    # E quem nao tem instituicao nenhuma continua disponivel: o filtro dos
+    # dois niveis nao pode derrubar quem so tem um nivel.
+    solta = cliente_admin.post("/api/interlocutores", json={"nome": "Sem Instituicao"}).json()
+    assert solta["id"] in {p["id"] for p in cliente_admin.get("/api/interlocutores").json()}
+
+
 def test_apagar_instituicao_inexistente_e_404(cliente_admin, semente):
     resposta = cliente_admin.delete(f"/api/instituicoes/{uuid4()}")
     assert resposta.status_code == 404
