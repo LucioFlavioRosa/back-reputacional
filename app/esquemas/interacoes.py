@@ -200,7 +200,14 @@ class InteracaoEntrada(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    frente: Frente
+    #: OPCIONAL, DE PROPÓSITO — ver `app/casos_de_uso/derivar_frente.py`.
+    #:
+    #: A tela nova não pergunta mais Frente diretamente: deriva de Formato +
+    #: a categoria de público da instituição. Quem mandar `frente` explícito
+    #: ainda é respeitado (retrocompatível com o cliente antigo, e com quem
+    #: sabe exatamente o que quer) — a derivação só entra quando o campo vem
+    #: ausente. `para_dominio` exige o valor final resolvido; ver a rota.
+    frente: Frente | None = None
     data_interacao: date
     instituicao_id: UUID
     uf: str
@@ -256,9 +263,13 @@ class InteracaoEntrada(BaseModel):
     areas: list[int] = Field(default_factory=list)
     participacoes: list[ParticipacaoEntrada] = Field(default_factory=list)
 
-    def para_dominio(self) -> Interacao:
+    def para_dominio(self, *, frente: Frente) -> Interacao:
+        """`frente` é OBRIGATÓRIA aqui, mesmo `self.frente` sendo opcional no
+        corpo do POST: quem chama (a rota) já resolveu o valor final —
+        explícito ou derivado — antes de chegar aqui. `para_dominio` nunca
+        adivinha sozinho."""
         return Interacao(
-            frente=self.frente,
+            frente=frente,
             data_interacao=self.data_interacao,
             instituicao_id=self.instituicao_id,
             uf=self.uf.upper(),
@@ -281,7 +292,7 @@ class InteracaoEntrada(BaseModel):
             registro_url=self.registro_url,
             modalidade=self.modalidade,
             local=self.local,
-            extensao=self.extensao.para_dominio(self.frente) if self.extensao else None,
+            extensao=self.extensao.para_dominio(frente) if self.extensao else None,
             temas=tuple(self.temas),
             areas=tuple(self.areas),
             participacoes=tuple(

@@ -34,6 +34,7 @@ from app.banco.repositorio_interacoes import (
 )
 from app.banco.sessao import SessaoDoPedido
 from app.casos_de_uso import consultar_interacoes, editar_interacao, registrar_interacao
+from app.casos_de_uso.derivar_frente import derivar_frente
 from app.dominio.erros import RegraViolada
 from app.dominio.interacao import MOMENTOS_DE_MATERIAL
 from app.dominio.recorte import Recorte
@@ -183,8 +184,16 @@ def listar(
 def criar(
     sessao: Sessao, usuario: UsuarioQueEscreve, entrada: InteracaoEntrada
 ) -> InteracaoSaida:
+    # QUEM MANDOU `frente` EXPLÍCITO É RESPEITADO — retrocompatível com o
+    # cliente antigo (que ainda escolhe a Frente na tela) e com quem sabe
+    # exatamente o que quer. Só deriva quando o campo vem ausente.
+    frente = entrada.frente or derivar_frente(
+        sessao,
+        instituicao_id=entrada.instituicao_id,
+        formato_interacao_id=entrada.formato_interacao_id,
+    )
     criada = registrar_interacao.registrar(
-        RepositorioSQL(sessao), interacao=entrada.para_dominio(), usuario=usuario
+        RepositorioSQL(sessao), interacao=entrada.para_dominio(frente=frente), usuario=usuario
     )
     return InteracaoSaida.de_dominio(criada, ve_campos_sensiveis=usuario.ve_campos_sensiveis)
 
