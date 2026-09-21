@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import (
     acesso,
     catalogo,
+    dicionarios,
     exportacoes,
     interacoes,
     materiais,
@@ -137,6 +138,7 @@ def criar_app() -> FastAPI:
     app.include_router(referencias.rotas)
     app.include_router(stakeholders.rotas)
     app.include_router(catalogo.rotas)
+    app.include_router(dicionarios.rotas)
 
     @app.get("/api/saude", tags=["plataforma"])
     def saude() -> dict[str, str]:
