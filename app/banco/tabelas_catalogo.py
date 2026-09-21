@@ -160,13 +160,6 @@ class CategoriaPublico(_Dicionario, Tabela):
     area_dona_id: Mapped[int | None] = mapped_column(
         SmallInteger, ForeignKey("area_pessoa.id"), nullable=True
     )
-    #: A Frente derivada para interações com instituições desta categoria —
-    #: ver `derivar_frente` e `0039_frente_padrao_por_categoria.sql`. Nula só
-    #: em quem ainda não foi mapeado (não deveria acontecer, com as 10 linhas
-    #: de `0036` todas cobertas na 0039).
-    frente_padrao_id: Mapped[int | None] = mapped_column(
-        SmallInteger, ForeignKey("frente.id"), nullable=True
-    )
 
 
 class SubcategoriaPublico(Tabela):
