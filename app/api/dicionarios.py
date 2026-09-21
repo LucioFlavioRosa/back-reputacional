@@ -37,6 +37,7 @@ from app.api.dependencias import (
     UsuarioQueAdministraCadastros,
     obter_usuario_atual,
 )
+from app.api.stakeholders import _gravar
 from app.banco.sessao import SessaoDoPedido
 from app.banco.tabelas_catalogo import (
     DICIONARIOS,
@@ -199,6 +200,13 @@ def acrescentar(
 ):
     tabela = _tabela_aberta(nome)
     valor = entrada.nome.strip()
+    # SERIALIZA POR DICIONÁRIO: dois "Acrescentar" ao mesmo tempo no mesmo
+    # vocabulário entram um de cada vez — é o que faz a conferência de nome
+    # abaixo e o `max(ordem) + 1` valerem de verdade. O lock é da transação
+    # e some no commit; dicionários diferentes não se esperam.
+    sessao.execute(
+        select(func.pg_advisory_xact_lock(func.hashtext(f"dicionario:{nome}")))
+    )
     if sessao.scalar(select(tabela).where(func.lower(tabela.nome) == valor.lower())) is not None:
         raise RegraViolada(f"Já existe {valor!r} em {ROTULOS[nome]}.")
     campos: dict[str, Any] = {
@@ -215,10 +223,14 @@ def acrescentar(
     # para os dois, que é o que `geral` significa.
     if tabela is Formato:
         campos["escopo"] = "geral"
-    registro = tabela(**campos)
-    sessao.add(registro)
-    sessao.flush()
-    return registro
+    # `_gravar`: se ainda assim o índice único de `codigo`/`nome` estourar,
+    # a resposta é de domínio (422), e não um 500 de constraint.
+    return _gravar(
+        sessao,
+        tabela(**campos),
+        novo=True,
+        ao_colidir=f"Já existe {valor!r} em {ROTULOS[nome]}.",
+    )
 
 
 @rotas.put("/{nome}/{id}", response_model=ItemSaida)
@@ -243,5 +255,4 @@ def editar(
         raise RegraViolada(f"Já existe {valor!r} em {ROTULOS[nome]}.")
     registro.nome = valor
     registro.ativo = entrada.ativo
-    sessao.flush()
-    return registro
+    return _gravar(sessao, registro, ao_colidir=f"Já existe {valor!r} em {ROTULOS[nome]}.")

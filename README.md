@@ -154,7 +154,7 @@ privilégio](#versão-e-privilégio). 46 tabelas, organizadas em seis assuntos:
 | biblioteca | `referencia`, `referencia_versao`, `referencia_tema`, `arquivo` |
 | trilhas | `auditoria`, `exportacao`, `importacao` (schema sem aplicação) |
 
-As 42 migrations ficam em `app/banco/migrations/` e rodam **em ordem
+As 43 migrations ficam em `app/banco/migrations/` e rodam **em ordem
 alfabética**, uma vez, na primeira subida do banco. Cada arquivo abre com um
 cabeçalho dizendo o que muda e por quê — é lá que está o histórico, e não aqui.
 
