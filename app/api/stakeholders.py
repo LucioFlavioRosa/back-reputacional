@@ -13,7 +13,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.dependencias import (
@@ -37,7 +37,7 @@ from app.banco.tabelas_stakeholders import (
     PessoaAegeaTema,
 )
 from app.dominio.erros import NaoEncontrado, RegraViolada
-from app.dominio.frentes import TIPOS_DE_INSTITUICAO
+from app.dominio.frentes import TIPO_DA_CATEGORIA_DE_PUBLICO, TIPOS_DE_INSTITUICAO
 
 rotas = APIRouter(
     prefix="/api",
@@ -122,9 +122,23 @@ def listar_interlocutores(
     sessao: Sessao,
     incluir_inativos: Annotated[bool, Query()] = False,
 ) -> list[Interlocutor]:
+    """Quem fala pelas instituicoes.
+
+    DISPONIVEL = a pessoa esta ativa E a instituicao dela esta ativa. Desativar
+    a instituicao nao reescreve o `ativo` de cada pessoa — e o que permite
+    reativa-la depois sem "religar" quem foi desligada individualmente —, mas
+    a listagem padrao, que alimenta quem oferece escolha, aplica os dois
+    niveis. `incluir_inativos` devolve tudo, para a administracao.
+    """
     consulta = select(Interlocutor).order_by(Interlocutor.nome)
     if not incluir_inativos:
-        consulta = consulta.where(Interlocutor.ativo.is_(True))
+        # `outerjoin`: `instituicao_id` e anulavel, e uma pessoa sem
+        # instituicao nao tem instituicao desativada — continua disponivel.
+        consulta = (
+            consulta.outerjoin(Instituicao, Instituicao.id == Interlocutor.instituicao_id)
+            .where(Interlocutor.ativo.is_(True))
+            .where(or_(Instituicao.id.is_(None), Instituicao.ativo.is_(True)))
+        )
     return list(sessao.scalars(consulta))
 
 
@@ -157,35 +171,20 @@ def listar_pessoas_aegea(
 # muda o que aparece em toda agenda que aponta para ela.
 
 
-class RepresentanteInicial(BaseModel):
-    """A primeira pessoa da instituicao, cadastrada JUNTO com ela.
-
-    Cadastrar a instituicao e depois abrir a edicao para acrescentar quem fala
-    por ela sao dois gestos para uma decisao so — e uma instituicao sem
-    ninguem nao serve para nada: o formulario de agenda so oferece pessoas
-    depois que a instituicao e escolhida, e a lista sairia vazia.
-
-    Vem AQUI DENTRO, e nao numa segunda requisicao, porque as duas escritas
-    precisam cair ou passar juntas. Separadas, uma falha na segunda deixaria a
-    instituicao criada e sem representante, e a tela teria de explicar um
-    estado meio-feito que ninguem pediu.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    nome: str = Field(min_length=1)
-    email: str | None = None
-    cargo: str | None = None
-
-
 class InstituicaoEntrada(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     nome: str = Field(min_length=1)
     #: `veiculo`, `orgao`, `entidade`, `investidor`, `proposicao`,
-    #: `area_interna`. E o que liga a instituicao a uma FRENTE — ver
+    #: `area_interna`, `credor`. E o que liga a instituicao a uma FRENTE — ver
     #: `TIPO_DE_INSTITUICAO` no dominio.
-    tipo: str
+    #:
+    #: OPCIONAL: a tela de cadastro nao pergunta mais o tipo. Ausente, ele vem
+    #: da categoria de publico (`TIPO_DA_CATEGORIA_DE_PUBLICO`) — e sem
+    #: categoria tambem, a criacao e recusada, porque uma instituicao sem tipo
+    #: nao aparece em formulario nenhum. Na edicao, ausente, o tipo gravado
+    #: fica como esta.
+    tipo: str | None = None
     #: O nome POR EXTENSO. Quem escolhe "ABCON" no formulario de agenda
     #: precisa saber que instituicao e essa, e a sigla nao diz.
     nome_completo: str | None = None
@@ -205,9 +204,6 @@ class InstituicaoEntrada(BaseModel):
     #: tem `padrao_de_quebra != sem_quebra` — ver `_conferir_categoria_publico`.
     subcategoria_publico_id: int | None = None
     ativo: bool = True
-    #: Opcional: da para cadastrar a instituicao e preencher quem representa
-    #: depois. So nao da para faze-lo em DUAS transacoes.
-    representante: RepresentanteInicial | None = None
 
 
 class InterlocutorEntrada(BaseModel):
@@ -270,18 +266,15 @@ def _normalizar(nome: str) -> str:
 def criar_instituicao(
     sessao: Sessao, usuario: UsuarioQueAdministraCadastros, entrada: InstituicaoEntrada
 ) -> Instituicao:
-    if entrada.tipo not in TIPOS_DE_INSTITUICAO:
-        raise RegraViolada(
-            f"Tipo invalido: {entrada.tipo!r}. Use {', '.join(sorted(TIPOS_DE_INSTITUICAO))}."
-        )
     _conferir_tier(sessao, entrada.tier)
     _conferir_categoria_publico(
         sessao, entrada.categoria_publico_id, entrada.subcategoria_publico_id
     )
+    tipo = _tipo_efetivo(sessao, entrada, atual=None)
     registro = Instituicao(
         nome=entrada.nome.strip(),
         nome_normalizado=_normalizar(entrada.nome),
-        tipo=entrada.tipo,
+        tipo=tipo,
         nome_completo=entrada.nome_completo,
         categoria_publico_id=entrada.categoria_publico_id,
         subcategoria_publico_id=entrada.subcategoria_publico_id,
@@ -295,36 +288,42 @@ def criar_instituicao(
         registro,
         novo=True,
         ao_colidir=(
-            f"Ja existe uma instituicao chamada {entrada.nome!r} do tipo "
-            f"{entrada.tipo!r}."
+            f"Ja existe uma instituicao chamada {entrada.nome!r} do tipo {tipo!r}."
         ),
     )
 
-    # NA MESMA TRANSACAO. Se esta insercao falhar, a excecao sobe e o commit
-    # nao acontece — a instituicao tambem nao entra. E o que evita o estado
-    # meio-feito que duas requisicoes produziriam.
-    if entrada.representante is not None:
-        # PELO `_gravar` TAMBEM. A atomicidade ja vem da transacao: se esta
-        # escrita falha, a instituicao tambem nao entra. O que `_gravar`
-        # acrescenta e a MENSAGEM — sem ele, a duplicata sai como 500, que nao
-        # diz o que aconteceu nem o que fazer.
-        _gravar(
-            sessao,
-            Interlocutor(
-                nome=entrada.representante.nome.strip(),
-                nome_normalizado=_normalizar(entrada.representante.nome),
-                instituicao_id=registro.id,
-                cargo=entrada.representante.cargo,
-                email=entrada.representante.email,
-            ),
-            novo=True,
-            ao_colidir=(
-                f"{entrada.representante.nome!r} ja esta cadastrada nesta "
-                "instituicao."
-            ),
-        )
-
     return registro
+
+
+def _tipo_efetivo(sessao: Sessao, entrada: InstituicaoEntrada, *, atual: str | None) -> str:
+    """O tipo que vai ficar gravado: o informado, ou o que a categoria implica.
+
+    A ORDEM E ESTA: quem manda `tipo` esta dizendo o que quer, e a categoria
+    nao passa por cima — e o que permite corrigir, na edicao, um banco credor
+    que a taxonomia nao distingue de um investidor. Sem `tipo`, a categoria
+    decide; sem os dois, na edicao o tipo gravado fica, e na criacao nao ha de
+    onde tirar um — recusar aqui e melhor do que gravar uma instituicao que
+    nunca aparece em formulario nenhum.
+    """
+    if entrada.tipo is not None:
+        if entrada.tipo not in TIPOS_DE_INSTITUICAO:
+            raise RegraViolada(
+                f"Tipo invalido: {entrada.tipo!r}. "
+                f"Use {', '.join(sorted(TIPOS_DE_INSTITUICAO))}."
+            )
+        return entrada.tipo
+    if entrada.categoria_publico_id is not None:
+        # `_conferir_categoria_publico` ja garantiu que ela existe e esta ativa.
+        categoria = sessao.get(CategoriaPublico, entrada.categoria_publico_id)
+        tipo = TIPO_DA_CATEGORIA_DE_PUBLICO.get(categoria.codigo) if categoria else None
+        if tipo is not None:
+            return tipo
+    if atual is not None:
+        return atual
+    raise RegraViolada(
+        "Informe a categoria de publico: e dela que sai o tipo da instituicao, "
+        "e sem tipo ela nao apareceria em formulario nenhum."
+    )
 
 
 def _conferir_tier(sessao: Sessao, tier: int | None) -> None:
@@ -400,21 +399,13 @@ def editar_instituicao(
     registro = sessao.get(Instituicao, id)
     if registro is None:
         raise NaoEncontrado("Instituicao nao encontrada.")
-    if entrada.tipo not in TIPOS_DE_INSTITUICAO:
-        raise RegraViolada(
-            f"Tipo invalido: {entrada.tipo!r}. Use {', '.join(sorted(TIPOS_DE_INSTITUICAO))}."
-        )
-    # `representante` E IGNORADO NA EDICAO, de proposito: editar a instituicao
-    # nao e o lugar de acrescentar gente — para isso existe
-    # `POST /api/interlocutores`, que diz o que faz. Aceitar aqui criaria uma
-    # pessoa nova a cada salvamento de nome.
     _conferir_tier(sessao, entrada.tier)
     _conferir_categoria_publico(
         sessao, entrada.categoria_publico_id, entrada.subcategoria_publico_id
     )
     registro.nome = entrada.nome.strip()
     registro.nome_normalizado = _normalizar(entrada.nome)
-    registro.tipo = entrada.tipo
+    registro.tipo = _tipo_efetivo(sessao, entrada, atual=registro.tipo)
     registro.nome_completo = entrada.nome_completo
     registro.tier = entrada.tier
     registro.categoria_publico_id = entrada.categoria_publico_id
@@ -427,10 +418,72 @@ def editar_instituicao(
         registro,
         ao_colidir=(
             f"Ja existe outra instituicao chamada {entrada.nome!r} do tipo "
-            f"{entrada.tipo!r}."
+            f"{registro.tipo!r}."
         ),
     )
     return registro
+
+
+@rotas.delete("/instituicoes/{id}", status_code=status.HTTP_204_NO_CONTENT)
+def remover_instituicao(
+    sessao: Sessao, usuario: UsuarioQueAdministraCadastros, id: UUID
+) -> None:
+    """Apaga a instituicao que entrou por engano. Recusa a que ja tem agenda.
+
+    A MESMA REGRA DE `remover_interlocutor`, um nivel acima: uma instituicao
+    cadastrada errada e lixo, e apagar e o certo; uma que ja esteve numa
+    reuniao e um FATO, e o registro daquela reuniao ficaria sem a outra parte.
+    Para essa existe `ativo = false` (Desativar, na mesma linha da tela): sai
+    de quem oferece escolha e fica onde e historico.
+
+    AS PESSOAS DELA SAEM JUNTO — quem foi cadastrado "pela ANA" nao tem para
+    quem falar se a ANA some. Mas so se nenhuma delas esteve numa agenda: a
+    presenca de uma pessoa numa reuniao e historico tanto quanto a da
+    instituicao, e uma pessoa da ANA pode ter participado de uma agenda
+    registrada em nome de outra instituicao.
+
+    O banco recusaria de qualquer jeito, pela chave estrangeira — com uma
+    mensagem de constraint que nao diz o que fazer. Aqui a recusa conta as
+    agendas e aponta o gesto certo.
+    """
+    from app.banco.tabelas_interacoes import InteracaoInterlocutor, InteracaoRegistro
+    from app.banco.tabelas_stakeholders import InterlocutorTema
+
+    registro = sessao.get(Instituicao, id)
+    if registro is None:
+        raise NaoEncontrado("Instituicao nao encontrada.")
+
+    pessoas = select(Interlocutor.id).where(Interlocutor.instituicao_id == id)
+    # As agendas da instituicao, mais as agendas de qualquer pessoa dela — pelas
+    # duas formas de estar numa agenda (ver `remover_interlocutor`). `union`
+    # para a mesma agenda, alcancada por mais de um caminho, contar uma vez.
+    agendas = (
+        select(InteracaoRegistro.id)
+        .where(InteracaoRegistro.instituicao_id == id)
+        .union(
+            select(InteracaoRegistro.id).where(
+                InteracaoRegistro.interlocutor_id.in_(pessoas)
+            ),
+            select(InteracaoInterlocutor.interacao_id).where(
+                InteracaoInterlocutor.interlocutor_id.in_(pessoas)
+            ),
+        )
+    )
+    em_agendas = sessao.scalar(select(func.count()).select_from(agendas.subquery())) or 0
+    if em_agendas:
+        raise RegraViolada(
+            f"{registro.nome} aparece em {em_agendas} "
+            f"{'agenda' if em_agendas == 1 else 'agendas'} e nao pode ser "
+            "apagada: o registro delas ficaria sem a outra parte. Use "
+            "Desativar — ela sai das listas e o historico fica."
+        )
+
+    sessao.execute(
+        delete(InterlocutorTema).where(InterlocutorTema.interlocutor_id.in_(pessoas))
+    )
+    sessao.execute(delete(Interlocutor).where(Interlocutor.instituicao_id == id))
+    sessao.delete(registro)
+    sessao.flush()
 
 
 @rotas.post(
