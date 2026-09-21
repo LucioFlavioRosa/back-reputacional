@@ -34,6 +34,7 @@ from app.banco.repositorio_interacoes import (
 from app.banco.tabelas_catalogo import Tema
 from app.banco.tabelas_stakeholders import (
     Instituicao,
+    Interlocutor,
     PessoaAegea,
 )
 from app.dominio.frentes import Frente
@@ -177,6 +178,44 @@ def test_remover_tema_funciona_com_o_papel_restrito(sessao_restrita, semente):
         {"id": criada.id},
     ).scalars().all()
     assert restantes == [temas[0].id]
+
+
+def test_apagar_pessoa_funciona_com_o_papel_restrito(sessao_restrita, semente):
+    """`DELETE /api/interlocutores/{id}` existia sem `grant delete` (0042).
+
+    Passava em desenvolvimento, como superusuario; em producao, "Remover"
+    devolvia permission denied na hora de confirmar. Aqui a conta e a
+    restrita, e o `DELETE` tem de sair.
+    """
+    instituicao = sessao_restrita.scalars(select(Instituicao).limit(1)).first()
+    pessoa = Interlocutor(
+        nome="Entrou por engano",
+        nome_normalizado="entrou por engano",
+        instituicao_id=instituicao.id,
+    )
+    sessao_restrita.add(pessoa)
+    sessao_restrita.flush()
+
+    sessao_restrita.delete(pessoa)
+    sessao_restrita.flush()
+
+    assert sessao_restrita.get(Interlocutor, pessoa.id) is None
+
+
+def test_apagar_instituicao_funciona_com_o_papel_restrito(sessao_restrita, semente):
+    """O mesmo para `DELETE /api/instituicoes/{id}`, que nasce com a 0042."""
+    registro = Instituicao(
+        nome="Orgao Fantasma",
+        nome_normalizado="orgao fantasma",
+        tipo="orgao",
+    )
+    sessao_restrita.add(registro)
+    sessao_restrita.flush()
+
+    sessao_restrita.delete(registro)
+    sessao_restrita.flush()
+
+    assert sessao_restrita.get(Instituicao, registro.id) is None
 
 
 def test_remover_porta_voz_funciona_com_o_papel_restrito(sessao_restrita, semente):
