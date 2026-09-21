@@ -208,6 +208,26 @@ TIPO_DA_CATEGORIA_DE_PUBLICO: dict[str, str] = {
     "parceiros_cadeia_valor": "entidade",
 }
 
+#: O FORMATO DE INTERAÇÃO QUE UMA FRENTE IMPLICA, quando ninguém disse qual
+#: foi. Formato responde "que tipo de encontro foi" e frente "quem é a
+#: contraparte" — são ortogonais, e quem cadastra escolhe o formato. Mas o
+#: acervo importado nasceu sem formato, e "Tipo de Interação" (filtro e
+#: gráfico) ficava vazio para ele. Isto é o palpite mais provável por frente,
+#: gravado UMA vez onde falta (`0044`, `derivados.py`) e corrigível pela
+#: edição: uma demanda de imprensa foi Mídia; um evento, Evento; investidor e
+#: credor, Agenda de mercado; governo e legislativo, Agenda pública; o resto,
+#: Reunião. Chave: `Frente`; valor: `formato_interacao.codigo`.
+FORMATO_PADRAO_DA_FRENTE: dict[Frente, str] = {
+    Frente.IMPRENSA: "midia",
+    Frente.EVENTOS: "evento",
+    Frente.INVESTIDORES: "agenda_de_mercado",
+    Frente.BANCOS_CREDORES: "agenda_de_mercado",
+    Frente.GOVERNO: "agenda_publica",
+    Frente.LEGISLATIVO: "agenda_publica",
+    Frente.PARCEIROS: "reuniao",
+    Frente.INTERNA: "reuniao",
+}
+
 #: O inverso do mapa acima — a frente que o TIPO da instituição já basta para
 #: decidir sozinho, sem perguntar mais nada. "entidade" fica de fora de
 #: propósito: é o único tipo que duas frentes conversam (Parceiros e
