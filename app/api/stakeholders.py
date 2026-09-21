@@ -419,10 +419,8 @@ def remover_instituicao(
     A MESMA REGRA DE `remover_interlocutor`, um nivel acima: uma instituicao
     cadastrada errada e lixo, e apagar e o certo; uma que ja esteve numa
     reuniao e um FATO, e o registro daquela reuniao ficaria sem a outra parte.
-    O banco guarda `ativo = false` para tira-la das listas sem perder o
-    historico, mas a tela de instituicoes ainda nao oferece esse gesto — por
-    isso a mensagem manda corrigir pela edicao, e nao aponta um botao que
-    nao existe.
+    Para essa existe `ativo = false` (Desativar, na mesma linha da tela): sai
+    de quem oferece escolha e fica onde e historico.
 
     AS PESSOAS DELA SAEM JUNTO — quem foi cadastrado "pela ANA" nao tem para
     quem falar se a ANA some. Mas so se nenhuma delas esteve numa agenda: a
@@ -462,8 +460,8 @@ def remover_instituicao(
         raise RegraViolada(
             f"{registro.nome} aparece em {em_agendas} "
             f"{'agenda' if em_agendas == 1 else 'agendas'} e nao pode ser "
-            "apagada: o registro delas ficaria sem a outra parte. Corrija o "
-            "cadastro pela edicao; o historico precisa dela."
+            "apagada: o registro delas ficaria sem a outra parte. Use "
+            "Desativar — ela sai das listas e o historico fica."
         )
 
     sessao.execute(

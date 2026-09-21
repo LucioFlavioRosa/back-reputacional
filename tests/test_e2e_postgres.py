@@ -1584,7 +1584,7 @@ def test_apagar_instituicao_que_entrou_por_engano_leva_as_pessoas_junto(
 
 def test_nao_apaga_instituicao_que_ja_esteve_numa_agenda(cliente_admin, semente):
     """O registro da agenda ficaria sem a outra parte. A recusa conta as
-    agendas e diz o que fazer."""
+    agendas e aponta Desativar."""
     instituicao = cliente_admin.post(
         "/api/instituicoes", json={"nome": "Orgao Com Agenda", "tipo": "orgao"}
     ).json()
@@ -1598,8 +1598,8 @@ def test_nao_apaga_instituicao_que_ja_esteve_numa_agenda(cliente_admin, semente)
     assert resposta.status_code == 422
     detalhe = resposta.json()["detalhe"]
     assert "1 agenda" in detalhe
-    #: E diz o que fazer — sem apontar um botao que a tela nao tem.
-    assert "edicao" in detalhe
+    #: E diz o que fazer, e nao so o que nao da.
+    assert "Desativar" in detalhe
 
 
 def test_nao_apaga_instituicao_cuja_pessoa_esteve_numa_agenda_de_outra(
@@ -1623,6 +1623,32 @@ def test_nao_apaga_instituicao_cuja_pessoa_esteve_numa_agenda_de_outra(
 
     assert resposta.status_code == 422
     assert "1 agenda" in resposta.json()["detalhe"]
+
+
+def test_desativar_instituicao_a_tira_da_listagem_padrao_mas_nao_da_administracao(
+    cliente_admin, semente
+):
+    """Desativar e o caminho para quem tem historico: sai de quem oferece
+    escolha, fica onde e administracao. O front carrega o catalogo com
+    `incluir_inativos=1` e filtra por `ativo` onde oferece escolha — este
+    teste e o que segura os dois lados desse contrato.
+    """
+    criada = cliente_admin.post(
+        "/api/instituicoes", json={"nome": "Orgao Encerrado", "tipo": "orgao"}
+    ).json()
+    resposta = cliente_admin.put(
+        f"/api/instituicoes/{criada['id']}",
+        json={"nome": "Orgao Encerrado", "tipo": "orgao", "ativo": False},
+    )
+    assert resposta.status_code == 200, resposta.text
+    assert resposta.json()["ativo"] is False
+
+    padrao = {i["id"] for i in cliente_admin.get("/api/instituicoes").json()}
+    assert criada["id"] not in padrao
+
+    com_inativas = cliente_admin.get("/api/instituicoes?incluir_inativos=1").json()
+    achada = next(i for i in com_inativas if i["id"] == criada["id"])
+    assert achada["ativo"] is False
 
 
 def test_apagar_instituicao_inexistente_e_404(cliente_admin, semente):
