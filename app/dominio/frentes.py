@@ -183,6 +183,15 @@ TIPO_DE_INSTITUICAO: dict[Frente, str] = {
 #: que alguem o escreva num comentario.
 TIPOS_DE_INSTITUICAO: frozenset[str] = frozenset(TIPO_DE_INSTITUICAO.values())
 
+#: O inverso do mapa acima — a frente que o TIPO da instituição já basta para
+#: decidir sozinho, sem perguntar mais nada. "entidade" fica de fora de
+#: propósito: é o único tipo que duas frentes conversam (Parceiros e
+#: Eventos), então não tem frente única — quem decide entre as duas é o
+#: Formato da interação, em `derivar_frente`.
+FRENTE_UNICA_DO_TIPO: dict[str, Frente] = {
+    tipo: frente for frente, tipo in TIPO_DE_INSTITUICAO.items() if tipo != "entidade"
+}
+
 #: A frente determina qual extensão é aceita. Uma interação de Governo com
 #: dados de imprensa é um erro de programação, não um caso de uso.
 EXTENSAO_POR_FRENTE: dict[Frente, type[Extensao]] = {
