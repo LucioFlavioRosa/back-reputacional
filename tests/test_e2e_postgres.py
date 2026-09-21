@@ -1397,6 +1397,17 @@ def test_instituicao_nao_aceita_mais_representante_no_corpo(cliente_admin, semen
     ]
     assert achadas == [], "a instituicao entrou apesar do corpo recusado"
 
+    # No PUT tambem: o mesmo modelo, a mesma recusa — antes o campo era
+    # aceito e ignorado na edicao, o que escondia cliente desatualizado.
+    criada = cliente_admin.post(
+        "/api/instituicoes", json={"nome": "Orgao Q", "tipo": "orgao"}
+    ).json()
+    resposta = cliente_admin.put(
+        f"/api/instituicoes/{criada['id']}",
+        json={"nome": "Orgao Q", "tipo": "orgao", "representante": {"nome": "X"}},
+    )
+    assert resposta.status_code == 422, resposta.text
+
 
 # -- apagar e desligar sao coisas diferentes -----------------------------------
 
@@ -1521,6 +1532,26 @@ def test_sem_tipo_a_categoria_de_publico_decide(cliente_admin, semente):
     )
     assert resposta.status_code == 201, resposta.text
     assert resposta.json()["tipo"] == "veiculo"
+
+
+def test_categoria_inativa_nao_serve_para_derivar_o_tipo(cliente_admin, semente, sessao):
+    """`_conferir_categoria_publico` recusa a categoria desativada antes de
+    `_tipo_efetivo` olhar para ela — a tela nao a oferece, e a API responde
+    o mesmo que a tela."""
+    from app.banco.tabelas_catalogo import CategoriaPublico
+
+    categoria = sessao.scalar(
+        select(CategoriaPublico).where(CategoriaPublico.codigo == "poder_judiciario")
+    )
+    categoria.ativo = False
+    sessao.flush()
+
+    resposta = cliente_admin.post(
+        "/api/instituicoes",
+        json={"nome": "Tribunal Novo", "categoria_publico_id": categoria.id},
+    )
+    assert resposta.status_code == 422, resposta.text
+    assert "categoria" in resposta.json()["detalhe"].lower()
 
 
 def test_tipo_informado_vale_mais_que_a_categoria(cliente_admin, semente):
@@ -1649,6 +1680,16 @@ def test_desativar_instituicao_a_tira_da_listagem_padrao_mas_nao_da_administraca
     com_inativas = cliente_admin.get("/api/instituicoes?incluir_inativos=1").json()
     achada = next(i for i in com_inativas if i["id"] == criada["id"])
     assert achada["ativo"] is False
+
+    # Editar uma desativada mandando `ativo: false` a mantem desativada — e
+    # um PUT SEM `ativo` a reativaria, porque o padrao do modelo e `true`:
+    # e por isso que a tela sempre manda o campo.
+    resposta = cliente_admin.put(
+        f"/api/instituicoes/{criada['id']}",
+        json={"nome": "Orgao Encerrado (renomeado)", "tipo": "orgao", "ativo": False},
+    )
+    assert resposta.status_code == 200, resposta.text
+    assert resposta.json()["ativo"] is False
 
 
 def test_desativar_instituicao_tira_as_pessoas_dela_da_listagem_padrao(
