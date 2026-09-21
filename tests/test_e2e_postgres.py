@@ -1373,108 +1373,29 @@ def test_a_sessao_sobrevive_a_duplicata_recusada(sessao, semente):
     assert depois.id is not None
 
 
-def test_cadastrar_instituicao_com_o_primeiro_representante(cliente_admin, semente):
-    """As duas coisas numa requisicao so.
+def test_instituicao_nao_aceita_mais_representante_no_corpo(cliente_admin, semente):
+    """O cadastro conjunto (instituicao + primeira pessoa) saiu da API.
 
-    Uma instituicao sem ninguem nao serve para nada: o formulario de agenda so
-    oferece pessoas depois que a instituicao e escolhida, e a lista sairia
-    vazia. Pedir dois gestos para uma decisao so e o caminho para metade das
-    instituicoes ficar sem representante.
+    A tela deixou de oferecer o modo "Instituicao e Contatos": quem representa
+    a instituicao se cadastra em Contatos, depois que ela existe. Sem cliente
+    para o campo, ele saiu do contrato — e `extra="forbid"` e o que garante
+    que um cliente antigo descubra isso com 422, e nao com uma pessoa
+    silenciosamente ignorada.
     """
     resposta = cliente_admin.post(
         "/api/instituicoes",
         json={
             "nome": "ABCON",
-            "nome_completo": "Associacao Brasileira das Concessionarias Privadas",
             "tipo": "entidade",
-            "representante": {
-                "nome": "Percy Soares",
-                "email": "percy@abcon.example",
-                "cargo": "Diretor executivo",
-            },
+            "representante": {"nome": "Percy Soares"},
         },
     )
 
-    assert resposta.status_code == 201, resposta.text
-    criada = resposta.json()
-    assert criada["nome_completo"].startswith("Associacao")
-
-    pessoas = [
-        p
-        for p in cliente_admin.get("/api/interlocutores").json()
-        if p["instituicao_id"] == criada["id"]
-    ]
-    assert len(pessoas) == 1
-    assert pessoas[0]["email"] == "percy@abcon.example"
-    assert pessoas[0]["cargo"] == "Diretor executivo"
-
-
-def test_a_instituicao_nao_entra_sozinha_se_o_representante_falhar(
-    cliente_admin, semente
-):
-    """As duas escritas caem ou passam JUNTAS.
-
-    Em duas requisicoes, uma falha na segunda deixaria a instituicao criada e
-    sem representante — e a tela teria de explicar um estado meio-feito que
-    ninguem pediu. Aqui o `flush` do representante estoura antes do commit, e
-    nada entra.
-    """
-    resposta = cliente_admin.post(
-        "/api/instituicoes",
-        json={
-            "nome": "Instituicao Fantasma",
-            "tipo": "orgao",
-            # `nome` vazio: `min_length=1` recusa antes de qualquer escrita.
-            "representante": {"nome": ""},
-        },
-    )
-
-    assert resposta.status_code == 422
+    assert resposta.status_code == 422, resposta.text
     achadas = [
-        i
-        for i in cliente_admin.get("/api/instituicoes").json()
-        if i["nome"] == "Instituicao Fantasma"
+        i for i in cliente_admin.get("/api/instituicoes").json() if i["nome"] == "ABCON"
     ]
-    assert achadas == [], "a instituicao entrou sem o representante"
-
-
-def test_o_representante_e_opcional(cliente_admin, semente):
-    """A prova negativa: exigir representante travaria o cadastro.
-
-    Nem toda instituicao tem contato conhecido no dia em que entra na base.
-    """
-    resposta = cliente_admin.post(
-        "/api/instituicoes", json={"nome": "Orgao Sem Contato", "tipo": "orgao"}
-    )
-
-    assert resposta.status_code == 201, resposta.text
-
-
-def test_editar_instituicao_nao_cria_pessoa(cliente_admin, semente):
-    """`representante` e ignorado na edicao, e isso e deliberado.
-
-    Aceita-lo criaria uma pessoa nova a cada salvamento de nome — e o cadastro
-    encheria de duplicatas sem ninguem entender de onde vieram.
-    """
-    criada = cliente_admin.post(
-        "/api/instituicoes", json={"nome": "Orgao Z", "tipo": "orgao"}
-    ).json()
-
-    cliente_admin.put(
-        f"/api/instituicoes/{criada['id']}",
-        json={
-            "nome": "Orgao Z",
-            "tipo": "orgao",
-            "representante": {"nome": "Nao deve ser criado"},
-        },
-    )
-
-    pessoas = [
-        p
-        for p in cliente_admin.get("/api/interlocutores").json()
-        if p["instituicao_id"] == criada["id"]
-    ]
-    assert pessoas == []
+    assert achadas == [], "a instituicao entrou apesar do corpo recusado"
 
 
 # -- apagar e desligar sao coisas diferentes -----------------------------------

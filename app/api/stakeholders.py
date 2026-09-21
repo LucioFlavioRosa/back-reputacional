@@ -157,27 +157,6 @@ def listar_pessoas_aegea(
 # muda o que aparece em toda agenda que aponta para ela.
 
 
-class RepresentanteInicial(BaseModel):
-    """A primeira pessoa da instituicao, cadastrada JUNTO com ela.
-
-    Cadastrar a instituicao e depois abrir a edicao para acrescentar quem fala
-    por ela sao dois gestos para uma decisao so — e uma instituicao sem
-    ninguem nao serve para nada: o formulario de agenda so oferece pessoas
-    depois que a instituicao e escolhida, e a lista sairia vazia.
-
-    Vem AQUI DENTRO, e nao numa segunda requisicao, porque as duas escritas
-    precisam cair ou passar juntas. Separadas, uma falha na segunda deixaria a
-    instituicao criada e sem representante, e a tela teria de explicar um
-    estado meio-feito que ninguem pediu.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    nome: str = Field(min_length=1)
-    email: str | None = None
-    cargo: str | None = None
-
-
 class InstituicaoEntrada(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -205,9 +184,6 @@ class InstituicaoEntrada(BaseModel):
     #: tem `padrao_de_quebra != sem_quebra` — ver `_conferir_categoria_publico`.
     subcategoria_publico_id: int | None = None
     ativo: bool = True
-    #: Opcional: da para cadastrar a instituicao e preencher quem representa
-    #: depois. So nao da para faze-lo em DUAS transacoes.
-    representante: RepresentanteInicial | None = None
 
 
 class InterlocutorEntrada(BaseModel):
@@ -300,30 +276,6 @@ def criar_instituicao(
         ),
     )
 
-    # NA MESMA TRANSACAO. Se esta insercao falhar, a excecao sobe e o commit
-    # nao acontece — a instituicao tambem nao entra. E o que evita o estado
-    # meio-feito que duas requisicoes produziriam.
-    if entrada.representante is not None:
-        # PELO `_gravar` TAMBEM. A atomicidade ja vem da transacao: se esta
-        # escrita falha, a instituicao tambem nao entra. O que `_gravar`
-        # acrescenta e a MENSAGEM — sem ele, a duplicata sai como 500, que nao
-        # diz o que aconteceu nem o que fazer.
-        _gravar(
-            sessao,
-            Interlocutor(
-                nome=entrada.representante.nome.strip(),
-                nome_normalizado=_normalizar(entrada.representante.nome),
-                instituicao_id=registro.id,
-                cargo=entrada.representante.cargo,
-                email=entrada.representante.email,
-            ),
-            novo=True,
-            ao_colidir=(
-                f"{entrada.representante.nome!r} ja esta cadastrada nesta "
-                "instituicao."
-            ),
-        )
-
     return registro
 
 
@@ -404,10 +356,6 @@ def editar_instituicao(
         raise RegraViolada(
             f"Tipo invalido: {entrada.tipo!r}. Use {', '.join(sorted(TIPOS_DE_INSTITUICAO))}."
         )
-    # `representante` E IGNORADO NA EDICAO, de proposito: editar a instituicao
-    # nao e o lugar de acrescentar gente — para isso existe
-    # `POST /api/interlocutores`, que diz o que faz. Aceitar aqui criaria uma
-    # pessoa nova a cada salvamento de nome.
     _conferir_tier(sessao, entrada.tier)
     _conferir_categoria_publico(
         sessao, entrada.categoria_publico_id, entrada.subcategoria_publico_id
