@@ -166,3 +166,37 @@ def test_as_ufs_e_os_grupos_saem_na_mesma_resposta(sessao):
     assert ufs[-1]["nome"] == "Internacional"
     # E as 27 UFs antes deles, em ordem alfabética.
     assert [u["codigo"] for u in ufs[:3]] == ["AC", "AL", "AM"]
+
+
+def test_as_frentes_do_python_sao_as_da_tabela(sessao):
+    """`Frente` é um StrEnum porque o domínio decide por ela (o tipo da
+    instituição → frente, a extensão de cada uma); a tabela `frente` é o que
+    o front e os filtros leem. As duas têm de ser o MESMO conjunto — e todo
+    mapa do domínio indexado por frente tem de cobrir todas."""
+    from app.dominio.frentes import (
+        EXTENSAO_POR_FRENTE,
+        FORMATO_PADRAO_DA_FRENTE,
+        TIPO_DE_INSTITUICAO,
+        Frente,
+    )
+
+    na_tabela = set(sessao.execute(text("select codigo from frente")).scalars())
+    no_codigo = {f.value for f in Frente}
+    assert no_codigo == na_tabela, f"código {no_codigo ^ na_tabela} só de um lado"
+
+    for nome, mapa in (
+        ("TIPO_DE_INSTITUICAO", TIPO_DE_INSTITUICAO),
+        ("EXTENSAO_POR_FRENTE", EXTENSAO_POR_FRENTE),
+        ("FORMATO_PADRAO_DA_FRENTE", FORMATO_PADRAO_DA_FRENTE),
+    ):
+        assert set(mapa) == set(Frente), f"{nome} não cobre toda frente"
+
+
+def test_toda_area_do_seed_existe_no_dicionario(sessao):
+    """`AREA_POR_FRENTE` (semeador) liga frente a área PELO NOME; um nome que
+    o dicionário não tenha faria o seed quebrar em `KeyError` — ou, pior,
+    ligar a agenda a área nenhuma."""
+    from app.banco.semear_enredos import AREA_POR_FRENTE
+
+    nomes = set(sessao.execute(text("select nome from area_pessoa")).scalars())
+    assert set(AREA_POR_FRENTE.values()) <= nomes
