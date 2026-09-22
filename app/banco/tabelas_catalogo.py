@@ -115,6 +115,20 @@ class Stakeholder(_Dicionario, Tabela):
     __tablename__ = "stakeholder"
 
 
+class CanalConsulta(_Dicionario, Tabela):
+    """Por onde uma consulta recebida chegou — e-mail, formulário, rating."""
+
+    __tablename__ = "canal_consulta"
+
+
+class Apuracao(_Dicionario, Tabela):
+    """Em que pé está a apuração de uma alegação. Tem cor: a tela pinta a
+    alegação por ela, como faz com clima."""
+
+    __tablename__ = "apuracao"
+    cor_hex: Mapped[str] = mapped_column(String(7))
+
+
 class UnidadeNegocio(Tabela):
     __tablename__ = "unidade_negocio"
 
@@ -206,4 +220,6 @@ DICIONARIOS: dict[str, type[Tabela]] = {
     "areas_pessoa": AreaPessoa,
     "categorias_publico": CategoriaPublico,
     "subcategorias_publico": SubcategoriaPublico,
+    "canais_consulta": CanalConsulta,
+    "apuracoes": Apuracao,
 }

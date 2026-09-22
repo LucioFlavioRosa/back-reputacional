@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 # -- as rotas ------------------------------------------------------------------
 from app.api import (
     acesso,
+    alegacoes,
     catalogo,
     dicionarios,
     exportacoes,
@@ -136,6 +137,7 @@ def criar_app() -> FastAPI:
     app.include_router(materiais.rotas)
     app.include_router(exportacoes.rotas)
     app.include_router(referencias.rotas)
+    app.include_router(alegacoes.rotas)
     app.include_router(stakeholders.rotas)
     app.include_router(catalogo.rotas)
     app.include_router(dicionarios.rotas)

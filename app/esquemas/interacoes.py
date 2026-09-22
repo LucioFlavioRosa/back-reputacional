@@ -24,6 +24,7 @@ from app.dominio.frentes import (
     extensao_esperada,
 )
 from app.dominio.interacao import (
+    Consulta,
     Interacao,
     MaterialDaAgenda,
     ParticipacaoAegea,
@@ -195,6 +196,29 @@ class ExtensaoEntrada(BaseModel):
         raise ValueError(f"Frente sem extensão definida: {frente}")
 
 
+class ConsultaEntrada(BaseModel):
+    """O bloco de "Consulta recebida" no corpo do POST/PUT."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    canal_id: int | None = None
+    remetente: str | None = None
+    teor: str | None = None
+    motivo: str | None = None
+    prazo_resposta: date | None = None
+    respondida_em: date | None = None
+
+    def para_dominio(self) -> Consulta:
+        return Consulta(
+            canal_id=self.canal_id,
+            remetente=(self.remetente or "").strip() or None,
+            teor=(self.teor or "").strip() or None,
+            motivo=(self.motivo or "").strip() or None,
+            prazo_resposta=self.prazo_resposta,
+            respondida_em=self.respondida_em,
+        )
+
+
 class InteracaoEntrada(BaseModel):
     """Corpo do POST."""
 
@@ -262,6 +286,10 @@ class InteracaoEntrada(BaseModel):
     #: De quais áreas internas da Aegea trata. Mesmo contrato de `temas`.
     areas: list[int] = Field(default_factory=list)
     participacoes: list[ParticipacaoEntrada] = Field(default_factory=list)
+    #: Só faz sentido no tipo "Consulta recebida"; nulo no resto.
+    consulta: ConsultaEntrada | None = None
+    #: Ids de `alegacao` — o que as perguntas desta consulta deram como fato.
+    alegacoes: list[UUID] = Field(default_factory=list)
 
     def para_dominio(self, *, frente: Frente) -> Interacao:
         """`frente` é OBRIGATÓRIA aqui, mesmo `self.frente` sendo opcional no
@@ -295,6 +323,8 @@ class InteracaoEntrada(BaseModel):
             extensao=self.extensao.para_dominio(frente) if self.extensao else None,
             temas=tuple(self.temas),
             areas=tuple(self.areas),
+            consulta=self.consulta.para_dominio() if self.consulta else None,
+            alegacoes=tuple(self.alegacoes),
             participacoes=tuple(
                 ParticipacaoAegea(
                     pessoa_aegea_id=p.pessoa_aegea_id,
@@ -370,6 +400,11 @@ class InteracaoEdicao(BaseModel):
     areas: list[int] | None = None
     participacoes: list[ParticipacaoEntrada] | None = None
     extensao: ExtensaoEntrada | None = None
+    #: `null` explícito LARGA o bloco — é o que uma interação que deixou de
+    #: ser consulta precisa fazer, e o que distingue "não mexi nisto" (campo
+    #: ausente) de "não é mais consulta".
+    consulta: ConsultaEntrada | None = None
+    alegacoes: list[UUID] | None = None
 
     # -- o ciclo da agenda ----------------------------------------------------
     #
@@ -399,6 +434,12 @@ class InteracaoEdicao(BaseModel):
                     alteracoes["extensao"] = (
                         self.extensao.para_dominio(frente) if self.extensao else None
                     )
+                case "consulta":
+                    alteracoes["consulta"] = (
+                        self.consulta.para_dominio() if self.consulta else None
+                    )
+                case "alegacoes":
+                    alteracoes["alegacoes"] = tuple(valor or ())
                 case "temas":
                     alteracoes["temas"] = tuple(valor or ())
                 case "areas":
@@ -503,6 +544,8 @@ class InteracaoSaida(BaseModel):
     temas: list[int]
     areas: list[int]
     participacoes: list[ParticipacaoSaida]
+    consulta: ConsultaEntrada | None = None
+    alegacoes: list[UUID] = Field(default_factory=list)
 
     # -- o ciclo da agenda ----------------------------------------------------
     expectativa: str | None = None
@@ -531,6 +574,25 @@ class InteracaoSaida(BaseModel):
     #: um terceiro não deveria levar embora — e a busca livre continua varrendo
     #: `relato`, então esconder o campo não esconde a existência do registro.
     CAMPOS_SENSIVEIS: ClassVar[tuple[str, ...]] = ("relato", "pendencias")
+
+    #: O mesmo, DENTRO do bloco da consulta recebida.
+    #:
+    #: `teor` é texto colado de um e-mail — carrega a pergunta e, com ela, o
+    #: dado pessoal de quem escreveu; `remetente` é o nome ou o endereço de
+    #: uma pessoa que nem precisa estar no cadastro. Os dois são exatamente o
+    #: que um terceiro não deveria levar embora, pela mesma razão de `relato`.
+    #:
+    #: Canal, prazo e data da resposta FICAM: são operacionais, dizem o que a
+    #: área deve fazer, e sem eles a fila de "prazo vencido" sumiria para quem
+    #: justamente precisa respondê-la.
+    CAMPOS_SENSIVEIS_DA_CONSULTA: ClassVar[tuple[str, ...]] = (
+        "remetente",
+        "teor",
+        #: `motivo` é a HIPÓTESE de quem recebeu sobre a intenção de quem
+        #: perguntou — "quer justificar revisão de spread". Escrita para uso
+        #: interno, e a última coisa que deveria sair da companhia.
+        "motivo",
+    )
 
     @classmethod
     def de_dominio(
@@ -568,6 +630,17 @@ class InteracaoSaida(BaseModel):
             registro_url=interacao.registro_url,
             modalidade=interacao.modalidade,
             local=interacao.local,
+            consulta=ConsultaEntrada(
+                canal_id=interacao.consulta.canal_id,
+                remetente=interacao.consulta.remetente,
+                teor=interacao.consulta.teor,
+                motivo=interacao.consulta.motivo,
+                prazo_resposta=interacao.consulta.prazo_resposta,
+                respondida_em=interacao.consulta.respondida_em,
+            )
+            if interacao.consulta
+            else None,
+            alegacoes=list(interacao.alegacoes),
             expectativa=interacao.expectativa,
             clima_esperado=interacao.clima_esperado,
             declinado_por=interacao.declinado_por,
@@ -644,6 +717,20 @@ class InteracaoSaida(BaseModel):
             saida = saida.model_copy(
                 update={campo: None for campo in cls.CAMPOS_SENSIVEIS}
             )
+            if saida.consulta is not None:
+                # O bloco INTEIRO não vai a `None`: canal e prazos continuam
+                # valendo para quem opera. Só o que identifica a pessoa e o
+                # que ela escreveu é que some.
+                saida = saida.model_copy(
+                    update={
+                        "consulta": saida.consulta.model_copy(
+                            update={
+                                campo: None
+                                for campo in cls.CAMPOS_SENSIVEIS_DA_CONSULTA
+                            }
+                        )
+                    }
+                )
 
         return saida
 

@@ -33,6 +33,7 @@ from app.banco.tabelas_catalogo import (
     UnidadeNegocio,
 )
 from app.banco.tabelas_interacoes import (
+    InteracaoAlegacao,
     InteracaoArea,
     InteracaoInterlocutor,
     InteracaoPessoaAegea,
@@ -144,6 +145,22 @@ def _tratou_de_algum(nomes: Sequence[str]) -> ColumnElement[bool]:
             and_(
                 InteracaoTema.interacao_id == InteracaoRegistro.id,
                 InteracaoTema.tema_id.in_(select(Tema.id).where(Tema.nome.in_(nomes))),
+            )
+        )
+    )
+
+
+def _trouxe_a_alegacao(alegacao_id: UUID) -> ColumnElement[bool]:
+    """As consultas em que esta alegação apareceu.
+
+    `exists`, e não `join`: a interação entra uma vez, e não uma por vínculo —
+    o mesmo motivo de `_de_alguma_area`.
+    """
+    return exists(
+        select(InteracaoAlegacao.interacao_id).where(
+            and_(
+                InteracaoAlegacao.interacao_id == InteracaoRegistro.id,
+                InteracaoAlegacao.alegacao_id == alegacao_id,
             )
         )
     )
@@ -342,6 +359,8 @@ def condicoes(
         onde.append(_tratou_de_algum(recorte.tags))
     if recorte.areas:
         onde.append(_de_alguma_area(recorte.areas))
+    if recorte.alegacao:
+        onde.append(_trouxe_a_alegacao(recorte.alegacao))
     if recorte.formatos_interacao:
         onde.append(InteracaoRegistro.formato_interacao_id.in_(recorte.formatos_interacao))
     if recorte.categorias_publico:

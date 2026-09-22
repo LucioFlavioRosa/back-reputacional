@@ -18,7 +18,8 @@ tipos), registro
 
 **Tipo de interação**:
 Que espécie de encontro foi — Mídia, Agenda de mercado, Agenda pública,
-Manifestação formal, Evento, Visita, Reunião. Escolhido por quem registra.
+Manifestação formal, Evento, Visita, Reunião, Consulta recebida. Escolhido por
+quem registra.
 _Avoid_: formato (é outra coisa, ver abaixo), modalidade (essa é
 presencial/online/híbrida)
 
@@ -63,6 +64,32 @@ _Avoid_: status (só no nome interno)
 **Relevância**:
 O tier (1 a 4) da INSTITUIÇÃO, que a interação herda ao ser registrada.
 _Avoid_: tier (só no nome interno), prioridade (é campo do legislativo)
+
+**Consulta recebida**:
+Um questionário que chegou de fora — de um banco, de um investidor, de uma
+plataforma de rating — perguntando sobre assunto que a companhia não
+comunicou. É um tipo de interação como os outros: tem contraparte, data e
+tema, o questionário é material dela, e a frente sai do tipo da instituição.
+_Avoid_: e-mail (é o canal), sondagem, questionário (é o documento)
+
+**Alegação**:
+O que uma pergunta recebida dá como fato, em uma frase, na voz de quem alega —
+"o Banco X não renegociaria a dívida". Vive solta da consulta porque se
+repete: a mesma alegação chega de instituições diferentes, e é isso que se
+conta.
+_Avoid_: boato, rumor (afirmam má-fé que o registro não prova), fake news
+
+**Convergência**:
+Quantas INSTITUIÇÕES DISTINTAS trouxeram a mesma alegação, e em quanto tempo.
+É a leitura da aba: um banco perguntando é diligência; quatro perguntando o
+mesmo em duas semanas é um movimento. Convergência não é prova de combinação.
+_Avoid_: coordenação, conluio, campanha
+
+**Apuração**:
+O que a companhia verificou sobre uma alegação — Em apuração, Sem fundamento,
+Procede em parte, Procede. Uma alegação é apurada uma vez, e não uma vez por
+consulta.
+_Avoid_: status, desmentido
 
 ### Com quem se fala
 

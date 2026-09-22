@@ -16,7 +16,7 @@ from app.banco.filtros_sql import condicoes
 from app.dominio.erros import NaoAutorizado
 from app.dominio.frentes import Frente
 from app.dominio.identidade import Escopo, Papel, UsuarioAtual
-from app.dominio.interacao import Interacao
+from app.dominio.interacao import Consulta, Interacao
 from app.dominio.politica import (
     exigir_permissao_de_edicao,
     pode_editar,
@@ -209,6 +209,36 @@ def test_papel_sem_campos_sensiveis_recebe_nulo():
     assert reduzida.pendencias is None
     # O resto continua vindo: esconder campo não é esconder o registro.
     assert reduzida.pauta == interacao.pauta
+
+
+def test_a_consulta_recebida_perde_o_que_identifica_e_guarda_o_que_opera():
+    """`remetente` e `teor` carregam a pessoa que escreveu e o que ela
+    escreveu; `motivo` é a hipótese interna sobre a intenção dela. Canal e
+    prazos FICAM — sem eles, a fila de "prazo vencido" sumiria justamente
+    para quem precisa respondê-la.
+    """
+    interacao = nova(
+        id=uuid4(),
+        consulta=Consulta(
+            canal_id=1,
+            remetente="analista@banco.com",
+            teor="Como tratam a hipótese de não renegociação?",
+            motivo="Quer justificar revisão de spread.",
+            prazo_resposta=date(2026, 6, 30),
+        ),
+    )
+
+    completa = InteracaoSaida.de_dominio(interacao, ve_campos_sensiveis=True)
+    assert completa.consulta is not None
+    assert completa.consulta.remetente == "analista@banco.com"
+
+    reduzida = InteracaoSaida.de_dominio(interacao, ve_campos_sensiveis=False)
+    assert reduzida.consulta is not None, "o bloco inteiro não some"
+    assert reduzida.consulta.remetente is None
+    assert reduzida.consulta.teor is None
+    assert reduzida.consulta.motivo is None
+    assert reduzida.consulta.canal_id == 1
+    assert reduzida.consulta.prazo_resposta == date(2026, 6, 30)
 
 
 def test_limite_vem_antes_da_autorizacao():

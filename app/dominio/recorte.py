@@ -71,6 +71,9 @@ class Recorte:
     subtipo: str | None = None
     porta_voz: UUID | None = None
     pessoa: UUID | None = None
+    #: Uma ALEGAÇÃO — as consultas que a trouxeram. Clicar nela na aba de
+    #: Sinais filtra a tela inteira, e o servidor é quem aplica (ADR 0002).
+    alegacao: UUID | None = None
     tags: tuple[str, ...] = ()
     #: Áreas internas da Aegea envolvidas — ids de `area`, não nomes. Mesmo
     #: comportamento de `tags`: OR entre as escolhidas.
@@ -123,7 +126,8 @@ class Recorte:
             for valor in (
                 self.frente, self.unidade, self.uf, self.esfera, self.tier,
                 self.clima, self.clima_esperado, self.resultado, self.status, self.grupo_status,
-                self.entidade, self.subtipo, self.porta_voz, self.pessoa, self.busca,
+                self.entidade, self.subtipo, self.porta_voz, self.pessoa,
+                self.alegacao, self.busca,
             )
             if valor is not None
         )

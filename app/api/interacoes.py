@@ -34,6 +34,7 @@ from app.banco.repositorio_interacoes import (
 )
 from app.banco.sessao import SessaoDoPedido
 from app.casos_de_uso import consultar_interacoes, editar_interacao, registrar_interacao
+from app.casos_de_uso.consulta_recebida import validar_consulta
 from app.casos_de_uso.derivar_frente import derivar_frente
 from app.dominio.erros import RegraViolada
 from app.dominio.interacao import MOMENTOS_DE_MATERIAL
@@ -111,6 +112,10 @@ def obter_recorte(
     subtipo: Annotated[str | None, Query(description="tipo de investidor")] = None,
     porta_voz: Annotated[UUID | None, Query(alias="portaVoz")] = None,
     pessoa: Annotated[UUID | None, Query()] = None,
+    alegacao: Annotated[
+        UUID | None,
+        Query(description="id de uma alegação; traz as consultas que a trouxeram"),
+    ] = None,
     tags: Annotated[
         list[str] | None,
         Query(
@@ -161,6 +166,7 @@ def obter_recorte(
         subtipo=subtipo,
         porta_voz=porta_voz,
         pessoa=pessoa,
+        alegacao=alegacao,
         tags=tags,
         areas=areas,
         formatos_interacao=formatos_interacao,
@@ -218,8 +224,12 @@ def criar(
         instituicao_id=entrada.instituicao_id,
         formato_interacao_id=entrada.formato_interacao_id,
     )
+    interacao = entrada.para_dominio(frente=frente)
+    # O BLOCO DA CONSULTA SÓ VALE NO TIPO CERTO, e quem garante é o servidor:
+    # a tela já manda coerente, mas a API aceita um cliente direto.
+    validar_consulta(sessao, interacao)
     criada = registrar_interacao.registrar(
-        RepositorioSQL(sessao), interacao=entrada.para_dominio(frente=frente), usuario=usuario
+        RepositorioSQL(sessao), interacao=interacao, usuario=usuario
     )
     return InteracaoSaida.de_dominio(criada, ve_campos_sensiveis=usuario.ve_campos_sensiveis)
 
@@ -249,6 +259,11 @@ def editar(
     atualizada = editar_interacao.editar(
         repositorio, sessao, id=id, alteracoes=alteracoes, usuario=usuario
     )
+    # DEPOIS DE APLICAR, e não antes: o `PATCH` altera um campo de cada vez, e
+    # a invariante é sobre o ESTADO FINAL. Trocar só o tipo, sem tocar no
+    # bloco, é exatamente o caso que precisa ser recusado — e a recusa desfaz
+    # a transação inteira, como qualquer `RegraViolada`.
+    validar_consulta(sessao, atualizada)
 
     # O BYTE SO SOME DEPOIS DO COMMIT, e por isso vai como tarefa de fundo.
     #

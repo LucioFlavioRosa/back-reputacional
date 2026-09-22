@@ -116,6 +116,35 @@ class ArquivoDoMaterial:
 
 
 @dataclass(frozen=True, slots=True)
+class Consulta:
+    """O que uma CONSULTA RECEBIDA tem e uma reunião não.
+
+    Chega por e-mail um questionário de um banco, de um investidor ou de uma
+    plataforma de rating, perguntando sobre assunto que a companhia não
+    comunicou. O questionário em si é material da agenda e o contato que
+    assina é a outra parte, como em toda interação; aqui fica o resto.
+
+    ESTE OBJETO NÃO É UMA EXTENSÃO DE FRENTE. As extensões respondem "quem é a
+    contraparte" e o domínio recusa a combinação errada; esta responde "que
+    tipo de encontro foi", e por isso convive com a extensão — uma consulta de
+    banco tem frente `bancos_credores` e extensão `Investidores`.
+    """
+
+    canal_id: int | None = None
+    #: Quem assina, em texto, para o caso comum de não estar no cadastro.
+    remetente: str | None = None
+    #: As perguntas, coladas do e-mail — o que basta para reconhecê-las.
+    teor: str | None = None
+    #: POR QUE ACHAM QUE PERGUNTARAM — hipótese de quem recebeu, e não a
+    #: alegação: esta é o que a pergunta DIZ; aquele, a intenção que se supõe.
+    motivo: str | None = None
+    prazo_resposta: date | None = None
+    #: Nulo com `prazo_resposta` vencido é o que a aba cobra. Responder ANTES
+    #: do prazo é o caso bom, então não há invariante entre as duas datas.
+    respondida_em: date | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class MaterialDaAgenda:
     """Um documento que circula em torno da agenda.
 
@@ -222,6 +251,12 @@ class Interacao:
     #: diferente: o de onde, e não o sobre o quê.
     areas: tuple[int, ...] = ()
     participacoes: tuple[ParticipacaoAegea, ...] = ()
+    #: Só em interação do tipo "Consulta recebida" — ver `Consulta`.
+    consulta: Consulta | None = None
+    #: O QUE A PERGUNTA DEU COMO FATO. N:N porque a mesma alegação chega por
+    #: consultas de instituições diferentes, e é contá-las que responde "o
+    #: quanto isto está circulando".
+    alegacoes: tuple[UUID, ...] = ()
 
     # -- o ciclo da agenda ----------------------------------------------------
     #

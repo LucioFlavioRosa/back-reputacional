@@ -52,19 +52,26 @@ def semente(sessao):
     return {"instituicao": valor}
 
 
-def test_migration_criou_as_7_linhas_direto_no_banco(sessao):
-    """Confere a migration sem passar pela API — não depende de sessão/CSRF,
-    só do que `0038_formato_interacao.sql` de fato gravou."""
+def test_migration_criou_os_tipos_de_interacao_direto_no_banco(sessao):
+    """Confere as migrations sem passar pela API — não depende de sessão/CSRF,
+    só do que `0038_formato_interacao.sql` e `0046` de fato gravaram.
+
+    A ORDEM É O CONTRATO: é ela que o formulário e o filtro exibem. "Consulta
+    recebida" entra no fim (0046) porque é o tipo mais novo, não porque é o
+    menos importante.
+    """
     formatos = sessao.scalars(
         select(FormatoInteracao).order_by(FormatoInteracao.ordem)
     ).all()
     assert [f.codigo for f in formatos] == [
         "midia", "agenda_de_mercado", "agenda_publica",
         "manifestacao_formal", "evento", "visita", "reuniao",
+        "consulta_recebida",
     ]
     assert [f.nome for f in formatos] == [
         "Mídia", "Agenda de mercado", "Agenda pública",
         "Manifestação formal", "Evento", "Visita", "Reunião",
+        "Consulta recebida",
     ]
     assert all(f.ativo for f in formatos)
 
@@ -77,6 +84,7 @@ def test_formatos_interacao_aparece_nos_dicionarios(cliente):
     assert codigos == {
         "midia", "agenda_de_mercado", "agenda_publica",
         "manifestacao_formal", "evento", "visita", "reuniao",
+        "consulta_recebida",
     }
 
 

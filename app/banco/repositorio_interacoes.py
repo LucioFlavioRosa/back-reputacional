@@ -33,8 +33,10 @@ from app.banco.tabelas_catalogo import (
 from app.banco.tabelas_interacoes import (
     RELACAO_DA_EXTENSAO,
     Arquivo,
+    ConsultaRegistro,
     ImprensaRegistro,
     InstitucionalRegistro,
+    InteracaoAlegacao,
     InteracaoArea,
     InteracaoInterlocutor,
     InteracaoOrigem,
@@ -60,6 +62,7 @@ from app.dominio.frentes import (
 from app.dominio.identidade import Escopo
 from app.dominio.interacao import (
     ArquivoDoMaterial,
+    Consulta,
     Interacao,
     MaterialDaAgenda,
     ParticipacaoAegea,
@@ -245,7 +248,9 @@ class RepositorioSQL:
         registro.preve_desdobramento = interacao.preve_desdobramento
 
         self._aplicar_extensao(interacao, registro, novo=novo)
+        self._aplicar_consulta(interacao, registro)
         self._aplicar_temas(interacao, registro)
+        self._aplicar_alegacoes(interacao, registro)
         self._aplicar_areas(interacao, registro)
         self._aplicar_participacoes(interacao, registro)
         self._aplicar_outra_parte(interacao, registro)
@@ -574,6 +579,43 @@ class RepositorioSQL:
 
         setattr(registro, relacao_ativa, atual)
 
+    def _aplicar_consulta(
+        self, interacao: Interacao, registro: InteracaoRegistro
+    ) -> None:
+        """O bloco 1-1 da consulta recebida.
+
+        Mesma limpeza das extensões de frente: quem deixa de ser consulta
+        larga o bloco, senão sobra prazo de resposta numa reunião.
+        """
+        if interacao.consulta is None:
+            registro.consulta = None
+            return
+
+        atual = registro.consulta or ConsultaRegistro()
+        atual.canal_id = interacao.consulta.canal_id
+        atual.remetente = interacao.consulta.remetente
+        atual.teor = interacao.consulta.teor
+        atual.motivo = interacao.consulta.motivo
+        atual.prazo_resposta = interacao.consulta.prazo_resposta
+        atual.respondida_em = interacao.consulta.respondida_em
+        registro.consulta = atual
+
+    def _aplicar_alegacoes(
+        self, interacao: Interacao, registro: InteracaoRegistro
+    ) -> None:
+        """Mesmo padrão de `_aplicar_temas`: mantém quem continua, acrescenta
+        quem entrou, e deixa o `delete-orphan` levar quem saiu — o que faz a
+        trilha registrar só o que de fato mudou."""
+        desejadas = set(interacao.alegacoes)
+        registro.alegacoes[:] = [
+            vinculo for vinculo in registro.alegacoes if vinculo.alegacao_id in desejadas
+        ]
+        ja_ligadas = {vinculo.alegacao_id for vinculo in registro.alegacoes}
+        registro.alegacoes.extend(
+            InteracaoAlegacao(alegacao_id=alegacao_id)
+            for alegacao_id in desejadas - ja_ligadas
+        )
+
     def _aplicar_temas(self, interacao: Interacao, registro: InteracaoRegistro) -> None:
         desejados = set(interacao.temas)
         registro.temas[:] = [
@@ -804,6 +846,22 @@ class RepositorioSQL:
             modalidade=registro.modalidade,
             local=registro.local,
             extensao=self._extensao_do_registro(registro, frente),
+            consulta=Consulta(
+                canal_id=registro.consulta.canal_id,
+                remetente=registro.consulta.remetente,
+                teor=registro.consulta.teor,
+                motivo=registro.consulta.motivo,
+                prazo_resposta=registro.consulta.prazo_resposta,
+                respondida_em=registro.consulta.respondida_em,
+            )
+            if registro.consulta
+            else None,
+            alegacoes=tuple(
+                sorted(
+                    (vinculo.alegacao_id for vinculo in registro.alegacoes),
+                    key=str,
+                )
+            ),
             temas=tuple(sorted(vinculo.tema_id for vinculo in registro.temas)),
             areas=tuple(sorted(vinculo.area_id for vinculo in registro.areas)),
             participacoes=tuple(
