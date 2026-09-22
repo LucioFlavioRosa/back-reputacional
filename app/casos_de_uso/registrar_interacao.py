@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.armazenamento import blob
 from app.banco.repositorio_interacoes import RepositorioSQL
 from app.banco.tabelas_interacoes import Arquivo, Material
+from app.banco.tabelas_stakeholders import Instituicao
 from app.dominio.erros import NaoEncontrado
 from app.dominio.identidade import UsuarioAtual
 from app.dominio.interacao import Interacao
@@ -36,11 +37,43 @@ def registrar(
     return repositorio.adicionar(interacao)
 
 
+def _caminho_do_anexo(
+    sessao: Session, interacao: Interacao, *, momento: str, arquivo_id: UUID, nome: str
+) -> str:
+    """A ÁRVORE DEPENDE DO QUE A INTERAÇÃO É.
+
+    Material de agenda mora na pasta da agenda, porque quem o procura chega
+    pelo registro e já tem o link. O anexo de uma consulta recebida é
+    procurado pelo contêiner — por mês, por quem mandou —, e por isso ganha
+    árvore própria. Ver `blob.caminho_da_consulta`.
+    """
+    if interacao.consulta is None:
+        return blob.caminho_do_arquivo(
+            interacao_id=interacao.id,
+            momento=momento,
+            arquivo_id=arquivo_id,
+            nome=nome,
+        )
+
+    instituicao = sessao.scalar(
+        select(Instituicao.nome).where(Instituicao.id == interacao.instituicao_id)
+    )
+    return blob.caminho_da_consulta(
+        data=interacao.data_interacao,
+        # Sem nome de instituição o caminho ainda precisa existir: o byte não
+        # pode ficar sem casa porque um cadastro sumiu.
+        instituicao=instituicao or "sem-instituicao",
+        consulta_id=interacao.id,
+        arquivo_id=arquivo_id,
+        nome=nome,
+    )
+
+
 def guardar_arquivo(
     repositorio: RepositorioSQL,
     sessao: Session,
     *,
-    interacao_id: UUID,
+    interacao: Interacao,
     momento: str,
     nome: str,
     tipo_conteudo: str,
@@ -72,11 +105,8 @@ def guardar_arquivo(
     sessao.add(arquivo)
     sessao.flush()
 
-    arquivo.caminho = blob.caminho_do_arquivo(
-        interacao_id=interacao_id,
-        momento=momento,
-        arquivo_id=arquivo.id,
-        nome=nome,
+    arquivo.caminho = _caminho_do_anexo(
+        sessao, interacao, momento=momento, arquivo_id=arquivo.id, nome=nome
     )
     sessao.flush()
 

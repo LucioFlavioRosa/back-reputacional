@@ -12,6 +12,16 @@ Uma agenda, uma pasta; dentro dela, uma subpasta por momento. É isso que dá a
 ligação única entre pasta e materiais: olhando o contêiner, dá para dizer a
 qual agenda um arquivo pertence sem consultar o banco.
 
+DUAS OUTRAS ÁRVORES, e cada uma existe porque a PERGUNTA é outra:
+
+    referencias/{assunto}/{tipo}/{referência}/v{n}-{id}-{nome}
+    consultas/{aaaa-mm}/{instituicao}/{aaaa-mm-dd}-{consulta_id}/{arquivo_id}-{nome}
+
+A da agenda serve a quem chega pelo registro e já tem o link. As outras duas
+servem a quem chega pelo CONTÊINER — "onde está o Q&A de tarifa", "o que o
+mercado mandou em setembro" — e uma pasta de uuid não responde nenhuma das
+duas sem consultar o banco.
+
 O `arquivo_id` no começo do nome é o que garante unicidade — dois arquivos com
 o mesmo nome na mesma agenda não se sobrescrevem. O nome vem junto porque
 quem abre o Storage Explorer para conferir precisa reconhecer o que está
@@ -22,6 +32,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from datetime import date
 from uuid import UUID
 
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
@@ -159,6 +170,42 @@ def caminho_do_arquivo(
 ) -> str:
     """Onde o arquivo de uma AGENDA nasce. Ver o cabeçalho do módulo."""
     return f"interacoes/{interacao_id}/{momento}/{arquivo_id}-{_sem_acento_nem_surpresa(nome)}"
+
+
+def caminho_da_consulta(
+    *, data: date, instituicao: str, consulta_id: UUID, arquivo_id: UUID, nome: str
+) -> str:
+    """Onde o anexo de uma CONSULTA RECEBIDA nasce.
+
+        consultas/<aaaa-mm>/<instituicao>/<aaaa-mm-dd>-<id>/<arquivo_id>-<nome>
+
+    POR QUE NÃO A ÁRVORE DA AGENDA. `interacoes/<uuid>/…` serve para material
+    que se acha PELO REGISTRO: quem abre a ficha tem o link, e o contêiner é
+    só onde o byte mora. O anexo de uma consulta é procurado de outro jeito —
+    "o que o mercado mandou em setembro", "o que este banco já perguntou" —, e
+    numa pasta de uuid essa pergunta não tem resposta sem consultar o banco.
+
+    MÊS, DEPOIS INSTITUIÇÃO: um movimento de mercado acontece numa janela de
+    semanas, e é por período que se vistoria. A instituição em seguida agrupa
+    o que veio do mesmo remetente dentro daquele mês.
+
+    UMA PASTA POR CONSULTA, e é o id INTEIRO que garante isso: dois
+    questionários do mesmo banco no mesmo dia são duas consultas, e juntá-las
+    numa pasta faria parecer que o anexo da segunda é da primeira. Um prefixo
+    do uuid seria mais curto de ler e deixaria de ser garantia — com 8
+    caracteres, mil consultas do mesmo banco no mesmo dia colidiriam uma vez
+    em cem —, e quem navega se orienta pela DATA, que vem antes; o uuid é só
+    o desempate.
+
+    A DATA COMEÇA O NOME da pasta para a ordenação alfabética do Storage
+    Explorer já ser a cronológica.
+    """
+    return (
+        f"consultas/{data:%Y-%m}"
+        f"/{_sem_acento_nem_surpresa(instituicao).lower()}"
+        f"/{data:%Y-%m-%d}-{consulta_id}"
+        f"/{arquivo_id}-{_sem_acento_nem_surpresa(nome)}"
+    )
 
 
 def caminho_da_referencia(

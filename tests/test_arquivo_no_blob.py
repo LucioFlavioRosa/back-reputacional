@@ -10,12 +10,80 @@ caminho ou um vídeo de 800 MB atravessando a rede antes de ser recusado.
 
 from __future__ import annotations
 
+from datetime import date
 from uuid import uuid4
 
 import pytest
 
 from app.armazenamento import blob
 from app.dominio.erros import RegraViolada
+
+# -- a pasta da consulta: por mês, por quem mandou -----------------------------
+
+
+def test_a_consulta_agrupa_por_mes_e_por_instituicao():
+    """A vistoria do contêiner é por PERÍODO: um movimento de mercado acontece
+    numa janela de semanas, e é assim que alguém procura — "o que o mercado
+    mandou em setembro", e não "o que tem na agenda 8f3c…"."""
+    consulta = uuid4()
+    caminho = blob.caminho_da_consulta(
+        data=date(2026, 9, 13),
+        instituicao="Banco Interamericano S.A.",
+        consulta_id=consulta,
+        arquivo_id=uuid4(),
+        nome="Questionário anual.pdf",
+    )
+
+    # O ponto final some: `_sem_acento_nem_surpresa` apara pontos e hifens das
+    # pontas, e pasta terminada em ponto é armadilha no Windows.
+    assert caminho.startswith("consultas/2026-09/banco-interamericano-s.a/")
+    assert f"/2026-09-13-{consulta}/" in caminho
+    assert caminho.endswith("-Questionario-anual.pdf")
+
+
+def test_duas_consultas_do_mesmo_banco_no_mesmo_dia_ficam_em_pastas_diferentes():
+    """Uma pasta por CONSULTA: juntá-las faria parecer que o anexo da segunda
+    é da primeira. O id inteiro no nome é o que garante — um prefixo dele
+    deixaria de ser garantia e viraria probabilidade."""
+    argumentos = dict(
+        data=date(2026, 9, 13),
+        instituicao="Banco X",
+        arquivo_id=uuid4(),
+        nome="anexo.pdf",
+    )
+    um = blob.caminho_da_consulta(consulta_id=uuid4(), **argumentos)
+    outro = blob.caminho_da_consulta(consulta_id=uuid4(), **argumentos)
+
+    assert um.rsplit("/", 1)[0] != outro.rsplit("/", 1)[0]
+
+
+def test_a_data_comeca_o_nome_da_pasta_para_a_ordem_ser_cronologica():
+    """Ordenação alfabética do Storage Explorer = ordem do tempo."""
+    pastas = [
+        blob.caminho_da_consulta(
+            data=data,
+            instituicao="Banco X",
+            consulta_id=uuid4(),
+            arquivo_id=uuid4(),
+            nome="anexo.pdf",
+        ).rsplit("/", 2)[1]
+        for data in (date(2026, 9, 2), date(2026, 9, 13), date(2026, 9, 9))
+    ]
+
+    assert sorted(pastas) == [pastas[0], pastas[2], pastas[1]]
+
+
+def test_instituicao_sem_nome_usavel_ainda_produz_caminho():
+    """O byte não pode ficar sem casa porque um cadastro tem nome estranho."""
+    caminho = blob.caminho_da_consulta(
+        data=date(2026, 9, 13),
+        instituicao="???",
+        consulta_id=uuid4(),
+        arquivo_id=uuid4(),
+        nome="anexo.pdf",
+    )
+    assert caminho.startswith("consultas/2026-09/arquivo/")
+
 
 # -- a pasta é a agenda --------------------------------------------------------
 
