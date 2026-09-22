@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session
 from app.banco.repositorio_interacoes import (
     RepositorioSQL,
 )
-from app.banco.tabelas_catalogo import Tema
+from app.banco.tabelas_catalogo import AreaPessoa, Tema
 from app.banco.tabelas_stakeholders import (
     Instituicao,
     Interlocutor,
@@ -178,6 +178,46 @@ def test_remover_tema_funciona_com_o_papel_restrito(sessao_restrita, semente):
         {"id": criada.id},
     ).scalars().all()
     assert restantes == [temas[0].id]
+
+
+def test_remover_area_funciona_com_o_papel_restrito(sessao_restrita, semente):
+    """O mesmo `delete-orphan` de tema, em `interacao_area` — o vínculo que a
+    0032 criou sem `grant delete`. Até a 0041, tirar uma área de uma agenda
+    passava em desenvolvimento (superusuário) e caía em produção.
+
+    Confere também a trilha: área é vínculo como tema e porta-voz, e mudava
+    em silêncio.
+    """
+    areas = sessao_restrita.scalars(
+        select(AreaPessoa).where(AreaPessoa.ativo.is_(True)).limit(2)
+    ).all()
+    assert len(areas) == 2, "a semente precisa de ao menos duas áreas ativas"
+
+    repositorio = RepositorioSQL(sessao_restrita)
+    criada = repositorio.adicionar(
+        _interacao(sessao_restrita, semente, areas=tuple(a.id for a in areas))
+    )
+    sessao_restrita.flush()
+
+    criada.areas = (areas[0].id,)
+    repositorio.atualizar(criada)
+    sessao_restrita.flush()
+
+    restantes = sessao_restrita.execute(
+        text("select area_id from interacao_area where interacao_id = :id"),
+        {"id": criada.id},
+    ).scalars().all()
+    assert restantes == [areas[0].id]
+
+    trilha = sessao_restrita.execute(
+        text(
+            "select valor_anterior, valor_novo from interacao_auditoria "
+            "where interacao_id = :id and campo = 'area' order by id"
+        ),
+        {"id": criada.id},
+    ).all()
+    assert (None, str(areas[0].id)) in trilha, "a entrada da área não foi auditada"
+    assert (str(areas[1].id), None) in trilha, "a saída da área não foi auditada"
 
 
 def test_apagar_pessoa_funciona_com_o_papel_restrito(sessao_restrita, semente):
