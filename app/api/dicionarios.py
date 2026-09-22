@@ -37,7 +37,7 @@ from app.api.dependencias import (
     UsuarioQueAdministraCadastros,
     obter_usuario_atual,
 )
-from app.api.stakeholders import _gravar
+from app.banco.gravar import gravar
 from app.banco.sessao import SessaoDoPedido
 from app.banco.tabelas_catalogo import (
     DICIONARIOS,
@@ -138,23 +138,39 @@ def _linhas(sessao, tabela) -> list[dict[str, Any]]:
     ]
 
 
+class DicionarioAdministravel(BaseModel):
+    """Um vocabulário como a Administração o vê: tudo, inclusive o desativado,
+    e se se edita aqui — com o motivo quando não."""
+
+    nome: str
+    rotulo: str
+    editavel: bool
+    motivo: str | None
+    #: As linhas cruas da tabela: `id`, `nome`, `ordem`, `ativo` e, quando
+    #: houver, `codigo` e o que mais a tabela tiver (`escopo`, `cor_hex`…).
+    itens: list[dict[str, Any]]
+
+
 @rotas.get("/administracao")
 def listar_para_administracao(
     sessao: Sessao, usuario: UsuarioQueAdministraCadastros
-) -> list[dict[str, Any]]:
+) -> list[DicionarioAdministravel]:
     """Todos os vocabulários, inclusive inativos, cada um dizendo se se edita aqui."""
-    resposta: list[dict[str, Any]] = []
-    for nome, tabela in ABERTOS.items():
-        resposta.append(
-            {"nome": nome, "rotulo": ROTULOS[nome], "editavel": True, "motivo": None,
-             "itens": _linhas(sessao, tabela)}
+    resposta = [
+        DicionarioAdministravel(
+            nome=nome, rotulo=ROTULOS[nome], editavel=True, motivo=None,
+            itens=_linhas(sessao, tabela),
         )
+        for nome, tabela in ABERTOS.items()
+    ]
     for grupo in (FECHADOS, APOSENTADOS):
-        for nome, motivo in grupo.items():
-            resposta.append(
-                {"nome": nome, "rotulo": ROTULOS[nome], "editavel": False, "motivo": motivo,
-                 "itens": _linhas(sessao, DICIONARIOS[nome])}
+        resposta.extend(
+            DicionarioAdministravel(
+                nome=nome, rotulo=ROTULOS[nome], editavel=False, motivo=motivo,
+                itens=_linhas(sessao, DICIONARIOS[nome]),
             )
+            for nome, motivo in grupo.items()
+        )
     return resposta
 
 
@@ -225,7 +241,7 @@ def acrescentar(
         campos["escopo"] = "geral"
     # `_gravar`: se ainda assim o índice único de `codigo`/`nome` estourar,
     # a resposta é de domínio (422), e não um 500 de constraint.
-    return _gravar(
+    return gravar(
         sessao,
         tabela(**campos),
         novo=True,
@@ -255,4 +271,4 @@ def editar(
         raise RegraViolada(f"Já existe {valor!r} em {ROTULOS[nome]}.")
     registro.nome = valor
     registro.ativo = entrada.ativo
-    return _gravar(sessao, registro, ao_colidir=f"Já existe {valor!r} em {ROTULOS[nome]}.")
+    return gravar(sessao, registro, ao_colidir=f"Já existe {valor!r} em {ROTULOS[nome]}.")
