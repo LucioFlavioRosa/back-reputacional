@@ -113,6 +113,12 @@ app/
 ├── casos_de_uso/          o que a aplicação faz, um arquivo por operação
 ├── banco/                 ORM, consultas, sessão e migrations
 ├── armazenamento/         o Blob: caminho, upload e download dos arquivos
+│                          três árvores, e cada uma responde a uma pergunta:
+│                          `interacoes/<id>/<momento>/` — o material da agenda,
+│                          achado pelo registro; `referencias/<assunto>/<tipo>/`
+│                          — a biblioteca, achada pelo assunto; e
+│                          `consultas/<aaaa-mm>/<instituicao>/<dia>-<id>/` — o
+│                          anexo do e-mail recebido, achado pelo contêiner
 ├── seguranca/             OIDC, cookie, CSRF, limite de taxa, cabeçalhos
 ├── configuracao.py        variáveis de ambiente, com os padrões
 └── observabilidade.py     log estruturado e telemetria

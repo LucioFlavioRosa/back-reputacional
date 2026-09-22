@@ -312,7 +312,7 @@ def subir_arquivo_de_material(
     # O ESCOPO ENTRA AQUI TAMBÉM. Sem isto, quem não enxerga uma agenda poderia
     # escrever no armazenamento dela conhecendo só o id — e a pasta é o que dá
     # a ligação entre arquivo e agenda.
-    consultar_interacoes.obter(repositorio, id=id, escopo=usuario.escopo)
+    interacao = consultar_interacoes.obter(repositorio, id=id, escopo=usuario.escopo)
 
     if momento not in MOMENTOS_DE_MATERIAL:
         raise RegraViolada(
@@ -332,7 +332,7 @@ def subir_arquivo_de_material(
     salvo = registrar_interacao.guardar_arquivo(
         repositorio,
         sessao,
-        interacao_id=id,
+        interacao=interacao,
         momento=momento,
         nome=arquivo.filename or "arquivo",
         tipo_conteudo=arquivo.content_type or "application/octet-stream",

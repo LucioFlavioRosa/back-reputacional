@@ -22,6 +22,7 @@ import pytest
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
+from app.armazenamento import blob
 from app.banco.sessao import obter_sessao
 from app.banco.tabelas_alegacoes import Alegacao
 from app.banco.tabelas_catalogo import Apuracao
@@ -500,3 +501,64 @@ def test_as_inativas_sao_recusadas_a_quem_so_escreve(cliente):
 
 def test_as_inativas_saem_para_quem_administra(cliente_admin):
     assert cliente_admin.get("/api/alegacoes?incluir_inativas=1").status_code == 200
+
+
+# -- o anexo do e-mail --------------------------------------------------------
+
+
+def test_o_anexo_da_consulta_vai_para_a_arvore_da_consulta(
+    cliente_admin, sessao, semente, credor, monkeypatch
+):
+    """O QUESTIONÁRIO É MATERIAL DA CONSULTA, e o byte vai para a árvore que se
+    vistoria pelo contêiner — por mês e por quem mandou —, e não para a pasta
+    de uuid da agenda.
+
+    O blob é substituído por um dublê: o que se prova aqui é o CAMINHO que o
+    servidor escolhe, e subir o byte de verdade exigiria o Azurite.
+    """
+    guardados: list[str] = []
+    monkeypatch.setattr(
+        blob, "guardar", lambda caminho, dados, tipo: guardados.append(caminho)
+    )
+
+    criada = _consulta(
+        cliente_admin,
+        semente,
+        credor["id"],
+        data_interacao="2026-09-13",
+        consulta={"remetente": "research@banco.com"},
+    )
+
+    resposta = cliente_admin.post(
+        f"/api/interacoes/{criada['id']}/materiais/arquivo",
+        data={"momento": "obtido"},
+        files={"arquivo": ("Questionario anual.pdf", b"%PDF-1.4 teste", "application/pdf")},
+    )
+    assert resposta.status_code == 201, resposta.text
+
+    assert len(guardados) == 1
+    caminho = guardados[0]
+    assert caminho.startswith("consultas/2026-09/banco-da-sondagem/")
+    assert f"/2026-09-13-{criada['id'][:8]}/" in caminho
+    assert caminho.endswith("-Questionario-anual.pdf")
+
+
+def test_o_anexo_de_uma_reuniao_continua_na_pasta_da_agenda(
+    cliente_admin, semente, monkeypatch
+):
+    """A árvore nova é para a consulta, e só. Material de agenda é procurado
+    pelo registro, e quem o abre já tem o link."""
+    guardados: list[str] = []
+    monkeypatch.setattr(
+        blob, "guardar", lambda caminho, dados, tipo: guardados.append(caminho)
+    )
+
+    criada = cliente_admin.post("/api/interacoes", json=corpo(semente)).json()
+    resposta = cliente_admin.post(
+        f"/api/interacoes/{criada['id']}/materiais/arquivo",
+        data={"momento": "apoio"},
+        files={"arquivo": ("Pauta.pdf", b"%PDF-1.4 teste", "application/pdf")},
+    )
+    assert resposta.status_code == 201, resposta.text
+
+    assert guardados[0].startswith(f"interacoes/{criada['id']}/apoio/")
