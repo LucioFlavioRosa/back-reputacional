@@ -1457,8 +1457,9 @@ def test_nao_apaga_quem_ja_esteve_numa_agenda(cliente_admin, semente):
     assert resposta.status_code == 422
     detalhe = resposta.json()["detalhe"]
     assert "1 agenda" in detalhe
-    #: E diz o que fazer, e nao so o que nao da.
-    assert "Desligar" in detalhe
+    #: E diz o que fazer, e nao so o que nao da — com o mesmo verbo da
+    #: instituicao (CONTEXT.md).
+    assert "Desativar" in detalhe
 
 
 def test_desligar_e_o_caminho_para_quem_tem_historico(cliente_admin, semente):
@@ -1722,6 +1723,75 @@ def test_desativar_instituicao_tira_as_pessoas_dela_da_listagem_padrao(
     # dois niveis nao pode derrubar quem so tem um nivel.
     solta = cliente_admin.post("/api/interlocutores", json={"nome": "Sem Instituicao"}).json()
     assert solta["id"] in {p["id"] for p in cliente_admin.get("/api/interlocutores").json()}
+
+
+def test_filtro_por_formato_e_por_categoria_de_publico_no_servidor(cliente_admin, semente):
+    """Os dois filtros que só existiam no cliente. Sem eles no servidor, o KPI
+    da tela (filtrado no navegador) e a exportação/materiais (filtrados no
+    servidor) contavam agendas diferentes para o mesmo recorte."""
+    dicionarios = cliente_admin.get("/api/dicionarios").json()
+    reuniao = next(f for f in dicionarios["formatos_interacao"] if f["codigo"] == "reuniao")
+    evento = next(f for f in dicionarios["formatos_interacao"] if f["codigo"] == "evento")
+    executivo = next(
+        c for c in dicionarios["categorias_publico"] if c["codigo"] == "poder_executivo"
+    )
+
+    ministerio = cliente_admin.post(
+        "/api/instituicoes",
+        json={"nome": "Ministerio X", "tipo": "orgao", "categoria_publico_id": executivo["id"]},
+    ).json()
+    outro = cliente_admin.post(
+        "/api/instituicoes", json={"nome": "Orgao Sem Categoria", "tipo": "orgao"}
+    ).json()
+
+    def agenda(instituicao_id, formato_id):
+        corpo_ = corpo(semente)
+        corpo_["instituicao_id"] = instituicao_id
+        corpo_["formato_interacao_id"] = formato_id
+        resposta = cliente_admin.post("/api/interacoes", json=corpo_)
+        assert resposta.status_code == 201, resposta.text
+        return resposta.json()["id"]
+
+    a = agenda(ministerio["id"], reuniao["id"])
+    b = agenda(ministerio["id"], evento["id"])
+    c = agenda(outro["id"], reuniao["id"])
+
+    def ids(consulta: str) -> set[str]:
+        resposta = cliente_admin.get(f"/api/interacoes?{consulta}&tamanho=200")
+        assert resposta.status_code == 200, resposta.text
+        return {i["id"] for i in resposta.json()["itens"]} & {a, b, c}
+
+    assert ids(f"formatoInteracao={reuniao['id']}") == {a, c}
+    assert ids(f"formatoInteracao={reuniao['id']},{evento['id']}") == {a, b, c}
+    assert ids(f"categoriaPublico={executivo['id']}") == {a, b}
+    assert ids(f"categoriaPublico={executivo['id']}&formatoInteracao={evento['id']}") == {b}
+    assert cliente_admin.get("/api/interacoes?formatoInteracao=midia").status_code == 422
+
+
+def test_clima_esperado_filtra_pelo_antes_e_clima_pelo_depois(cliente_admin, semente):
+    """`climaEsperado` e `clima` são filtros distintos: quem clica na coluna
+    "Antes" da tela Preparar agenda não perde a coluna "Antes"."""
+
+    def agenda(esperado, registrado):
+        corpo_ = corpo(semente)
+        corpo_["clima_esperado"] = esperado
+        corpo_["clima"] = registrado
+        resposta = cliente_admin.post("/api/interacoes", json=corpo_)
+        assert resposta.status_code == 201, resposta.text
+        return resposta.json()["id"]
+
+    a = agenda("tenso", "propositivo")
+    b = agenda("tenso", "tenso")
+    c = agenda("neutro", "propositivo")
+
+    def ids(consulta: str) -> set[str]:
+        resposta = cliente_admin.get(f"/api/interacoes?{consulta}&tamanho=200")
+        assert resposta.status_code == 200, resposta.text
+        return {i["id"] for i in resposta.json()["itens"]} & {a, b, c}
+
+    assert ids("climaEsperado=tenso") == {a, b}
+    assert ids("clima=propositivo") == {a, c}
+    assert ids("climaEsperado=tenso&clima=propositivo") == {a}
 
 
 def test_apagar_instituicao_inexistente_e_404(cliente_admin, semente):

@@ -96,7 +96,11 @@ def obter_recorte(
     # Sem `le`: quantos níveis existem é o que estiver em `relevancia`, e
     # um teto aqui voltaria a ser uma cópia que envelhece sozinha.
     tier: Annotated[int | None, Query(ge=1)] = None,
-    clima: Annotated[str | None, Query()] = None,
+    clima: Annotated[str | None, Query(description="clima registrado depois da interação")] = None,
+    clima_esperado: Annotated[
+        str | None,
+        Query(alias="climaEsperado", description="clima esperado ao marcar a interação"),
+    ] = None,
     resultado: Annotated[str | None, Query()] = None,
     status_: Annotated[
         str | None,
@@ -107,10 +111,29 @@ def obter_recorte(
     subtipo: Annotated[str | None, Query(description="tipo de investidor")] = None,
     porta_voz: Annotated[UUID | None, Query(alias="portaVoz")] = None,
     pessoa: Annotated[UUID | None, Query()] = None,
-    tags: Annotated[str | None, Query(description="separadas por vírgula; OR entre elas")] = None,
+    tags: Annotated[
+        list[str] | None,
+        Query(
+            description="repetido — tags=a&tags=b; OR entre elas. Um nome de tema pode ter vírgula."
+        ),
+    ] = None,
     areas: Annotated[
         str | None,
         Query(description="ids de área interna, separados por vírgula; OR entre elas"),
+    ] = None,
+    formatos_interacao: Annotated[
+        str | None,
+        Query(
+            alias="formatoInteracao",
+            description="ids de formato de interação, separados por vírgula; OR entre eles",
+        ),
+    ] = None,
+    categorias_publico: Annotated[
+        str | None,
+        Query(
+            alias="categoriaPublico",
+            description="ids de categoria de público da instituição, separados por vírgula",
+        ),
     ] = None,
     q: Annotated[str | None, Query(description="busca livre")] = None,
 ) -> Recorte:
@@ -130,6 +153,7 @@ def obter_recorte(
         esfera=esfera,
         tier=tier,
         clima=clima,
+        clima_esperado=clima_esperado,
         resultado=resultado,
         status=status_,
         grupo_status=grupo,
@@ -139,6 +163,8 @@ def obter_recorte(
         pessoa=pessoa,
         tags=tags,
         areas=areas,
+        formatos_interacao=formatos_interacao,
+        categorias_publico=categorias_publico,
         busca=q,
     )
 

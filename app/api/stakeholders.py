@@ -14,7 +14,6 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, func, or_, select
-from sqlalchemy.exc import IntegrityError
 
 from app.api.dependencias import (
     UsuarioQueAdministraCadastros,
@@ -22,6 +21,7 @@ from app.api.dependencias import (
     exigir_diretorio,
     exigir_portal_crm,
 )
+from app.banco.gravar import gravar
 from app.banco.sessao import SessaoDoPedido
 from app.banco.tabelas_catalogo import (
     AreaPessoa,
@@ -36,8 +36,8 @@ from app.banco.tabelas_stakeholders import (
     PessoaAegea,
     PessoaAegeaTema,
 )
+from app.casos_de_uso.derivar_tipo import derivar_tipo
 from app.dominio.erros import NaoEncontrado, RegraViolada
-from app.dominio.frentes import TIPO_DA_CATEGORIA_DE_PUBLICO, TIPOS_DE_INSTITUICAO
 
 rotas = APIRouter(
     prefix="/api",
@@ -220,34 +220,6 @@ class InterlocutorEntrada(BaseModel):
     ativo: bool = True
 
 
-def _gravar(sessao, registro, *, ao_colidir: str, novo: bool = False):
-    """Grava, e traduz colisao de indice unico em mensagem de gente.
-
-    ESTA FUNCAO EXISTE POR UMA ORDEM QUE E FACIL DE ERRAR, e que eu errei: o
-    `add` precisa ficar DENTRO do savepoint. Um `flush` que falha marca a
-    SESSAO INTEIRA para rollback, e o savepoint so a protege se a insercao
-    inteira estiver dentro dele. Com o `add` de fora, o comando seguinte
-    estoura `PendingRollbackError` — um erro sem relacao aparente com o que a
-    pessoa fez.
-
-    Estava copiada em SEIS rotas. Uma regra que so vale se escrita numa ordem
-    especifica, repetida seis vezes, e seis chances de a proxima edicao
-    inverte-la em uma so.
-
-    `ao_colidir` e a mensagem que a pessoa le. O banco diria "duplicate key
-    value violates unique constraint", que nao ajuda ninguem a decidir o que
-    fazer.
-    """
-    try:
-        with sessao.begin_nested():
-            if novo:
-                sessao.add(registro)
-            sessao.flush()
-    except IntegrityError as erro:
-        raise RegraViolada(ao_colidir) from erro
-    return registro
-
-
 def _normalizar(nome: str) -> str:
     """A forma comparavel do nome, como a planilha ja gravava.
 
@@ -270,7 +242,9 @@ def criar_instituicao(
     _conferir_categoria_publico(
         sessao, entrada.categoria_publico_id, entrada.subcategoria_publico_id
     )
-    tipo = _tipo_efetivo(sessao, entrada, atual=None)
+    tipo = derivar_tipo(
+        sessao, tipo=entrada.tipo, categoria_publico_id=entrada.categoria_publico_id, atual=None
+    )
     registro = Instituicao(
         nome=entrada.nome.strip(),
         nome_normalizado=_normalizar(entrada.nome),
@@ -283,7 +257,7 @@ def criar_instituicao(
         tier=entrada.tier,
         ativo=entrada.ativo,
     )
-    _gravar(
+    gravar(
         sessao,
         registro,
         novo=True,
@@ -293,37 +267,6 @@ def criar_instituicao(
     )
 
     return registro
-
-
-def _tipo_efetivo(sessao: Sessao, entrada: InstituicaoEntrada, *, atual: str | None) -> str:
-    """O tipo que vai ficar gravado: o informado, ou o que a categoria implica.
-
-    A ORDEM E ESTA: quem manda `tipo` esta dizendo o que quer, e a categoria
-    nao passa por cima — e o que permite corrigir, na edicao, um banco credor
-    que a taxonomia nao distingue de um investidor. Sem `tipo`, a categoria
-    decide; sem os dois, na edicao o tipo gravado fica, e na criacao nao ha de
-    onde tirar um — recusar aqui e melhor do que gravar uma instituicao que
-    nunca aparece em formulario nenhum.
-    """
-    if entrada.tipo is not None:
-        if entrada.tipo not in TIPOS_DE_INSTITUICAO:
-            raise RegraViolada(
-                f"Tipo invalido: {entrada.tipo!r}. "
-                f"Use {', '.join(sorted(TIPOS_DE_INSTITUICAO))}."
-            )
-        return entrada.tipo
-    if entrada.categoria_publico_id is not None:
-        # `_conferir_categoria_publico` ja garantiu que ela existe e esta ativa.
-        categoria = sessao.get(CategoriaPublico, entrada.categoria_publico_id)
-        tipo = TIPO_DA_CATEGORIA_DE_PUBLICO.get(categoria.codigo) if categoria else None
-        if tipo is not None:
-            return tipo
-    if atual is not None:
-        return atual
-    raise RegraViolada(
-        "Informe a categoria de publico: e dela que sai o tipo da instituicao, "
-        "e sem tipo ela nao apareceria em formulario nenhum."
-    )
 
 
 def _conferir_tier(sessao: Sessao, tier: int | None) -> None:
@@ -405,7 +348,12 @@ def editar_instituicao(
     )
     registro.nome = entrada.nome.strip()
     registro.nome_normalizado = _normalizar(entrada.nome)
-    registro.tipo = _tipo_efetivo(sessao, entrada, atual=registro.tipo)
+    registro.tipo = derivar_tipo(
+        sessao,
+        tipo=entrada.tipo,
+        categoria_publico_id=entrada.categoria_publico_id,
+        atual=registro.tipo,
+    )
     registro.nome_completo = entrada.nome_completo
     registro.tier = entrada.tier
     registro.categoria_publico_id = entrada.categoria_publico_id
@@ -413,7 +361,7 @@ def editar_instituicao(
     registro.esfera_id = entrada.esfera_id
     registro.uf = entrada.uf
     registro.ativo = entrada.ativo
-    _gravar(
+    gravar(
         sessao,
         registro,
         ao_colidir=(
@@ -509,7 +457,7 @@ def criar_interlocutor(
     #
     # Criar o helper e deixar duas chamadas de fora e o mesmo defeito que ele
     # existe para evitar, so que mais dificil de ver.
-    return _gravar(
+    return gravar(
         sessao,
         registro,
         novo=True,
@@ -534,7 +482,7 @@ def editar_interlocutor(
     registro.email = entrada.email
     registro.tipo = entrada.tipo
     registro.ativo = entrada.ativo
-    return _gravar(
+    return gravar(
         sessao,
         registro,
         ao_colidir=(
@@ -549,7 +497,8 @@ def remover_interlocutor(
 ) -> None:
     """Apaga quem entrou por engano. Recusa quem ja esteve numa agenda.
 
-    APAGAR E DESLIGAR SAO COISAS DIFERENTES, e a diferenca e o historico.
+    EXCLUIR E DESATIVAR SAO COISAS DIFERENTES, e a diferenca e o historico
+    (os mesmos dois verbos da instituicao — ver CONTEXT.md).
 
     Uma pessoa cadastrada com o nome errado, ou na instituicao errada, e lixo:
     apagar e o certo. Uma pessoa que participou de uma reuniao e um FATO — e
@@ -591,7 +540,7 @@ def remover_interlocutor(
             f"{registro.nome} participa de {em_agendas} "
             f"{'agenda' if em_agendas == 1 else 'agendas'} e nao pode ser "
             "apagada: o registro delas ficaria sem o nome de quem esteve na "
-            "sala. Use Desligar — ela sai das listas e o historico fica."
+            "sala. Use Desativar — ela sai das listas e o historico fica."
         )
 
     # O vinculo com temas e ligacao pura, sem valor de historico: sai junto.
@@ -690,7 +639,7 @@ def criar_pessoa_aegea(
         area_id=entrada.area_id,
         ativo=entrada.ativo,
     )
-    _gravar(
+    gravar(
         sessao,
         registro,
         novo=True,
@@ -719,7 +668,7 @@ def editar_pessoa_aegea(
     registro.eh_porta_voz = entrada.eh_porta_voz
     registro.area_id = entrada.area_id
     registro.ativo = entrada.ativo
-    _gravar(
+    gravar(
         sessao,
         registro,
         ao_colidir=f"Ja existe outra pessoa chamada {entrada.nome!r} na Aegea.",
@@ -798,7 +747,7 @@ def criar_tema(
             f"Nivel invalido: {entrada.nivel!r}. Use {' ou '.join(NIVEIS_DE_TEMA)}."
         )
     registro = Tema(nome=entrada.nome.strip(), nivel=entrada.nivel, ativo=entrada.ativo)
-    return _gravar(
+    return gravar(
         sessao,
         registro,
         novo=True,
@@ -823,7 +772,7 @@ def editar_tema(
     registro.nome = entrada.nome.strip()
     registro.nivel = entrada.nivel
     registro.ativo = entrada.ativo
-    return _gravar(
+    return gravar(
         sessao,
         registro,
         ao_colidir=f"Ja existe outro assunto chamado {entrada.nome!r}.",
