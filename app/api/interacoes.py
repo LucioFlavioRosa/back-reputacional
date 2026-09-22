@@ -111,6 +111,10 @@ def obter_recorte(
     subtipo: Annotated[str | None, Query(description="tipo de investidor")] = None,
     porta_voz: Annotated[UUID | None, Query(alias="portaVoz")] = None,
     pessoa: Annotated[UUID | None, Query()] = None,
+    alegacao: Annotated[
+        UUID | None,
+        Query(description="id de uma alegação; traz as consultas que a trouxeram"),
+    ] = None,
     tags: Annotated[
         list[str] | None,
         Query(
@@ -161,6 +165,7 @@ def obter_recorte(
         subtipo=subtipo,
         porta_voz=porta_voz,
         pessoa=pessoa,
+        alegacao=alegacao,
         tags=tags,
         areas=areas,
         formatos_interacao=formatos_interacao,

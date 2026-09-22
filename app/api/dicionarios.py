@@ -41,7 +41,9 @@ from app.banco.gravar import gravar
 from app.banco.sessao import SessaoDoPedido
 from app.banco.tabelas_catalogo import (
     DICIONARIOS,
+    Apuracao,
     AreaPessoa,
+    CanalConsulta,
     Casa,
     Esfera,
     Formato,
@@ -70,6 +72,8 @@ ABERTOS: dict[str, type] = {
     "casas": Casa,
     "tramitacoes": Tramitacao,
     "areas_pessoa": AreaPessoa,
+    "canais_consulta": CanalConsulta,
+    "apuracoes": Apuracao,
 }
 
 #: Os fechados, com o motivo que a tela mostra no lugar do botão.
@@ -113,6 +117,8 @@ ROTULOS: dict[str, str] = {
     "casas": "Casas legislativas",
     "tramitacoes": "Tramitações",
     "areas_pessoa": "Áreas da Aegea",
+    "canais_consulta": "Canais de consulta",
+    "apuracoes": "Apurações de alegação",
     "frentes": "Frentes",
     "status": "Situações",
     "climas": "Climas",

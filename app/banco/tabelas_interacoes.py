@@ -230,6 +230,17 @@ class InteracaoRegistro(Tabela):
         cascade="all, delete-orphan", lazy="selectin"
     )
 
+    #: 1-1 como as extensões acima, MAS ESCOLHIDA PELO TIPO DE INTERAÇÃO, e
+    #: não pela frente: uma consulta de banco tem frente `bancos_credores` e
+    #: já usa `investidores`. Por isso convive com a extensão da frente em vez
+    #: de disputar o lugar dela — ver o cabeçalho de `migrations/0046`.
+    consulta: Mapped[ConsultaRegistro | None] = relationship(
+        back_populates="interacao", cascade="all, delete-orphan", lazy="joined"
+    )
+    alegacoes: Mapped[list[InteracaoAlegacao]] = relationship(
+        cascade="all, delete-orphan", lazy="selectin"
+    )
+
 
 class ImprensaRegistro(Tabela):
     __tablename__ = "interacao_imprensa"
@@ -317,6 +328,48 @@ class InternaRegistro(Tabela):
     data_retorno: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     interacao: Mapped[InteracaoRegistro] = relationship(back_populates="interna")
+
+
+class ConsultaRegistro(Tabela):
+    """Os dados próprios de uma interação do tipo "Consulta recebida" (0046).
+
+    O questionário em si é `material`, como todo documento de uma agenda; o
+    contato cadastrado que assina é `interacao_interlocutor`, como em toda
+    interação. Aqui fica só o que não tem lugar nesses dois: por onde chegou,
+    quem assinou quando não está no cadastro, o teor e o prazo.
+    """
+
+    __tablename__ = "interacao_consulta"
+
+    interacao_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("interacao.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    canal_id: Mapped[int | None] = mapped_column(
+        SmallInteger, ForeignKey("canal_consulta.id"), nullable=True
+    )
+    remetente: Mapped[str | None] = mapped_column(Text, nullable=True)
+    teor: Mapped[str | None] = mapped_column(Text, nullable=True)
+    prazo_resposta: Mapped[date | None] = mapped_column(Date, nullable=True)
+    respondida_em: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+    interacao: Mapped[InteracaoRegistro] = relationship(back_populates="consulta")
+
+
+class InteracaoAlegacao(Tabela):
+    """Que alegações esta consulta trouxe. Espelha `InteracaoTema` — vínculo
+    N:N puro, sem atributo próprio —, e é auditado como ele: mudar isto muda a
+    contagem que a aba usa para dizer que algo está circulando."""
+
+    __tablename__ = "interacao_alegacao"
+
+    interacao_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("interacao.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    alegacao_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("alegacao.id"), primary_key=True
+    )
 
 
 class MaterialTema(Tabela):

@@ -31,7 +31,8 @@ from sqlalchemy.orm import Session
 from app.banco.repositorio_interacoes import (
     RepositorioSQL,
 )
-from app.banco.tabelas_catalogo import Tema
+from app.banco.tabelas_alegacoes import Alegacao
+from app.banco.tabelas_catalogo import Apuracao, Tema
 from app.banco.tabelas_stakeholders import (
     Instituicao,
     Interlocutor,
@@ -178,6 +179,60 @@ def test_remover_tema_funciona_com_o_papel_restrito(sessao_restrita, semente):
         {"id": criada.id},
     ).scalars().all()
     assert restantes == [temas[0].id]
+
+
+def test_trocar_a_alegacao_funciona_com_o_papel_restrito(sessao_restrita, semente):
+    """`delete-orphan` em `interacao_alegacao` (0046).
+
+    Mesma classe de falha de tema e área: tirar uma alegação de uma consulta
+    emite `DELETE`, e as `alter default privileges` da 0009 dão só
+    select/insert/update a tabela nova. Em desenvolvimento passa, porque tudo
+    roda como superusuário; com a conta restrita, a coordenação corrigiria o
+    registro e receberia "permission denied" na hora de salvar.
+
+    Confere também a trilha: mudar isto muda a contagem que a aba de Sinais
+    usa para afirmar que algo está circulando.
+    """
+    alegacoes = sessao_restrita.scalars(select(Alegacao).limit(2)).all()
+    if len(alegacoes) < 2:
+        apuracao = sessao_restrita.scalar(select(Apuracao.id).limit(1))
+        alegacoes = [
+            Alegacao(
+                id=uuid4(),
+                texto=f"Alegação de sondagem {i}",
+                texto_normalizado=f"alegacao de sondagem {i}",
+                apuracao_id=apuracao,
+            )
+            for i in (1, 2)
+        ]
+        sessao_restrita.add_all(alegacoes)
+        sessao_restrita.flush()
+
+    repositorio = RepositorioSQL(sessao_restrita)
+    criada = repositorio.adicionar(
+        _interacao(sessao_restrita, semente, alegacoes=tuple(a.id for a in alegacoes))
+    )
+    sessao_restrita.flush()
+
+    criada.alegacoes = (alegacoes[0].id,)
+    repositorio.atualizar(criada)
+    sessao_restrita.flush()
+
+    restantes = sessao_restrita.execute(
+        text("select alegacao_id from interacao_alegacao where interacao_id = :id"),
+        {"id": criada.id},
+    ).scalars().all()
+    assert restantes == [alegacoes[0].id]
+
+    trilha = sessao_restrita.execute(
+        text(
+            "select valor_anterior, valor_novo from interacao_auditoria "
+            "where interacao_id = :id and campo = 'alegacao' order by id"
+        ),
+        {"id": criada.id},
+    ).all()
+    assert (None, str(alegacoes[0].id)) in trilha, "a entrada não foi auditada"
+    assert (str(alegacoes[1].id), None) in trilha, "a saída não foi auditada"
 
 
 def test_apagar_pessoa_funciona_com_o_papel_restrito(sessao_restrita, semente):

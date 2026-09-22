@@ -143,18 +143,19 @@ de acesso vale na hora exata, e a revogação feita pela tela vale no ato. Ver
 ## Banco
 
 PostgreSQL **15 ou superior** — a razão do piso está em [Versão e
-privilégio](#versão-e-privilégio). 46 tabelas, organizadas em seis assuntos:
+privilégio](#versão-e-privilégio). 57 tabelas, organizadas em sete assuntos:
 
 | Assunto | Tabelas principais |
 |---|---|
 | dicionários | `frente`, `status`, `tema`, `esfera`, `clima`, `resultado`, `formato`, … |
 | stakeholders | `instituicao`, `interlocutor`, `pessoa_aegea` |
 | acesso | `papel`, `usuario`, `escopo`, `acesso_log`, trilha de concessão |
-| agendas | `interacao` (tabela-mãe) + cinco extensões 1-para-1 por frente, `interacao_interlocutor`, `interacao_origem`, `participacao_aegea`, `material` |
+| agendas | `interacao` (tabela-mãe) + cinco extensões 1-para-1 por frente, `interacao_consulta` (1-para-1 pelo TIPO), `interacao_interlocutor`, `interacao_origem`, `participacao_aegea`, `material` |
 | biblioteca | `referencia`, `referencia_versao`, `referencia_tema`, `arquivo` |
+| sinais | `alegacao`, `alegacao_tema`, `interacao_alegacao`, `apuracao`, `canal_consulta` |
 | trilhas | `auditoria`, `exportacao`, `importacao` (schema sem aplicação) |
 
-As 43 migrations ficam em `app/banco/migrations/` e rodam **em ordem
+As 44 migrations ficam em `app/banco/migrations/` e rodam **em ordem
 alfabética**, uma vez, na primeira subida do banco. Cada arquivo abre com um
 cabeçalho dizendo o que muda e por quê — é lá que está o histórico, e não aqui.
 
@@ -414,6 +415,11 @@ Escrito explicitamente para quem for continuar.
 
 - **Importação da planilha.** As tabelas existem (migration `0008`) e o desenho
   está documentado lá; não há rota nem caso de uso.
+- **Ingestão automática de e-mail.** A consulta recebida (`0046`) é
+  REGISTRADA À MÃO: quem recebe o questionário cadastra a interação e a
+  alegação que ela traz. Encaminhar para uma caixa e o sistema se registrar
+  sozinho — com a alegação sugerida — é a fase seguinte, e exige e-mail de
+  entrada no Azure.
 - **Administração dos dicionários fechados.** Frente, status, clima, resultado e
   formato só se leem (`GET /api/dicionarios`); mudar um valor é SQL. O que TEM
   tela e rota é o cadastro de assuntos, instituições, interlocutores e pessoas
