@@ -165,9 +165,13 @@ class Recorte:
         else:
             intervalo = Periodo()
 
+        # REPETIDO NA QUERY (`tags=a&tags=b`), lista aqui. Um nome de tema pode
+        # ter vírgula, então NÃO se parte o texto nela: quem ainda mandar
+        # "a,b" num valor só está pedindo um tema chamado "a,b".
         tags = filtros.pop("tags", ()) or ()
         if isinstance(tags, str):
-            tags = tuple(t.strip() for t in tags.split(",") if t.strip())
+            tags = (tags,)
+        tags = tuple(t.strip() for t in tags if t and t.strip())
 
         # MESMO CONTRATO DE `tags` NA QUERY STRING — "1,2,3" —, mas os ids de
         # área são NÚMEROS, e não nomes: convertê-los aqui é o que faz o

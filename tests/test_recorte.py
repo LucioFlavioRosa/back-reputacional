@@ -19,7 +19,7 @@ def test_recorte_vazio_significa_base_inteira():
 
 def test_conta_filtros_ativos_para_o_contador_do_botao():
     recorte = Recorte.construir(
-        periodo="ultimos-90", frente="imprensa", uf="SP", tags="Tarifa,IPO"
+        periodo="ultimos-90", frente="imprensa", uf="SP", tags=["Tarifa", "IPO"]
     )
     # período + frente + uf + tags = 4
     assert recorte.quantidade_de_filtros == 4
@@ -44,9 +44,14 @@ def test_atalho_futuro_resolve_para_intervalo_de_datas():
     assert periodo.ate == date(2027, 8, 19)
 
 
-def test_tags_chegam_como_texto_separado_por_virgula():
-    recorte = Recorte.construir(tags="Tarifa, IPO ,Copasa")
-    assert recorte.tags == ("Copasa", "IPO", "Tarifa")
+def test_tags_chegam_como_lista_e_a_virgula_faz_parte_do_nome():
+    """Repetido na query (`tags=a&tags=b`), lista aqui — e nunca partido na
+    vírgula, porque um nome de tema pode tê-la."""
+    recorte = Recorte.construir(tags=["Tarifa", " IPO ", "", "Saneamento, drenagem"])
+    assert recorte.tags == ("IPO", "Saneamento, drenagem", "Tarifa")
+
+    # Um texto só é UM tema, vírgula inclusa.
+    assert Recorte.construir(tags="Saneamento, drenagem").tags == ("Saneamento, drenagem",)
 
 
 def test_alternar_tag_liga_e_desliga():

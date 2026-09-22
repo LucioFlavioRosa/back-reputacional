@@ -107,7 +107,12 @@ def obter_recorte(
     subtipo: Annotated[str | None, Query(description="tipo de investidor")] = None,
     porta_voz: Annotated[UUID | None, Query(alias="portaVoz")] = None,
     pessoa: Annotated[UUID | None, Query()] = None,
-    tags: Annotated[str | None, Query(description="separadas por vírgula; OR entre elas")] = None,
+    tags: Annotated[
+        list[str] | None,
+        Query(
+            description="repetido — tags=a&tags=b; OR entre elas. Um nome de tema pode ter vírgula."
+        ),
+    ] = None,
     areas: Annotated[
         str | None,
         Query(description="ids de área interna, separados por vírgula; OR entre elas"),
