@@ -147,16 +147,17 @@ privilégio](#versão-e-privilégio). 57 tabelas, organizadas em sete assuntos:
 
 | Assunto | Tabelas principais |
 |---|---|
-| dicionários | `frente`, `status`, `tema`, `esfera`, `clima`, `resultado`, `formato`, … |
+| dicionários | `frente`, `status`, `tema`, `esfera`, `clima`, `resultado`, `formato`, `formato_interacao`, `area_pessoa`, `categoria_publico`, `subcategoria_publico`, … |
 | stakeholders | `instituicao`, `interlocutor`, `pessoa_aegea` |
 | acesso | `papel`, `usuario`, `escopo`, `acesso_log`, trilha de concessão |
-| agendas | `interacao` (tabela-mãe) + cinco extensões 1-para-1 por frente, `interacao_consulta` (1-para-1 pelo TIPO), `interacao_interlocutor`, `interacao_origem`, `participacao_aegea`, `material` |
+| agendas | `interacao` (tabela-mãe) + cinco extensões 1-para-1 por frente, `interacao_consulta` (1-para-1 pelo TIPO), `interacao_interlocutor`, `interacao_origem`, `interacao_area`, `participacao_aegea`, `material` |
 | biblioteca | `referencia`, `referencia_versao`, `referencia_tema`, `arquivo` |
 | sinais | `alegacao`, `alegacao_tema`, `interacao_alegacao`, `apuracao`, `canal_consulta` |
 | trilhas | `auditoria`, `exportacao`, `importacao` (schema sem aplicação) |
 
-As 44 migrations ficam em `app/banco/migrations/` e rodam **em ordem
-alfabética**, uma vez, na primeira subida do banco. Cada arquivo abre com um
+As 45 migrations (`0001` a `0046`; a `0019` não existe) ficam em
+`app/banco/migrations/` e rodam **em ordem alfabética**, uma vez, na primeira
+subida do banco. Cada arquivo abre com um
 cabeçalho dizendo o que muda e por quê — é lá que está o histórico, e não aqui.
 
 Cada objeto é criado **uma vez**, no estado final. Não há migration que corrija
@@ -166,6 +167,39 @@ outra.
 > massa e só alcança o que já existia; `select`, `insert` e `update` vêm depois
 > pelo `alter default privileges`, mas `delete` não. Sem o `grant` explícito, a
 > edição falha só na hora de salvar, com erro de permissão.
+
+### O que o vocabulário ganhou em setembro de 2026
+
+- **Oito frentes.** `bancos_credores` (Bancos/Credores) entrou pela `0031` e
+  usa a extensão `interacao_institucional`, a mesma de Governo, Parceiros e
+  Eventos — o mapa é `EXTENSAO_POR_FRENTE`, em `app/dominio/frentes.py`.
+- **Clima é Proativo / Reativo** (`0030`). Os códigos `propositivo` e `tenso`
+  continuam no banco; só o nome exibido mudou.
+- **Área interna da agenda.** `area_pessoa` é a área da Aegea (Comunicação,
+  Relações Institucionais, Operações Financeiras, Relações com Investidores;
+  "Performance e Dados" está com `ativo = false` desde a `0033`), e
+  `interacao_area` liga cada agenda a uma ou mais áreas (`0032`; o `delete`
+  para `painel_app` e o gatilho de auditoria vieram só na `0041`). O filtro é
+  `areas=1,2` — ids separados por vírgula, OR entre eles.
+- **Taxonomia de públicos** (`0036`). Dez categorias, cada uma com seu
+  `padrao_de_quebra` (esfera, lógica de relação, posição de capital, lógica
+  editorial ou nenhuma) e a área dona daquele público; vinte subcategorias.
+  **Mora em `instituicao`** (`categoria_publico_id`, `subcategoria_publico_id`),
+  não em `interacao`: é atributo do órgão, não da reunião. `natureza_orgao`
+  segue no banco e na API enquanto o backfill não termina —
+  `python -m app.banco.sugerir_categoria_de_publico` sugere, sem gravar, a
+  categoria de cada instituição já cadastrada.
+- **Conteúdo por versão** na biblioteca (`0034`): o resumo acompanha a versão
+  da referência e é obrigatório na criação; o arquivo passou a ser opcional.
+- **Formato da interação** (`0038`): Mídia, Evento, Reunião, Visita,
+  Manifestação formal… — responde "que tipo de encontro foi", uma pergunta
+  ortogonal à da frente ("quem é a contraparte"). `formato_interacao_id` em
+  `interacao`; o filtro "Tipo de Interação" do Painel usa ele, não a frente.
+- **A Frente deixou de ser perguntada.** Quem registra escolhe o formato e a
+  instituição, e `derivar_frente` (`app/casos_de_uso/derivar_frente.py`) deduz
+  a frente do tipo da instituição. A tentativa de guardar uma frente padrão
+  por categoria de público (`0039`) foi desfeita na `0040`: o tipo da
+  instituição já bastava.
 
 ### Versão e privilégio
 
@@ -261,6 +295,14 @@ A listagem de interações e as rotas de métricas recebem **os mesmos filtros**
 porque vêm da mesma dependência `obter_recorte`. As demais têm parâmetros
 próprios.
 
+O período aceita duas formas: `de`/`ate` (datas ISO) ou um atalho em `periodo`
+— `ultimos-30|60|90|180|360` e `proximos-30|60|90|180|360`, a mesma escala para
+trás e para a frente (`app/dominio/periodo.py`). O front resolve os atalhos do
+lado dele e manda só `de`/`ate`, o que permite combinar passado e futuro num
+intervalo único. Os demais filtros: `frente`, `unidade`, `uf`, `esfera`,
+`tier`, `clima`, `resultado`, `status`, `grupo`, `entidade`, `subtipo`,
+`portaVoz`, `pessoa`, `tags`, `areas` e `q` (busca livre).
+
 | Método | Rota | O que faz |
 |---|---|---|
 | `GET` | `/api/saude` | healthcheck |
@@ -314,7 +356,7 @@ oferece do que só se lê.
 ## Testes e qualidade
 
 ```bash
-python -m pytest        # 635 testes; precisa do Postgres no ar
+python -m pytest        # 709 testes; precisa do Postgres no ar
 ruff check .            # linter, com as regras FastAPI (FAST); passa limpo
 ```
 
@@ -352,6 +394,7 @@ configuração do repositório.
 | `test_verificacao_de_producao.py` | a API recusa subir com configuração insegura |
 | `test_protecao_http.py` | CORS, CSRF, cabeçalhos, limite de corpo |
 | `test_schema_bate_com_migration.py` | compara o ORM com o DDL, coluna por coluna |
+| `test_semeadores.py` | os três semeadores do README, na ordem, contra o banco de teste — o caminho de quem clona |
 
 ## As versões são travadas
 

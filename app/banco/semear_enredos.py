@@ -3125,7 +3125,7 @@ def vincular_areas(sessao: Session) -> int:
     """
     id_da_area = {a.nome: a.id for a in sessao.scalars(select(AreaPessoa))}
     codigo_da_frente = {f.id: f.codigo for f in sessao.scalars(select(FrenteTabela))}
-    ja_ligadas = {v.interacao_id for v in sessao.scalars(select(InteracaoArea.interacao_id))}
+    ja_ligadas = set(sessao.scalars(select(InteracaoArea.interacao_id)))
 
     ligadas = 0
     for interacao in sessao.scalars(select(InteracaoRegistro)):
