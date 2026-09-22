@@ -338,6 +338,18 @@ def condicoes(
         onde.append(_tratou_de_algum(recorte.tags))
     if recorte.areas:
         onde.append(_de_alguma_area(recorte.areas))
+    if recorte.formatos_interacao:
+        onde.append(InteracaoRegistro.formato_interacao_id.in_(recorte.formatos_interacao))
+    if recorte.categorias_publico:
+        # A categoria mora na INSTITUIÇÃO, não na interação: junta pela
+        # instituição da agenda — o mesmo caminho de `_da_instituicao`.
+        onde.append(
+            InteracaoRegistro.instituicao_id.in_(
+                select(Instituicao.id).where(
+                    Instituicao.categoria_publico_id.in_(recorte.categorias_publico)
+                )
+            )
+        )
     if recorte.subtipo:
         onde.append(_do_tipo_de_investidor(recorte.subtipo))
 

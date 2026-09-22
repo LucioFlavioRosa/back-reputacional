@@ -171,3 +171,14 @@ def test_o_filtro_por_pessoa_nao_estoura():
         escopo=Escopo(irrestrito=True),
         busca_em_campos_sensiveis=False,
     )
+
+
+def test_formatos_e_categorias_chegam_como_ids_separados_por_virgula():
+    """Os dois filtros que nasceram só no cliente: mesmo contrato de `areas`."""
+    recorte = Recorte.construir(formatos_interacao="7,1", categorias_publico="3")
+    assert recorte.formatos_interacao == (1, 7)
+    assert recorte.categorias_publico == (3,)
+    assert recorte.quantidade_de_filtros == 2
+
+    with pytest.raises(RegraViolada):
+        Recorte.construir(formatos_interacao="midia")

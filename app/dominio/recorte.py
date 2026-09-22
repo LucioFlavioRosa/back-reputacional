@@ -70,6 +70,14 @@ class Recorte:
     #: Áreas internas da Aegea envolvidas — ids de `area`, não nomes. Mesmo
     #: comportamento de `tags`: OR entre as escolhidas.
     areas: tuple[int, ...] = ()
+    #: Formato da interação (Mídia, Reunião, Evento…) — ids de
+    #: `formato_interacao`, OR entre eles. Nasceu só no cliente; passou ao
+    #: servidor para métricas, materiais e exportação obedecerem ao mesmo
+    #: recorte que a tela.
+    formatos_interacao: tuple[int, ...] = ()
+    #: Categoria de público da INSTITUIÇÃO da interação — ids de
+    #: `categoria_publico`, OR entre eles. Mesma origem e mesmo motivo.
+    categorias_publico: tuple[int, ...] = ()
     busca: str | None = None
 
     def __post_init__(self) -> None:
@@ -119,6 +127,10 @@ class Recorte:
         if self.tags:
             ativos += 1
         if self.areas:
+            ativos += 1
+        if self.formatos_interacao:
+            ativos += 1
+        if self.categorias_publico:
             ativos += 1
         return ativos
 
@@ -177,20 +189,34 @@ class Recorte:
         # área são NÚMEROS, e não nomes: convertê-los aqui é o que faz o
         # `exists` de `filtros_sql._de_alguma_area` comparar inteiro com
         # inteiro, em vez de precisar de outra volta ao banco para casar texto.
-        areas = filtros.pop("areas", ()) or ()
-        if isinstance(areas, str):
-            try:
-                areas = tuple(int(a.strip()) for a in areas.split(",") if a.strip())
-            except ValueError as erro:
-                raise RegraViolada(
-                    f"Área inválida: {areas!r}. Use ids separados por vírgula."
-                ) from erro
+        areas = _ids(filtros.pop("areas", ()), "Área")
+        formatos_interacao = _ids(filtros.pop("formatos_interacao", ()), "Formato de interação")
+        categorias_publico = _ids(filtros.pop("categorias_publico", ()), "Categoria de público")
 
         # Ordenadas para que dois Recortes com as mesmas tags/áreas sejam
         # iguais, independentemente da ordem em que o usuário clicou nelas.
         return cls(
             periodo=intervalo,
             tags=tuple(sorted(tags)),
-            areas=tuple(sorted(areas)),
+            areas=areas,
+            formatos_interacao=formatos_interacao,
+            categorias_publico=categorias_publico,
             **filtros,
         )  # type: ignore[arg-type]
+
+
+def _ids(valor: object, rotulo: str) -> tuple[int, ...]:
+    """Uma lista de ids como chega da query string ("1,2,3") ou do código.
+
+    Ordenada, para dois Recortes com os mesmos ids serem iguais seja qual for
+    a ordem dos cliques."""
+    if not valor:
+        return ()
+    if isinstance(valor, str):
+        try:
+            return tuple(sorted(int(v.strip()) for v in valor.split(",") if v.strip()))
+        except ValueError as erro:
+            raise RegraViolada(
+                f"{rotulo} inválido: {valor!r}. Use ids separados por vírgula."
+            ) from erro
+    return tuple(sorted(int(v) for v in valor))  # type: ignore[union-attr]

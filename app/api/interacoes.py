@@ -117,6 +117,20 @@ def obter_recorte(
         str | None,
         Query(description="ids de área interna, separados por vírgula; OR entre elas"),
     ] = None,
+    formatos_interacao: Annotated[
+        str | None,
+        Query(
+            alias="formatoInteracao",
+            description="ids de formato de interação, separados por vírgula; OR entre eles",
+        ),
+    ] = None,
+    categorias_publico: Annotated[
+        str | None,
+        Query(
+            alias="categoriaPublico",
+            description="ids de categoria de público da instituição, separados por vírgula",
+        ),
+    ] = None,
     q: Annotated[str | None, Query(description="busca livre")] = None,
 ) -> Recorte:
     """Monta o Recorte a partir da query string.
@@ -144,6 +158,8 @@ def obter_recorte(
         pessoa=pessoa,
         tags=tags,
         areas=areas,
+        formatos_interacao=formatos_interacao,
+        categorias_publico=categorias_publico,
         busca=q,
     )
 
