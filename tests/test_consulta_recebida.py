@@ -539,7 +539,7 @@ def test_o_anexo_da_consulta_vai_para_a_arvore_da_consulta(
     assert len(guardados) == 1
     caminho = guardados[0]
     assert caminho.startswith("consultas/2026-09/banco-da-sondagem/")
-    assert f"/2026-09-13-{criada['id'][:8]}/" in caminho
+    assert f"/2026-09-13-{criada['id']}/" in caminho
     assert caminho.endswith("-Questionario-anual.pdf")
 
 

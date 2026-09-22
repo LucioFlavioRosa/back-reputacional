@@ -37,13 +37,14 @@ def test_a_consulta_agrupa_por_mes_e_por_instituicao():
     # O ponto final some: `_sem_acento_nem_surpresa` apara pontos e hifens das
     # pontas, e pasta terminada em ponto é armadilha no Windows.
     assert caminho.startswith("consultas/2026-09/banco-interamericano-s.a/")
-    assert f"/2026-09-13-{str(consulta)[:8]}/" in caminho
+    assert f"/2026-09-13-{consulta}/" in caminho
     assert caminho.endswith("-Questionario-anual.pdf")
 
 
-def test_dois_e_mails_do_mesmo_banco_no_mesmo_dia_ficam_em_pastas_diferentes():
-    """Uma pasta por E-MAIL: juntá-los faria parecer que o segundo anexo é do
-    primeiro questionário."""
+def test_duas_consultas_do_mesmo_banco_no_mesmo_dia_ficam_em_pastas_diferentes():
+    """Uma pasta por CONSULTA: juntá-las faria parecer que o anexo da segunda
+    é da primeira. O id inteiro no nome é o que garante — um prefixo dele
+    deixaria de ser garantia e viraria probabilidade."""
     argumentos = dict(
         data=date(2026, 9, 13),
         instituicao="Banco X",

@@ -15,7 +15,7 @@ qual agenda um arquivo pertence sem consultar o banco.
 DUAS OUTRAS ÁRVORES, e cada uma existe porque a PERGUNTA é outra:
 
     referencias/{assunto}/{tipo}/{referência}/v{n}-{id}-{nome}
-    consultas/{aaaa-mm}/{instituicao}/{aaaa-mm-dd}-{id curto}/{id}-{nome}
+    consultas/{aaaa-mm}/{instituicao}/{aaaa-mm-dd}-{consulta_id}/{arquivo_id}-{nome}
 
 A da agenda serve a quem chega pelo registro e já tem o link. As outras duas
 servem a quem chega pelo CONTÊINER — "onde está o Q&A de tarifa", "o que o
@@ -177,7 +177,7 @@ def caminho_da_consulta(
 ) -> str:
     """Onde o anexo de uma CONSULTA RECEBIDA nasce.
 
-        consultas/<aaaa-mm>/<instituicao>/<aaaa-mm-dd>-<id curto>/<id>-<nome>
+        consultas/<aaaa-mm>/<instituicao>/<aaaa-mm-dd>-<id>/<arquivo_id>-<nome>
 
     POR QUE NÃO A ÁRVORE DA AGENDA. `interacoes/<uuid>/…` serve para material
     que se acha PELO REGISTRO: quem abre a ficha tem o link, e o contêiner é
@@ -189,15 +189,21 @@ def caminho_da_consulta(
     semanas, e é por período que se vistoria. A instituição em seguida agrupa
     o que veio do mesmo remetente dentro daquele mês.
 
-    UMA PASTA POR E-MAIL, e é o `id curto` que garante isso: dois
-    questionários do mesmo banco no mesmo dia são dois e-mails, e juntá-los
-    numa pasta só faria parecer que o segundo é anexo do primeiro. A data
-    começa o nome para a ordenação alfabética ser a cronológica.
+    UMA PASTA POR CONSULTA, e é o id INTEIRO que garante isso: dois
+    questionários do mesmo banco no mesmo dia são duas consultas, e juntá-las
+    numa pasta faria parecer que o anexo da segunda é da primeira. Um prefixo
+    do uuid seria mais curto de ler e deixaria de ser garantia — com 8
+    caracteres, mil consultas do mesmo banco no mesmo dia colidiriam uma vez
+    em cem —, e quem navega se orienta pela DATA, que vem antes; o uuid é só
+    o desempate.
+
+    A DATA COMEÇA O NOME da pasta para a ordenação alfabética do Storage
+    Explorer já ser a cronológica.
     """
     return (
         f"consultas/{data:%Y-%m}"
         f"/{_sem_acento_nem_surpresa(instituicao).lower()}"
-        f"/{data:%Y-%m-%d}-{str(consulta_id)[:8]}"
+        f"/{data:%Y-%m-%d}-{consulta_id}"
         f"/{arquivo_id}-{_sem_acento_nem_surpresa(nome)}"
     )
 
