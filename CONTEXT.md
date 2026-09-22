@@ -111,8 +111,8 @@ instituição dele ativa.
 
 **Recorte**:
 O conjunto de filtros em vigor — período, frente, área, tipo de interação,
-público, instituição, tema, clima, desfecho, situação, relevância, esfera,
-unidade, UF, busca. Mora no endereço; todo número, tabela e gráfico obedece
+público, instituição, tema, clima esperado, clima registrado, desfecho,
+situação, relevância, esfera, unidade, UF, busca. Mora no endereço; todo número, tabela e gráfico obedece
 ao mesmo recorte, e o servidor é quem o aplica.
 _Avoid_: filtro (é um campo do recorte), query, seleção
 

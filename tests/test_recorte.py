@@ -182,3 +182,12 @@ def test_formatos_e_categorias_chegam_como_ids_separados_por_virgula():
 
     with pytest.raises(RegraViolada):
         Recorte.construir(formatos_interacao="midia")
+
+
+def test_clima_esperado_e_clima_registrado_sao_filtros_distintos():
+    """Na tela Preparar agenda, a coluna "Antes" filtra pelo esperado e a
+    coluna "Depois" pelo registrado — e os dois podem coexistir."""
+    recorte = Recorte.construir(clima_esperado="tenso", clima="propositivo")
+    assert recorte.clima_esperado == "tenso"
+    assert recorte.clima == "propositivo"
+    assert recorte.quantidade_de_filtros == 2

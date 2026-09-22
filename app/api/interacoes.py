@@ -96,7 +96,11 @@ def obter_recorte(
     # Sem `le`: quantos níveis existem é o que estiver em `relevancia`, e
     # um teto aqui voltaria a ser uma cópia que envelhece sozinha.
     tier: Annotated[int | None, Query(ge=1)] = None,
-    clima: Annotated[str | None, Query()] = None,
+    clima: Annotated[str | None, Query(description="clima registrado depois da interação")] = None,
+    clima_esperado: Annotated[
+        str | None,
+        Query(alias="climaEsperado", description="clima esperado ao marcar a interação"),
+    ] = None,
     resultado: Annotated[str | None, Query()] = None,
     status_: Annotated[
         str | None,
@@ -149,6 +153,7 @@ def obter_recorte(
         esfera=esfera,
         tier=tier,
         clima=clima,
+        clima_esperado=clima_esperado,
         resultado=resultado,
         status=status_,
         grupo_status=grupo,

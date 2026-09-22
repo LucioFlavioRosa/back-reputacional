@@ -291,6 +291,10 @@ def condicoes(
         onde.append(InteracaoRegistro.esfera_id == _id_do_codigo(Esfera, recorte.esfera))
     if recorte.clima:
         onde.append(InteracaoRegistro.clima_id == _id_do_codigo(Clima, recorte.clima))
+    if recorte.clima_esperado:
+        onde.append(
+            InteracaoRegistro.clima_esperado_id == _id_do_codigo(Clima, recorte.clima_esperado)
+        )
     if recorte.resultado:
         onde.append(
             InteracaoRegistro.resultado_id == _id_do_codigo(Resultado, recorte.resultado)

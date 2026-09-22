@@ -59,6 +59,11 @@ class Recorte:
     esfera: str | None = None
     tier: int | None = None
     clima: str | None = None
+    #: O clima que se ESPERAVA ao marcar a reunião — filtro separado do
+    #: registrado depois dela. Nasceu na tela Preparar agenda: com um
+    #: filtro só, clicar na coluna "Antes" filtrava pelo registrado e a
+    #: própria coluna "Antes" sumia.
+    clima_esperado: str | None = None
     resultado: str | None = None
     status: str | None = None
     grupo_status: str | None = None
@@ -117,7 +122,7 @@ class Recorte:
             1
             for valor in (
                 self.frente, self.unidade, self.uf, self.esfera, self.tier,
-                self.clima, self.resultado, self.status, self.grupo_status,
+                self.clima, self.clima_esperado, self.resultado, self.status, self.grupo_status,
                 self.entidade, self.subtipo, self.porta_voz, self.pessoa, self.busca,
             )
             if valor is not None

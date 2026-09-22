@@ -1768,6 +1768,32 @@ def test_filtro_por_formato_e_por_categoria_de_publico_no_servidor(cliente_admin
     assert cliente_admin.get("/api/interacoes?formatoInteracao=midia").status_code == 422
 
 
+def test_clima_esperado_filtra_pelo_antes_e_clima_pelo_depois(cliente_admin, semente):
+    """`climaEsperado` e `clima` são filtros distintos: quem clica na coluna
+    "Antes" da tela Preparar agenda não perde a coluna "Antes"."""
+
+    def agenda(esperado, registrado):
+        corpo_ = corpo(semente)
+        corpo_["clima_esperado"] = esperado
+        corpo_["clima"] = registrado
+        resposta = cliente_admin.post("/api/interacoes", json=corpo_)
+        assert resposta.status_code == 201, resposta.text
+        return resposta.json()["id"]
+
+    a = agenda("tenso", "propositivo")
+    b = agenda("tenso", "tenso")
+    c = agenda("neutro", "propositivo")
+
+    def ids(consulta: str) -> set[str]:
+        resposta = cliente_admin.get(f"/api/interacoes?{consulta}&tamanho=200")
+        assert resposta.status_code == 200, resposta.text
+        return {i["id"] for i in resposta.json()["itens"]} & {a, b, c}
+
+    assert ids("climaEsperado=tenso") == {a, b}
+    assert ids("clima=propositivo") == {a, c}
+    assert ids("climaEsperado=tenso&clima=propositivo") == {a}
+
+
 def test_apagar_instituicao_inexistente_e_404(cliente_admin, semente):
     resposta = cliente_admin.delete(f"/api/instituicoes/{uuid4()}")
     assert resposta.status_code == 404
