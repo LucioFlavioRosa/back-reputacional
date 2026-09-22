@@ -132,6 +132,9 @@ def _consulta(cliente_admin, semente, instituicao_id, **ajustes):
     # da instituição, e é isso que se está provando aqui.
     corpo_.pop("frente", None)
     corpo_["formato_interacao_id"] = _tipo_de_consulta(cliente_admin)
+    # O BLOCO SEMPRE VIAJA no tipo de consulta, como a tela faz: ele é o
+    # marcador de consulta para quem lê, e alegação sem ele é recusada.
+    corpo_["consulta"] = {}
     corpo_.update(ajustes)
     resposta = cliente_admin.post("/api/interacoes", json=corpo_)
     assert resposta.status_code == 201, resposta.text
@@ -394,6 +397,26 @@ def test_alegacao_sem_consulta_e_recusada(cliente_admin, semente, credor):
     assert "consulta recebida" in resposta.json()["detalhe"]
 
 
+def test_alegacao_com_o_tipo_certo_mas_sem_o_bloco_e_recusada(
+    cliente_admin, semente, credor
+):
+    """O BLOCO é o marcador de consulta para quem lê: sem ele, a interação
+    ficaria fora da aba levando a premissa consigo — registrada, e nunca
+    contada."""
+    alegacao = _alegacao(cliente_admin, "O covenant seria renegociado em agosto")
+    resposta = cliente_admin.post(
+        "/api/interacoes",
+        json={
+            **corpo(semente),
+            "instituicao_id": credor["id"],
+            "formato_interacao_id": _tipo_de_consulta(cliente_admin),
+            "alegacoes": [alegacao["id"]],
+        },
+    )
+    assert resposta.status_code == 422
+    assert "consulta recebida" in resposta.json()["detalhe"]
+
+
 def test_trocar_o_tipo_sem_limpar_o_bloco_e_recusado(cliente_admin, semente, credor):
     """O `PATCH` altera um campo de cada vez, e a invariante é sobre o ESTADO
     FINAL: sem isto, uma reunião ficaria com prazo de resposta e alegações."""
@@ -407,6 +430,12 @@ def test_trocar_o_tipo_sem_limpar_o_bloco_e_recusado(cliente_admin, semente, cre
         f"/api/interacoes/{criada['id']}", json={"formato_interacao_id": reuniao}
     )
     assert resposta.status_code == 422
+
+    # QUE A EDIÇÃO PARCIAL É DESFEITA se prova em
+    # `test_sessao_do_pedido::test_erro_de_dominio_desfaz_a_transacao`, e não
+    # aqui: esta suíte injeta a sessão por `dependency_overrides`, então o
+    # código de saída de `obter_sessao` — o `rollback` — não roda. Afirmá-lo
+    # neste arquivo seria testar o harness, e não o servidor.
 
     # E com o bloco limpo na MESMA edição, passa.
     ok = cliente_admin.patch(

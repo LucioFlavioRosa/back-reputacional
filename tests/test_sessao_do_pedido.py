@@ -20,10 +20,13 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Annotated
 
+import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
+from app.banco import sessao as sessao_do_banco
 from app.banco.sessao import SessaoDoPedido, obter_sessao
+from app.dominio.erros import RegraViolada
 
 
 class _FalhaNoCommit(RuntimeError):
@@ -130,4 +133,41 @@ def test_toda_rota_usa_o_alias():
     assert not infratores, (
         "use `SessaoDoPedido` (de `app/banco/sessao.py`) em vez de "
         f"`Depends(obter_sessao)` sem escopo: {infratores}"
+    )
+
+
+def test_erro_de_dominio_desfaz_a_transacao(monkeypatch):
+    """A recusa de uma regra não pode deixar meia edição gravada.
+
+    É o que sustenta a validação de `consulta_recebida`, que roda DEPOIS de a
+    edição ser aplicada: trocar o tipo de uma consulta para "Reunião" sem
+    limpar o bloco levanta `RegraViolada`, e é este `rollback` que desfaz o
+    tipo novo.
+
+    PROVADO AQUI, E NÃO PELO E2E: a suíte de API injeta a sessão por
+    `dependency_overrides`, então o código de saída de `obter_sessao` — que é
+    justamente o que se quer provar — não roda lá.
+    """
+    passos: list[str] = []
+
+    class SessaoFalsa:
+        def commit(self) -> None:
+            passos.append("commit")
+
+        def rollback(self) -> None:
+            passos.append("rollback")
+
+        def close(self) -> None:
+            passos.append("close")
+
+    monkeypatch.setattr(sessao_do_banco, "obter_fabrica_de_sessao", lambda: SessaoFalsa)
+
+    gerador = obter_sessao()
+    next(gerador)
+    with pytest.raises(RegraViolada):
+        gerador.throw(RegraViolada("o tipo não combina com o bloco"))
+
+    assert passos == ["rollback", "close"], (
+        "uma exceção no meio do pedido precisa desfazer a transação antes de "
+        "fechar a sessão — sem isso, a recusa deixaria o que já foi escrito"
     )
