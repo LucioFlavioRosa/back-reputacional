@@ -1373,108 +1373,40 @@ def test_a_sessao_sobrevive_a_duplicata_recusada(sessao, semente):
     assert depois.id is not None
 
 
-def test_cadastrar_instituicao_com_o_primeiro_representante(cliente_admin, semente):
-    """As duas coisas numa requisicao so.
+def test_instituicao_nao_aceita_mais_representante_no_corpo(cliente_admin, semente):
+    """O cadastro conjunto (instituicao + primeira pessoa) saiu da API.
 
-    Uma instituicao sem ninguem nao serve para nada: o formulario de agenda so
-    oferece pessoas depois que a instituicao e escolhida, e a lista sairia
-    vazia. Pedir dois gestos para uma decisao so e o caminho para metade das
-    instituicoes ficar sem representante.
+    A tela deixou de oferecer o modo "Instituicao e Contatos": quem representa
+    a instituicao se cadastra em Contatos, depois que ela existe. Sem cliente
+    para o campo, ele saiu do contrato — e `extra="forbid"` e o que garante
+    que um cliente antigo descubra isso com 422, e nao com uma pessoa
+    silenciosamente ignorada.
     """
     resposta = cliente_admin.post(
         "/api/instituicoes",
         json={
             "nome": "ABCON",
-            "nome_completo": "Associacao Brasileira das Concessionarias Privadas",
             "tipo": "entidade",
-            "representante": {
-                "nome": "Percy Soares",
-                "email": "percy@abcon.example",
-                "cargo": "Diretor executivo",
-            },
+            "representante": {"nome": "Percy Soares"},
         },
     )
 
-    assert resposta.status_code == 201, resposta.text
-    criada = resposta.json()
-    assert criada["nome_completo"].startswith("Associacao")
-
-    pessoas = [
-        p
-        for p in cliente_admin.get("/api/interlocutores").json()
-        if p["instituicao_id"] == criada["id"]
-    ]
-    assert len(pessoas) == 1
-    assert pessoas[0]["email"] == "percy@abcon.example"
-    assert pessoas[0]["cargo"] == "Diretor executivo"
-
-
-def test_a_instituicao_nao_entra_sozinha_se_o_representante_falhar(
-    cliente_admin, semente
-):
-    """As duas escritas caem ou passam JUNTAS.
-
-    Em duas requisicoes, uma falha na segunda deixaria a instituicao criada e
-    sem representante — e a tela teria de explicar um estado meio-feito que
-    ninguem pediu. Aqui o `flush` do representante estoura antes do commit, e
-    nada entra.
-    """
-    resposta = cliente_admin.post(
-        "/api/instituicoes",
-        json={
-            "nome": "Instituicao Fantasma",
-            "tipo": "orgao",
-            # `nome` vazio: `min_length=1` recusa antes de qualquer escrita.
-            "representante": {"nome": ""},
-        },
-    )
-
-    assert resposta.status_code == 422
+    assert resposta.status_code == 422, resposta.text
     achadas = [
-        i
-        for i in cliente_admin.get("/api/instituicoes").json()
-        if i["nome"] == "Instituicao Fantasma"
+        i for i in cliente_admin.get("/api/instituicoes").json() if i["nome"] == "ABCON"
     ]
-    assert achadas == [], "a instituicao entrou sem o representante"
+    assert achadas == [], "a instituicao entrou apesar do corpo recusado"
 
-
-def test_o_representante_e_opcional(cliente_admin, semente):
-    """A prova negativa: exigir representante travaria o cadastro.
-
-    Nem toda instituicao tem contato conhecido no dia em que entra na base.
-    """
-    resposta = cliente_admin.post(
-        "/api/instituicoes", json={"nome": "Orgao Sem Contato", "tipo": "orgao"}
-    )
-
-    assert resposta.status_code == 201, resposta.text
-
-
-def test_editar_instituicao_nao_cria_pessoa(cliente_admin, semente):
-    """`representante` e ignorado na edicao, e isso e deliberado.
-
-    Aceita-lo criaria uma pessoa nova a cada salvamento de nome — e o cadastro
-    encheria de duplicatas sem ninguem entender de onde vieram.
-    """
+    # No PUT tambem: o mesmo modelo, a mesma recusa — antes o campo era
+    # aceito e ignorado na edicao, o que escondia cliente desatualizado.
     criada = cliente_admin.post(
-        "/api/instituicoes", json={"nome": "Orgao Z", "tipo": "orgao"}
+        "/api/instituicoes", json={"nome": "Orgao Q", "tipo": "orgao"}
     ).json()
-
-    cliente_admin.put(
+    resposta = cliente_admin.put(
         f"/api/instituicoes/{criada['id']}",
-        json={
-            "nome": "Orgao Z",
-            "tipo": "orgao",
-            "representante": {"nome": "Nao deve ser criado"},
-        },
+        json={"nome": "Orgao Q", "tipo": "orgao", "representante": {"nome": "X"}},
     )
-
-    pessoas = [
-        p
-        for p in cliente_admin.get("/api/interlocutores").json()
-        if p["instituicao_id"] == criada["id"]
-    ]
-    assert pessoas == []
+    assert resposta.status_code == 422, resposta.text
 
 
 # -- apagar e desligar sao coisas diferentes -----------------------------------
@@ -1525,8 +1457,9 @@ def test_nao_apaga_quem_ja_esteve_numa_agenda(cliente_admin, semente):
     assert resposta.status_code == 422
     detalhe = resposta.json()["detalhe"]
     assert "1 agenda" in detalhe
-    #: E diz o que fazer, e nao so o que nao da.
-    assert "Desligar" in detalhe
+    #: E diz o que fazer, e nao so o que nao da — com o mesmo verbo da
+    #: instituicao (CONTEXT.md).
+    assert "Desativar" in detalhe
 
 
 def test_desligar_e_o_caminho_para_quem_tem_historico(cliente_admin, semente):
@@ -1550,6 +1483,320 @@ def test_desligar_e_o_caminho_para_quem_tem_historico(cliente_admin, semente):
 
     assert resposta.status_code == 200, resposta.text
     assert resposta.json()["ativo"] is False
+
+
+# -- o tipo vem da categoria de publico ----------------------------------------
+
+
+def _categoria(cliente, codigo: str) -> dict:
+    return next(
+        c for c in cliente.get("/api/dicionarios").json()["categorias_publico"]
+        if c["codigo"] == codigo
+    )
+
+
+def test_sem_tipo_a_categoria_de_publico_decide(cliente_admin, semente):
+    """A tela de cadastro nao pergunta mais o tipo: quem escolhe "Poder
+    Executivo" cadastrou um orgao, e quem escolhe "Imprensa" um veiculo.
+
+    E o tipo, e nao a categoria, que a frente da interacao le depois
+    (`derivar_frente`) — por isso ele continua gravado.
+    """
+    executivo = _categoria(cliente_admin, "poder_executivo")
+    federal = next(
+        s for s in cliente_admin.get("/api/dicionarios").json()["subcategorias_publico"]
+        if s["categoria_publico_id"] == executivo["id"]
+    )
+    resposta = cliente_admin.post(
+        "/api/instituicoes",
+        json={
+            "nome": "Ministerio da Fazenda",
+            "categoria_publico_id": executivo["id"],
+            "subcategoria_publico_id": federal["id"],
+        },
+    )
+    assert resposta.status_code == 201, resposta.text
+    assert resposta.json()["tipo"] == "orgao"
+
+    imprensa = _categoria(cliente_admin, "imprensa_formadores_opiniao")
+    economica = next(
+        s for s in cliente_admin.get("/api/dicionarios").json()["subcategorias_publico"]
+        if s["categoria_publico_id"] == imprensa["id"]
+    )
+    resposta = cliente_admin.post(
+        "/api/instituicoes",
+        json={
+            "nome": "Jornal Novo",
+            "categoria_publico_id": imprensa["id"],
+            "subcategoria_publico_id": economica["id"],
+        },
+    )
+    assert resposta.status_code == 201, resposta.text
+    assert resposta.json()["tipo"] == "veiculo"
+
+
+def test_categoria_inativa_nao_serve_para_derivar_o_tipo(cliente_admin, semente, sessao):
+    """`_conferir_categoria_publico` recusa a categoria desativada antes de
+    `_tipo_efetivo` olhar para ela — a tela nao a oferece, e a API responde
+    o mesmo que a tela."""
+    from app.banco.tabelas_catalogo import CategoriaPublico
+
+    categoria = sessao.scalar(
+        select(CategoriaPublico).where(CategoriaPublico.codigo == "poder_judiciario")
+    )
+    categoria.ativo = False
+    sessao.flush()
+
+    resposta = cliente_admin.post(
+        "/api/instituicoes",
+        json={"nome": "Tribunal Novo", "categoria_publico_id": categoria.id},
+    )
+    assert resposta.status_code == 422, resposta.text
+    assert "categoria" in resposta.json()["detalhe"].lower()
+
+
+def test_tipo_informado_vale_mais_que_a_categoria(cliente_admin, semente):
+    """Quem manda `tipo` esta dizendo o que quer — e o que deixa corrigir um
+    banco credor, que a taxonomia nao distingue de um investidor."""
+    mercado = _categoria(cliente_admin, "mercado_financeiro_capitais")
+    resposta = cliente_admin.post(
+        "/api/instituicoes",
+        json={"nome": "Banco Credor X", "tipo": "credor", "categoria_publico_id": mercado["id"]},
+    )
+    assert resposta.status_code == 201, resposta.text
+    assert resposta.json()["tipo"] == "credor"
+
+
+def test_sem_tipo_e_sem_categoria_nao_ha_de_onde_tirar_um(cliente_admin, semente):
+    """Uma instituicao sem tipo nao aparece em formulario nenhum — melhor
+    recusar do que gravar."""
+    resposta = cliente_admin.post("/api/instituicoes", json={"nome": "Sem Nada"})
+    assert resposta.status_code == 422, resposta.text
+    assert "categoria" in resposta.json()["detalhe"].lower()
+
+
+def test_na_edicao_sem_tipo_o_gravado_fica(cliente_admin, semente):
+    """A edicao pode mandar so o que muda; o tipo nao e trocado por omissao."""
+    criada = cliente_admin.post(
+        "/api/instituicoes", json={"nome": "Orgao T", "tipo": "proposicao"}
+    ).json()
+    resposta = cliente_admin.put(
+        f"/api/instituicoes/{criada['id']}", json={"nome": "Orgao T renomeado"}
+    )
+    assert resposta.status_code == 200, resposta.text
+    assert resposta.json()["tipo"] == "proposicao"
+
+
+# -- apagar uma instituicao ----------------------------------------------------
+
+
+def test_apagar_instituicao_que_entrou_por_engano_leva_as_pessoas_junto(
+    cliente_admin, semente
+):
+    """Cadastrada errada, sem agenda nenhuma: e lixo, e as pessoas dela nao
+    teriam para quem falar."""
+    instituicao = cliente_admin.post(
+        "/api/instituicoes", json={"nome": "Orgao Errado", "tipo": "orgao"}
+    ).json()
+    pessoa = cliente_admin.post(
+        "/api/interlocutores",
+        json={"nome": "Pessoa do Orgao Errado", "instituicao_id": instituicao["id"]},
+    ).json()
+
+    resposta = cliente_admin.delete(f"/api/instituicoes/{instituicao['id']}")
+
+    assert resposta.status_code == 204, resposta.text
+    assert not [
+        i for i in cliente_admin.get("/api/instituicoes").json() if i["id"] == instituicao["id"]
+    ]
+    assert not [
+        p for p in cliente_admin.get("/api/interlocutores").json() if p["id"] == pessoa["id"]
+    ]
+
+
+def test_nao_apaga_instituicao_que_ja_esteve_numa_agenda(cliente_admin, semente):
+    """O registro da agenda ficaria sem a outra parte. A recusa conta as
+    agendas e aponta Desativar."""
+    instituicao = cliente_admin.post(
+        "/api/instituicoes", json={"nome": "Orgao Com Agenda", "tipo": "orgao"}
+    ).json()
+    agenda = corpo(semente)
+    agenda["instituicao_id"] = instituicao["id"]
+    criada = cliente_admin.post("/api/interacoes", json=agenda)
+    assert criada.status_code == 201, criada.text
+
+    resposta = cliente_admin.delete(f"/api/instituicoes/{instituicao['id']}")
+
+    assert resposta.status_code == 422
+    detalhe = resposta.json()["detalhe"]
+    assert "1 agenda" in detalhe
+    #: E diz o que fazer, e nao so o que nao da.
+    assert "Desativar" in detalhe
+
+
+def test_nao_apaga_instituicao_cuja_pessoa_esteve_numa_agenda_de_outra(
+    cliente_admin, semente
+):
+    """A pessoa da ANA pode ter participado de uma agenda registrada em nome de
+    outra instituicao — a presenca dela e historico do mesmo jeito."""
+    instituicao = cliente_admin.post(
+        "/api/instituicoes", json={"nome": "Orgao Da Pessoa", "tipo": "orgao"}
+    ).json()
+    pessoa = cliente_admin.post(
+        "/api/interlocutores",
+        json={"nome": "Esteve por outra", "instituicao_id": instituicao["id"]},
+    ).json()
+    agenda = corpo(semente)  # a agenda e da instituicao da semente, nao desta
+    agenda["outra_parte"] = [{"interlocutor_id": pessoa["id"], "principal": True}]
+    criada = cliente_admin.post("/api/interacoes", json=agenda)
+    assert criada.status_code == 201, criada.text
+
+    resposta = cliente_admin.delete(f"/api/instituicoes/{instituicao['id']}")
+
+    assert resposta.status_code == 422
+    assert "1 agenda" in resposta.json()["detalhe"]
+
+
+def test_desativar_instituicao_a_tira_da_listagem_padrao_mas_nao_da_administracao(
+    cliente_admin, semente
+):
+    """Desativar e o caminho para quem tem historico: sai de quem oferece
+    escolha, fica onde e administracao. O front carrega o catalogo com
+    `incluir_inativos=1` e filtra por `ativo` onde oferece escolha — este
+    teste e o que segura os dois lados desse contrato.
+    """
+    criada = cliente_admin.post(
+        "/api/instituicoes", json={"nome": "Orgao Encerrado", "tipo": "orgao"}
+    ).json()
+    resposta = cliente_admin.put(
+        f"/api/instituicoes/{criada['id']}",
+        json={"nome": "Orgao Encerrado", "tipo": "orgao", "ativo": False},
+    )
+    assert resposta.status_code == 200, resposta.text
+    assert resposta.json()["ativo"] is False
+
+    padrao = {i["id"] for i in cliente_admin.get("/api/instituicoes").json()}
+    assert criada["id"] not in padrao
+
+    com_inativas = cliente_admin.get("/api/instituicoes?incluir_inativos=1").json()
+    achada = next(i for i in com_inativas if i["id"] == criada["id"])
+    assert achada["ativo"] is False
+
+    # Editar uma desativada mandando `ativo: false` a mantem desativada — e
+    # um PUT SEM `ativo` a reativaria, porque o padrao do modelo e `true`:
+    # e por isso que a tela sempre manda o campo.
+    resposta = cliente_admin.put(
+        f"/api/instituicoes/{criada['id']}",
+        json={"nome": "Orgao Encerrado (renomeado)", "tipo": "orgao", "ativo": False},
+    )
+    assert resposta.status_code == 200, resposta.text
+    assert resposta.json()["ativo"] is False
+
+
+def test_desativar_instituicao_tira_as_pessoas_dela_da_listagem_padrao(
+    cliente_admin, semente
+):
+    """A mesma regra, um nivel abaixo: a pessoa de uma instituicao desativada
+    nao e oferecida — sem reescrever o `ativo` dela, que continua `true` e
+    volta a valer sozinho quando a instituicao for reativada."""
+    instituicao = cliente_admin.post(
+        "/api/instituicoes", json={"nome": "Orgao Que Fecha", "tipo": "orgao"}
+    ).json()
+    pessoa = cliente_admin.post(
+        "/api/interlocutores",
+        json={"nome": "Pessoa Do Orgao Que Fecha", "instituicao_id": instituicao["id"]},
+    ).json()
+    assert pessoa["id"] in {p["id"] for p in cliente_admin.get("/api/interlocutores").json()}
+
+    cliente_admin.put(
+        f"/api/instituicoes/{instituicao['id']}",
+        json={"nome": "Orgao Que Fecha", "tipo": "orgao", "ativo": False},
+    )
+
+    padrao = {p["id"] for p in cliente_admin.get("/api/interlocutores").json()}
+    assert pessoa["id"] not in padrao
+    com_inativos = cliente_admin.get("/api/interlocutores?incluir_inativos=1").json()
+    achada = next(p for p in com_inativos if p["id"] == pessoa["id"])
+    assert achada["ativo"] is True, "desativar a instituicao nao reescreve a pessoa"
+
+    # E quem nao tem instituicao nenhuma continua disponivel: o filtro dos
+    # dois niveis nao pode derrubar quem so tem um nivel.
+    solta = cliente_admin.post("/api/interlocutores", json={"nome": "Sem Instituicao"}).json()
+    assert solta["id"] in {p["id"] for p in cliente_admin.get("/api/interlocutores").json()}
+
+
+def test_filtro_por_formato_e_por_categoria_de_publico_no_servidor(cliente_admin, semente):
+    """Os dois filtros que só existiam no cliente. Sem eles no servidor, o KPI
+    da tela (filtrado no navegador) e a exportação/materiais (filtrados no
+    servidor) contavam agendas diferentes para o mesmo recorte."""
+    dicionarios = cliente_admin.get("/api/dicionarios").json()
+    reuniao = next(f for f in dicionarios["formatos_interacao"] if f["codigo"] == "reuniao")
+    evento = next(f for f in dicionarios["formatos_interacao"] if f["codigo"] == "evento")
+    executivo = next(
+        c for c in dicionarios["categorias_publico"] if c["codigo"] == "poder_executivo"
+    )
+
+    ministerio = cliente_admin.post(
+        "/api/instituicoes",
+        json={"nome": "Ministerio X", "tipo": "orgao", "categoria_publico_id": executivo["id"]},
+    ).json()
+    outro = cliente_admin.post(
+        "/api/instituicoes", json={"nome": "Orgao Sem Categoria", "tipo": "orgao"}
+    ).json()
+
+    def agenda(instituicao_id, formato_id):
+        corpo_ = corpo(semente)
+        corpo_["instituicao_id"] = instituicao_id
+        corpo_["formato_interacao_id"] = formato_id
+        resposta = cliente_admin.post("/api/interacoes", json=corpo_)
+        assert resposta.status_code == 201, resposta.text
+        return resposta.json()["id"]
+
+    a = agenda(ministerio["id"], reuniao["id"])
+    b = agenda(ministerio["id"], evento["id"])
+    c = agenda(outro["id"], reuniao["id"])
+
+    def ids(consulta: str) -> set[str]:
+        resposta = cliente_admin.get(f"/api/interacoes?{consulta}&tamanho=200")
+        assert resposta.status_code == 200, resposta.text
+        return {i["id"] for i in resposta.json()["itens"]} & {a, b, c}
+
+    assert ids(f"formatoInteracao={reuniao['id']}") == {a, c}
+    assert ids(f"formatoInteracao={reuniao['id']},{evento['id']}") == {a, b, c}
+    assert ids(f"categoriaPublico={executivo['id']}") == {a, b}
+    assert ids(f"categoriaPublico={executivo['id']}&formatoInteracao={evento['id']}") == {b}
+    assert cliente_admin.get("/api/interacoes?formatoInteracao=midia").status_code == 422
+
+
+def test_clima_esperado_filtra_pelo_antes_e_clima_pelo_depois(cliente_admin, semente):
+    """`climaEsperado` e `clima` são filtros distintos: quem clica na coluna
+    "Antes" da tela Preparar agenda não perde a coluna "Antes"."""
+
+    def agenda(esperado, registrado):
+        corpo_ = corpo(semente)
+        corpo_["clima_esperado"] = esperado
+        corpo_["clima"] = registrado
+        resposta = cliente_admin.post("/api/interacoes", json=corpo_)
+        assert resposta.status_code == 201, resposta.text
+        return resposta.json()["id"]
+
+    a = agenda("tenso", "propositivo")
+    b = agenda("tenso", "tenso")
+    c = agenda("neutro", "propositivo")
+
+    def ids(consulta: str) -> set[str]:
+        resposta = cliente_admin.get(f"/api/interacoes?{consulta}&tamanho=200")
+        assert resposta.status_code == 200, resposta.text
+        return {i["id"] for i in resposta.json()["itens"]} & {a, b, c}
+
+    assert ids("climaEsperado=tenso") == {a, b}
+    assert ids("clima=propositivo") == {a, c}
+    assert ids("climaEsperado=tenso&clima=propositivo") == {a}
+
+
+def test_apagar_instituicao_inexistente_e_404(cliente_admin, semente):
+    resposta = cliente_admin.delete(f"/api/instituicoes/{uuid4()}")
+    assert resposta.status_code == 404
 
 
 # -- porta-vozes e os assuntos que eles falam ----------------------------------

@@ -291,6 +291,10 @@ def condicoes(
         onde.append(InteracaoRegistro.esfera_id == _id_do_codigo(Esfera, recorte.esfera))
     if recorte.clima:
         onde.append(InteracaoRegistro.clima_id == _id_do_codigo(Clima, recorte.clima))
+    if recorte.clima_esperado:
+        onde.append(
+            InteracaoRegistro.clima_esperado_id == _id_do_codigo(Clima, recorte.clima_esperado)
+        )
     if recorte.resultado:
         onde.append(
             InteracaoRegistro.resultado_id == _id_do_codigo(Resultado, recorte.resultado)
@@ -338,6 +342,18 @@ def condicoes(
         onde.append(_tratou_de_algum(recorte.tags))
     if recorte.areas:
         onde.append(_de_alguma_area(recorte.areas))
+    if recorte.formatos_interacao:
+        onde.append(InteracaoRegistro.formato_interacao_id.in_(recorte.formatos_interacao))
+    if recorte.categorias_publico:
+        # A categoria mora na INSTITUIÇÃO, não na interação: junta pela
+        # instituição da agenda — o mesmo caminho de `_da_instituicao`.
+        onde.append(
+            InteracaoRegistro.instituicao_id.in_(
+                select(Instituicao.id).where(
+                    Instituicao.categoria_publico_id.in_(recorte.categorias_publico)
+                )
+            )
+        )
     if recorte.subtipo:
         onde.append(_do_tipo_de_investidor(recorte.subtipo))
 

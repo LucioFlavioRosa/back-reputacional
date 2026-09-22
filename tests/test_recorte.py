@@ -19,7 +19,7 @@ def test_recorte_vazio_significa_base_inteira():
 
 def test_conta_filtros_ativos_para_o_contador_do_botao():
     recorte = Recorte.construir(
-        periodo="ultimos-90", frente="imprensa", uf="SP", tags="Tarifa,IPO"
+        periodo="ultimos-90", frente="imprensa", uf="SP", tags=["Tarifa", "IPO"]
     )
     # período + frente + uf + tags = 4
     assert recorte.quantidade_de_filtros == 4
@@ -44,9 +44,14 @@ def test_atalho_futuro_resolve_para_intervalo_de_datas():
     assert periodo.ate == date(2027, 8, 19)
 
 
-def test_tags_chegam_como_texto_separado_por_virgula():
-    recorte = Recorte.construir(tags="Tarifa, IPO ,Copasa")
-    assert recorte.tags == ("Copasa", "IPO", "Tarifa")
+def test_tags_chegam_como_lista_e_a_virgula_faz_parte_do_nome():
+    """Repetido na query (`tags=a&tags=b`), lista aqui — e nunca partido na
+    vírgula, porque um nome de tema pode tê-la."""
+    recorte = Recorte.construir(tags=["Tarifa", " IPO ", "", "Saneamento, drenagem"])
+    assert recorte.tags == ("IPO", "Saneamento, drenagem", "Tarifa")
+
+    # Um texto só é UM tema, vírgula inclusa.
+    assert Recorte.construir(tags="Saneamento, drenagem").tags == ("Saneamento, drenagem",)
 
 
 def test_alternar_tag_liga_e_desliga():
@@ -166,3 +171,23 @@ def test_o_filtro_por_pessoa_nao_estoura():
         escopo=Escopo(irrestrito=True),
         busca_em_campos_sensiveis=False,
     )
+
+
+def test_formatos_e_categorias_chegam_como_ids_separados_por_virgula():
+    """Os dois filtros que nasceram só no cliente: mesmo contrato de `areas`."""
+    recorte = Recorte.construir(formatos_interacao="7,1", categorias_publico="3")
+    assert recorte.formatos_interacao == (1, 7)
+    assert recorte.categorias_publico == (3,)
+    assert recorte.quantidade_de_filtros == 2
+
+    with pytest.raises(RegraViolada):
+        Recorte.construir(formatos_interacao="midia")
+
+
+def test_clima_esperado_e_clima_registrado_sao_filtros_distintos():
+    """Na tela Preparar agenda, a coluna "Antes" filtra pelo esperado e a
+    coluna "Depois" pelo registrado — e os dois podem coexistir."""
+    recorte = Recorte.construir(clima_esperado="tenso", clima="propositivo")
+    assert recorte.clima_esperado == "tenso"
+    assert recorte.clima == "propositivo"
+    assert recorte.quantidade_de_filtros == 2

@@ -3142,17 +3142,25 @@ def vincular_areas(sessao: Session) -> int:
 
 
 def principal() -> None:
+    from app.banco.derivados import derivar_o_que_falta
     from app.banco.sessao import obter_fabrica_de_sessao
 
     sessao = obter_fabrica_de_sessao()()
     try:
         criadas = semear(sessao)
         ligadas = vincular_areas(sessao)
+        # O ÚLTIMO SEMEADOR DERIVA O QUE FALTA — tier e categoria das
+        # instituições, formato das interações — sobre a base inteira, pelo
+        # mesmo motivo de `vincular_areas`: as migrations 0043/0044 rodam
+        # antes de existir dado, e a base semeada nasceria incoerente.
+        derivados = derivar_o_que_falta(sessao)
         sessao.commit()
         print(f"Agendas criadas: {criadas}")
         if criadas == 0:
             print("A base já tinha linhagem. Nada a fazer.")
         print(f"Áreas vinculadas: {ligadas}")
+        for nome, quantos in derivados.items():
+            print(f"{nome.replace('_', ' ').capitalize()}: {quantos}")
     finally:
         sessao.close()
 

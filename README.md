@@ -25,6 +25,13 @@ docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_r
 docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_enredos
 ```
 
+O terceiro semeador termina derivando o que o acervo não trouxe — relevância
+da instituição (moda das agendas dela), categoria de público (o sugeridor,
+só em confiança alta) e formato da interação (pela frente) — as mesmas
+regras das migrations `0043`/`0044`, em `app/banco/derivados.py`. Num banco
+que já existe, as migrations fazem isso sozinhas; a categoria continua
+sendo `python -m app.banco.sugerir_categoria_de_publico --aplicar`.
+
 Abra <http://localhost:8081>. O primeiro semeador imprime as oito contas e a
 senha — uma por papel, todas com a mesma senha, que o código chama de
 `SENHA_DE_DESENVOLVIMENTO` justamente porque **não é segredo e não pretende
@@ -147,7 +154,7 @@ privilégio](#versão-e-privilégio). 51 tabelas, organizadas em seis assuntos:
 | biblioteca | `referencia`, `referencia_versao`, `referencia_tema`, `arquivo` |
 | trilhas | `auditoria`, `exportacao`, `importacao` (schema sem aplicação) |
 
-As 40 migrations (`0001` a `0041`; a `0019` não existe) ficam em
+As 44 migrations (`0001` a `0045`; a `0019` não existe) ficam em
 `app/banco/migrations/` e rodam **em ordem alfabética**, uma vez, na primeira
 subida do banco. Cada arquivo abre com um
 cabeçalho dizendo o que muda e por quê — é lá que está o histórico, e não aqui.

@@ -183,6 +183,51 @@ TIPO_DE_INSTITUICAO: dict[Frente, str] = {
 #: que alguem o escreva num comentario.
 TIPOS_DE_INSTITUICAO: frozenset[str] = frozenset(TIPO_DE_INSTITUICAO.values())
 
+#: O TIPO QUE UMA CATEGORIA DE PÚBLICO IMPLICA — o que faz a tela de cadastro
+#: não precisar perguntar o tipo: quem cadastra escolhe o público (Poder
+#: Executivo, Imprensa, Mercado Financeiro...) e o tipo — e, por ele, a frente —
+#: vem daqui. Chave: `categoria_publico.codigo`.
+#:
+#: NÃO É O CAMINHO INVERSO DE `FRENTE_UNICA_DO_TIPO`: a categoria continua
+#: informativa na INTERAÇÃO (ver `derivar_frente`). Ela decide o tipo uma vez,
+#: no nascimento da instituição — e o tipo é o que fica gravado e o que a
+#: edição ainda deixa corrigir, porque duas coisas a taxonomia não distingue:
+#: um banco credor de um investidor (os dois moram em "Mercado Financeiro e de
+#: Capitais"), e uma área interna, que não é público de ninguém. Para essas, o
+#: padrão abaixo é o caso mais comum, e a edição é o ajuste.
+TIPO_DA_CATEGORIA_DE_PUBLICO: dict[str, str] = {
+    "poder_executivo": "orgao",
+    "poder_legislativo": "proposicao",
+    "poder_judiciario": "orgao",
+    "controle_fiscalizacao": "orgao",
+    "reguladores": "orgao",
+    "mercado_financeiro_capitais": "investidor",
+    "imprensa_formadores_opiniao": "veiculo",
+    "entidades_setoriais_representativas": "entidade",
+    "sociedade_civil_comunidade": "entidade",
+    "parceiros_cadeia_valor": "entidade",
+}
+
+#: O FORMATO DE INTERAÇÃO QUE UMA FRENTE IMPLICA, quando ninguém disse qual
+#: foi. Formato responde "que tipo de encontro foi" e frente "quem é a
+#: contraparte" — são ortogonais, e quem cadastra escolhe o formato. Mas o
+#: acervo importado nasceu sem formato, e "Tipo de Interação" (filtro e
+#: gráfico) ficava vazio para ele. Isto é o palpite mais provável por frente,
+#: gravado UMA vez onde falta (`0044`, `derivados.py`) e corrigível pela
+#: edição: uma demanda de imprensa foi Mídia; um evento, Evento; investidor e
+#: credor, Agenda de mercado; governo e legislativo, Agenda pública; o resto,
+#: Reunião. Chave: `Frente`; valor: `formato_interacao.codigo`.
+FORMATO_PADRAO_DA_FRENTE: dict[Frente, str] = {
+    Frente.IMPRENSA: "midia",
+    Frente.EVENTOS: "evento",
+    Frente.INVESTIDORES: "agenda_de_mercado",
+    Frente.BANCOS_CREDORES: "agenda_de_mercado",
+    Frente.GOVERNO: "agenda_publica",
+    Frente.LEGISLATIVO: "agenda_publica",
+    Frente.PARCEIROS: "reuniao",
+    Frente.INTERNA: "reuniao",
+}
+
 #: O inverso do mapa acima — a frente que o TIPO da instituição já basta para
 #: decidir sozinho, sem perguntar mais nada. "entidade" fica de fora de
 #: propósito: é o único tipo que duas frentes conversam (Parceiros e
