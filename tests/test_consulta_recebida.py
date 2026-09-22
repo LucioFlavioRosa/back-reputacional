@@ -16,12 +16,17 @@ de verdade:
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 import pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
 from app.banco.sessao import obter_sessao
+from app.banco.tabelas_alegacoes import Alegacao
+from app.banco.tabelas_catalogo import Apuracao
 from app.banco.tabelas_stakeholders import Instituicao
+from app.dominio.texto import normalizar
 from main import app
 from tests.test_e2e_postgres import URL, corpo
 
@@ -56,6 +61,20 @@ def cliente_admin(sessao):
     )
     app.dependency_overrides[obter_sessao] = lambda: sessao
     app.dependency_overrides[obter_configuracao] = lambda: como_admin
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def cliente(sessao):
+    """`crm_edicao`: escreve agenda e NÃO vê campos sensíveis nem administra
+    cadastros — o perfil mais comum, e o que este arquivo usa para provar o
+    que NÃO sai."""
+    from fastapi.testclient import TestClient
+
+    app.dependency_overrides[obter_sessao] = lambda: sessao
     try:
         yield TestClient(app)
     finally:
@@ -101,12 +120,18 @@ def _alegacao(cliente_admin, texto: str, **ajustes):
     return resposta.json()
 
 
+def _tipo_de_consulta(cliente_admin) -> int:
+    formatos = cliente_admin.get("/api/dicionarios").json()["formatos_interacao"]
+    return next(f["id"] for f in formatos if f["codigo"] == "consulta_recebida")
+
+
 def _consulta(cliente_admin, semente, instituicao_id, **ajustes):
     corpo_ = corpo(semente)
     corpo_["instituicao_id"] = instituicao_id
     # SEM `frente` NO CORPO, de propósito: é ela que o servidor deriva do tipo
     # da instituição, e é isso que se está provando aqui.
     corpo_.pop("frente", None)
+    corpo_["formato_interacao_id"] = _tipo_de_consulta(cliente_admin)
     corpo_.update(ajustes)
     resposta = cliente_admin.post("/api/interacoes", json=corpo_)
     assert resposta.status_code == 201, resposta.text
@@ -331,3 +356,118 @@ def test_tirar_a_alegacao_de_uma_consulta_fica_na_trilha(
     ).all()
     assert ("alegacao", None, alegacao["id"]) in trilha, "a entrada não foi auditada"
     assert ("alegacao", alegacao["id"], None) in trilha, "a saída não foi auditada"
+
+
+# -- a invariante: o bloco pertence ao tipo -----------------------------------
+
+
+def test_o_bloco_da_consulta_fora_do_tipo_e_recusado(cliente_admin, semente, credor):
+    """A tela manda coerente; a API aceita um cliente direto, e é ela que
+    garante a invariante."""
+    resposta = cliente_admin.post(
+        "/api/interacoes",
+        json={
+            **corpo(semente),
+            "instituicao_id": credor["id"],
+            "formato_interacao_id": None,
+            "consulta": {"remetente": "mesa@banco.com"},
+        },
+    )
+    assert resposta.status_code == 422
+    assert "Consulta recebida" in resposta.json()["detalhe"]
+
+
+def test_alegacao_sem_consulta_e_recusada(cliente_admin, semente, credor):
+    """Pendurar uma alegação numa reunião faria a aba contar, como premissa em
+    circulação, algo que ninguém perguntou."""
+    alegacao = _alegacao(cliente_admin, "O plano de investimentos seria revisto")
+    resposta = cliente_admin.post(
+        "/api/interacoes",
+        json={
+            **corpo(semente),
+            "instituicao_id": credor["id"],
+            "formato_interacao_id": None,
+            "alegacoes": [alegacao["id"]],
+        },
+    )
+    assert resposta.status_code == 422
+    assert "consulta recebida" in resposta.json()["detalhe"]
+
+
+def test_trocar_o_tipo_sem_limpar_o_bloco_e_recusado(cliente_admin, semente, credor):
+    """O `PATCH` altera um campo de cada vez, e a invariante é sobre o ESTADO
+    FINAL: sem isto, uma reunião ficaria com prazo de resposta e alegações."""
+    criada = _consulta(
+        cliente_admin, semente, credor["id"], consulta={"remetente": "mesa@banco.com"}
+    )
+    formatos = cliente_admin.get("/api/dicionarios").json()["formatos_interacao"]
+    reuniao = next(f["id"] for f in formatos if f["codigo"] == "reuniao")
+
+    resposta = cliente_admin.patch(
+        f"/api/interacoes/{criada['id']}", json={"formato_interacao_id": reuniao}
+    )
+    assert resposta.status_code == 422
+
+    # E com o bloco limpo na MESMA edição, passa.
+    ok = cliente_admin.patch(
+        f"/api/interacoes/{criada['id']}",
+        json={"formato_interacao_id": reuniao, "consulta": None, "alegacoes": []},
+    )
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["consulta"] is None
+
+
+# -- quem vê o quê na lista de alegações ---------------------------------------
+#
+# UM CLIENTE POR TESTE, de propósito: `cliente` e `cliente_admin` escrevem no
+# mesmo `app.dependency_overrides`, então montar os dois no mesmo teste faria
+# ambos rodarem com o último perfil — e o contraste que se quer provar
+# desapareceria sem falhar.
+
+
+def _alegacao_com_nota(sessao, texto: str, nota: str) -> Alegacao:
+    """Direto no banco: escrever a nota pela API exige o papel que o teste
+    justamente NÃO quer usar."""
+    registro = Alegacao(
+        id=uuid4(),
+        texto=texto,
+        texto_normalizado=normalizar(texto),
+        apuracao_id=sessao.scalar(select(Apuracao.id).order_by(Apuracao.ordem)),
+        nota=nota,
+    )
+    sessao.add(registro)
+    sessao.flush()
+    return registro
+
+
+def test_a_nota_de_apuracao_nao_sai_para_quem_so_escreve(cliente, sessao):
+    """A premissa que circula é o que a tela precisa mostrar; a investigação
+    sobre ela, não."""
+    registro = _alegacao_com_nota(
+        sessao, "A agência rebaixaria a nota em dezembro", "Apurado: sem base."
+    )
+    listada = next(
+        a for a in cliente.get("/api/alegacoes").json() if a["id"] == str(registro.id)
+    )
+    assert listada["texto"] == registro.texto
+    assert listada["nota"] is None
+
+
+def test_a_nota_de_apuracao_sai_para_quem_administra(cliente_admin, sessao):
+    registro = _alegacao_com_nota(
+        sessao, "O rating cairia antes do balanço", "Apurado: sem base."
+    )
+    listada = next(
+        a for a in cliente_admin.get("/api/alegacoes").json() if a["id"] == str(registro.id)
+    )
+    assert listada["nota"] == "Apurado: sem base."
+
+
+def test_as_inativas_sao_recusadas_a_quem_so_escreve(cliente):
+    """Recusado, e não silenciosamente ignorado: quem pediu precisa saber que
+    não recebeu tudo."""
+    assert cliente.get("/api/alegacoes?incluir_inativas=1").status_code == 403
+
+
+def test_as_inativas_saem_para_quem_administra(cliente_admin):
+    assert cliente_admin.get("/api/alegacoes?incluir_inativas=1").status_code == 200

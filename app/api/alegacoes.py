@@ -40,7 +40,7 @@ from app.banco.sessao import SessaoDoPedido
 from app.banco.tabelas_alegacoes import Alegacao, AlegacaoTema
 from app.banco.tabelas_catalogo import Apuracao
 from app.banco.tabelas_interacoes import InteracaoAlegacao
-from app.dominio.erros import NaoEncontrado, RegraViolada
+from app.dominio.erros import NaoAutorizado, NaoEncontrado, RegraViolada
 from app.dominio.texto import normalizar
 
 rotas = APIRouter(
@@ -77,6 +77,9 @@ class AlegacaoSaida(BaseModel):
     temas: list[int]
     apuracao_id: int
     referencia_id: UUID | None
+    #: O QUE A ÁREA APUROU — trabalho interno, e só quem administra cadastros
+    #: o recebe. Para o resto do CRM sai nulo: a premissa que circula é o que
+    #: a tela precisa mostrar; a investigação sobre ela, não.
     nota: str | None
     ativo: bool
     criado_em: datetime | None
@@ -97,6 +100,8 @@ def _saida(
     registro: Alegacao,
     temas: dict[UUID, list[int]],
     consultas: dict[UUID, int],
+    *,
+    com_nota: bool = True,
 ) -> AlegacaoSaida:
     return AlegacaoSaida(
         id=registro.id,
@@ -104,7 +109,7 @@ def _saida(
         temas=sorted(temas.get(registro.id, [])),
         apuracao_id=registro.apuracao_id,
         referencia_id=registro.referencia_id,
-        nota=registro.nota,
+        nota=registro.nota if com_nota else None,
         ativo=registro.ativo,
         criado_em=registro.criado_em,
         consultas=consultas.get(registro.id, 0),
@@ -154,23 +159,44 @@ def listar(
     usuario: UsuarioLogado,
     incluir_inativas: Annotated[
         bool,
-        Query(description="1 traz também as que saíram de circulação"),
+        Query(
+            description=(
+                "1 traz também as que saíram de circulação — exige administrar cadastros"
+            )
+        ),
     ] = False,
 ) -> list[AlegacaoSaida]:
-    """As alegações, da mais recente para a mais antiga.
+    """As alegações EM CIRCULAÇÃO, da mais recente para a mais antiga.
 
-    INATIVAS TAMBÉM, quando pedido: sem elas a alegação desativada some da
-    administração e volta como "já existe" na próxima tentativa de cadastrar a
-    mesma frase — o índice único é sobre o texto normalizado, e não sobre o
-    texto que a pessoa vê.
+    DOIS PÚBLICOS, UMA ROTA, E O QUE MUDA É O QUE SAI:
+
+    - quem escreve agenda precisa da lista para marcar numa consulta, e a aba
+      de Sinais precisa dela para resolver o texto de cada premissa. Recebe as
+      ATIVAS, sem a nota de apuração;
+    - quem administra cadastros precisa também das inativas — sem elas a
+      alegação desativada some da tela e volta como "já está cadastrada" na
+      tentativa seguinte, porque o índice único é sobre o texto normalizado e
+      não sobre o que a pessoa vê — e da nota, que é o trabalho dela.
+
+    Pedir as inativas sem o papel é RECUSADO, e não silenciosamente ignorado:
+    quem pediu precisa saber que não recebeu tudo.
     """
+    administra = usuario.administra_dicionarios
+    if incluir_inativas and not administra:
+        raise NaoAutorizado(
+            "As alegações fora de circulação são da administração de cadastros."
+        )
+
     consulta = select(Alegacao).order_by(Alegacao.criado_em.desc())
     if not incluir_inativas:
         consulta = consulta.where(Alegacao.ativo.is_(True))
 
     temas = _temas_por_alegacao(sessao)
     consultas = _consultas_por_alegacao(sessao)
-    return [_saida(registro, temas, consultas) for registro in sessao.scalars(consulta)]
+    return [
+        _saida(registro, temas, consultas, com_nota=administra)
+        for registro in sessao.scalars(consulta)
+    ]
 
 
 @rotas.post("", status_code=status.HTTP_201_CREATED)

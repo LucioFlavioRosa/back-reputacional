@@ -595,6 +595,7 @@ class RepositorioSQL:
         atual.canal_id = interacao.consulta.canal_id
         atual.remetente = interacao.consulta.remetente
         atual.teor = interacao.consulta.teor
+        atual.motivo = interacao.consulta.motivo
         atual.prazo_resposta = interacao.consulta.prazo_resposta
         atual.respondida_em = interacao.consulta.respondida_em
         registro.consulta = atual
@@ -849,6 +850,7 @@ class RepositorioSQL:
                 canal_id=registro.consulta.canal_id,
                 remetente=registro.consulta.remetente,
                 teor=registro.consulta.teor,
+                motivo=registro.consulta.motivo,
                 prazo_resposta=registro.consulta.prazo_resposta,
                 respondida_em=registro.consulta.respondida_em,
             )

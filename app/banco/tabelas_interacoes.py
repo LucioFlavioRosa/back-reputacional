@@ -350,6 +350,7 @@ class ConsultaRegistro(Tabela):
     )
     remetente: Mapped[str | None] = mapped_column(Text, nullable=True)
     teor: Mapped[str | None] = mapped_column(Text, nullable=True)
+    motivo: Mapped[str | None] = mapped_column(Text, nullable=True)
     prazo_resposta: Mapped[date | None] = mapped_column(Date, nullable=True)
     respondida_em: Mapped[date | None] = mapped_column(Date, nullable=True)
 

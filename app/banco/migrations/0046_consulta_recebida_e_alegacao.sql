@@ -169,6 +169,17 @@ create table if not exists interacao_consulta (
   --: é escolha deliberada, e o anexo continua em `material`.
   teor text,
 
+  --: POR QUE ACHAM QUE PERGUNTARAM — a leitura de quem recebeu, em texto
+  --: livre: "quer justificar revisão de spread", "está montando relatório
+  --: setorial", "ouviu da concorrência".
+  --:
+  --: NÃO É A ALEGAÇÃO, e a diferença é o que mantém a leitura honesta: a
+  --: alegação é o que a pergunta DIZ (observável, e é o que a aba conta); o
+  --: motivo é a hipótese de quem leu sobre a INTENÇÃO de quem perguntou. Um
+  --: se conta, o outro se lê — misturá-los faria a tela apresentar suposição
+  --: com a mesma autoridade de um fato registrado.
+  motivo text,
+
   --: Até quando responder, se o remetente deu prazo.
   prazo_resposta date,
 
@@ -176,10 +187,6 @@ create table if not exists interacao_consulta (
   --: cobra.
   respondida_em date
 );
-
-create index if not exists consulta_sem_resposta
-  on interacao_consulta (prazo_resposta)
-  where respondida_em is null;
 
 create table if not exists interacao_alegacao (
   interacao_id uuid not null references interacao(id) on delete cascade,

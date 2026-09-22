@@ -135,6 +135,9 @@ class Consulta:
     remetente: str | None = None
     #: As perguntas, coladas do e-mail — o que basta para reconhecê-las.
     teor: str | None = None
+    #: POR QUE ACHAM QUE PERGUNTARAM — hipótese de quem recebeu, e não a
+    #: alegação: esta é o que a pergunta DIZ; aquele, a intenção que se supõe.
+    motivo: str | None = None
     prazo_resposta: date | None = None
     #: Nulo com `prazo_resposta` vencido é o que a aba cobra. Responder ANTES
     #: do prazo é o caso bom, então não há invariante entre as duas datas.
