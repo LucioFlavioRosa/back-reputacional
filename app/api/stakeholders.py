@@ -497,7 +497,8 @@ def remover_interlocutor(
 ) -> None:
     """Apaga quem entrou por engano. Recusa quem ja esteve numa agenda.
 
-    APAGAR E DESLIGAR SAO COISAS DIFERENTES, e a diferenca e o historico.
+    EXCLUIR E DESATIVAR SAO COISAS DIFERENTES, e a diferenca e o historico
+    (os mesmos dois verbos da instituicao — ver CONTEXT.md).
 
     Uma pessoa cadastrada com o nome errado, ou na instituicao errada, e lixo:
     apagar e o certo. Uma pessoa que participou de uma reuniao e um FATO — e
@@ -539,7 +540,7 @@ def remover_interlocutor(
             f"{registro.nome} participa de {em_agendas} "
             f"{'agenda' if em_agendas == 1 else 'agendas'} e nao pode ser "
             "apagada: o registro delas ficaria sem o nome de quem esteve na "
-            "sala. Use Desligar — ela sai das listas e o historico fica."
+            "sala. Use Desativar — ela sai das listas e o historico fica."
         )
 
     # O vinculo com temas e ligacao pura, sem valor de historico: sai junto.

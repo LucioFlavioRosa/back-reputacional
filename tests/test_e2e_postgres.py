@@ -1457,8 +1457,9 @@ def test_nao_apaga_quem_ja_esteve_numa_agenda(cliente_admin, semente):
     assert resposta.status_code == 422
     detalhe = resposta.json()["detalhe"]
     assert "1 agenda" in detalhe
-    #: E diz o que fazer, e nao so o que nao da.
-    assert "Desligar" in detalhe
+    #: E diz o que fazer, e nao so o que nao da — com o mesmo verbo da
+    #: instituicao (CONTEXT.md).
+    assert "Desativar" in detalhe
 
 
 def test_desligar_e_o_caminho_para_quem_tem_historico(cliente_admin, semente):
