@@ -36,6 +36,11 @@ dependencies = [
     # rota de upload devolve 500 na primeira chamada e nada no import — o
     # mesmo jeito de falhar que quase deixou a telemetria de fora.
     "python-multipart>=0.0.9",
+    # Os exports dos fornecedores do Score chegam em .xlsx. Declarada aqui
+    # pelo mesmo motivo das de cima: o import é dentro da função de
+    # ingestão, então um deploy sem a dependência sobe inteiro e só falha
+    # na primeira importação de planilha, meses depois.
+    "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]

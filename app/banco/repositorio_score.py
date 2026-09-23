@@ -21,10 +21,11 @@ from sqlalchemy import Date as ColunaDeData
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.banco.tabelas_catalogo import Clima
+from app.banco.tabelas_catalogo import Clima, Tema
 from app.banco.tabelas_interacoes import InteracaoRegistro
 from app.banco.tabelas_score import (
     Lente,
+    Mencao,
     ScoreConfig,
     ScoreEstimativa,
     ScoreFonte,
@@ -32,11 +33,14 @@ from app.banco.tabelas_score import (
 )
 from app.dominio.score import (
     Calibracao,
+    Contagem,
     Indice,
     LenteMedida,
     SomasDaFonte,
     calcular_indice,
     medir_lente,
+    ns,
+    ponderar,
 )
 
 #: O código da fonte que se lê deste banco, e não de planilha.
@@ -204,6 +208,107 @@ def _tem_fonte_interna(sessao: Session, lente_id: int) -> bool:
         .select_from(ScoreFonte)
         .where(ScoreFonte.lente_id == lente_id, ScoreFonte.interna.is_(True))
     ) > 0
+
+
+def _somas_da_lente(
+    sessao: Session, lente_id: int, mes: date
+) -> dict[str, list[SomasDaFonte]]:
+    """As somas de uma lente, por fonte — incluindo a interna."""
+    lente = sessao.get(Lente, lente_id)
+    das_planilhas = _somas_das_planilhas(sessao, primeiro_dia(mes)).get(
+        lente.codigo if lente else "", {}
+    )
+    somas = dict(das_planilhas)
+    if _tem_fonte_interna(sessao, lente_id):
+        do_crm = _somas_do_crm(sessao, primeiro_dia(mes))
+        if do_crm:
+            somas[FONTE_INTERNA_DO_CRM] = do_crm
+    return somas
+
+
+def composicao_da_lente(
+    sessao: Session, lente_id: int, mes: date, calibracao: Calibracao
+) -> Contagem:
+    """Os três números da fórmula, já ponderados — o que a barra desenha.
+
+    SOMA DAS FONTES LIGADAS, e não a média de NS: a média é como o SCORE da
+    lente sai (§2.4), mas a barra mostra volume, e volume se soma.
+    """
+    total = Contagem()
+    for fonte, linhas in _somas_da_lente(sessao, lente_id, mes).items():
+        if calibracao.ligada(fonte):
+            total = total + ponderar(linhas, calibracao)
+    return total
+
+
+def fontes_da_lente(
+    sessao: Session, lente_id: int, mes: date, calibracao: Calibracao
+) -> list[tuple[ScoreFonte, float | None, int]]:
+    """Cada fonte da lente com o seu próprio NS e o volume do mês.
+
+    É o que deixa a tela responder "qual das duas está puxando a lente para
+    baixo" — com a média de NS, uma fonte pode esconder a outra.
+    """
+    somas = _somas_da_lente(sessao, lente_id, mes)
+    saida = []
+    for fonte in sessao.scalars(
+        select(ScoreFonte).where(ScoreFonte.lente_id == lente_id).order_by(ScoreFonte.ordem)
+    ):
+        linhas = somas.get(fonte.codigo, [])
+        saida.append((
+            fonte,
+            ns(ponderar(linhas, calibracao)) if linhas else None,
+            int(sum(linha.mencoes for linha in linhas)),
+        ))
+    return saida
+
+
+def temas_da_lente(
+    sessao: Session, lente_id: int, mes: date, quantos: int = 5
+) -> list[tuple[str, int, int, str | None]]:
+    """Os temas mais falados da lente no mês, com positivo × negativo.
+
+    Vem de `mencao`, que só a INGESTÃO preenche: sem planilha importada a lista
+    volta vazia, e a tela diz por quê. Preferir uma lista vazia a números
+    inventados é o que mantém a leitura honesta.
+
+    O NOME SAI DE DOIS LUGARES. `tema_id` aponta para o vocabulário do CRM,
+    que é o bom: é por ele que um tema do Score e um tema de reunião são o
+    mesmo tema. Mas o fornecedor manda o assunto no vocabulário DELE, e enquanto
+    ninguém casou as duas listas é o texto bruto que a tela tem para mostrar.
+    Exigir a correspondência deixaria a aba de Drivers vazia com o banco cheio.
+    """
+    rotulo = func.coalesce(Tema.nome, Mencao.tema_texto)
+    consulta = (
+        select(
+            rotulo.label("tema"),
+            func.count().filter(Mencao.sentimento == "pos"),
+            func.count().filter(Mencao.sentimento == "neg"),
+            # Só o tema do CRM tem tipo; agrupado pelo rótulo, `max` devolve o
+            # único valor não nulo do grupo — ou nulo, quando veio só do texto.
+            func.max(Tema.tipo),
+        )
+        .select_from(Mencao)
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .outerjoin(Tema, Tema.id == Mencao.tema_id)
+        .where(
+            ScoreFonte.lente_id == lente_id,
+            Mencao.mes == primeiro_dia(mes),
+            rotulo.is_not(None),
+        )
+        .group_by(rotulo)
+        # ORDENADO PELO QUE TOMA PARTIDO, e não pelo volume. Os assuntos mais
+        # numerosos da Approach são etiquetas de operação — "spam", "Stories -
+        # marcado" —, com centenas de menções neutras e nenhuma positiva ou
+        # negativa. Ordenar por volume encheria "Drivers e riscos" com cinco
+        # barras vazias e esconderia Falta de Água.
+        .having(
+            func.count().filter(Mencao.sentimento.in_(("pos", "neg"))) > 0
+        )
+        .order_by(func.count().filter(Mencao.sentimento.in_(("pos", "neg"))).desc())
+        .limit(quantos)
+    )
+    return [(nome, pos, neg, tipo) for nome, pos, neg, tipo in sessao.execute(consulta)]
 
 
 def indice_do_mes(sessao: Session, mes: date, calibracao: Calibracao) -> Indice:

@@ -95,6 +95,8 @@ class Mencao(Tabela):
     tema_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("tema.id"), nullable=True
     )
+    #: O assunto no vocabulário do FORNECEDOR, que não é o do CRM.
+    tema_texto: Mapped[str | None] = mapped_column(Text, nullable=True)
     atributo: Mapped[str | None] = mapped_column(Text, nullable=True)
     veiculo: Mapped[str | None] = mapped_column(Text, nullable=True)
     publico_alvo: Mapped[str | None] = mapped_column(Text, nullable=True)

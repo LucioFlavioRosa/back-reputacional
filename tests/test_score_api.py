@@ -115,7 +115,7 @@ def test_a_migration_cadastrou_as_cinco_lentes_e_as_seis_fontes(sessao):
 
     fontes = sessao.scalars(select(ScoreFonte)).all()
     assert {fonte.codigo for fonte in fontes} >= {
-        "clipei", "edelman", "approach_sl", "bites", "approach_cm", "crm"
+        "clipei", "clipei_investidores", "approach_sl", "bites", "approach_cm", "crm"
     }
     # O CRM é a única fonte interna: ela se lê deste banco, não de planilha.
     assert [fonte.codigo for fonte in fontes if fonte.interna] == ["crm"]
@@ -190,9 +190,30 @@ def test_mes_invalido_e_recusado_dizendo_o_formato(cliente_do_score):
 
 
 def test_desligar_as_fontes_da_sociedade_tira_a_lente_e_redistribui(
-    cliente_do_score, junho
+    cliente_do_score, junho, sessao
 ):
-    """§7: "Desligar Approach SL e Bites remove Sociedade e redistribui pesos"."""
+    """§7: "Desligar Approach SL e Bites remove Sociedade e redistribui pesos".
+
+    A LENTE PRECISA TER DADO para o desligamento significar alguma coisa: uma
+    lente que não teve export nenhum no mês já sai do cálculo por falta de
+    medição, e o teste passaria sem que a chave de desligar fizesse nada.
+    """
+    for codigo in ("approach_sl", "bites"):
+        fonte = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == codigo))
+        for sentimento, total in (("pos", 700), ("neu", 140), ("neg", 1100)):
+            sessao.add(
+                ScoreMesFonte(
+                    fonte_id=fonte.id, mes=junho, sentimento=sentimento,
+                    tier="", mencoes=total,
+                )
+            )
+    sessao.flush()
+
+    com_sociedade = cliente_do_score.get("/api/score?mes=2026-06").json()
+    assert next(
+        lente for lente in com_sociedade["lentes"] if lente["codigo"] == "sociedade"
+    )["score"] is not None
+
     gravou = cliente_do_score.put(
         "/api/score/calibracao",
         json={"fontes_desligadas": ["approach_sl", "bites"]},
@@ -342,3 +363,173 @@ def test_as_opcoes_da_calibracao_vem_do_servidor(cliente_do_score):
     }
     assert set(opcoes["reguas_de_engajamento"]) == {"n", "log", "bruto", "cargo"}
     assert len(opcoes["lentes"]) == 5
+
+
+# -- a ingestão da planilha do fornecedor ---------------------------------------
+#
+# A tradução célula → menção se prova em `test_ingestao_score.py`, sem arquivo.
+# Aqui é o que só o banco responde: o mês entra, o agregado nasce das menções,
+# reenviar o mesmo arquivo não dobra nada, e quem não administra não importa.
+
+
+def _planilha(aba: str, cabecalho: list[str], linhas: list[list]) -> bytes:
+    from io import BytesIO
+
+    from openpyxl import Workbook
+
+    livro = Workbook()
+    pagina = livro.active
+    pagina.title = aba
+    pagina.append(cabecalho)
+    for linha in linhas:
+        pagina.append(linha)
+    buffer = BytesIO()
+    livro.save(buffer)
+    return buffer.getvalue()
+
+
+def _export_da_bites(linhas: list[list]) -> bytes:
+    return _planilha(
+        "Posts",
+        ["Data", "Autor", "Cargo", "Sentimento", "Atributo", "Categoria", "Engajamento"],
+        linhas,
+    )
+
+
+def _subir(cliente, codigo: str, conteudo: bytes):
+    return cliente.post(
+        f"/api/score/fontes/{codigo}/planilha",
+        files={
+            "arquivo": (
+                "export.xlsx",
+                conteudo,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        },
+    )
+
+
+def test_a_planilha_vira_mencao_e_agregado(cliente_do_score, sessao):
+    conteudo = _export_da_bites(
+        [
+            [date(2026, 6, 2), "@a", "Governador", "Positivo", "Investimento", "Obras", 100],
+            [date(2026, 6, 3), "@b", "Vereador", "Negativo", "Tarifa", "Tarifa", 9],
+            [date(2026, 6, 4), "@c", "", "Não informado", "", "", 5],
+        ]
+    )
+    resposta = _subir(cliente_do_score, "bites", conteudo)
+    assert resposta.status_code == 201
+
+    resumo = resposta.json()
+    assert resumo["linhas"] == 3
+    assert resumo["ingeridas"] == 2
+    # O post sem classificação é recusa declarada, e sai na resposta.
+    assert resumo["descartes"]["sem_sentimento"] == 1
+    assert resumo["meses"] == ["2026-06"]
+
+    bites = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == "bites"))
+    somas = sessao.scalars(
+        select(ScoreMesFonte).where(ScoreMesFonte.fonte_id == bites.id)
+    ).all()
+    por_sentimento = {soma.sentimento: soma for soma in somas}
+    assert por_sentimento["pos"].mencoes == 1
+    assert por_sentimento["pos"].soma_engajamento == 100
+    # `1 + log10(1 + 9)` = 2, e o vereador vale 2 na régua de cargo.
+    assert float(por_sentimento["neg"].soma_log) == pytest.approx(2.0)
+    assert float(por_sentimento["neg"].soma_cargo) == pytest.approx(2.0)
+    assert float(por_sentimento["pos"].soma_cargo) == pytest.approx(5.0)
+
+
+def test_reenviar_o_mesmo_arquivo_nao_dobra_o_mes(cliente_do_score, sessao):
+    """O fornecedor reenvia o export quando corrige uma classificação — somar
+    contaria o mesmo post duas vezes."""
+    conteudo = _export_da_bites(
+        [[date(2026, 6, 2), "@a", "Prefeito", "Positivo", "", "", 10]]
+    )
+    _subir(cliente_do_score, "bites", conteudo)
+    segunda = _subir(cliente_do_score, "bites", conteudo)
+    assert segunda.json()["ingeridas"] == 1
+
+    bites = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == "bites"))
+    somas = sessao.scalars(
+        select(ScoreMesFonte).where(ScoreMesFonte.fonte_id == bites.id)
+    ).all()
+    assert [soma.mencoes for soma in somas] == [1]
+
+
+def test_o_mes_que_o_arquivo_nao_traz_fica_intacto(cliente_do_score, sessao):
+    """O export de junho não é uma afirmação sobre maio."""
+    _subir(
+        cliente_do_score,
+        "bites",
+        _export_da_bites([[date(2026, 5, 9), "@a", "", "Positivo", "", "", 1]]),
+    )
+    _subir(
+        cliente_do_score,
+        "bites",
+        _export_da_bites([[date(2026, 6, 9), "@b", "", "Negativo", "", "", 1]]),
+    )
+
+    bites = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == "bites"))
+    meses = sessao.scalars(
+        select(ScoreMesFonte.mes).where(ScoreMesFonte.fonte_id == bites.id)
+    ).all()
+    assert sorted(set(meses)) == [date(2026, 5, 1), date(2026, 6, 1)]
+
+
+def test_o_recorte_de_investidores_sai_do_arquivo_da_clipei(cliente_do_score):
+    """Duas lentes, um arquivo: Mercado é o clipping filtrado por público."""
+    conteudo = _planilha(
+        "Clipping",
+        ["Data", "Classificação", "Aegea Tier", "Atributo", "Veículo",
+         "Público-alvo", "Subcategoria"],
+        [
+            [date(2026, 6, 1), "POSITIVA", "Muito Relevante", "Gestão",
+             "Valor Econômico", "Investidores", "Resultados"],
+            [date(2026, 6, 2), "NEGATIVA", "Relevante", "Tarifa",
+             "Jornal Local", "População em geral", "Tarifa"],
+        ],
+    )
+    do_mercado = _subir(cliente_do_score, "clipei_investidores", conteudo).json()
+    assert do_mercado["ingeridas"] == 1
+    assert do_mercado["descartes"]["fora_do_filtro"] == 1
+
+    # A MESMA planilha, sem recorte, alimenta Imprensa com as duas.
+    da_imprensa = _subir(cliente_do_score, "clipei", conteudo).json()
+    assert da_imprensa["ingeridas"] == 2
+
+
+def test_a_planilha_sem_as_colunas_do_cadastro_e_recusada(cliente_do_score):
+    conteudo = _planilha("Posts", ["Quando", "Tom"], [[date(2026, 6, 1), "Positivo"]])
+    recusa = _subir(cliente_do_score, "bites", conteudo)
+    assert recusa.status_code == 422
+    # A mensagem NOMEIA as colunas que faltam: "arquivo inválido" mandaria a
+    # pessoa abrir o export e adivinhar.
+    assert "Data" in recusa.json()["detalhe"]
+
+
+def test_o_arquivo_que_nao_e_planilha_e_recusado_com_instrucao(cliente_do_score):
+    recusa = _subir(cliente_do_score, "bites", b"Data;Sentimento\n2026-06-01;Positivo")
+    assert recusa.status_code == 422
+    assert ".xlsx" in recusa.json()["detalhe"]
+
+
+def test_a_fonte_interna_nao_se_importa(cliente_do_score):
+    """O CRM já está neste banco: aceitar uma planilha para ele criaria uma
+    segunda versão do clima das interações."""
+    conteudo = _export_da_bites([[date(2026, 6, 2), "@a", "", "Positivo", "", "", 1]])
+    recusa = _subir(cliente_do_score, "crm", conteudo)
+    assert recusa.status_code == 422
+    assert "interna" in recusa.json()["detalhe"]
+
+
+def test_quem_so_le_o_score_nao_importa_planilha(sessao):
+    """Importar muda o número que todos leem — mesma régua da calibração."""
+    cliente = _cliente(sessao, "plataforma_leitura")
+    try:
+        conteudo = _export_da_bites(
+            [[date(2026, 6, 2), "@a", "", "Positivo", "", "", 1]]
+        )
+        assert _subir(cliente, "bites", conteudo).status_code == 403
+    finally:
+        app.dependency_overrides.clear()

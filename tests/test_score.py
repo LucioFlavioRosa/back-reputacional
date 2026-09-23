@@ -53,9 +53,9 @@ CLIPEI_JUNHO = [
 #: A lente Mercado é proxy: os veículos Muito Relevante com público
 #: investidores, sem ponderação de tier (já são todos do mesmo tier).
 MERCADO_JUNHO = [
-    SomasDaFonte("edelman", "pos", "", mencoes=65),
-    SomasDaFonte("edelman", "neu", "", mencoes=64),
-    SomasDaFonte("edelman", "neg", "", mencoes=16),
+    SomasDaFonte("clipei_investidores", "pos", "", mencoes=65),
+    SomasDaFonte("clipei_investidores", "neu", "", mencoes=64),
+    SomasDaFonte("clipei_investidores", "neg", "", mencoes=16),
 ]
 
 APPROACH_SL_JUNHO = [
@@ -105,7 +105,7 @@ def _lentes(calibracao: Calibracao) -> list[LenteMedida]:
         ),
         medir_lente(
             codigo="mercado", nome="Mercado", peso=calibracao.peso("mercado", 20),
-            somas_por_fonte={"edelman": MERCADO_JUNHO}, calibracao=calibracao,
+            somas_por_fonte={"clipei_investidores": MERCADO_JUNHO}, calibracao=calibracao,
         ),
         medir_lente(
             codigo="sociedade", nome="Sociedade digital", peso=calibracao.peso("sociedade", 20),
@@ -289,6 +289,35 @@ def test_a_estimativa_entra_so_onde_nao_ha_medicao():
 
     assert lente.estimado
     assert lente.score == para_score(0.45)
+
+
+def test_a_estimativa_vale_para_o_mes_que_nao_teve_export_nenhum():
+    """Sem export, a lente não chega com fonte alguma — e não com uma fonte
+    vazia. É o caso real da Imprensa de janeiro a maio, que não tem base da
+    Clipei: sem isto, o mês inteiro ficaria sem Imprensa com a estimativa
+    gravada e ignorada."""
+    lente = medir_lente(
+        codigo="imprensa", nome="Imprensa", peso=30,
+        somas_por_fonte={}, calibracao=PADRAO, estimativa=0.45,
+    )
+
+    assert lente.estimado
+    assert lente.score == para_score(0.45)
+
+
+def test_desligar_toda_fonte_nao_faz_a_lente_cair_na_estimativa():
+    """Desligar é ato deliberado: voltar pela estimativa devolveria justamente
+    o número que a coordenação tirou do cálculo."""
+    calibracao = Calibracao(pesos=PADRAO.pesos, fontes_desligadas=frozenset({"clipei"}))
+    lente = medir_lente(
+        codigo="imprensa", nome="Imprensa", peso=30,
+        somas_por_fonte={"clipei": CLIPEI_JUNHO}, calibracao=calibracao,
+        estimativa=0.45,
+    )
+
+    assert lente.score is None
+    assert not lente.estimado
+    assert lente.ausencia == "todas as fontes desta lente estão desligadas"
 
 
 def test_havendo_medicao_a_estimativa_e_ignorada():

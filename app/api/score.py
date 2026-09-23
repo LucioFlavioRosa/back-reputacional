@@ -21,7 +21,7 @@ from datetime import date
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, select
 
@@ -33,6 +33,7 @@ from app.api.dependencias import (
 from app.banco import repositorio_score
 from app.banco.sessao import SessaoDoPedido
 from app.banco.tabelas_score import Lente, ScoreConfig, ScoreFato, ScoreFonte, ScoreMesFonte
+from app.casos_de_uso import ingerir_mencoes
 from app.dominio.erros import NaoEncontrado, RegraViolada
 from app.dominio.score import (
     REGUAS_DE_ENGAJAMENTO,
@@ -326,6 +327,139 @@ def _meses_distintos(sessao, fonte_id: int) -> int:
     )
 
 
+class ComposicaoSaida(BaseModel):
+    """Os três números da fórmula, JÁ PONDERADOS pela régua vigente.
+
+    São o que a barra da aba Lentes desenha — e não a contagem crua: com a
+    régua 10/5/1, as 65 matérias de veículo Muito Relevante valem 650, e é
+    isso que entra na conta.
+    """
+
+    positivo: float
+    neutro: float
+    negativo: float
+
+
+class FonteDaLenteSaida(BaseModel):
+    codigo: str
+    nome: str
+    ns: float | None
+    mencoes: int
+    ligada: bool
+
+
+class TemaDaLenteSaida(BaseModel):
+    nome: str
+    positivo: int
+    negativo: int
+    #: `estruturante` | `operacional` | nulo quando ninguém classificou.
+    tipo: str | None
+
+
+class LenteDetalheSaida(BaseModel):
+    codigo: str
+    nome: str
+    stakeholder: str
+    score: int | None
+    ns: float | None
+    peso: int
+    estimado: bool
+    ausencia: str | None
+    composicao: ComposicaoSaida
+    #: A fórmula aplicada, escrita — muda com a régua, então é gerada.
+    formula: str
+    fontes: list[FonteDaLenteSaida]
+    temas: list[TemaDaLenteSaida]
+
+
+@rotas.get("/lentes/{codigo}")
+def obter_lente(
+    sessao: Sessao,
+    usuario: UsuarioLogado,
+    codigo: str,
+    mes: Annotated[str, Query(description="AAAA-MM")],
+) -> LenteDetalheSaida:
+    """Uma lente por dentro: a composição, a fórmula e os temas."""
+    alvo = _mes_de(mes)
+    calibracao = repositorio_score.calibracao_vigente(sessao)
+
+    lente = sessao.scalar(select(Lente).where(Lente.codigo == codigo))
+    if lente is None:
+        raise NaoEncontrado(f"Lente {codigo!r} não existe.")
+
+    medida = next(
+        (m for m in repositorio_score.medir_lentes(sessao, alvo, calibracao)
+         if m.codigo == codigo),
+        None,
+    )
+    if medida is None:  # pragma: no cover - `medir_lentes` cobre as ativas
+        raise NaoEncontrado(f"Lente {codigo!r} não está ativa.")
+
+    composicao = repositorio_score.composicao_da_lente(
+        sessao, lente.id, alvo, calibracao
+    )
+    return LenteDetalheSaida(
+        codigo=lente.codigo,
+        nome=lente.nome,
+        stakeholder=lente.stakeholder,
+        score=medida.score,
+        ns=round(medida.ns, 4) if medida.ns is not None else None,
+        peso=medida.peso,
+        estimado=medida.estimado,
+        ausencia=medida.ausencia,
+        composicao=ComposicaoSaida(
+            positivo=round(composicao.positivo, 2),
+            neutro=round(composicao.neutro, 2),
+            negativo=round(composicao.negativo, 2),
+        ),
+        formula=_formula(lente.codigo, calibracao),
+        fontes=[
+            FonteDaLenteSaida(
+                codigo=fonte.codigo, nome=fonte.nome, ns=ns_da_fonte, mencoes=mencoes,
+                ligada=calibracao.ligada(fonte.codigo),
+            )
+            for fonte, ns_da_fonte, mencoes in repositorio_score.fontes_da_lente(
+                sessao, lente.id, alvo, calibracao
+            )
+        ],
+        temas=[
+            TemaDaLenteSaida(nome=nome, positivo=pos, negativo=neg, tipo=tipo)
+            for nome, pos, neg, tipo in repositorio_score.temas_da_lente(
+                sessao, lente.id, alvo
+            )
+        ],
+    )
+
+
+#: Quantas matérias cada tier vale, em palavras, para a frase da fórmula.
+def _formula(lente: str, calibracao: Calibracao) -> str:
+    """A fórmula aplicada, escrita — é a explicação que a tela mostra.
+
+    GERADA, e não fixa: ela muda com a régua, e um texto escrito à mão
+    passaria a mentir no primeiro ajuste da calibração.
+    """
+    base = "NS = (positivas − negativas) ÷ total; score = (NS + 1) ÷ 2 × 100."
+    if lente in ("imprensa", "mercado"):
+        pesos = REGUAS_DE_TIER[calibracao.regua_tier]
+        return (
+            f"{base} Cada matéria vale {pesos['muito_relevante']:g} (Muito "
+            f"Relevante), {pesos['relevante']:g} (Relevante) ou "
+            f"{pesos['menos_relevante']:g} (Menos Relevante)."
+        )
+    if lente in ("sociedade", "clientes"):
+        comoR = {
+            "n": "cada menção vale 1",
+            "log": "cada menção vale 1 + log₁₀(1 + engajamento)",
+            "bruto": "cada menção vale o seu engajamento",
+            "cargo": "cada menção vale o peso do cargo de quem postou",
+        }[calibracao.regua_engajamento]
+        return (
+            f"{base} {comoR[0].upper() + comoR[1:]}. Com mais de uma fonte, "
+            "a lente é a média simples dos NS."
+        )
+    return f"{base} Vem do clima das interações registradas neste painel."
+
+
 class CalibracaoEntrada(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -445,6 +579,49 @@ def remover_fato(
     if registro is None:
         raise NaoEncontrado("Fato não encontrado.")
     sessao.execute(delete(ScoreFato).where(ScoreFato.id == id))
+
+
+class ImportacaoSaida(BaseModel):
+    """O que a planilha rendeu — a tela mostra isto depois do upload.
+
+    OS DESCARTES SAEM NA RESPOSTA de propósito. Uma importação que diz só
+    "ingeridas 4.973" esconde que 1.426 posts vieram sem classificação de
+    sentimento: quem conferir o número do mês precisa saber que o fornecedor
+    mandou 7.868 linhas e que a diferença não é perda, é recusa declarada.
+    """
+
+    fonte: str
+    linhas: int
+    ingeridas: int
+    descartes: dict[str, int]
+    meses: list[str]
+
+
+@rotas.post("/fontes/{codigo}/planilha", status_code=status.HTTP_201_CREATED)
+def importar_planilha(
+    sessao: Sessao,
+    usuario: UsuarioQueAdministraCadastros,
+    codigo: str,
+    arquivo: Annotated[UploadFile, File()],
+) -> ImportacaoSaida:
+    """Lê o export do fornecedor e substitui os meses que ele traz.
+
+    MESMA PERMISSÃO DA CALIBRAÇÃO, e pelo mesmo motivo: isto muda o número que
+    todo mundo lê na reunião. Ler o Score basta ter o portal; mexer no que o
+    alimenta é da coordenação.
+    """
+    fonte = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == codigo))
+    if fonte is None:
+        raise NaoEncontrado("Fonte não encontrada.")
+
+    resumo = ingerir_mencoes.ingerir(sessao, fonte, arquivo.file.read())
+    return ImportacaoSaida(
+        fonte=resumo.fonte,
+        linhas=resumo.linhas,
+        ingeridas=resumo.ingeridas,
+        descartes=dict(resumo.descartes),
+        meses=[f"{mes:%Y-%m}" for mes in resumo.meses],
+    )
 
 
 class OpcoesSaida(BaseModel):

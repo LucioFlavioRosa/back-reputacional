@@ -267,7 +267,13 @@ def medir_lente(
         for fonte, somas in somas_por_fonte.items()
         if calibracao.ligada(fonte)
     }
-    if not ligadas:
+    # DESLIGAR TODAS AS FONTES É DIFERENTE DE NÃO TER NENHUMA. Quem desligou
+    # fez isso de propósito, e cair na estimativa devolveria pela porta dos
+    # fundos justamente o número que a pessoa tirou do cálculo. Já a lente que
+    # simplesmente não teve export no mês — a Imprensa de janeiro a maio, que
+    # não tem base da Clipei — nunca chega aqui com fonte alguma, e é dela que
+    # a estimativa do resumo semestral trata.
+    if somas_por_fonte and not ligadas:
         return LenteMedida(
             codigo=codigo, nome=nome, peso=peso, ns=None, score=None,
             ausencia="todas as fontes desta lente estão desligadas",

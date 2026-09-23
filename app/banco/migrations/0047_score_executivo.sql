@@ -102,19 +102,64 @@ create table if not exists score_fonte (
   observacao text
 );
 
-insert into score_fonte (codigo, nome, fornecedor, lente_id, tipo_arquivo, interna, ordem, observacao) values
+-- O MAPEAMENTO É O CADASTRO DA FONTE, e foi conferido contra os quatro
+-- exports de junho/2026: com estas colunas, a agregação reproduz número por
+-- número os totais do protótipo. `aba` diz de qual planilha do arquivo ler —
+-- o export da Approach traz Social Listening e Community Management no mesmo
+-- arquivo, em abas diferentes, e são duas fontes de lentes diferentes.
+-- `filtros` recorta antes de contar. Ver `dominio/ingestao_score.py`.
+
+insert into score_fonte (codigo, nome, fornecedor, lente_id, tipo_arquivo, mapeamento_colunas, interna, ordem, observacao) values
   ('clipei', 'Clipei', 'Clipei', (select id from lente where codigo='imprensa'),
-   'xlsx', false, 1, 'Clipping de imprensa, ponderado pelo Aegea Tier'),
-  ('edelman', 'Edelman', 'Edelman', (select id from lente where codigo='mercado'),
-   'xlsx', false, 2, 'Resumo semestral — contexto e proxy para os meses sem Clipei'),
+   'xlsx',
+   '{"aba": "Clipping",
+     "colunas": {"data": "Data", "sentimento": "Classificação", "tier": "Aegea Tier",
+                 "atributo": "Atributo", "veiculo": "Veículo",
+                 "publico_alvo": "Público-alvo", "tema": "Subcategoria"}}'::jsonb,
+   false, 1, 'Clipping de imprensa, ponderado pelo Aegea Tier'),
+
+  -- A MESMA PLANILHA DA CLIPEI, recortada. O §2 define a lente Mercado como
+  -- "veículos com público-alvo Investidores" — é um recorte do clipping, e
+  -- não um fornecedor à parte. Separar em duas fontes é o que permite ligar e
+  -- desligar Imprensa e Mercado de forma independente na Calibração, lendo o
+  -- mesmo arquivo. (A Edelman entra como ESTIMATIVA, em `score_estimativa`:
+  -- o resumo semestral dela é um NS suposto, e não menção medida.)
+  ('clipei_investidores', 'Clipei · público investidores', 'Clipei',
+   (select id from lente where codigo='mercado'),
+   'xlsx',
+   '{"aba": "Clipping",
+     "filtros": {"Público-alvo": ["Investidores"]},
+     "colunas": {"data": "Data", "sentimento": "Classificação", "tier": "Aegea Tier",
+                 "atributo": "Atributo", "veiculo": "Veículo",
+                 "publico_alvo": "Público-alvo", "tema": "Subcategoria"}}'::jsonb,
+   false, 2, 'Recorte do clipping: matérias dirigidas a investidores'),
+
   ('approach_sl', 'Approach · Social Listening', 'Approach', (select id from lente where codigo='sociedade'),
-   'xlsx', false, 3, 'Redes em mar aberto'),
+   'xlsx',
+   '{"aba": "SL",
+     "colunas": {"data": "Data", "sentimento": "Sentimento",
+                 "engajamento": "Engajamento", "tema": "Tags (tema)"}}'::jsonb,
+   false, 3, 'Redes em mar aberto'),
+
   ('bites', 'Bites', 'Bites', (select id from lente where codigo='sociedade'),
-   'xlsx', false, 4, 'Redes em mar aberto; única fonte que traz o cargo do autor'),
+   'xlsx',
+   '{"aba": "Posts",
+     "colunas": {"data": "Data", "sentimento": "Sentimento", "engajamento": "Engajamento",
+                 "cargo": "Cargo", "atributo": "Atributo", "tema": "Categoria"}}'::jsonb,
+   false, 4, 'Redes em mar aberto; única fonte que traz o cargo do autor'),
+
+  -- `Interações`, e não `Engajamento`: é o mesmo fato com o nome que a aba de
+  -- Community Management usa. Trocar o nome no código serviria a esta aba e
+  -- quebraria a outra — por isso o nome mora no cadastro.
   ('approach_cm', 'Approach · Community Management', 'Approach', (select id from lente where codigo='clientes'),
-   'xlsx', false, 5, 'Canais próprios'),
+   'xlsx',
+   '{"aba": "CM",
+     "colunas": {"data": "Data", "sentimento": "Sentimento",
+                 "engajamento": "Interações", "tema": "TAG (assunto 1)"}}'::jsonb,
+   false, 5, 'Canais próprios'),
+
   ('crm', 'CRM dos Stakeholders', 'Aegea', (select id from lente where codigo='institucional'),
-   null, true, 6, 'O clima das interações deste painel — lido, não importado')
+   null, '{}'::jsonb, true, 6, 'O clima das interações deste painel — lido, não importado')
 on conflict (codigo) do nothing;
 
 
@@ -141,6 +186,13 @@ create table if not exists mencao (
   cargo text,
   unidade_negocio_id smallint references unidade_negocio(id),
   tema_id integer references tema(id),
+  --: O tema COMO O FORNECEDOR ESCREVEU. A Clipei manda "Obras", a Approach
+  --: manda "2 - Aegea - Obra": é o mesmo assunto com dois nomes, e nenhum dos
+  --: dois é o vocabulário de `tema`, que é o do CRM. Guardar o texto bruto faz
+  --: a tela de Drivers acender no primeiro import; `tema_id` fica para quando
+  --: alguém sentar e casar as duas listas, que é decisão editorial e não
+  --: conversão automática.
+  tema_texto text,
   --: O atributo reputacional da Clipei — alimenta a barra divergente de
   --: "Drivers e riscos".
   atributo text,
