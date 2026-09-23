@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,700&display=swap" rel="stylesheet" />
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #F4F6FC; font-family: "DM Sans", Arial, sans-serif; color: #191B23; -webkit-font-smoothing: antialiased; }
+  a { color: #0027BD; text-decoration: none; }
+  a:hover { color: #17A99A; }
+  input, button { font-family: inherit; }
+  ::placeholder { color: #A6ABBD; }
+  .destaque { font-family: Georgia, "Times New Roman", serif; font-style: italic; font-weight: 400; }
+  @keyframes girar { to { transform: rotate(360deg); } }
+  @media (max-width: 880px) {
+    .login-grid { grid-template-columns: 1fr !important; }
+    .login-arte { min-height: 240px; }
+    .login-arte .login-arte-inner { padding: 28px 24px !important; gap: 20px; }
+    .login-arte h1 { font-size: 28px !important; }
+    .login-arte p { font-size: 14px !important; }
+    .login-form { padding: 32px 22px !important; }
+  }
+  @media (max-width: 520px) {
+    .login-arte .login-nums { display: none; }
+    .login-arte h1 { font-size: 24px !important; }
+  }
+</style>
+</helmet>
+
+<div class="login-grid" style="min-height:100vh;display:grid;grid-template-columns:1.05fr 1fr">
+
+  <div class="login-arte" style="position:relative;overflow:hidden;background:#0027BD">
+    <div style="position:absolute;inset:0;background-image:url('assets/hero-agua.png');background-size:cover;background-position:center bottom;background-size:auto 140%"></div>
+    <div style="position:absolute;inset:0;background:linear-gradient(155deg, rgba(0,39,189,0.72) 0%, rgba(0,39,189,0.44) 52%, rgba(23,227,203,0.14) 100%)"></div>
+    <div class="login-arte-inner" style="position:relative;height:100%;display:flex;flex-direction:column;justify-content:space-between;gap:32px;padding:44px 48px">
+      <div style="display:flex;align-items:center;gap:14px">
+        <div style="width:36px;height:36px;border-radius:50%;background:#17E3CB"></div>
+        <span style="font-size:12px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#9DEEE7">Aegea · Reputação</span>
+      </div>
+      <div>
+        <h1 style="margin:0;font-size:40px;font-weight:700;letter-spacing:-0.03em;color:#fff;max-width:20ch;line-height:1.08;text-shadow:0 2px 18px rgba(0,25,120,0.4)">Central de inteligência <span class="destaque" style="color:#17E3CB">reputacional</span></h1>
+        <p style="margin:16px 0 0;font-size:15px;color:#EAEEFC;max-width:46ch;line-height:1.65;text-wrap:pretty;text-shadow:0 1px 12px rgba(0,25,120,0.35)">Cadastro e análise das interações institucionais da companhia — imprensa, governo, parceiros, investidores, eventos e proposições legislativas.</p>
+      </div>
+      <div class="login-nums" style="display:flex;gap:26px;flex-wrap:wrap">
+        <div>
+          <div style="font-size:26px;font-weight:700;letter-spacing:-0.03em;color:#17E3CB;line-height:1">7</div>
+          <div style="font-size:11px;color:#DDE3FA;letter-spacing:0.04em">frentes consolidadas</div>
+        </div>
+        <div>
+          <div style="font-size:26px;font-weight:700;letter-spacing:-0.03em;color:#fff;line-height:1">11</div>
+          <div style="font-size:11px;color:#DDE3FA;letter-spacing:0.04em">fontes mapeadas</div>
+        </div>
+        <div>
+          <div style="font-size:26px;font-weight:700;letter-spacing:-0.03em;color:#fff;line-height:1">28</div>
+          <div style="font-size:11px;color:#DDE3FA;letter-spacing:0.04em">unidades da holding</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="login-form" style="display:flex;align-items:center;justify-content:center;padding:40px 32px">
+    <div style="width:100%;max-width:392px">
+
+      <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#8C91A4">Acesso restrito</div>
+      <h2 style="margin:8px 0 6px;font-size:26px;font-weight:700;letter-spacing:-0.02em">Entrar no painel</h2>
+      <p style="margin:0 0 26px;font-size:14px;color:#44495C;line-height:1.6">Use sua conta corporativa Aegea. O acesso e o perfil de permissão vêm do diretório da companhia.</p>
+
+      <button onClick="{{ entrarSso }}" style="{{ ssoStyle }}">
+        <span style="display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:2px;width:18px;height:18px;flex-shrink:0">
+          <span style="background:#F25022"></span>
+          <span style="background:#7FBA00"></span>
+          <span style="background:#00A4EF"></span>
+          <span style="background:#FFB900"></span>
+        </span>
+        <span style="flex:1;text-align:left">{{ ssoLabel }}</span>
+        <sc-if value="{{ carregando }}" hint-placeholder-val="{{ false }}">
+          <span style="width:15px;height:15px;border:2px solid #D5DAEA;border-top-color:#0027BD;border-radius:50%;animation:girar .7s linear infinite;flex-shrink:0"></span>
+        </sc-if>
+      </button>
+
+      <div style="font-size:12px;color:#8C91A4;margin-top:10px;line-height:1.55">Entra pelo Microsoft Entra ID (Azure AD) do tenant <strong>aegea.com.br</strong>, com MFA quando exigido pela política.</div>
+
+      <div style="display:flex;align-items:center;gap:12px;margin:26px 0">
+        <span style="flex:1;height:1px;background:#E2E5F0"></span>
+        <span style="font-size:11px;color:#A6ABBD;letter-spacing:0.06em;text-transform:uppercase">ou</span>
+        <span style="flex:1;height:1px;background:#E2E5F0"></span>
+      </div>
+
+      <sc-if value="{{ formAberto }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:14px;margin-bottom:18px">
+          <label style="display:flex;flex-direction:column;gap:6px">
+            <span style="font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#8C91A4">E-mail corporativo</span>
+            <input type="email" value="{{ email }}" onChange="{{ onEmail }}" placeholder="nome.sobrenome@aegea.com.br" style="height:44px;border:1px solid #D5DAEA;border-radius:9px;padding:0 12px;font-size:14px" />
+          </label>
+          <label style="display:flex;flex-direction:column;gap:6px">
+            <span style="font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#8C91A4">Senha</span>
+            <input type="password" value="{{ senha }}" onChange="{{ onSenha }}" onKeyDown="{{ onEnter }}" placeholder="••••••••" style="height:44px;border:1px solid #D5DAEA;border-radius:9px;padding:0 12px;font-size:14px" />
+          </label>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+            <button onClick="{{ toggleLembrar }}" style="display:flex;align-items:center;gap:9px;border:none;background:transparent;cursor:pointer;padding:0;font-size:13px;color:#44495C">
+              <span style="{{ lembrarBox }}">{{ lembrarMarca }}</span> Manter conectado
+            </button>
+            <a href="#recuperar" style="font-size:13px">Esqueci a senha</a>
+          </div>
+          <sc-if value="{{ temErro }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;align-items:flex-start;gap:9px;background:#FFE7E8;border-radius:9px;padding:11px 13px">
+              <span style="width:8px;height:8px;background:#B32328;transform:rotate(45deg);margin-top:5px;flex-shrink:0"></span>
+              <span style="font-size:13px;color:#B32328;line-height:1.5">{{ erro }}</span>
+            </div>
+          </sc-if>
+          <button onClick="{{ entrar }}" style="height:46px;background:#0027BD;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer" style-hover="background:#111799">Entrar</button>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ formFechado }}" hint-placeholder-val="{{ true }}">
+        <button onClick="{{ abrirForm }}" style="width:100%;height:46px;background:#fff;color:#44495C;border:1px solid #D5DAEA;border-radius:10px;font-size:14px;font-weight:500;cursor:pointer" style-hover="border-color:#0027BD;color:#0027BD">Entrar com e-mail e senha</button>
+      </sc-if>
+
+      <div style="margin-top:26px;padding-top:20px;border-top:1px solid #E2E5F0">
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#8C91A4;margin-bottom:10px">Perfis de acesso</div>
+        <div style="display:flex;flex-direction:column;gap:9px">
+          <div style="display:flex;align-items:flex-start;gap:9px;font-size:12px;color:#44495C;line-height:1.5">
+            <span style="width:8px;height:8px;border-radius:2px;background:#0027BD;margin-top:5px;flex-shrink:0"></span>
+            <span><strong>Analista</strong> — cadastra e edita os próprios registros</span>
+          </div>
+          <div style="display:flex;align-items:flex-start;gap:9px;font-size:12px;color:#44495C;line-height:1.5">
+            <span style="width:8px;height:8px;border-radius:2px;background:#17E3CB;margin-top:5px;flex-shrink:0"></span>
+            <span><strong>Coordenação</strong> — edita tudo e administra as listas</span>
+          </div>
+          <div style="display:flex;align-items:flex-start;gap:9px;font-size:12px;color:#44495C;line-height:1.5">
+            <span style="width:8px;height:8px;border-radius:2px;background:#8C91A4;margin-top:5px;flex-shrink:0"></span>
+            <span><strong>Diretoria</strong> — leitura dos painéis e do relatório</span>
+          </div>
+        </div>
+      </div>
+
+      <p style="margin:22px 0 0;font-size:11px;color:#A6ABBD;line-height:1.6">Ao entrar você concorda com os Termos Gerais de Uso e com a Política de Privacidade e Proteção de Dados da Aegea. Acessos são registrados para auditoria.</p>
+    </div>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{}">
+class Component extends DCLogic {
+  state = { email: '', senha: '', lembrar: true, erro: '', carregando: false, formAberto: false };
+
+  entrarSso = () => {
+    this.setState({ carregando: true, erro: '' });
+    setTimeout(() => {
+      this.setState({ carregando: false });
+      window.location.href = 'Painel Reputacional Aegea.dc.html';
+    }, 1100);
+  };
+
+  entrar = () => {
+    const { email, senha } = this.state;
+    if (!email.trim() || !senha) { this.setState({ erro: 'Informe e-mail corporativo e senha.' }); return; }
+    if (!/@aegea\.com\.br$/i.test(email.trim())) { this.setState({ erro: 'Use um e-mail do domínio aegea.com.br ou entre pelo SSO.' }); return; }
+    this.setState({ erro: '' });
+    window.location.href = 'Painel Reputacional Aegea.dc.html';
+  };
+
+  renderVals() {
+    const s = this.state;
+    return {
+      email: s.email,
+      senha: s.senha,
+      onEmail: e => this.setState({ email: e.target.value, erro: '' }),
+      onSenha: e => this.setState({ senha: e.target.value, erro: '' }),
+      onEnter: e => { if (e.key === 'Enter') this.entrar(); },
+      entrar: this.entrar,
+      entrarSso: this.entrarSso,
+      carregando: s.carregando,
+      ssoLabel: s.carregando ? 'Redirecionando para a Microsoft…' : 'Entrar com a conta Microsoft Aegea',
+      ssoStyle: 'width:100%;height:50px;display:flex;align-items:center;gap:13px;padding:0 16px;border:1px solid ' +
+        (s.carregando ? '#0027BD' : '#D5DAEA') + ';background:#fff;border-radius:10px;font-size:15px;font-weight:500;color:#191B23;cursor:pointer;transition:border-color .12s,box-shadow .12s',
+      formAberto: s.formAberto,
+      formFechado: !s.formAberto,
+      abrirForm: () => this.setState({ formAberto: true }),
+      temErro: !!s.erro,
+      erro: s.erro,
+      toggleLembrar: () => this.setState({ lembrar: !s.lembrar }),
+      lembrarBox: 'width:18px;height:18px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;border:1px solid ' +
+        (s.lembrar ? '#0027BD;background:#0027BD;color:#fff;' : '#D5DAEA;background:#fff;color:transparent;'),
+      lembrarMarca: s.lembrar ? '✓' : ''
+    };
+  }
+}
+
+</script>
+</body>
+</html>

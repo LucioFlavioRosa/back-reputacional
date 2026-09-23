@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,700&display=swap" rel="stylesheet" />
+<script src="./image-slot.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  .destaque { font-family: Georgia, "Times New Roman", serif; font-style: italic; font-weight: 400; }
+  body { margin: 0; background: #F4F6FC; font-family: "DM Sans", Arial, sans-serif; color: #191B23; -webkit-font-smoothing: antialiased; }
+  a { color: #0027BD; text-decoration: none; }
+  a:hover { color: #17A99A; }
+  .om-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+  .om-scroll::-webkit-scrollbar-thumb { background: #D5DAEA; border-radius: 8px; }
+</style>
+</helmet>
+
+<div style="min-height:100vh">
+
+  <header style="position:relative;overflow:hidden;background:#0027BD">
+    <div style="position:absolute;inset:0">
+      <div style="position:absolute;inset:0;background-image:url('assets/hero-agua.png');background-size:cover;background-position:center 82%"></div>
+    </div>
+    <div style="position:absolute;inset:0;background:linear-gradient(105deg, rgba(0,39,189,0.50) 0%, rgba(0,39,189,0.32) 44%, rgba(0,39,189,0.14) 78%, rgba(23,227,203,0.08) 100%);pointer-events:none"></div>
+    <div style="position:relative;padding:44px 32px 96px;pointer-events:none">
+      <div style="max-width:1320px;margin:0 auto">
+        <div style="display:flex;align-items:center;gap:14px;margin-bottom:26px">
+          <div style="width:34px;height:34px;border-radius:50%;background:#17E3CB"></div>
+          <span style="font-size:12px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#9DEEE7">Aegea · Reputação</span>
+        </div>
+        <h1 style="margin:0;font-size:44px;font-weight:700;letter-spacing:-0.03em;color:#fff;max-width:22ch;line-height:1.08;text-shadow:0 2px 18px rgba(0,25,120,0.45)">Central de inteligência <span class="destaque" style="color:#17E3CB">reputacional</span></h1>
+        <p style="margin:16px 0 0;font-size:15px;color:#EAEEFC;max-width:66ch;line-height:1.65;text-wrap:pretty;text-shadow:0 1px 12px rgba(0,25,120,0.4)">Construída em ondas: cada uma amplia as fontes conectadas e a inteligência entre elas, respeitando o tempo de maturação que o dado exige. Estamos no escopo inicial — Foundation e MVP, Onda 1.</p>
+
+      </div>
+    </div>
+    <div style="position:relative;height:64px;background:#17E3CB;border-radius:50% 50% 0 0 / 64px 64px 0 0;margin-bottom:-32px"></div>
+    <div style="position:relative;height:36px;background:#F4F6FC;border-radius:50% 50% 0 0 / 36px 36px 0 0"></div>
+  </header>
+
+  <main style="max-width:1320px;margin:0 auto;padding:32px 32px 72px">
+
+    <div style="display:flex;align-items:baseline;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px">
+      <h2 style="margin:0;font-size:20px;font-weight:700;letter-spacing:-0.02em">MVP · Onda 1 — os três <span class="destaque" style="color:#0027BD">painéis executivos</span></h2>
+      <span style="font-size:12px;color:#A6ABBD">Entrega-chave: base industrializada e confiável + MVP funcional com bases reais</span>
+    </div>
+
+    <section style="display:grid;grid-template-columns:1.35fr 1fr 1fr;gap:16px;margin-bottom:32px;align-items:stretch">
+
+      <a href="Painel Reputacional Aegea.dc.html" style="display:flex;flex-direction:column;background:#0027BD;border-radius:16px;padding:26px;color:#fff" style-hover="background:#111799">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px">
+          <div style="width:52px;height:52px;border-radius:15px;background:rgba(255,255,255,0.14);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <span style="position:relative;width:26px;height:26px;display:block">
+              <span style="position:absolute;top:0;left:7px;width:11px;height:11px;border-radius:50%;background:#17E3CB"></span>
+              <span style="position:absolute;bottom:0;left:0;width:11px;height:11px;border-radius:50%;background:#fff"></span>
+              <span style="position:absolute;bottom:0;right:0;width:11px;height:11px;border-radius:50%;background:#fff"></span>
+            </span>
+          </div>
+          <span style="font-size:11px;font-weight:700;padding:4px 10px;border-radius:6px;background:#17E3CB;color:#00312C;white-space:nowrap">Disponível</span>
+        </div>
+        <h2 style="margin:0 0 8px;font-size:21px;font-weight:700;letter-spacing:-0.02em">CRM dos <span class="destaque" style="color:#17E3CB">Stakeholders</span></h2>
+        <p style="margin:0 0 18px;font-size:13px;color:#C3CDF7;line-height:1.6;text-wrap:pretty">Cadastro e análise das interações com imprensa, governo, parceiros, investidores, eventos e proposições legislativas — tags, porta-vozes, interlocutores, resolutividade e distribuição geográfica.</p>
+        <span style="margin-top:auto;font-size:14px;font-weight:500;display:flex;align-items:center;gap:9px">Abrir módulo <span style="font-size:17px">→</span></span>
+      </a>
+
+      <div style="display:flex;flex-direction:column;background:#fff;border:1px solid #E2E5F0;border-radius:16px;padding:24px">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:18px">
+          <div style="width:48px;height:48px;border-radius:14px;background:#EEF1F8;display:flex;align-items:flex-end;justify-content:center;gap:4px;padding:13px;flex-shrink:0">
+            <span style="width:5px;height:9px;background:#0027BD;border-radius:1px"></span>
+            <span style="width:5px;height:15px;background:#0027BD;border-radius:1px"></span>
+            <span style="width:5px;height:21px;background:#17E3CB;border-radius:1px"></span>
+          </div>
+          <span style="font-size:11px;font-weight:700;padding:4px 10px;border-radius:6px;background:#F8DC00;color:#332727;white-space:nowrap">MVP · Onda 1</span>
+        </div>
+        <h2 style="margin:0 0 8px;font-size:19px;font-weight:700;letter-spacing:-0.02em">Síntese Executiva</h2>
+        <p style="margin:0;font-size:13px;color:#8C91A4;line-height:1.6;text-wrap:pretty">Visão geral da reputação da Aegea nas mídias em todos os níveis — nacional, regional e local, on e off, imprensa e digital — consolidada em uma página para a diretoria.</p>
+        <span style="margin-top:auto;padding-top:18px;font-size:12px;color:#A6ABBD">Em desenvolvimento no escopo inicial</span>
+      </div>
+
+      <div style="display:flex;flex-direction:column;background:#fff;border:1px solid #E2E5F0;border-radius:16px;padding:24px">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:18px">
+          <div style="width:48px;height:48px;border-radius:14px;background:#EEF1F8;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <span style="width:24px;height:24px;border-radius:50%;border:3px solid #0027BD;border-right-color:#17E3CB;border-top-color:#17E3CB"></span>
+          </div>
+          <span style="font-size:11px;font-weight:700;padding:4px 10px;border-radius:6px;background:#F8DC00;color:#332727;white-space:nowrap">MVP · Onda 1</span>
+        </div>
+        <h2 style="margin:0 0 8px;font-size:19px;font-weight:700;letter-spacing:-0.02em">Score Executivo</h2>
+        <p style="margin:0;font-size:13px;color:#8C91A4;line-height:1.6;text-wrap:pretty">Índice único de reputação sobre a metodologia do Score Aegea — pesos e régua de indicadores.</p>
+        <span style="margin-top:auto;padding-top:18px;font-size:12px;color:#A6ABBD">Em desenvolvimento no escopo inicial</span>
+      </div>
+    </section>
+
+    <h2 style="margin:0 0 14px;font-size:20px;font-weight:700;letter-spacing:-0.02em">Squad evolutiva · <span class="destaque" style="color:#0027BD">ferramentas</span></h2>
+    <section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-bottom:32px">
+      <div style="background:#fff;border:1px solid #E2E5F0;border-radius:14px;padding:20px">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px">
+          <div style="width:44px;height:44px;border-radius:12px;background:#EEF1F8;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <span style="width:16px;height:16px;background:#FE952B;transform:rotate(45deg)"></span>
+          </div>
+          <span style="font-size:11px;font-weight:700;padding:3px 9px;border-radius:5px;border:1px solid #D5DAEA;color:#44495C;white-space:nowrap">Onda 3</span>
+        </div>
+        <div style="font-size:15px;font-weight:700;margin-bottom:5px">Painel de Alertas</div>
+        <p style="margin:0;font-size:12px;color:#8C91A4;line-height:1.55">Regras de alerta e treinamento de agentes via outputs — evolui para alertas dinâmicos na Onda 4.</p>
+      </div>
+      <div style="background:#fff;border:1px solid #E2E5F0;border-radius:14px;padding:20px">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px">
+          <div style="width:44px;height:44px;border-radius:12px;background:#EEF1F8;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <span style="position:relative;width:22px;height:22px;display:block">
+              <span style="position:absolute;top:0;left:0;width:16px;height:16px;border:2px solid #8C91A4;border-radius:3px"></span>
+              <span style="position:absolute;bottom:0;right:0;width:16px;height:16px;border:2px solid #0027BD;border-radius:3px;background:#fff"></span>
+            </span>
+          </div>
+          <span style="font-size:11px;font-weight:700;padding:3px 9px;border-radius:5px;border:1px solid #D5DAEA;color:#44495C;white-space:nowrap">Onda 2</span>
+        </div>
+        <div style="font-size:15px;font-weight:700;margin-bottom:5px">Relatórios</div>
+        <p style="margin:0;font-size:12px;color:#8C91A4;line-height:1.55">Novos blocos de indicadores e reports, exportáveis no padrão visual Aegea.</p>
+      </div>
+      <div style="background:#fff;border:1px solid #E2E5F0;border-radius:14px;padding:20px">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px">
+          <div style="width:44px;height:44px;border-radius:12px;background:#EEF1F8;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <span style="position:relative;width:22px;height:22px;display:block">
+              <span style="position:absolute;top:2px;left:0;width:9px;height:9px;border-radius:50%;background:#A11FFF"></span>
+              <span style="position:absolute;bottom:0;right:2px;width:13px;height:13px;border-radius:50%;border:2px solid #0027BD;background:#fff"></span>
+            </span>
+          </div>
+          <span style="font-size:11px;font-weight:700;padding:3px 9px;border-radius:5px;border:1px solid #D5DAEA;color:#44495C;white-space:nowrap">Onda 4</span>
+        </div>
+        <div style="font-size:15px;font-weight:700;margin-bottom:5px">Aceleradores IA</div>
+        <p style="margin:0;font-size:12px;color:#8C91A4;line-height:1.55">Agentes de classificação e sugestão de tendência, em aprimoramento contínuo até a Onda 6.</p>
+      </div>
+      <div style="background:#fff;border:1px solid #E2E5F0;border-radius:14px;padding:20px">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px">
+          <div style="width:44px;height:44px;border-radius:12px;background:#EEF1F8;display:flex;align-items:flex-end;justify-content:center;gap:3px;padding:12px;flex-shrink:0">
+            <span style="width:4px;height:8px;background:#8C91A4"></span>
+            <span style="width:4px;height:14px;background:#0027BD"></span>
+            <span style="width:4px;height:19px;background:#17E3CB"></span>
+          </div>
+          <span style="font-size:11px;font-weight:700;padding:3px 9px;border-radius:5px;border:1px solid #D5DAEA;color:#44495C;white-space:nowrap">Onda 5</span>
+        </div>
+        <div style="font-size:15px;font-weight:700;margin-bottom:5px">Cenários e projeções</div>
+        <p style="margin:0;font-size:12px;color:#8C91A4;line-height:1.55">Simulações e modelos preditivos com validação contínua.</p>
+      </div>
+    </section>
+
+    <h2 style="margin:0 0 14px;font-size:20px;font-weight:700;letter-spacing:-0.02em">Análise por <span class="destaque" style="color:#0027BD">frente</span></h2>
+    <section style="margin-bottom:32px">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px">
+
+        <div style="background:#fff;border:1px solid #E2E5F0;border-radius:14px;padding:20px">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:14px">
+            <div style="width:40px;height:40px;border-radius:11px;background:#EEF1F8;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;flex-shrink:0">
+              <span style="width:20px;height:3px;background:#0027BD"></span>
+              <span style="width:20px;height:3px;background:#8C91A4"></span>
+              <span style="width:13px;height:3px;background:#8C91A4"></span>
+            </div>
+            <span style="font-size:11px;font-weight:700;padding:3px 8px;border-radius:5px;background:#F8DC00;color:#332727;white-space:nowrap">Onda 1</span>
+          </div>
+          <div style="font-size:14px;font-weight:700;margin-bottom:4px">Imprensa</div>
+          <p style="margin:0;font-size:12px;color:#8C91A4;line-height:1.55">Fonte crítica já mapeada — vive no CRM.</p>
+        </div>
+
+        <div style="background:#fff;border:1px solid #E2E5F0;border-radius:14px;padding:20px">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:14px">
+            <div style="width:40px;height:40px;border-radius:11px;background:#EEF1F8;display:flex;align-items:flex-end;justify-content:center;gap:3px;padding:11px;flex-shrink:0">
+              <span style="width:6px;height:12px;background:#0027BD;border-radius:1px"></span>
+              <span style="width:6px;height:18px;background:#17E3CB;border-radius:1px"></span>
+            </div>
+            <span style="font-size:11px;font-weight:700;padding:3px 8px;border-radius:5px;background:#F8DC00;color:#332727;white-space:nowrap">Onda 1</span>
+          </div>
+          <div style="font-size:14px;font-weight:700;margin-bottom:4px">Institucional</div>
+          <p style="margin:0;font-size:12px;color:#8C91A4;line-height:1.55">Governo, entidades e agenda legislativa — vive no CRM.</p>
+        </div>
+
+        <div style="background:#fff;border:1px solid #E2E5F0;border-radius:14px;padding:20px">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:14px">
+            <div style="width:40px;height:40px;border-radius:11px;background:#EEF1F8;display:flex;align-items:flex-end;justify-content:center;gap:3px;padding:11px;flex-shrink:0">
+              <span style="width:4px;height:6px;background:#0027BD"></span>
+              <span style="width:4px;height:11px;background:#0027BD"></span>
+              <span style="width:4px;height:17px;background:#0027BD"></span>
+            </div>
+            <span style="font-size:11px;font-weight:700;padding:3px 8px;border-radius:5px;border:1px solid #D5DAEA;color:#44495C;white-space:nowrap">Onda 2</span>
+          </div>
+          <div style="font-size:14px;font-weight:700;margin-bottom:4px">Mercado</div>
+          <p style="margin:0;font-size:12px;color:#8C91A4;line-height:1.55">Setor, concorrência e leilões, com pipelines estáveis.</p>
+        </div>
+
+        <div style="background:#fff;border:1px solid #E2E5F0;border-radius:14px;padding:20px">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:14px">
+            <div style="width:40px;height:40px;border-radius:11px;background:#EEF1F8;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+              <span style="width:20px;height:20px;border-radius:50%;border:3px solid #0027BD;display:flex;align-items:center;justify-content:center">
+                <span style="width:6px;height:6px;border-radius:50%;background:#17E3CB"></span>
+              </span>
+            </div>
+            <span style="font-size:11px;font-weight:700;padding:3px 8px;border-radius:5px;border:1px solid #D5DAEA;color:#44495C;white-space:nowrap">Onda 2</span>
+          </div>
+          <div style="font-size:14px;font-weight:700;margin-bottom:4px">Marca</div>
+          <p style="margin:0;font-size:12px;color:#8C91A4;line-height:1.55">Percepção e atributos, em novos blocos de indicadores.</p>
+        </div>
+
+        <div style="background:#fff;border:1px solid #E2E5F0;border-radius:14px;padding:20px">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:14px">
+            <div style="width:40px;height:40px;border-radius:11px;background:#EEF1F8;display:flex;align-items:center;justify-content:center;gap:4px;flex-shrink:0">
+              <span style="width:7px;height:7px;border-radius:50%;background:#0027BD"></span>
+              <span style="width:7px;height:7px;border-radius:50%;background:#17E3CB"></span>
+              <span style="width:7px;height:7px;border-radius:50%;background:#0027BD"></span>
+            </div>
+            <span style="font-size:11px;font-weight:700;padding:3px 8px;border-radius:5px;border:1px solid #D5DAEA;color:#44495C;white-space:nowrap">Onda 3</span>
+          </div>
+          <div style="font-size:14px;font-weight:700;margin-bottom:4px">Redes Sociais</div>
+          <p style="margin:0;font-size:12px;color:#8C91A4;line-height:1.55">Nova fonte estratégica — menções, engajamento e CM.</p>
+        </div>
+
+        <div style="background:#fff;border:1px solid #E2E5F0;border-radius:14px;padding:20px">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:14px">
+            <div style="width:40px;height:40px;border-radius:11px;background:#EEF1F8;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+              <span style="position:relative;width:20px;height:20px;display:block">
+                <span style="position:absolute;top:0;left:0;width:20px;height:20px;border:3px solid #0027BD;border-radius:3px"></span>
+                <span style="position:absolute;bottom:-4px;right:-4px;width:9px;height:9px;background:#FE952B;border-radius:2px"></span>
+              </span>
+            </div>
+            <span style="font-size:11px;font-weight:700;padding:3px 8px;border-radius:5px;border:1px solid #D5DAEA;color:#44495C;white-space:nowrap">Onda 3</span>
+          </div>
+          <div style="font-size:14px;font-weight:700;margin-bottom:4px">Publicidade</div>
+          <p style="margin:0;font-size:12px;color:#8C91A4;line-height:1.55">Campanhas, mídia e alcance como nova fonte.</p>
+        </div>
+
+        <div style="background:#fff;border:1px solid #E2E5F0;border-radius:14px;padding:20px">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:14px">
+            <div style="width:40px;height:40px;border-radius:11px;background:#EEF1F8;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+              <span style="position:relative;width:20px;height:20px;display:block">
+                <span style="position:absolute;top:0;left:0;width:14px;height:14px;border-radius:50%;background:#17E3CB"></span>
+                <span style="position:absolute;bottom:0;right:0;width:11px;height:11px;border-radius:50%;border:2px solid #0027BD;background:#fff"></span>
+              </span>
+            </div>
+            <span style="font-size:11px;font-weight:700;padding:3px 8px;border-radius:5px;border:1px solid #D5DAEA;color:#44495C;white-space:nowrap">Onda 4</span>
+          </div>
+          <div style="font-size:14px;font-weight:700;margin-bottom:4px">ESG</div>
+          <p style="margin:0;font-size:12px;color:#8C91A4;line-height:1.55">Clima, carbono, reúso e inclusão — fontes externas.</p>
+        </div>
+      </div>
+    </section>
+
+    <section style="position:relative;border-radius:16px;overflow:hidden;margin-bottom:22px;min-height:200px">
+      <div style="position:absolute;inset:0">
+        <div style="position:absolute;inset:0;background-image:url('assets/hero-agua.png');background-size:cover;background-position:center 70%"></div>
+      </div>
+      <div style="position:absolute;inset:0;background:linear-gradient(90deg, rgba(0,49,44,0.74) 0%, rgba(10,107,96,0.52) 52%, rgba(10,107,96,0.20) 82%, rgba(23,227,203,0.08) 100%);pointer-events:none"></div>
+      <div style="position:relative;padding:34px 32px;display:flex;align-items:center;justify-content:space-between;gap:32px;flex-wrap:wrap;pointer-events:none">
+        <div style="max-width:56ch">
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#9DEEE7;margin-bottom:10px">Escopo inicial em curso</div>
+          <h2 style="margin:0 0 8px;font-size:26px;font-weight:700;letter-spacing:-0.02em;color:#fff">Cada onda amplia as fontes conectadas e a <span class="destaque" style="color:#17E3CB">inteligência</span> entre elas</h2>
+          <p style="margin:0;font-size:14px;color:#DDE3FA;line-height:1.6;text-wrap:pretty">11 fontes mapeadas, 9 críticas para o MVP. O CRM dos Stakeholders já está no ar; as demais camadas entram nas ondas seguintes.</p>
+
+        </div>
+        <div style="display:flex;gap:26px;flex-wrap:wrap">
+          <div>
+            <div style="font-size:34px;font-weight:700;letter-spacing:-0.03em;color:#17E3CB;line-height:1">11</div>
+            <div style="font-size:11px;color:#9DEEE7;letter-spacing:0.04em">fontes mapeadas</div>
+          </div>
+          <div>
+            <div style="font-size:34px;font-weight:700;letter-spacing:-0.03em;color:#fff;line-height:1">9</div>
+            <div style="font-size:11px;color:#9DEEE7;letter-spacing:0.04em">críticas para o MVP</div>
+          </div>
+          <div>
+            <div style="font-size:34px;font-weight:700;letter-spacing:-0.03em;color:#fff;line-height:1">6</div>
+            <div style="font-size:11px;color:#9DEEE7;letter-spacing:0.04em">ondas de evolução</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section style="background:#fff;border:1px solid #E2E5F0;border-radius:16px;padding:26px;margin-bottom:22px">
+      <h2 style="margin:0 0 5px;font-size:18px;font-weight:700;letter-spacing:-0.01em">Jornada via ondas de evolução</h2>
+      <p style="margin:0 0 22px;font-size:13px;color:#8C91A4;max-width:82ch;text-wrap:pretty">Cada onda amplia as fontes conectadas e a inteligência entre elas. Abaixo, a entrega-chave de cada uma.</p>
+      <div class="om-scroll" style="overflow-x:auto;padding-bottom:6px">
+        <div style="display:grid;grid-template-columns:repeat(7,minmax(168px,1fr));gap:12px;min-width:1180px">
+
+          <div style="border:1px solid #E2E5F0;border-radius:12px;overflow:hidden">
+            <div style="background:#191B23;color:#fff;padding:11px 14px">
+              <div style="font-size:13px;font-weight:700">Foundation</div>
+              <div style="font-size:11px;color:#8C91A4">Onda 1</div>
+            </div>
+            <div style="padding:14px">
+              <div style="font-size:12px;color:#44495C;line-height:1.55;margin-bottom:12px">Arquitetura estrutural, fluxo das fontes e oportunidades de automatização. 11 fontes mapeadas, 9 críticas para o MVP.</div>
+              <div style="font-size:11px;font-weight:700;color:#0027BD">Base industrializada e confiável</div>
+            </div>
+          </div>
+
+          <div style="border:1px solid #F8DC00;border-radius:12px;overflow:hidden">
+            <div style="background:#F8DC00;color:#332727;padding:11px 14px">
+              <div style="font-size:13px;font-weight:700">MVP</div>
+              <div style="font-size:11px">Onda 1 · em curso</div>
+            </div>
+            <div style="padding:14px">
+              <div style="font-size:12px;color:#44495C;line-height:1.55;margin-bottom:12px">Os 3 painéis executivos, metodologia do Score Aegea e leitura assistida dos dados.</div>
+              <div style="font-size:11px;font-weight:700;color:#0027BD">MVP funcional com bases reais</div>
+            </div>
+          </div>
+
+          <div style="border:1px solid #E2E5F0;border-radius:12px;overflow:hidden">
+            <div style="background:#0027BD;color:#fff;padding:11px 14px">
+              <div style="font-size:13px;font-weight:700">Onda 2</div>
+              <div style="font-size:11px;color:#9DEEE7">Expansão</div>
+            </div>
+            <div style="padding:14px">
+              <div style="font-size:12px;color:#44495C;line-height:1.55;margin-bottom:12px">Novos blocos de indicadores, séries históricas, ingestão automatizada e mais fontes integradas.</div>
+              <div style="font-size:11px;font-weight:700;color:#0027BD">Drivers, correlações e novas visões</div>
+            </div>
+          </div>
+
+          <div style="border:1px solid #E2E5F0;border-radius:12px;overflow:hidden">
+            <div style="background:#0027BD;color:#fff;padding:11px 14px">
+              <div style="font-size:13px;font-weight:700">Onda 3</div>
+              <div style="font-size:11px;color:#9DEEE7">Analytics</div>
+            </div>
+            <div style="padding:14px">
+              <div style="font-size:12px;color:#44495C;line-height:1.55;margin-bottom:12px">Visões comparativas, backtests, regras de alerta e novas fontes estratégicas.</div>
+              <div style="font-size:11px;font-weight:700;color:#0027BD">Insights diagnósticos e alertas inteligentes</div>
+            </div>
+          </div>
+
+          <div style="border:1px solid #E2E5F0;border-radius:12px;overflow:hidden">
+            <div style="background:#0027BD;color:#fff;padding:11px 14px">
+              <div style="font-size:13px;font-weight:700">Onda 4</div>
+              <div style="font-size:11px;color:#9DEEE7">IA e insights</div>
+            </div>
+            <div style="padding:14px">
+              <div style="font-size:12px;color:#44495C;line-height:1.55;margin-bottom:12px">Alertas dinâmicos, agentes de sugestão de tendência, camada semântica e governança ativa.</div>
+              <div style="font-size:11px;font-weight:700;color:#0027BD">Insights preditivos com IA</div>
+            </div>
+          </div>
+
+          <div style="border:1px solid #E2E5F0;border-radius:12px;overflow:hidden">
+            <div style="background:#0027BD;color:#fff;padding:11px 14px">
+              <div style="font-size:13px;font-weight:700">Onda 5</div>
+              <div style="font-size:11px;color:#9DEEE7">Predição</div>
+            </div>
+            <div style="padding:14px">
+              <div style="font-size:12px;color:#44495C;line-height:1.55;margin-bottom:12px">Cenários e simulações, recomendações automáticas e modelos preditivos validados.</div>
+              <div style="font-size:11px;font-weight:700;color:#0027BD">Tendências e recomendação de ações</div>
+            </div>
+          </div>
+
+          <div style="border:1px solid #E2E5F0;border-radius:12px;overflow:hidden">
+            <div style="background:#0027BD;color:#fff;padding:11px 14px">
+              <div style="font-size:13px;font-weight:700">Onda 6</div>
+              <div style="font-size:11px;color:#9DEEE7">Escala</div>
+            </div>
+            <div style="padding:14px">
+              <div style="font-size:12px;color:#44495C;line-height:1.55;margin-bottom:12px">Backlog contínuo de dashboards, IA em aprimoramento e fontes renovadas.</div>
+              <div style="font-size:11px;font-weight:700;color:#0027BD">Ecossistema escalável e sustentável</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section style="background:#191B23;color:#fff;border-radius:16px;padding:26px">
+      <h2 style="margin:0 0 5px;font-size:18px;font-weight:700;letter-spacing:-0.01em">As cinco camadas</h2>
+      <p style="margin:0 0 22px;font-size:13px;color:#8C91A4">O que cada camada entrega no escopo inicial — Foundation e MVP.</p>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px">
+        <div style="border:1px solid #333949;border-radius:12px;padding:17px">
+          <div style="display:flex;align-items:center;gap:9px;margin-bottom:9px">
+            <span style="width:22px;height:22px;border-radius:50%;background:#F8DC00;color:#332727;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">1</span>
+            <span style="font-size:14px;font-weight:700">Report executivo</span>
+          </div>
+          <div style="font-size:12px;color:#D5DAEA;line-height:1.6">Desenvolvimento do MVP dos 3 painéis executivos.</div>
+        </div>
+        <div style="border:1px solid #333949;border-radius:12px;padding:17px">
+          <div style="display:flex;align-items:center;gap:9px;margin-bottom:9px">
+            <span style="width:22px;height:22px;border-radius:50%;background:#F8DC00;color:#332727;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">2</span>
+            <span style="font-size:14px;font-weight:700">Aceleradores IA</span>
+          </div>
+          <div style="font-size:12px;color:#D5DAEA;line-height:1.6">Leitura assistida de papers e consulta objetiva dos dados.</div>
+        </div>
+        <div style="border:1px solid #333949;border-radius:12px;padding:17px">
+          <div style="display:flex;align-items:center;gap:9px;margin-bottom:9px">
+            <span style="width:22px;height:22px;border-radius:50%;background:#F8DC00;color:#332727;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">3</span>
+            <span style="font-size:14px;font-weight:700">Advanced Analytics</span>
+          </div>
+          <div style="font-size:12px;color:#D5DAEA;line-height:1.6">Metodologia do Score Aegea, pesos e régua de indicadores.</div>
+        </div>
+        <div style="border:1px solid #333949;border-radius:12px;padding:17px">
+          <div style="display:flex;align-items:center;gap:9px;margin-bottom:9px">
+            <span style="width:22px;height:22px;border-radius:50%;background:#17E3CB;color:#00312C;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">4</span>
+            <span style="font-size:14px;font-weight:700">Gestão de dados</span>
+          </div>
+          <div style="font-size:12px;color:#D5DAEA;line-height:1.6">Arquitetura estrutural, fluxo das fontes e oportunidades de automatização.</div>
+        </div>
+        <div style="border:1px solid #333949;border-radius:12px;padding:17px">
+          <div style="display:flex;align-items:center;gap:9px;margin-bottom:9px">
+            <span style="width:22px;height:22px;border-radius:50%;background:#17E3CB;color:#00312C;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">5</span>
+            <span style="font-size:14px;font-weight:700">Fontes de dados</span>
+          </div>
+          <div style="font-size:12px;color:#D5DAEA;line-height:1.6">11 fontes mapeadas, 9 críticas para o MVP, com indicadores calculados.</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:20px;padding-top:16px;border-top:1px solid #333949">
+        <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#8C91A4"><span style="width:10px;height:10px;border-radius:3px;background:#F8DC00"></span>Entregue no MVP · Onda 1</div>
+        <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#8C91A4"><span style="width:10px;height:10px;border-radius:3px;background:#17E3CB"></span>Entregue no Foundation · Onda 1</div>
+      </div>
+    </section>
+  </main>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{}"></script>
+</body>
+</html>

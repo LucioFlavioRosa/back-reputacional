@@ -1,0 +1,490 @@
+"""O Score Executivo — o Índice de Saúde Reputacional, servido pronto.
+
+O CÁLCULO É DO SERVIDOR, e a tela só exibe (regra 4 do handoff). Não é
+preferência de arquitetura: o ISR é um número que a diretoria vai citar em
+reunião, e ele precisa ser o mesmo para todo mundo, calculado uma vez, com a
+régua que a coordenação gravou — e não recomputado em cada navegador com a
+versão de código que aquele navegador carregou.
+
+O SCORE NÃO USA O RECORTE DO PAINEL. Ele é mensal e é da organização inteira:
+filtrar por frente ou por unidade produziria um "ISR da imprensa" cujo peso de
+lente não significa nada. O que se escolhe aqui é o MÊS.
+
+Permissões: ler exige o portal Score (`acessa_score`); mexer na calibração
+exige administrar cadastros — é configuração da organização, e muda o número
+que todos leem.
+"""
+
+from __future__ import annotations
+
+from datetime import date
+from typing import Annotated
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Query, status
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import delete, select
+
+from app.api.dependencias import (
+    UsuarioLogado,
+    UsuarioQueAdministraCadastros,
+    exigir_portal_score,
+)
+from app.banco import repositorio_score
+from app.banco.sessao import SessaoDoPedido
+from app.banco.tabelas_score import Lente, ScoreConfig, ScoreFato, ScoreFonte, ScoreMesFonte
+from app.dominio.erros import NaoEncontrado, RegraViolada
+from app.dominio.score import (
+    REGUAS_DE_ENGAJAMENTO,
+    REGUAS_DE_TIER,
+    Calibracao,
+    Indice,
+)
+
+rotas = APIRouter(
+    prefix="/api/score",
+    tags=["score"],
+    dependencies=[Depends(exigir_portal_score)],
+)
+
+Sessao = SessaoDoPedido
+
+
+class LenteSaida(BaseModel):
+    codigo: str
+    nome: str
+    peso: int
+    #: Nulo quando a lente ficou de fora — sem fonte ligada ou sem menção.
+    score: int | None
+    ns: float | None
+    #: Contra o mês anterior. Nulo quando não há os dois meses.
+    delta: int | None = None
+    fontes: list[str] = Field(default_factory=list)
+    estimado: bool = False
+    #: Por que ficou de fora, quando ficou. A tela mostra como aviso.
+    ausencia: str | None = None
+
+
+class FatoSaida(BaseModel):
+    id: UUID
+    mes: str
+    texto: str
+    efeito: str
+
+
+class CalibracaoSaida(BaseModel):
+    pesos: dict[str, int]
+    regua_tier: str
+    regua_engajamento: str
+    fontes_desligadas: list[str]
+    #: Verdadeiro quando a régua é a de fábrica — a tela mostra o chip
+    #: "calibração ajustada" quando falso.
+    padrao: bool
+
+
+class IndiceSaida(BaseModel):
+    mes: str
+    isr: int | None
+    faixa: str
+    leitura_da_faixa: str
+    #: Contra o mês anterior e contra o primeiro mês da série (§6.1).
+    delta_mes: int | None
+    delta_inicio: int | None
+    lentes: list[LenteSaida]
+    calibracao: CalibracaoSaida
+    fatos: list[FatoSaida]
+    #: A leitura em palavras: qual lente sustenta, qual corrói.
+    leitura: str
+
+
+class PontoDaSerie(BaseModel):
+    mes: str
+    isr: int | None
+    #: QUANTAS LENTES formaram o ponto, de 5. Um mês em que só a institucional
+    #: tem dado produz um ISR legítimo pela fórmula e ENGANOSO na curva — é o
+    #: score de uma lente, desenhado como se fosse o da companhia. A tela usa
+    #: este número para marcar o ponto como parcial.
+    lentes: int
+    #: Verdadeiro quando alguma lente do mês veio de estimativa, e não de
+    #: medição.
+    tem_estimativa: bool
+
+
+def _mes_de(texto: str) -> date:
+    """`2026-06` vira o primeiro dia do mês."""
+    try:
+        ano, mes = texto.split("-")
+        return date(int(ano), int(mes), 1)
+    except (ValueError, TypeError) as erro:
+        raise RegraViolada(
+            f"Mês inválido: {texto!r}. Use o formato AAAA-MM."
+        ) from erro
+
+
+def _calibracao_saida(sessao, calibracao: Calibracao) -> CalibracaoSaida:
+    padrao = repositorio_score.pesos_padrao(sessao)
+    return CalibracaoSaida(
+        pesos=calibracao.pesos,
+        regua_tier=calibracao.regua_tier,
+        regua_engajamento=calibracao.regua_engajamento,
+        fontes_desligadas=sorted(calibracao.fontes_desligadas),
+        padrao=(
+            calibracao.pesos == padrao
+            and calibracao.regua_tier == "aegea"
+            and calibracao.regua_engajamento == "n"
+            and not calibracao.fontes_desligadas
+        ),
+    )
+
+
+def _leitura(indice: Indice) -> str:
+    """A frase que explica o número (§6.1).
+
+    GERADA, E NÃO ESCRITA: ela muda com o mês e com a régua, e uma frase fixa
+    envelheceria no primeiro recálculo. Diz o que sustenta e o que corrói —
+    que é a pergunta que alguém faz ao ver o índice.
+    """
+    com_dado = indice.lentes_no_calculo
+    if not com_dado:
+        return "Nenhuma lente foi medida neste mês."
+
+    melhor = max(com_dado, key=lambda lente: lente.score or 0)
+    pior = min(com_dado, key=lambda lente: lente.score or 0)
+    fora = indice.lentes_de_fora
+
+    frase = (
+        f"{melhor.nome} sustenta o índice, com {melhor.score}; "
+        f"{pior.nome} é o que mais o pressiona, com {pior.score}."
+    )
+    if fora:
+        nomes = ", ".join(lente.nome for lente in fora)
+        frase += f" Fora do cálculo: {nomes}."
+    return frase
+
+
+@rotas.get("")
+def obter(
+    sessao: Sessao,
+    usuario: UsuarioLogado,
+    mes: Annotated[str, Query(description="AAAA-MM")],
+) -> IndiceSaida:
+    """O índice do mês, com as lentes que o formaram e o que explica a curva."""
+    alvo = _mes_de(mes)
+    calibracao = repositorio_score.calibracao_vigente(sessao)
+
+    indice = repositorio_score.indice_do_mes(sessao, alvo, calibracao)
+    anterior = repositorio_score.indice_do_mes(
+        sessao, _mes_anterior(alvo), calibracao
+    )
+
+    meses = repositorio_score.meses_com_dado(sessao)
+    primeiro = (
+        repositorio_score.indice_do_mes(sessao, meses[0], calibracao)
+        if meses else indice
+    )
+
+    scores_anteriores = {lente.codigo: lente.score for lente in anterior.lentes}
+    lentes = [
+        LenteSaida(
+            codigo=lente.codigo,
+            nome=lente.nome,
+            peso=lente.peso,
+            score=lente.score,
+            ns=round(lente.ns, 4) if lente.ns is not None else None,
+            delta=_delta(lente.score, scores_anteriores.get(lente.codigo)),
+            fontes=list(lente.fontes),
+            estimado=lente.estimado,
+            ausencia=lente.ausencia,
+        )
+        for lente in indice.lentes
+    ]
+
+    return IndiceSaida(
+        mes=indice.mes,
+        isr=indice.isr,
+        faixa=indice.faixa,
+        leitura_da_faixa=indice.leitura_da_faixa,
+        delta_mes=_delta(indice.isr, anterior.isr),
+        delta_inicio=_delta(indice.isr, primeiro.isr),
+        lentes=lentes,
+        calibracao=_calibracao_saida(sessao, calibracao),
+        fatos=_fatos_do_mes(sessao, alvo),
+        leitura=_leitura(indice),
+    )
+
+
+def _delta(atual: int | None, anterior: int | None) -> int | None:
+    """Sem os dois meses não há variação — e zero não é a resposta."""
+    if atual is None or anterior is None:
+        return None
+    return atual - anterior
+
+
+def _mes_anterior(mes: date) -> date:
+    return (
+        mes.replace(year=mes.year - 1, month=12) if mes.month == 1
+        else mes.replace(month=mes.month - 1)
+    )
+
+
+def _fatos_do_mes(sessao, mes: date) -> list[FatoSaida]:
+    registros = sessao.scalars(
+        select(ScoreFato).where(ScoreFato.mes == mes).order_by(ScoreFato.criado_em)
+    )
+    return [
+        FatoSaida(id=f.id, mes=f"{f.mes:%Y-%m}", texto=f.texto, efeito=f.efeito)
+        for f in registros
+    ]
+
+
+@rotas.get("/serie")
+def serie(sessao: Sessao, usuario: UsuarioLogado) -> list[PontoDaSerie]:
+    """A evolução mensal do índice, com a régua vigente.
+
+    TODOS OS MESES COM A MESMA RÉGUA: recalcular o passado com a calibração de
+    hoje é o que torna a curva comparável. Guardar o score de cada mês com a
+    régua da época faria a linha subir e descer por mudança de critério.
+    """
+    calibracao = repositorio_score.calibracao_vigente(sessao)
+    pontos = []
+    for mes in repositorio_score.meses_com_dado(sessao):
+        indice = repositorio_score.indice_do_mes(sessao, mes, calibracao)
+        pontos.append(
+            PontoDaSerie(
+                mes=indice.mes,
+                isr=indice.isr,
+                lentes=len(indice.lentes_no_calculo),
+                tem_estimativa=any(
+                    lente.estimado for lente in indice.lentes_no_calculo
+                ),
+            )
+        )
+    return pontos
+
+
+class FonteSaida(BaseModel):
+    codigo: str
+    nome: str
+    fornecedor: str
+    lente: str
+    interna: bool
+    ativo: bool
+    #: Se a calibração vigente a desligou.
+    ligada: bool
+    observacao: str | None
+    #: Quantos meses têm dado desta fonte, e quantas menções no mês pedido.
+    meses_com_dado: int
+    mencoes_no_mes: int
+
+
+@rotas.get("/fontes")
+def listar_fontes(
+    sessao: Sessao,
+    usuario: UsuarioLogado,
+    mes: Annotated[str, Query(description="AAAA-MM")],
+) -> list[FonteSaida]:
+    """O registro de fontes, com cobertura e volume — a aba Calibração."""
+    alvo = _mes_de(mes)
+    calibracao = repositorio_score.calibracao_vigente(sessao)
+    lentes = {lente.id: lente.nome for lente in repositorio_score.lentes_cadastradas(sessao)}
+
+    cobertura: dict[int, int] = {}
+    volume: dict[int, int] = {}
+    for fonte_id, mes_da_linha, mencoes in sessao.execute(
+        select(ScoreMesFonte.fonte_id, ScoreMesFonte.mes, ScoreMesFonte.mencoes)
+    ):
+        cobertura[fonte_id] = cobertura.get(fonte_id, 0) + (1 if mes_da_linha else 0)
+        if mes_da_linha == alvo:
+            volume[fonte_id] = volume.get(fonte_id, 0) + mencoes
+
+    return [
+        FonteSaida(
+            codigo=fonte.codigo,
+            nome=fonte.nome,
+            fornecedor=fonte.fornecedor,
+            lente=lentes.get(fonte.lente_id, "—"),
+            interna=fonte.interna,
+            ativo=fonte.ativo,
+            ligada=calibracao.ligada(fonte.codigo),
+            observacao=fonte.observacao,
+            # Meses distintos, e não linhas: cada mês tem várias linhas (uma
+            # por sentimento e tier).
+            meses_com_dado=_meses_distintos(sessao, fonte.id),
+            mencoes_no_mes=volume.get(fonte.id, 0),
+        )
+        for fonte in repositorio_score.fontes_cadastradas(sessao)
+    ]
+
+
+def _meses_distintos(sessao, fonte_id: int) -> int:
+    return len(
+        set(
+            sessao.scalars(
+                select(ScoreMesFonte.mes).where(ScoreMesFonte.fonte_id == fonte_id)
+            )
+        )
+    )
+
+
+class CalibracaoEntrada(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    pesos: dict[str, int] = Field(default_factory=dict)
+    regua_tier: str = "aegea"
+    regua_engajamento: str = "n"
+    fontes_desligadas: list[str] = Field(default_factory=list)
+
+
+@rotas.get("/calibracao")
+def obter_calibracao(sessao: Sessao, usuario: UsuarioLogado) -> CalibracaoSaida:
+    return _calibracao_saida(sessao, repositorio_score.calibracao_vigente(sessao))
+
+
+@rotas.put("/calibracao", status_code=status.HTTP_201_CREATED)
+def gravar_calibracao(
+    sessao: Sessao, usuario: UsuarioQueAdministraCadastros, entrada: CalibracaoEntrada
+) -> CalibracaoSaida:
+    """Grava uma VERSÃO NOVA da régua, e não altera a anterior.
+
+    Saber com que critério um número foi lido no mês passado é o que permite
+    explicar por que ele mudou — e é por isso que a tabela só cresce.
+    """
+    # `Calibracao` valida as réguas e a faixa dos pesos antes de qualquer
+    # escrita: a recusa vem do domínio, e não de um `check` no banco.
+    calibracao = Calibracao(
+        pesos=entrada.pesos,
+        regua_tier=entrada.regua_tier,
+        regua_engajamento=entrada.regua_engajamento,
+        fontes_desligadas=frozenset(entrada.fontes_desligadas),
+    )
+    conhecidas = {fonte.codigo for fonte in repositorio_score.fontes_cadastradas(sessao)}
+    desconhecidas = sorted(calibracao.fontes_desligadas - conhecidas)
+    if desconhecidas:
+        raise RegraViolada(
+            f"Fonte não cadastrada: {', '.join(desconhecidas)}."
+        )
+    conhecidas_lentes = set(repositorio_score.pesos_padrao(sessao))
+    fora = sorted(set(entrada.pesos) - conhecidas_lentes)
+    if fora:
+        raise RegraViolada(f"Lente não cadastrada: {', '.join(fora)}.")
+
+    sessao.add(
+        ScoreConfig(
+            pesos=entrada.pesos,
+            regua_tier=entrada.regua_tier,
+            regua_engajamento=entrada.regua_engajamento,
+            fontes_desligadas=sorted(entrada.fontes_desligadas),
+            criado_por=usuario.id,
+        )
+    )
+    sessao.flush()
+    return _calibracao_saida(sessao, repositorio_score.calibracao_vigente(sessao))
+
+
+@rotas.delete("/calibracao", status_code=status.HTTP_201_CREATED)
+def restaurar_padrao(
+    sessao: Sessao, usuario: UsuarioQueAdministraCadastros
+) -> CalibracaoSaida:
+    """"Restaurar padrão" (§3): grava uma versão com a régua de fábrica.
+
+    Não apaga o histórico — volta ao padrão gravando, que é como se desfaz
+    numa tabela que só cresce.
+    """
+    sessao.add(
+        ScoreConfig(
+            pesos=repositorio_score.pesos_padrao(sessao),
+            regua_tier="aegea",
+            regua_engajamento="n",
+            fontes_desligadas=[],
+            criado_por=usuario.id,
+        )
+    )
+    sessao.flush()
+    return _calibracao_saida(sessao, repositorio_score.calibracao_vigente(sessao))
+
+
+class FatoEntrada(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mes: str
+    texto: str = Field(min_length=3)
+    efeito: str
+
+
+EFEITOS = ("sustenta", "pressiona", "misto")
+
+
+@rotas.post("/fatos", status_code=status.HTTP_201_CREATED)
+def criar_fato(
+    sessao: Sessao, usuario: UsuarioQueAdministraCadastros, entrada: FatoEntrada
+) -> FatoSaida:
+    """O que explica a curva — "caiu em março porque saíram as DFs"."""
+    if entrada.efeito not in EFEITOS:
+        raise RegraViolada(
+            f"Efeito inválido: {entrada.efeito!r}. Use {', '.join(EFEITOS)}."
+        )
+    registro = ScoreFato(
+        mes=_mes_de(entrada.mes),
+        texto=entrada.texto.strip(),
+        efeito=entrada.efeito,
+        criado_por=usuario.id,
+    )
+    sessao.add(registro)
+    sessao.flush()
+    return FatoSaida(
+        id=registro.id, mes=f"{registro.mes:%Y-%m}", texto=registro.texto,
+        efeito=registro.efeito,
+    )
+
+
+@rotas.delete("/fatos/{id}", status_code=status.HTTP_204_NO_CONTENT)
+def remover_fato(
+    sessao: Sessao, usuario: UsuarioQueAdministraCadastros, id: UUID
+) -> None:
+    registro = sessao.get(ScoreFato, id)
+    if registro is None:
+        raise NaoEncontrado("Fato não encontrado.")
+    sessao.execute(delete(ScoreFato).where(ScoreFato.id == id))
+
+
+class OpcoesSaida(BaseModel):
+    """O que a tela de Calibração oferece — vem do servidor, não de lista fixa."""
+
+    reguas_de_tier: list[dict]
+    reguas_de_engajamento: list[str]
+    lentes: list[dict]
+    meses: list[str]
+
+
+@rotas.get("/opcoes")
+def opcoes(sessao: Sessao, usuario: UsuarioLogado) -> OpcoesSaida:
+    return OpcoesSaida(
+        reguas_de_tier=[
+            {"codigo": codigo, "pesos": {tier: peso for tier, peso in pesos.items()}}
+            for codigo, pesos in REGUAS_DE_TIER.items()
+        ],
+        reguas_de_engajamento=list(REGUAS_DE_ENGAJAMENTO),
+        lentes=[
+            {
+                "codigo": lente.codigo,
+                "nome": lente.nome,
+                "stakeholder": lente.stakeholder,
+                "peso_padrao": lente.peso_padrao,
+            }
+            for lente in sessao.scalars(
+                select(Lente).where(Lente.ativo.is_(True)).order_by(Lente.ordem)
+            )
+        ],
+        meses=[f"{mes:%Y-%m}" for mes in repositorio_score.meses_com_dado(sessao)],
+    )
+
+
+def _fontes_da_lente(sessao, lente_codigo: str) -> list[ScoreFonte]:  # pragma: no cover
+    return list(
+        sessao.scalars(
+            select(ScoreFonte)
+            .join(Lente, Lente.id == ScoreFonte.lente_id)
+            .where(Lente.codigo == lente_codigo)
+            .order_by(ScoreFonte.ordem)
+        )
+    )
