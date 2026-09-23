@@ -94,9 +94,15 @@ create table if not exists score_fonte (
   mapeamento_colunas jsonb not null default '{}'::jsonb,
   --: FONTE INTERNA não se ingere: o dado já está neste banco. Hoje só o CRM.
   interna boolean not null default false,
-  --: Desligar uma fonte tira o dado dela do índice sem apagar o histórico —
-  --: é o toggle da Calibração. Com todas as fontes de uma lente desligadas, a
-  --: lente sai do ISR e os pesos redistribuem.
+  --: SE A FONTE AINDA RECEBE IMPORTAÇÃO. Um fornecedor descontinuado entra
+  --: aqui como `false`: não se importa mais nada para ele, e o histórico dele
+  --: CONTINUA no índice. Tirar o passado junto reescreveria meses fechados —
+  --: o ISR que a diretoria citou em julho mudaria porque o contrato acabou em
+  --: outubro.
+  --:
+  --: NÃO É O TOGGLE DA CALIBRAÇÃO. Quem tira uma fonte do cálculo é
+  --: `score_config.fontes_desligadas`, que age na LEITURA e vale para todos os
+  --: meses de uma vez — ver `dominio/score.py::medir_lente`.
   ativo boolean not null default true,
   ordem smallint not null default 0,
   observacao text
@@ -107,12 +113,16 @@ create table if not exists score_fonte (
 -- número os totais do protótipo. `aba` diz de qual planilha do arquivo ler —
 -- o export da Approach traz Social Listening e Community Management no mesmo
 -- arquivo, em abas diferentes, e são duas fontes de lentes diferentes.
--- `filtros` recorta antes de contar. Ver `dominio/ingestao_score.py`.
+-- `filtros` recorta antes de contar, e `arquivo` diz quais fontes leem o MESMO
+-- export: subir o arquivo da Clipei alimenta Imprensa e Mercado na mesma
+-- transação, e o da Approach alimenta Sociedade e Clientes. Sem isso, importar
+-- por uma fonte deixaria a irmã com o mês anterior, e duas lentes leriam
+-- versões diferentes do mesmo arquivo. Ver `dominio/ingestao_score.py`.
 
 insert into score_fonte (codigo, nome, fornecedor, lente_id, tipo_arquivo, mapeamento_colunas, interna, ordem, observacao) values
   ('clipei', 'Clipei', 'Clipei', (select id from lente where codigo='imprensa'),
    'xlsx',
-   '{"aba": "Clipping",
+   '{"aba": "Clipping", "arquivo": "clipei",
      "colunas": {"data": "Data", "sentimento": "Classificação", "tier": "Aegea Tier",
                  "atributo": "Atributo", "veiculo": "Veículo",
                  "publico_alvo": "Público-alvo", "tema": "Subcategoria"}}'::jsonb,
@@ -127,7 +137,7 @@ insert into score_fonte (codigo, nome, fornecedor, lente_id, tipo_arquivo, mapea
   ('clipei_investidores', 'Clipei · público investidores', 'Clipei',
    (select id from lente where codigo='mercado'),
    'xlsx',
-   '{"aba": "Clipping",
+   '{"aba": "Clipping", "arquivo": "clipei",
      "filtros": {"Público-alvo": ["Investidores"]},
      "colunas": {"data": "Data", "sentimento": "Classificação", "tier": "Aegea Tier",
                  "atributo": "Atributo", "veiculo": "Veículo",
@@ -136,14 +146,14 @@ insert into score_fonte (codigo, nome, fornecedor, lente_id, tipo_arquivo, mapea
 
   ('approach_sl', 'Approach · Social Listening', 'Approach', (select id from lente where codigo='sociedade'),
    'xlsx',
-   '{"aba": "SL",
+   '{"aba": "SL", "arquivo": "approach",
      "colunas": {"data": "Data", "sentimento": "Sentimento",
                  "engajamento": "Engajamento", "tema": "Tags (tema)"}}'::jsonb,
    false, 3, 'Redes em mar aberto'),
 
   ('bites', 'Bites', 'Bites', (select id from lente where codigo='sociedade'),
    'xlsx',
-   '{"aba": "Posts",
+   '{"aba": "Posts", "arquivo": "bites",
      "colunas": {"data": "Data", "sentimento": "Sentimento", "engajamento": "Engajamento",
                  "cargo": "Cargo", "atributo": "Atributo", "tema": "Categoria"}}'::jsonb,
    false, 4, 'Redes em mar aberto; única fonte que traz o cargo do autor'),
@@ -153,7 +163,7 @@ insert into score_fonte (codigo, nome, fornecedor, lente_id, tipo_arquivo, mapea
   -- quebraria a outra — por isso o nome mora no cadastro.
   ('approach_cm', 'Approach · Community Management', 'Approach', (select id from lente where codigo='clientes'),
    'xlsx',
-   '{"aba": "CM",
+   '{"aba": "CM", "arquivo": "approach",
      "colunas": {"data": "Data", "sentimento": "Sentimento",
                  "engajamento": "Interações", "tema": "TAG (assunto 1)"}}'::jsonb,
    false, 5, 'Canais próprios'),

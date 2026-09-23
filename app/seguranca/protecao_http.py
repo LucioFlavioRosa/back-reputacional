@@ -148,16 +148,22 @@ class CabecalhosDeSegurancaMiddleware:
 #: decidir isso. Cada expressao aqui descreve uma rota que existe, e uma rota
 #: nova precisa ser acrescentada de proposito.
 #:
-#: SAO TRES, e nao uma: o material da agenda, o cadastro de referencia — que
-#: nasce COM a primeira versao — e cada versao seguinte. As tres recebem
-#: arquivo, e as tres precisam do mesmo teto de 25 MB. Faltando qualquer uma,
-#: o middleware recusa com 413 generico ANTES de a rota rodar, e a mensagem
-#: que diz o tamanho aceito nunca chega a quem subiu.
+#: SAO QUATRO, e nao uma: o material da agenda, o cadastro de referencia — que
+#: nasce COM a primeira versao —, cada versao seguinte, e a planilha do
+#: fornecedor do Score. Todas recebem arquivo, e todas precisam de teto proprio.
+#: Faltando qualquer uma, o middleware recusa com 413 generico ANTES de a rota
+#: rodar, e a mensagem que diz o tamanho aceito nunca chega a quem subiu.
+#:
+#: A PLANILHA DO SCORE entrou depois, e a falta dela era exatamente o erro que
+#: este comentario preve: o export da Clipei tem 1,4 MB, e pela tela o upload
+#: morria em 413 antes de qualquer validacao — enquanto a ingestao, chamada
+#: direto, funcionava. O teto dela e o de `ingerir_mencoes.TAMANHO_MAXIMO`.
 _UUID = "[0-9a-fA-F-]{36}"
 _CAMINHOS_DE_UPLOAD = (
     re.compile(rf"^/api/interacoes/{_UUID}/materiais/arquivo$"),
     re.compile(r"^/api/referencias$"),
     re.compile(rf"^/api/referencias/{_UUID}/versoes$"),
+    re.compile(r"^/api/score/fontes/[^/]+/planilha$"),
 )
 
 

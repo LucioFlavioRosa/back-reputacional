@@ -197,9 +197,25 @@ def medir_lentes(sessao: Session, mes: date, calibracao: Calibracao) -> list[Len
                 somas_por_fonte=somas,
                 calibracao=calibracao,
                 estimativa=estimativas.get(lente.codigo),
+                fontes_cadastradas=_codigos_das_fontes(sessao, lente.id),
             )
         )
     return medidas
+
+
+def _codigos_das_fontes(sessao: Session, lente_id: int) -> tuple[str, ...]:
+    """As fontes CADASTRADAS da lente, tenham dado no mês ou não.
+
+    `ativo` não entra no filtro: um fornecedor descontinuado para de receber
+    importação, e o histórico dele continua valendo — ver o comentário da 0047.
+    """
+    return tuple(
+        sessao.scalars(
+            select(ScoreFonte.codigo)
+            .where(ScoreFonte.lente_id == lente_id)
+            .order_by(ScoreFonte.ordem)
+        )
+    )
 
 
 def _tem_fonte_interna(sessao: Session, lente_id: int) -> bool:
@@ -248,6 +264,12 @@ def fontes_da_lente(
 
     É o que deixa a tela responder "qual das duas está puxando a lente para
     baixo" — com a média de NS, uma fonte pode esconder a outra.
+
+    O NS DE UMA FONTE DESLIGADA É CALCULADO ASSIM MESMO, de propósito: é a
+    resposta para "o que aconteceria se eu religasse esta". Quem diz que ela
+    não entrou no score é o campo `ligada`, que a API devolve ao lado — e a
+    tela precisa mostrar os dois juntos, senão o número vira explicação de um
+    score do qual não participou.
     """
     somas = _somas_da_lente(sessao, lente_id, mes)
     saida = []
@@ -264,13 +286,21 @@ def fontes_da_lente(
 
 
 def temas_da_lente(
-    sessao: Session, lente_id: int, mes: date, quantos: int = 5
+    sessao: Session,
+    lente_id: int,
+    mes: date,
+    calibracao: Calibracao,
+    quantos: int = 5,
 ) -> list[tuple[str, int, int, str | None]]:
     """Os temas mais falados da lente no mês, com positivo × negativo.
 
     Vem de `mencao`, que só a INGESTÃO preenche: sem planilha importada a lista
     volta vazia, e a tela diz por quê. Preferir uma lista vazia a números
     inventados é o que mantém a leitura honesta.
+
+    A CALIBRAÇÃO VALE AQUI TAMBÉM. Desligar a Bites tira os posts dela do
+    score da lente; deixar os temas dela na aba de Drivers explicaria o número
+    por um dado que não entrou nele. Quem lê o gráfico não tem como saber.
 
     O NOME SAI DE DOIS LUGARES. `tema_id` aponta para o vocabulário do CRM,
     que é o bom: é por ele que um tema do Score e um tema de reunião são o
@@ -295,6 +325,7 @@ def temas_da_lente(
             ScoreFonte.lente_id == lente_id,
             Mencao.mes == primeiro_dia(mes),
             rotulo.is_not(None),
+            ScoreFonte.codigo.not_in(calibracao.fontes_desligadas or {""}),
         )
         .group_by(rotulo)
         # ORDENADO PELO QUE TOMA PARTIDO, e não pelo volume. Os assuntos mais

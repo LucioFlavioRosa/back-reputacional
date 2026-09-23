@@ -320,6 +320,26 @@ def test_desligar_toda_fonte_nao_faz_a_lente_cair_na_estimativa():
     assert lente.ausencia == "todas as fontes desta lente estão desligadas"
 
 
+def test_a_estimativa_nao_atravessa_fonte_desligada_que_nao_tem_dado():
+    """O caso que o mês sem export esconde.
+
+    Em janeiro a Clipei está desligada E não tem linha nenhuma. Olhando só para
+    as fontes COM dado não se veria fonte alguma, e a estimativa entraria por
+    baixo do desligamento — devolvendo justamente o número que a coordenação
+    tirou do cálculo.
+    """
+    calibracao = Calibracao(pesos=PADRAO.pesos, fontes_desligadas=frozenset({"clipei"}))
+    lente = medir_lente(
+        codigo="imprensa", nome="Imprensa", peso=30,
+        somas_por_fonte={}, calibracao=calibracao, estimativa=0.45,
+        fontes_cadastradas=("clipei",),
+    )
+
+    assert lente.score is None
+    assert not lente.estimado
+    assert lente.ausencia == "todas as fontes desta lente estão desligadas"
+
+
 def test_havendo_medicao_a_estimativa_e_ignorada():
     """Medido ganha de suposto, sempre."""
     lente = medir_lente(

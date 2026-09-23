@@ -420,7 +420,9 @@ def test_a_planilha_vira_mencao_e_agregado(cliente_do_score, sessao):
     resposta = _subir(cliente_do_score, "bites", conteudo)
     assert resposta.status_code == 201
 
-    resumo = resposta.json()
+    # A Bites entrega um arquivo só dela: uma fonte, um resumo.
+    assert len(resposta.json()) == 1
+    resumo = resposta.json()[0]
     assert resumo["linhas"] == 3
     assert resumo["ingeridas"] == 2
     # O post sem classificação é recusa declarada, e sai na resposta.
@@ -448,7 +450,10 @@ def test_reenviar_o_mesmo_arquivo_nao_dobra_o_mes(cliente_do_score, sessao):
     )
     _subir(cliente_do_score, "bites", conteudo)
     segunda = _subir(cliente_do_score, "bites", conteudo)
-    assert segunda.json()["ingeridas"] == 1
+    assert segunda.json()[0]["ingeridas"] == 1
+    # E o resumo diz que o mês já tinha uma — é assim que um export parcial,
+    # que encolheria o mês, aparece para quem subiu.
+    assert segunda.json()[0]["antes"] == 1
 
     bites = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == "bites"))
     somas = sessao.scalars(
@@ -477,26 +482,84 @@ def test_o_mes_que_o_arquivo_nao_traz_fica_intacto(cliente_do_score, sessao):
     assert sorted(set(meses)) == [date(2026, 5, 1), date(2026, 6, 1)]
 
 
-def test_o_recorte_de_investidores_sai_do_arquivo_da_clipei(cliente_do_score):
-    """Duas lentes, um arquivo: Mercado é o clipping filtrado por público."""
-    conteudo = _planilha(
+def _clipping(linhas: list[list]) -> bytes:
+    return _planilha(
         "Clipping",
         ["Data", "Classificação", "Aegea Tier", "Atributo", "Veículo",
          "Público-alvo", "Subcategoria"],
-        [
-            [date(2026, 6, 1), "POSITIVA", "Muito Relevante", "Gestão",
-             "Valor Econômico", "Investidores", "Resultados"],
-            [date(2026, 6, 2), "NEGATIVA", "Relevante", "Tarifa",
-             "Jornal Local", "População em geral", "Tarifa"],
-        ],
+        linhas,
     )
-    do_mercado = _subir(cliente_do_score, "clipei_investidores", conteudo).json()
-    assert do_mercado["ingeridas"] == 1
-    assert do_mercado["descartes"]["fora_do_filtro"] == 1
 
-    # A MESMA planilha, sem recorte, alimenta Imprensa com as duas.
-    da_imprensa = _subir(cliente_do_score, "clipei", conteudo).json()
-    assert da_imprensa["ingeridas"] == 2
+
+DUAS_MATERIAS = [
+    [date(2026, 6, 1), "POSITIVA", "Muito Relevante", "Gestão",
+     "Valor Econômico", "Investidores", "Resultados"],
+    [date(2026, 6, 2), "NEGATIVA", "Relevante", "Tarifa",
+     "Jornal Local", "População em geral", "Tarifa"],
+]
+
+
+def test_um_arquivo_alimenta_as_duas_fontes_que_o_leem(cliente_do_score):
+    """Duas lentes, um arquivo: Mercado é o clipping filtrado por público.
+
+    O UPLOAD TRATA AS DUAS. Importar por uma só deixaria a irmã com o mês
+    anterior, e Imprensa e Mercado passariam a ler versões diferentes do MESMO
+    arquivo — divergência que a tela não teria como mostrar, porque cada lente
+    exibiria um número plausível.
+    """
+    resposta = _subir(cliente_do_score, "clipei", _clipping(DUAS_MATERIAS))
+    assert resposta.status_code == 201
+
+    por_fonte = {resumo["fonte"]: resumo for resumo in resposta.json()}
+    assert set(por_fonte) == {"clipei", "clipei_investidores"}
+    assert por_fonte["clipei"]["ingeridas"] == 2
+    assert por_fonte["clipei_investidores"]["ingeridas"] == 1
+    assert por_fonte["clipei_investidores"]["descartes"]["fora_do_filtro"] == 1
+
+
+def test_subir_pela_fonte_irma_da_no_mesmo(cliente_do_score):
+    """Quem escolhe "Importar" na linha do Mercado alimenta a Imprensa também:
+    o grupo é do arquivo, e não de quem clicou."""
+    resposta = _subir(cliente_do_score, "clipei_investidores", _clipping(DUAS_MATERIAS))
+    assert {resumo["fonte"] for resumo in resposta.json()} == {
+        "clipei", "clipei_investidores"
+    }
+
+
+def test_o_tier_que_ninguem_reconhece_entra_como_aviso(cliente_do_score):
+    """A matéria não se perde por causa de uma coluna acessória — mas uma
+    coluna inteira mapeada errado precisa aparecer."""
+    conteudo = _clipping(
+        [
+            [date(2026, 6, 1), "POSITIVA", "Tier 1", "Gestão",
+             "Valor Econômico", "Investidores", "Resultados"],
+        ]
+    )
+    por_fonte = {r["fonte"]: r for r in _subir(cliente_do_score, "clipei", conteudo).json()}
+    assert por_fonte["clipei"]["ingeridas"] == 1
+    assert por_fonte["clipei"]["avisos"]["tier_nao_reconhecido"] == 1
+
+
+def test_a_planilha_maior_que_um_mega_passa_pelo_teto_global(cliente_do_score):
+    """O teto de 1 MB protege as rotas de formulário; esta recebe arquivo.
+
+    O export da Clipei tem 1,4 MB. Sem a rota na lista de exceções do
+    `LimiteDeCorpoMiddleware`, o upload morria em 413 ANTES de a ingestão
+    rodar — e a única forma de carregar era chamar o caso de uso direto.
+
+    O CORPO AQUI NÃO É UMA PLANILHA de propósito: um `.xlsx` de verdade com
+    mais de 1 MB precisaria de dezenas de milhares de linhas (o formato
+    comprime bem), e o que se quer provar não é a leitura — é que o corpo
+    grande CHEGA na rota.
+    """
+    grande = b"x" * (1536 * 1024)
+    resposta = _subir(cliente_do_score, "bites", grande)
+
+    # 413 significaria que o middleware barrou o corpo antes da rota. O que se
+    # espera é 422: a rota RODOU e recusou o conteúdo por não ser um `.xlsx` —
+    # que é a mensagem que diz o que fazer.
+    assert resposta.status_code == 422, resposta.status_code
+    assert ".xlsx" in resposta.json()["detalhe"]
 
 
 def test_a_planilha_sem_as_colunas_do_cadastro_e_recusada(cliente_do_score):

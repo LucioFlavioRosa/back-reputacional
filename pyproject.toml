@@ -41,6 +41,11 @@ dependencies = [
     # ingestão, então um deploy sem a dependência sobe inteiro e só falha
     # na primeira importação de planilha, meses depois.
     "openpyxl>=3.1",
+    # O openpyxl usa o defusedxml SOZINHO quando ele está instalado, e sem
+    # ele o parser de XML padrão aceita expansão de entidade — a planilha
+    # vem de fora, por upload. Declarada aqui e não deixada ao acaso da
+    # transitividade, pelo mesmo motivo da telemetria.
+    "defusedxml>=0.7",
 ]
 
 [project.optional-dependencies]

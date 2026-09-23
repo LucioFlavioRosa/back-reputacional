@@ -250,6 +250,7 @@ def medir_lente(
     somas_por_fonte: dict[str, list[SomasDaFonte]],
     calibracao: Calibracao,
     estimativa: float | None = None,
+    fontes_cadastradas: tuple[str, ...] = (),
 ) -> LenteMedida:
     """O score de uma lente no mês.
 
@@ -271,9 +272,15 @@ def medir_lente(
     # fez isso de propósito, e cair na estimativa devolveria pela porta dos
     # fundos justamente o número que a pessoa tirou do cálculo. Já a lente que
     # simplesmente não teve export no mês — a Imprensa de janeiro a maio, que
-    # não tem base da Clipei — nunca chega aqui com fonte alguma, e é dela que
-    # a estimativa do resumo semestral trata.
-    if somas_por_fonte and not ligadas:
+    # não tem base da Clipei — é dela que a estimativa do resumo semestral
+    # trata.
+    #
+    # A PERGUNTA SE FAZ SOBRE AS FONTES CADASTRADAS, e não sobre as que têm
+    # linha no mês: em janeiro a Clipei está desligada E sem dado, e olhar só
+    # para o que tem dado não veria fonte nenhuma — a estimativa passaria por
+    # baixo do desligamento, que é justamente o que não pode.
+    cadastradas = fontes_cadastradas or tuple(somas_por_fonte)
+    if cadastradas and not any(calibracao.ligada(fonte) for fonte in cadastradas):
         return LenteMedida(
             codigo=codigo, nome=nome, peso=peso, ns=None, score=None,
             ausencia="todas as fontes desta lente estão desligadas",

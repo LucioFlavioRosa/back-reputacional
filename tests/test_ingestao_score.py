@@ -16,6 +16,7 @@ from datetime import date, datetime
 import pytest
 
 from app.dominio.ingestao_score import (
+    AVISO_DE_TIER,
     Descarte,
     Mapeamento,
     MencaoLida,
@@ -199,7 +200,14 @@ def test_linha_sem_data_nao_entra_em_mes_nenhum():
         ("0", 0),
         (1234, 1234),
         (12.7, 12),
+        # Milhar, à brasileira e à americana.
         ("1.234", 1234),
+        ("1,234", 1234),
+        ("12.345.678", 12345678),
+        # DECIMAL, e não milhar: apagar a vírgula faria 1 virar 15.
+        ("1,5", 1),
+        ("1.5", 1),
+        ("-42", -42),
         ("", None),
         (None, None),
         ("n/d", None),
@@ -207,6 +215,38 @@ def test_linha_sem_data_nao_entra_em_mes_nenhum():
 )
 def test_o_engajamento_escrito_como_texto(celula, esperado):
     assert para_inteiro(celula) == esperado
+
+
+def test_o_mapeamento_diz_qual_export_a_fonte_le():
+    """Duas fontes com o mesmo `arquivo` leem o mesmo anexo do fornecedor."""
+    imprensa = Mapeamento.de_json(
+        {"aba": "Clipping", "arquivo": "clipei",
+         "colunas": {"data": "Data", "sentimento": "Classificação"}}
+    )
+    mercado = Mapeamento.de_json(
+        {"aba": "Clipping", "arquivo": "clipei",
+         "filtros": {"Público-alvo": ["Investidores"]},
+         "colunas": {"data": "Data", "sentimento": "Classificação"}}
+    )
+    assert imprensa.arquivo == mercado.arquivo == "clipei"
+
+
+def test_o_tier_que_ninguem_reconhece_vira_aviso_e_nao_descarte():
+    """A matéria tem data e sentimento: jogá-la fora por causa de uma coluna
+    acessória perderia notícia de verdade. Mas uma coluna inteira mapeada
+    errado não pode passar calada."""
+    linhas = [
+        {"Data": date(2026, 6, 1), "Classificação": "POSITIVA", "Aegea Tier": "Tier 1"},
+        {"Data": date(2026, 6, 2), "Classificação": "POSITIVA", "Aegea Tier": ""},
+        {"Data": date(2026, 6, 3), "Classificação": "POSITIVA",
+         "Aegea Tier": "Muito Relevante"},
+    ]
+    leitura = ler_planilha(linhas, CLIPEI)
+
+    assert len(leitura.mencoes) == 3
+    # Só o texto que ninguém reconhece conta: a célula em branco é uma fonte
+    # sem tier, que é legítimo.
+    assert leitura.avisos[AVISO_DE_TIER] == 1
 
 
 def test_zero_em_texto_nao_vira_linha_sem_engajamento():

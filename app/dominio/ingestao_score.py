@@ -15,6 +15,7 @@ com linha literal, não com arquivo de exemplo.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -94,6 +95,13 @@ class Mapeamento:
 
     colunas: Mapping[str, str]
     aba: str | None = None
+    #: QUAL EXPORT ESTA FONTE LÊ. Duas fontes com o mesmo `arquivo` leem o
+    #: mesmo anexo do fornecedor — a Clipei alimenta Imprensa e, recortada,
+    #: Mercado; o export da Approach traz Social Listening e Community
+    #: Management em abas diferentes do mesmo `.xlsx`. Sem isto, importar por
+    #: uma das fontes deixaria a irmã com o mês antigo, e as duas lentes
+    #: passariam a ler versões diferentes do mesmo arquivo.
+    arquivo: str | None = None
     #: Recorta a planilha ANTES de contar — é o que faz a lente Mercado sair
     #: do mesmo arquivo da Clipei, só com `Público-alvo = Investidores`.
     filtros: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
@@ -129,9 +137,11 @@ class Mapeamento:
             for coluna, valores in dict(dados.get("filtros") or {}).items()
         }
         aba = dados.get("aba")
+        arquivo = dados.get("arquivo")
         return cls(
             colunas=dict(dados.get("colunas") or {}),
             aba=str(aba) if aba else None,
+            arquivo=str(arquivo) if arquivo else None,
             filtros=filtros,
             sentimentos=dict(dados.get("sentimentos") or {}),  # type: ignore[arg-type]
         )
@@ -171,6 +181,14 @@ class SomaCrua:
     soma_cargo: float
 
 
+#: O tier veio escrito e não é nenhum dos três da escala da Clipei. A linha
+#: ENTRA — ela tem data e sentimento, e jogá-la fora por causa de uma coluna
+#: acessória perderia matéria de verdade —, mas entra sem tier, valendo o peso
+#: de fábrica. Contar o aviso é o que distingue três células em branco num
+#: arquivo de 1.506 linhas de uma coluna inteira mapeada errado.
+AVISO_DE_TIER = "tier_nao_reconhecido"
+
+
 @dataclass(frozen=True, slots=True)
 class Leitura:
     """O que a planilha rendeu, com os descartes na cara."""
@@ -178,6 +196,8 @@ class Leitura:
     mencoes: tuple[MencaoLida, ...]
     descartes: Mapping[str, int]
     linhas: int
+    #: O que entrou, mas merece um olhar. Ver `AVISO_DE_TIER`.
+    avisos: Mapping[str, int] = field(default_factory=dict)
 
     @property
     def meses(self) -> tuple[date, ...]:
@@ -201,21 +221,48 @@ def para_data(valor: object) -> date | None:
     return None
 
 
+#: `1.234.567` ou `1,234,567` — o ponto e a vírgula separando MILHAR.
+_MILHAR = re.compile(r"\d{1,3}(\.\d{3})+|\d{1,3}(,\d{3})+")
+#: `1,5` ou `1.5` — o mesmo sinal separando DECIMAL.
+_DECIMAL = re.compile(r"\d+[.,]\d+")
+
+
 def para_inteiro(valor: object) -> int | None:
     """O engajamento da célula.
 
     A planilha de Community Management traz 885 linhas com o TEXTO `"0"` no
     lugar do número — uma conversão ingênua as leria como nulo, e o mês perderia
     um quinto das mensagens na régua de engajamento.
+
+    O PONTO E A VÍRGULA PRECISAM SER DISTINGUIDOS, e não apagados. Uma primeira
+    versão removia os dois: `"1.234"` virava 1234, certo, mas `"1,5"` virava 15
+    — um post com 1 interação entrando no mês como 15, calado. Aqui, milhar é
+    milhar e decimal é decimal; o decimal é truncado, porque engajamento é
+    contagem de gente e meia interação não existe.
     """
     if isinstance(valor, bool):
         return None
     if isinstance(valor, int | float):
         return int(valor)
-    texto = str(valor or "").strip().replace(".", "").replace(",", "")
-    if not texto.lstrip("-").isdigit():
+
+    texto = str(valor or "").strip()
+    negativo = texto.startswith("-")
+    corpo = texto.lstrip("+-").strip()
+    if not corpo:
         return None
-    return int(texto)
+
+    if _MILHAR.fullmatch(corpo):
+        numero = int(corpo.replace(".", "").replace(",", ""))
+    elif corpo.isdigit():
+        numero = int(corpo)
+    elif _DECIMAL.fullmatch(corpo):
+        numero = int(corpo.replace(",", ".").split(".")[0])
+    else:
+        # `n/d`, `—`, `sem dados`: não é número, e chutar zero seria afirmar
+        # que o post não teve engajamento nenhum.
+        return None
+
+    return -numero if negativo else numero
 
 
 def normalizar_cargo(valor: object) -> str | None:
@@ -273,15 +320,24 @@ def ler_planilha(
     """A planilha inteira, com a contagem do que ficou de fora."""
     mencoes: list[MencaoLida] = []
     descartes: dict[str, int] = {motivo.value: 0 for motivo in Descarte}
+    avisos: dict[str, int] = {AVISO_DE_TIER: 0}
+    coluna_do_tier = mapeamento.colunas.get("tier")
     total = 0
     for linha in linhas:
         total += 1
         lido = ler_linha(linha, mapeamento)
         if isinstance(lido, Descarte):
             descartes[lido.value] += 1
-        else:
-            mencoes.append(lido)
-    return Leitura(mencoes=tuple(mencoes), descartes=descartes, linhas=total)
+            continue
+        mencoes.append(lido)
+        # A fonte mapeia tier, a célula tem texto, e o texto não é nenhum dos
+        # três valores da escala: alguém trocou a coluna, ou o fornecedor mudou
+        # o vocabulário.
+        if coluna_do_tier and lido.tier is None and _achatar(linha.get(coluna_do_tier)):
+            avisos[AVISO_DE_TIER] += 1
+    return Leitura(
+        mencoes=tuple(mencoes), descartes=descartes, linhas=total, avisos=avisos
+    )
 
 
 def somar(mencoes: Iterable[MencaoLida]) -> list[SomaCrua]:

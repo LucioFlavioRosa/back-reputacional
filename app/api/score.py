@@ -425,7 +425,7 @@ def obter_lente(
         temas=[
             TemaDaLenteSaida(nome=nome, positivo=pos, negativo=neg, tipo=tipo)
             for nome, pos, neg, tipo in repositorio_score.temas_da_lente(
-                sessao, lente.id, alvo
+                sessao, lente.id, alvo, calibracao
             )
         ],
     )
@@ -582,18 +582,25 @@ def remover_fato(
 
 
 class ImportacaoSaida(BaseModel):
-    """O que a planilha rendeu — a tela mostra isto depois do upload.
+    """O que a planilha rendeu numa fonte — a tela mostra isto após o upload.
 
     OS DESCARTES SAEM NA RESPOSTA de propósito. Uma importação que diz só
     "ingeridas 4.973" esconde que 1.426 posts vieram sem classificação de
     sentimento: quem conferir o número do mês precisa saber que o fornecedor
     mandou 7.868 linhas e que a diferença não é perda, é recusa declarada.
+
+    `antes` é a outra metade da honestidade: quantas menções a fonte tinha
+    nestes meses antes da troca. É o que deixa um export parcial, baixado antes
+    do fechamento, aparecer como o que é — um mês que encolheu.
     """
 
     fonte: str
+    nome: str
     linhas: int
     ingeridas: int
+    antes: int
     descartes: dict[str, int]
+    avisos: dict[str, int]
     meses: list[str]
 
 
@@ -603,8 +610,13 @@ def importar_planilha(
     usuario: UsuarioQueAdministraCadastros,
     codigo: str,
     arquivo: Annotated[UploadFile, File()],
-) -> ImportacaoSaida:
+) -> list[ImportacaoSaida]:
     """Lê o export do fornecedor e substitui os meses que ele traz.
+
+    DEVOLVE UMA LINHA POR FONTE porque um arquivo alimenta mais de uma: o
+    export da Clipei atende Imprensa e, recortado, Mercado; o da Approach traz
+    Social Listening e Community Management em abas diferentes. Ver o cabeçalho
+    de `casos_de_uso/ingerir_mencoes.py`.
 
     MESMA PERMISSÃO DA CALIBRAÇÃO, e pelo mesmo motivo: isto muda o número que
     todo mundo lê na reunião. Ler o Score basta ter o portal; mexer no que o
@@ -614,14 +626,19 @@ def importar_planilha(
     if fonte is None:
         raise NaoEncontrado("Fonte não encontrada.")
 
-    resumo = ingerir_mencoes.ingerir(sessao, fonte, arquivo.file.read())
-    return ImportacaoSaida(
-        fonte=resumo.fonte,
-        linhas=resumo.linhas,
-        ingeridas=resumo.ingeridas,
-        descartes=dict(resumo.descartes),
-        meses=[f"{mes:%Y-%m}" for mes in resumo.meses],
-    )
+    return [
+        ImportacaoSaida(
+            fonte=resumo.fonte,
+            nome=resumo.nome,
+            linhas=resumo.linhas,
+            ingeridas=resumo.ingeridas,
+            antes=resumo.antes,
+            descartes=dict(resumo.descartes),
+            avisos=dict(resumo.avisos),
+            meses=[f"{mes:%Y-%m}" for mes in resumo.meses],
+        )
+        for resumo in ingerir_mencoes.ingerir(sessao, fonte, arquivo.file.read())
+    ]
 
 
 class OpcoesSaida(BaseModel):
