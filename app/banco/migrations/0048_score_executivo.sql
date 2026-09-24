@@ -1,5 +1,5 @@
 -- =============================================================================
--- 0047 — SCORE EXECUTIVO: o Índice de Saúde Reputacional (ISR).
+-- 0048 — SCORE EXECUTIVO: o Índice de Saúde Reputacional (ISR).
 --
 -- Especificação: `docs/handoff/SCORE.md` e o protótipo executável
 -- `docs/handoff/Score Executivo Aegea.dc.html` (a classe `Component` é a
@@ -353,7 +353,7 @@ alter table tema add column if not exists tipo text
   check (tipo in ('estruturante', 'operacional'));
 
 comment on column tema.tipo is
-  'Estruturante (afeta a tese da companhia) ou operacional (afeta o dia a dia). Cadastro, não derivação — ver 0047.';
+  'Estruturante (afeta a tese da companhia) ou operacional (afeta o dia a dia). Cadastro, não derivação — ver 0048.';
 
 
 -- -- 9. permissões --------------------------------------------------------------
@@ -368,8 +368,8 @@ comment on column tema.tipo is
 
 grant delete on mencao, score_mes_fonte, score_fato, score_estimativa to painel_app;
 
-comment on table lente is 'As cinco lentes do ISR. Fechado: uma sexta muda a fórmula (0047).';
-comment on table score_fonte is 'De onde vem o sentimento de cada lente. Extensível sem deploy (0047).';
-comment on table score_mes_fonte is 'Somas mensais por fonte, no grão que toda régua de ponderação consome (0047).';
+comment on table lente is 'As cinco lentes do ISR. Fechado: uma sexta muda a fórmula (0048).';
+comment on table score_fonte is 'De onde vem o sentimento de cada lente. Extensível sem deploy (0048).';
+comment on table score_mes_fonte is 'Somas mensais por fonte, no grão que toda régua de ponderação consome (0048).';
 
 commit;

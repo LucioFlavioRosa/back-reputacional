@@ -162,7 +162,7 @@ privilégio](#versão-e-privilégio). 64 tabelas, organizadas em oito assuntos:
 | score | `lente`, `score_fonte`, `mencao`, `score_mes_fonte`, `score_estimativa`, `score_config`, `score_fato` |
 | trilhas | `auditoria`, `exportacao`, `importacao` (schema sem aplicação) |
 
-As 46 migrations (`0001` a `0047`; a `0019` não existe) ficam em
+As 46 migrations (`0001` a `0048`; a `0019` não existe) ficam em
 `app/banco/migrations/` e rodam **em ordem alfabética**, uma vez, na primeira
 subida do banco. Cada arquivo abre com um
 cabeçalho dizendo o que muda e por quê — é lá que está o histórico, e não aqui.

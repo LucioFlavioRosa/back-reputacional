@@ -207,7 +207,7 @@ def _codigos_das_fontes(sessao: Session, lente_id: int) -> tuple[str, ...]:
     """As fontes CADASTRADAS da lente, tenham dado no mês ou não.
 
     `ativo` não entra no filtro: um fornecedor descontinuado para de receber
-    importação, e o histórico dele continua valendo — ver o comentário da 0047.
+    importação, e o histórico dele continua valendo — ver o comentário da 0048.
     """
     return tuple(
         sessao.scalars(

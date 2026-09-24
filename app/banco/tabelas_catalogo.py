@@ -147,7 +147,7 @@ class Tema(Tabela):
     nivel: Mapped[str] = mapped_column(Text)
     #: `estruturante` (afeta a tese da companhia) | `operacional` (afeta o dia
     #: a dia). CADASTRO, e não derivação — nada no dado diz qual é qual. Nulo
-    #: até alguém classificar. Ver `migrations/0047`.
+    #: até alguém classificar. Ver `migrations/0048`.
     tipo: Mapped[str | None] = mapped_column(Text, nullable=True)
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
     #: Tag livre nasce datada — é o rastro de quando o vocabulário cresceu.

@@ -1,4 +1,4 @@
-"""O Score Executivo, no banco. Espelha `migrations/0047`.
+"""O Score Executivo, no banco. Espelha `migrations/0048`.
 
 O índice mensal tem quatro coisas guardadas e uma calculada:
 
@@ -11,7 +11,7 @@ O índice mensal tem quatro coisas guardadas e uma calculada:
     score_fato          o que explica a curva, escrito por gente
 
 O score em si não mora aqui: é calculado na leitura, por `app/dominio/score.py`,
-porque a régua que o produz é configurável — ver o cabeçalho da 0047.
+porque a régua que o produz é configurável — ver o cabeçalho da 0048.
 """
 
 from __future__ import annotations

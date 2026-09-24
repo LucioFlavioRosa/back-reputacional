@@ -11,7 +11,7 @@ uma constante — o dado real perdendo para o rascunho, em silêncio.
 O QUE SOBRA É O QUE NÃO TEM ARQUIVO. De janeiro a maio a Clipei não entregou
 base: o que existe é o resumo semestral da Edelman, e dele se infere um NS
 para Imprensa e Mercado. É suposição, e por isso mora em `score_estimativa`,
-que a tela mostra com selo — ver o cabeçalho da 0047. Junho não entra: tem
+que a tela mostra com selo — ver o cabeçalho da 0048. Junho não entra: tem
 medição, e medido ganha de suposto.
 
 A lente institucional não é semeada nunca: ela é o clima das interações deste
@@ -55,7 +55,7 @@ ORIGEM_DA_ESTIMATIVA = (
 
 def _lente(sessao: Session, codigo: str) -> Lente:
     lente = sessao.scalar(select(Lente).where(Lente.codigo == codigo))
-    if lente is None:  # pragma: no cover - a 0047 semeia as cinco
+    if lente is None:  # pragma: no cover - a 0048 semeia as cinco
         raise RuntimeError(f"Lente {codigo!r} não cadastrada — rode as migrations.")
     return lente
 
