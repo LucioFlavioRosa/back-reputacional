@@ -231,6 +231,22 @@ create index if not exists mencao_por_mes on mencao (mes);
 --: consulta varre mês e tema.
 create index if not exists mencao_por_tema on mencao (tema_id) where tema_id is not null;
 
+-- OS TRÊS AGRUPAMENTOS DA ABA DE DRIVERS. Cada um varre um mês (ou seis, na
+-- perpetuação) e agrupa por um rótulo que a maioria das linhas NÃO tem: só
+-- Clipei e Bites classificam atributo, e só as redes trazem a concessionária.
+-- Índice parcial serve exatamente a esse formato — ele indexa a minoria que
+-- interessa, e não as centenas de milhares de linhas com o campo nulo.
+--
+-- Hoje, com 19 mil menções, uma varredura sequencial resolveria. O histórico é
+-- que cresce: são ~10 mil menções por mês, e o índice é mensal para sempre.
+create index if not exists mencao_por_atributo on mencao (mes, atributo)
+  where atributo is not null;
+create index if not exists mencao_por_unidade on mencao (mes, unidade_texto)
+  where unidade_texto is not null;
+--: A perpetuação olha SÓ o negativo, numa janela de seis meses.
+create index if not exists mencao_negativa_por_tema on mencao (mes, tema_texto)
+  where tema_texto is not null and sentimento = 'neg';
+
 
 -- -- 4. o agregado mensal, com as somas de toda régua --------------------------
 --

@@ -194,19 +194,13 @@ def obter(
     )
 
     scores_anteriores = {lente.codigo: lente.score for lente in anterior.lentes}
-    # O denominador do ISR: só as lentes que entraram. Zero quando nenhuma
-    # entrou — e aí todo peso efetivo é zero, que é a verdade do mês.
-    peso_no_calculo = sum(lente.peso for lente in indice.lentes_no_calculo)
+    efetivos = _pesos_efetivos(indice)
     lentes = [
         LenteSaida(
             codigo=lente.codigo,
             nome=lente.nome,
             peso=lente.peso,
-            peso_efetivo=(
-                round(lente.peso / peso_no_calculo * 100)
-                if lente.score is not None and peso_no_calculo
-                else 0
-            ),
+            peso_efetivo=efetivos.get(lente.codigo, 0),
             score=lente.score,
             ns=round(lente.ns, 4) if lente.ns is not None else None,
             delta=_delta(lente.score, scores_anteriores.get(lente.codigo)),
@@ -229,6 +223,37 @@ def obter(
         fatos=_fatos_do_mes(sessao, alvo),
         leitura=_leitura(indice),
     )
+
+
+def _pesos_efetivos(indice: Indice) -> dict[str, int]:
+    """Quanto cada lente pesou DE FATO, em porcento inteiro, somando 100.
+
+    ARREDONDAR CADA UMA POR SI NÃO FECHA. Com uma lente de 15 fora do cálculo,
+    30/85, 20/85, 20/85 e 15/85 viram 35 + 24 + 24 + 18 = 101 — e a tela passa
+    a exibir uma composição impossível, que é o tipo de detalhe que destrói a
+    confiança num número que a diretoria vai citar.
+
+    O resto é distribuído pelas MAIORES FRAÇÕES: quem mais perdeu no
+    arredondamento recebe o ponto que sobra. É o método de Hamilton, o mesmo de
+    repartição de cadeiras — e o que mais se aproxima da proporção real.
+    """
+    no_calculo = indice.lentes_no_calculo
+    total = sum(lente.peso for lente in no_calculo)
+    if not total:
+        return {}
+
+    exatos = {lente.codigo: lente.peso / total * 100 for lente in no_calculo}
+    inteiros = {codigo: int(valor) for codigo, valor in exatos.items()}
+    sobra = 100 - sum(inteiros.values())
+
+    # Empate na fração desempata pelo código: duas lentes igualmente
+    # prejudicadas precisam de uma ordem, e qualquer uma estável serve.
+    por_fracao = sorted(
+        exatos, key=lambda codigo: (-(exatos[codigo] - inteiros[codigo]), codigo)
+    )
+    for codigo in por_fracao[:sobra]:
+        inteiros[codigo] += 1
+    return inteiros
 
 
 def _delta(atual: int | None, anterior: int | None) -> int | None:
@@ -630,6 +655,19 @@ class PerpetuacaoSaida(BaseModel):
     lentes: list[str]
 
 
+class RegraDaPerpetuacao(BaseModel):
+    """Os números que definem "em perpetuação", ditos pelo servidor.
+
+    A TELA PRECISA EXPLICAR A REGRA para quem lê a lista — "temas presentes em
+    3 dos últimos 6 meses" —, e uma constante repetida no front envelheceria
+    calada: mudaria a explicação sem mudar a lista, que é a pior forma de
+    errar, porque ninguém desconfia do texto.
+    """
+
+    meses_da_janela: int
+    meses_para_perpetuar: int
+
+
 class DriversSaida(BaseModel):
     """A aba de Drivers e riscos: o porquê do número, e não o número.
 
@@ -643,9 +681,15 @@ class DriversSaida(BaseModel):
     atributos: list[AtributoSaida]
     unidades: list[UnidadeSaida]
     perpetuacao: list[PerpetuacaoSaida]
-    #: Quantas menções individuais o mês tem, de fontes ligadas. Zero explica
-    #: as três listas vazias melhor que qualquer frase.
+    regra_da_perpetuacao: RegraDaPerpetuacao
+    #: Quantas menções individuais o mês tem, DE FONTES LIGADAS. Zero explica
+    #: as três listas vazias — mas não diz qual dos dois motivos: pode não ter
+    #: planilha importada, ou pode ter e estar toda desligada na calibração. É
+    #: o que `fontes_ligadas` distingue.
     mencoes_no_mes: int
+    #: Quantas fontes de planilha estão no cálculo. Zero com menção no banco
+    #: significa "você desligou tudo", e não "falta importar".
+    fontes_ligadas: int
 
 
 @rotas.get("/drivers")
@@ -678,7 +722,10 @@ def drivers(
     ]
 
     unidades_cruas = repositorio_score.unidades_do_mes(sessao, alvo, calibracao)
-    total_negativo = sum(neg for _, neg, _ in unidades_cruas) or 1
+    # O TOTAL DO MÊS, e não a soma do ranking: com as oito primeiras como base,
+    # a nona unidade negativa sumiria da conta e as oito somariam 100% de um
+    # todo que não existe.
+    total_negativo = repositorio_score.negativas_do_mes(sessao, alvo, calibracao) or 1
     unidades = [
         UnidadeSaida(
             nome=nome,
@@ -708,7 +755,16 @@ def drivers(
         atributos=atributos,
         unidades=unidades,
         perpetuacao=perpetuacao,
+        regra_da_perpetuacao=RegraDaPerpetuacao(
+            meses_da_janela=repositorio_score.MESES_DA_PERPETUACAO,
+            meses_para_perpetuar=repositorio_score.MESES_PARA_PERPETUAR,
+        ),
         mencoes_no_mes=repositorio_score.mencoes_do_mes(sessao, alvo, calibracao),
+        fontes_ligadas=sum(
+            1
+            for fonte in repositorio_score.fontes_cadastradas(sessao)
+            if not fonte.interna and calibracao.ligada(fonte.codigo)
+        ),
     )
 
 

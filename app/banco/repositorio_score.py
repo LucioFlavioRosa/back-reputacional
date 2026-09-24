@@ -325,7 +325,7 @@ def temas_da_lente(
             ScoreFonte.lente_id == lente_id,
             Mencao.mes == primeiro_dia(mes),
             rotulo.is_not(None),
-            ScoreFonte.codigo.not_in(calibracao.fontes_desligadas or {""}),
+            *_so_fontes_ligadas(calibracao),
         )
         .group_by(rotulo)
         # ORDENADO PELO QUE TOMA PARTIDO, e não pelo volume. Os assuntos mais
@@ -401,10 +401,7 @@ def mencoes_do_mes(sessao: Session, mes: date, calibracao: Calibracao) -> int:
         select(func.count())
         .select_from(Mencao)
         .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
-        .where(
-            Mencao.mes == primeiro_dia(mes),
-            ScoreFonte.codigo.not_in(calibracao.fontes_desligadas or {""}),
-        )
+        .where(Mencao.mes == primeiro_dia(mes), *_so_fontes_ligadas(calibracao))
     )
     return int(total or 0)
 
@@ -431,12 +428,37 @@ def atributos_do_mes(
         .where(
             Mencao.mes == primeiro_dia(mes),
             Mencao.atributo.is_not(None),
-            ScoreFonte.codigo.not_in(calibracao.fontes_desligadas or {""}),
+            *_so_fontes_ligadas(calibracao),
         )
         .group_by(Mencao.atributo)
-        .order_by(func.count().desc())
+        # O DESEMPATE PELO NOME é o que faz a lista não trocar de ordem entre
+        # dois carregamentos do mesmo mês — dois atributos com o mesmo volume
+        # não têm ordem natural, e o Postgres não promete nenhuma.
+        .order_by(func.count().desc(), Mencao.atributo.asc())
     )
     return [(nome, pos, neu, neg) for nome, pos, neu, neg in sessao.execute(consulta)]
+
+
+def negativas_do_mes(sessao: Session, mes: date, calibracao: Calibracao) -> int:
+    """Todas as menções negativas do mês, de fonte ligada.
+
+    É O DENOMINADOR da participação de cada unidade — e precisa ser o total de
+    verdade, e não a soma das que couberam no ranking. Com as oito primeiras
+    como base, a nona unidade negativa some da conta e as oito passam a somar
+    100% de um todo que não existe.
+    """
+    total = sessao.scalar(
+        select(func.count())
+        .select_from(Mencao)
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .where(
+            Mencao.mes == primeiro_dia(mes),
+            Mencao.sentimento == "neg",
+            Mencao.unidade_texto.is_not(None),
+            *_so_fontes_ligadas(calibracao),
+        )
+    )
+    return int(total or 0)
 
 
 def unidades_do_mes(
@@ -459,14 +481,30 @@ def unidades_do_mes(
         .where(
             Mencao.mes == primeiro_dia(mes),
             Mencao.unidade_texto.is_not(None),
-            ScoreFonte.codigo.not_in(calibracao.fontes_desligadas or {""}),
+            *_so_fontes_ligadas(calibracao),
         )
         .group_by(Mencao.unidade_texto)
         .having(func.count().filter(Mencao.sentimento == "neg") > 0)
-        .order_by(func.count().filter(Mencao.sentimento == "neg").desc())
+        .order_by(
+            func.count().filter(Mencao.sentimento == "neg").desc(),
+            Mencao.unidade_texto.asc(),
+        )
         .limit(quantos)
     )
     return [(nome, neg, total) for nome, neg, total in sessao.execute(consulta)]
+
+
+def _so_fontes_ligadas(calibracao: Calibracao) -> list:
+    """As condições que tiram do resultado as fontes que a calibração desligou.
+
+    DEVOLVE UMA LISTA, vazia quando não há nada desligado — e não um `not_in`
+    com sentinela. O `not_in({""})` que existia aqui funcionava por acidente:
+    bastava alguém cadastrar uma fonte de código vazio para ela sumir de todas
+    as leituras sem que ninguém a tivesse desligado.
+    """
+    if not calibracao.fontes_desligadas:
+        return []
+    return [ScoreFonte.codigo.not_in(calibracao.fontes_desligadas)]
 
 
 #: Quantos meses a janela de perpetuação olha para trás, o mês pedido incluso.
@@ -489,6 +527,13 @@ def temas_em_perpetuacao(
 
     Conta MESES DISTINTOS, e não menções: um tema com 900 negativas num mês só
     é um episódio, e um com 40 por mês durante cinco é uma narrativa.
+
+    A CONSULTA INTEIRA OLHA SÓ PARA A NEGATIVA, e não apenas a contagem final.
+    Contar meses de qualquer sentimento deixava entrar um tema com UMA negativa
+    em março e menções neutras de abril a junho: quatro meses de "perpetuação"
+    de um assunto que parou de incomodar no primeiro. Pelo mesmo motivo a lista
+    de lentes sai daqui — dizer que o risco está na imprensa porque a imprensa
+    falou bem do assunto seria o contrário do que a tela promete.
     """
     alvo = primeiro_dia(mes)
     inicio = alvo
@@ -500,7 +545,7 @@ def temas_em_perpetuacao(
         )
 
     rotulo = func.coalesce(Tema.nome, Mencao.tema_texto)
-    negativas = func.count().filter(Mencao.sentimento == "neg")
+    negativas = func.count()
     meses_distintos = func.count(func.distinct(Mencao.mes))
     consulta = (
         select(
@@ -516,10 +561,11 @@ def temas_em_perpetuacao(
         .join(Lente, Lente.id == ScoreFonte.lente_id)
         .outerjoin(Tema, Tema.id == Mencao.tema_id)
         .where(
+            Mencao.sentimento == "neg",
             Mencao.mes <= alvo,
             Mencao.mes >= inicio,
             rotulo.is_not(None),
-            ScoreFonte.codigo.not_in(calibracao.fontes_desligadas or {""}),
+            *_so_fontes_ligadas(calibracao),
         )
         .group_by(rotulo)
         # SÓ O QUE ALCANÇA O MÊS PEDIDO: um tema que morreu em março não está
@@ -527,8 +573,7 @@ def temas_em_perpetuacao(
         # vivo mandaria a comunicação apagar um incêndio que já acabou.
         .having(func.max(Mencao.mes) == alvo)
         .having(meses_distintos >= MESES_PARA_PERPETUAR)
-        .having(negativas > 0)
-        .order_by(meses_distintos.desc(), negativas.desc())
+        .order_by(meses_distintos.desc(), negativas.desc(), rotulo.asc())
         .limit(quantos)
     )
     return [

@@ -719,3 +719,131 @@ def test_mes_sem_mencao_individual_diz_isso(cliente_do_score, junho):
 
 def test_quem_nao_tem_o_portal_do_score_nao_le_os_drivers(cliente_sem_score):
     assert cliente_sem_score.get("/api/score/drivers?mes=2026-06").status_code == 403
+
+
+def test_o_peso_efetivo_fecha_em_cem_com_quatro_lentes(cliente_do_score, sessao, junho):
+    """O caso que o arredondamento simples errava.
+
+    Com a lente Institucional fora, as outras quatro dividem 85 pontos: 30/85,
+    20/85, 20/85 e 15/85 arredondados por si dão 35 + 24 + 24 + 18 = 101 — uma
+    composição impossível na tela, e o tipo de detalhe que corrói a confiança
+    num número que a diretoria cita.
+    """
+    for codigo in ("clipei_investidores", "approach_sl", "approach_cm"):
+        fonte = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == codigo))
+        for sentimento, total in (("pos", 100), ("neu", 50), ("neg", 40)):
+            sessao.add(
+                ScoreMesFonte(
+                    fonte_id=fonte.id, mes=junho, sentimento=sentimento,
+                    tier="", mencoes=total,
+                )
+            )
+    sessao.flush()
+
+    corpo_ = cliente_do_score.get("/api/score?mes=2026-06").json()
+    efetivos = {lente["codigo"]: lente["peso_efetivo"] for lente in corpo_["lentes"]}
+    medidas = [lente for lente in corpo_["lentes"] if lente["score"] is not None]
+
+    assert len(medidas) == 4, "o teste precisa de quatro lentes medidas"
+    assert sum(efetivos.values()) == 100
+    # E a de fora continua em zero — não é "pouco peso", é nenhum.
+    assert efetivos["institucional"] == 0
+
+
+def test_perpetuacao_conta_so_os_meses_em_que_o_tema_foi_NEGATIVO(cliente_do_score):
+    """Uma negativa em março e elogios de abril a junho não são um risco vivo.
+
+    Contando meses de qualquer sentimento, esse tema entrava como quatro meses
+    de perpetuação — e a comunicação sairia atrás de um incêndio que virou
+    elogio no segundo mês.
+    """
+    linhas = [_post_da_bites(date(2026, 3, 5), "Negativo", "Governança", "Corsan", "Virou elogio")]
+    linhas += [
+        _post_da_bites(date(2026, mes_, 5), "Positivo", "Governança", "Corsan", "Virou elogio")
+        for mes_ in (4, 5, 6)
+    ]
+    # E um contraexemplo de verdade, negativo nos quatro meses.
+    linhas += [
+        _post_da_bites(date(2026, mes_, 6), "Negativo", "Governança", "Corsan", "Não passa")
+        for mes_ in (3, 4, 5, 6)
+    ]
+    _subir(cliente_do_score, "bites", _export_da_bites(linhas))
+
+    corpo_ = cliente_do_score.get("/api/score/drivers?mes=2026-06").json()
+    temas = {p["tema"]: p for p in corpo_["perpetuacao"]}
+    assert "Virou elogio" not in temas
+    assert temas["Não passa"]["meses"] == 4
+
+
+def test_a_lente_do_tema_perpetuado_e_onde_ele_foi_negativo(cliente_do_score):
+    """Dizer que o risco está numa lente porque ela falou BEM do assunto seria
+    o contrário do que a tela promete."""
+    linhas = [
+        _post_da_bites(date(2026, mes_, 5), "Negativo", "Governança", "Corsan", "Tarifa")
+        for mes_ in (4, 5, 6)
+    ]
+    _subir(cliente_do_score, "bites", _export_da_bites(linhas))
+
+    # A mesma tarifa, elogiada nos canais próprios — outra lente.
+    elogios = _planilha(
+        "CM",
+        ["Data", "Sentimento", "Interações", "TAG (assunto 1)", "Concessionárias"],
+        [[date(2026, 6, 7), "Positivo", 1, "Tarifa", "Corsan"]],
+    )
+    _subir(cliente_do_score, "approach_cm", elogios)
+
+    corpo_ = cliente_do_score.get("/api/score/drivers?mes=2026-06").json()
+    tarifa = next(p for p in corpo_["perpetuacao"] if p["tema"] == "Tarifa")
+    assert tarifa["lentes"] == ["Sociedade digital"]
+
+
+def test_a_participacao_da_unidade_usa_o_negativo_do_mes_inteiro(cliente_do_score):
+    """Com a soma do ranking como base, as unidades listadas somariam 100% de
+    um todo que não existe."""
+    linhas = [
+        _post_da_bites(date(2026, 6, 5), "Negativo", "Governança", "Corsan", "Tarifa"),
+        _post_da_bites(date(2026, 6, 5), "Negativo", "Governança", "Corsan", "Tarifa"),
+        _post_da_bites(date(2026, 6, 5), "Negativo", "Governança", "Prolagos", "Tarifa"),
+        _post_da_bites(date(2026, 6, 5), "Positivo", "Governança", "Prolagos", "Tarifa"),
+    ]
+    _subir(cliente_do_score, "bites", _export_da_bites(linhas))
+
+    unidades = {
+        u["nome"]: u
+        for u in cliente_do_score.get("/api/score/drivers?mes=2026-06").json()["unidades"]
+    }
+    # Três negativas no mês: duas na Corsan, uma no Prolagos.
+    assert unidades["Corsan"]["participacao"] == 67
+    assert unidades["Prolagos"]["participacao"] == 33
+    # E o total de menções da unidade sai junto: 1 de 2 no Prolagos é outra
+    # situação que 1 de 200.
+    assert unidades["Prolagos"]["mencoes"] == 2
+
+
+def test_os_drivers_dizem_a_regra_da_perpetuacao(cliente_do_score):
+    """A tela explica a lista — e o número da explicação vem de quem aplica a
+    regra, não de uma constante repetida no front."""
+    regra = cliente_do_score.get("/api/score/drivers?mes=2026-06").json()[
+        "regra_da_perpetuacao"
+    ]
+    assert regra["meses_da_janela"] >= regra["meses_para_perpetuar"] >= 2
+
+
+def test_tudo_desligado_nao_e_o_mesmo_que_planilha_faltando(cliente_do_score):
+    """Duas telas vazias, dois motivos: sem isso a tela manda importar uma
+    planilha que já está no banco."""
+    _subir(
+        cliente_do_score,
+        "bites",
+        _export_da_bites(
+            [_post_da_bites(date(2026, 6, 5), "Negativo", "Governança", "Corsan", "Tarifa")]
+        ),
+    )
+    todas = [
+        "clipei", "clipei_investidores", "approach_sl", "approach_cm", "bites",
+    ]
+    cliente_do_score.put("/api/score/calibracao", json={"fontes_desligadas": todas})
+
+    corpo_ = cliente_do_score.get("/api/score/drivers?mes=2026-06").json()
+    assert corpo_["mencoes_no_mes"] == 0
+    assert corpo_["fontes_ligadas"] == 0
