@@ -835,6 +835,10 @@ class OpcoesSaida(BaseModel):
     reguas_de_engajamento: list[str]
     lentes: list[dict]
     meses: list[str]
+    #: Em que mês abrir. NÃO é o último: o CRM põe um mês na lista a cada
+    #: interação registrada, e o mais recente costuma ser um mês com uma lente
+    #: só — um ISR que é o score da institucional, e quatro lentes vazias.
+    mes_sugerido: str | None
 
 
 @rotas.get("/opcoes")
@@ -857,6 +861,15 @@ def opcoes(sessao: Sessao, usuario: UsuarioLogado) -> OpcoesSaida:
             )
         ],
         meses=[f"{mes:%Y-%m}" for mes in repositorio_score.meses_com_dado(sessao)],
+        mes_sugerido=(
+            f"{sugerido:%Y-%m}"
+            if (
+                sugerido := repositorio_score.mes_mais_completo(
+                    sessao, repositorio_score.calibracao_vigente(sessao)
+                )
+            )
+            else None
+        ),
     )
 
 

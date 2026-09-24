@@ -374,6 +374,55 @@ def indice_do_mes(sessao: Session, mes: date, calibracao: Calibracao) -> Indice:
     )
 
 
+def mes_mais_completo(sessao: Session, calibracao: Calibracao) -> date | None:
+    """O mês que a tela deve abrir: o de MAIS LENTES medidas, e não o último.
+
+    O CRM é a única fonte que se alimenta sozinha — cada interação registrada
+    põe um mês novo na lista, mesmo sem nenhuma planilha de fornecedor. Abrir
+    no mês mais recente levava, por isso, a uma tela com quatro lentes vazias e
+    um ISR que era o score de uma lente só: o pior primeiro contato possível
+    com um índice, porque parece que o dado sumiu.
+
+    Empate resolve pelo mais recente — entre dois meses igualmente completos,
+    quem chega quer ver o último.
+    """
+    das_planilhas = (
+        select(ScoreMesFonte.mes.label("mes"), ScoreFonte.lente_id.label("lente_id"))
+        .join(ScoreFonte, ScoreFonte.id == ScoreMesFonte.fonte_id)
+        .where(*_so_fontes_ligadas(calibracao))
+        .distinct()
+    )
+    das_estimativas = select(
+        ScoreEstimativa.mes.label("mes"), ScoreEstimativa.lente_id.label("lente_id")
+    ).distinct()
+    # A institucional vem das interações, e não de `score_mes_fonte`.
+    do_crm = (
+        select(
+            func.date_trunc("month", InteracaoRegistro.data_interacao)
+            .cast(ColunaDeData)
+            .label("mes"),
+            ScoreFonte.lente_id.label("lente_id"),
+        )
+        .select_from(InteracaoRegistro)
+        .join(Clima, Clima.id == InteracaoRegistro.clima_id)
+        .join(ScoreFonte, ScoreFonte.codigo == FONTE_INTERNA_DO_CRM)
+        .where(
+            InteracaoRegistro.arquivado_em.is_(None),
+            *_so_fontes_ligadas(calibracao),
+        )
+        .distinct()
+    )
+
+    tudo = das_planilhas.union(das_estimativas, do_crm).subquery()
+    consulta = (
+        select(tudo.c.mes)
+        .group_by(tudo.c.mes)
+        .order_by(func.count(func.distinct(tudo.c.lente_id)).desc(), tudo.c.mes.desc())
+        .limit(1)
+    )
+    return sessao.scalar(consulta)
+
+
 def meses_com_dado(sessao: Session) -> list[date]:
     """Os meses que têm alguma leitura — de planilha, de estimativa ou do CRM.
 

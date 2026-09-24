@@ -866,3 +866,42 @@ def test_todo_clima_do_banco_tem_sentimento_no_score(sessao):
     assert codigos <= set(SENTIMENTO_DO_CLIMA), (
         f"clima sem tradução para sentimento: {sorted(codigos - set(SENTIMENTO_DO_CLIMA))}"
     )
+
+
+def test_a_tela_abre_no_mes_mais_completo_e_nao_no_ultimo(
+    cliente_do_score, sessao, semente, junho
+):
+    """O defeito que fazia a tela parecer vazia com o banco cheio.
+
+    O CRM é a única fonte que se alimenta sozinha: cada interação registrada põe
+    um mês na lista de meses com dado, mesmo sem planilha nenhuma. As planilhas
+    dos fornecedores chegam com atraso — então o mês MAIS RECENTE é quase sempre
+    um mês só de CRM, com quatro lentes vazias e um ISR que é o score de uma só.
+    """
+    # Junho com DUAS lentes: a `junho` traz a imprensa, e aqui entra a
+    # sociedade. É o que faz dele o mês mais completo — com uma lente só,
+    # empatado com setembro, o desempate pelo mais recente escolheria setembro,
+    # e com razão.
+    approach = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == "approach_sl"))
+    for sentimento, total in (("pos", 700), ("neu", 140), ("neg", 1100)):
+        sessao.add(
+            ScoreMesFonte(
+                fonte_id=approach.id, mes=junho, sentimento=sentimento,
+                tier="", mencoes=total,
+            )
+        )
+    sessao.flush()
+
+    # Uma interação em setembro, com clima: basta isso para setembro entrar na
+    # lista e, pela regra antiga, virar o mês de abertura.
+    criada = cliente_do_score.post(
+        "/api/interacoes",
+        json={**corpo(semente), "data_interacao": "2026-09-10", "clima": "propositivo"},
+    )
+    assert criada.status_code == 201, criada.text
+
+    opcoes = cliente_do_score.get("/api/score/opcoes").json()
+    assert "2026-09" in opcoes["meses"], "setembro precisa estar na lista"
+    assert opcoes["meses"][-1] == "2026-09", "e ser o último — é o que tornava o defeito possível"
+    # Mas não é nele que a tela abre.
+    assert opcoes["mes_sugerido"] == "2026-06"
