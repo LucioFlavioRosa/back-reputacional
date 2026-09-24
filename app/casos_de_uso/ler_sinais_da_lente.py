@@ -19,10 +19,12 @@ nada obrigaria cada um desses lugares a inventar o próprio texto de vazio.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from datetime import date
 
 from app.banco import repositorio_lentes
+from app.dominio.erros import RegraViolada
 from app.dominio.score import Calibracao
 from app.dominio.sinais_da_lente import (
     AcaoDeRating,
@@ -50,6 +52,28 @@ from app.dominio.sinais_da_lente import (
 
 #: O teor cujo peso a lente de Clientes acompanha mês a mês.
 TEOR_ACOMPANHADO = "Reclamação"
+
+registrador = logging.getLogger(__name__)
+
+
+def regua_dos_sinais(calibracao: Calibracao) -> Limites:
+    """Os limites gravados — ou os de fábrica, quando os gravados não servem.
+
+    O ENDPOINT DA CALIBRAÇÃO JÁ RECUSA valor inválido antes de gravar, e é lá
+    que a pessoa precisa ver o erro. Mas `score_config` é uma tabela como outra
+    qualquer: um `insert` na mão, um script de migração de ambiente ou um job
+    podem pôr lá dentro uma chave em camelCase ou um zero.
+
+    SE A LEITURA TAMBÉM ESTOURASSE, esse engano derrubaria a Calibração e as
+    cinco lentes para todo mundo, com 500 — e ninguém conseguiria abrir a tela
+    onde se conserta a régua. Cair no padrão de fábrica mantém o painel de pé; o
+    log é o que impede a degradação de passar despercebida.
+    """
+    try:
+        return Limites.a_partir_de(calibracao.limites)
+    except RegraViolada as erro:
+        registrador.error("Limites inválidos em score_config; usando o padrão de fábrica: %s", erro)
+        return Limites()
 
 
 def ler_sinais(
@@ -221,6 +245,13 @@ def _da_sociedade(sessao, lente, mes, meses, calibracao, limites) -> list[Sinal]
             secao=Secao.EVOLUCAO,
             limites=limites,
         ),
+        # CONTAGEM, E NÃO PERCENTUAL — e isto diverge da §5.6 de propósito. A
+        # especificação diz "5.2 sobre temas (%)" porque no protótipo os temas
+        # da Approach vêm já normalizados, linha a linha. A NOSSA base guarda
+        # menção a menção, e `temas_por_sentimento` devolve contagens: com elas
+        # existe um "geral" com que comparar, e some-lo é a leitura que a frase
+        # promete. Passar `percentual=True` aqui jogaria fora esse número por
+        # fidelidade a uma forma de dado que não é a nossa.
         *detectar_nos_itens(
             _itens(
                 repositorio_lentes.temas_por_sentimento(sessao, lente.id, mes, calibracao),

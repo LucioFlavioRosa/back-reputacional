@@ -34,7 +34,7 @@ from app.api.dependencias import UsuarioLogado, exigir_portal_score
 from app.api.score import _formula, _mes_de
 from app.banco import repositorio_lentes, repositorio_score
 from app.banco.sessao import SessaoDoPedido
-from app.casos_de_uso.ler_sinais_da_lente import ler_sinais
+from app.casos_de_uso.ler_sinais_da_lente import ler_sinais, regua_dos_sinais
 from app.dominio.erros import NaoEncontrado
 from app.dominio.lentes import (
     Conceito,
@@ -44,7 +44,7 @@ from app.dominio.lentes import (
     prioridade_do_jornalista,
 )
 from app.dominio.score import Calibracao
-from app.dominio.sinais_da_lente import Limites, Secao
+from app.dominio.sinais_da_lente import Secao
 
 rotas = APIRouter(
     prefix="/api/score/lentes",
@@ -249,9 +249,7 @@ def _saida_da_ficha(ficha: Ficha) -> FichaSaida:
         colunas=list(ficha.colunas),
         lacunas=list(ficha.lacunas),
         exemplo=ficha.exemplo,
-        conceitos=[
-            ConceitoSaida(termo=c.termo, texto=c.texto) for c in ficha.conceitos
-        ],
+        conceitos=[ConceitoSaida(termo=c.termo, texto=c.texto) for c in ficha.conceitos],
     )
 
 
@@ -300,16 +298,11 @@ def _colunas_do_teor(linhas: list[dict]) -> list[ColunaSaida]:
     """
     presentes = {chave for linha in linhas for chave in linha}
     principais = [
-        teor
-        for teor in ("Reclamação", "Dúvida", "Elogio", "Informação")
-        if teor in presentes
+        teor for teor in ("Reclamação", "Dúvida", "Elogio", "Informação") if teor in presentes
     ]
     return [
         ColunaSaida(chave="mes", titulo="Mês"),
-        *[
-            ColunaSaida(chave=teor, titulo=teor, alinhamento="direita")
-            for teor in principais
-        ],
+        *[ColunaSaida(chave=teor, titulo=teor, alinhamento="direita") for teor in principais],
         ColunaSaida(chave="sem_classificacao", titulo="Sem motivo", alinhamento="direita"),
         ColunaSaida(chave="acionaveis", titulo="Acionáveis", alinhamento="direita"),
     ]
@@ -341,9 +334,7 @@ def _serie_em_blocos(serie: list[dict]) -> list[dict]:
     ]
 
 
-def _evolucao(
-    sessao, lente, meses, calibracao: Calibracao, conclusao: str | None
-) -> BlocoSaida:
+def _evolucao(sessao, lente, meses, calibracao: Calibracao, conclusao: str | None) -> BlocoSaida:
     """A série mensal. Para Mercado é a linha do tempo de eventos, não barras."""
     if lente.codigo == "mercado":
         eventos = repositorio_lentes.eventos_de_mercado(sessao, meses)
@@ -382,9 +373,7 @@ def _evolucao(
 
     serie = repositorio_lentes.serie_da_lente(sessao, lente.id, meses, calibracao)
     if lente.codigo == "clientes":
-        recebidas = repositorio_lentes.recebidas_por_mes(
-            sessao, lente.id, meses, calibracao
-        )
+        recebidas = repositorio_lentes.recebidas_por_mes(sessao, lente.id, meses, calibracao)
         respondidas = repositorio_lentes.respondidas_por_mes(sessao, meses)
         exemplo = any(linha["exemplo"] for linha in respondidas.values())
         dados = [
@@ -428,9 +417,7 @@ def _evolucao(
     )
 
 
-def _paineis(
-    sessao, lente, mes: date, meses, calibracao: Calibracao
-) -> list[BlocoSaida]:
+def _paineis(sessao, lente, mes: date, meses, calibracao: Calibracao) -> list[BlocoSaida]:
     """Os dois painéis de cada lente, na ordem da especificação."""
     # OS TÍTULOS PASSAM A VIR DOS DETECTORES, e não de texto salvo. Nulos
     # aqui, preenchidos quando `sinais_da_lente` entrar — a tela já sabe cair no
@@ -534,11 +521,7 @@ def _paineis(
                         else "nenhum estudo cadastrado até este mês"
                     ),
                     exemplo=bool(estudo and estudo.exemplo),
-                    lacunas=(
-                        ()
-                        if estudo
-                        else ("Nenhum estudo de percepção cobre este mês.",)
-                    ),
+                    lacunas=(() if estudo else ("Nenhum estudo de percepção cobre este mês.",)),
                 ),
                 titulo_a,
             ),
@@ -595,9 +578,7 @@ def _paineis(
                     }
                     for linha in serie
                 ],
-                _ficha_da_base(
-                    _nomes_das_fontes(sessao, lente.id), ("Data", "Sentimento")
-                ),
+                _ficha_da_base(_nomes_das_fontes(sessao, lente.id), ("Data", "Sentimento")),
                 titulo_a,
                 SENTIMENTO,
             ),
@@ -627,12 +608,8 @@ def _paineis(
         temas = repositorio_lentes.temas_do_crm(sessao, meses)
         unidades = repositorio_lentes.orgaos_do_crm(sessao, meses)
     else:
-        temas = repositorio_lentes.temas_por_sentimento(
-            sessao, lente.id, mes, calibracao
-        )
-        unidades = repositorio_lentes.unidades_da_lente(
-            sessao, lente.id, meses, calibracao
-        )
+        temas = repositorio_lentes.temas_por_sentimento(sessao, lente.id, mes, calibracao)
+        unidades = repositorio_lentes.unidades_da_lente(sessao, lente.id, meses, calibracao)
     return [
         _bloco(
             "barras_100",
@@ -687,9 +664,7 @@ def _paineis(
     ]
 
 
-def _kpis(
-    sessao, lente, mes: date, meses, calibracao: Calibracao, medida
-) -> list[KpiSaida]:
+def _kpis(sessao, lente, mes: date, meses, calibracao: Calibracao, medida) -> list[KpiSaida]:
     """Os quatro números do destaque — e eles são DIFERENTES em cada lente.
 
     A §3 dá a lista de cada uma, e não é capricho: "matérias no ano" responde a
@@ -723,9 +698,7 @@ def _kpis_da_imprensa(sessao, serie, com_base, do_mes, total) -> list[KpiSaida]:
     p1 = [
         pessoa
         for pessoa in repositorio_lentes.matriz_de_jornalistas(sessao)
-        if prioridade_do_jornalista(
-            pessoa.relevancia, pessoa.exposicao, pessoa.proximidade
-        ).nivel
+        if prioridade_do_jornalista(pessoa.relevancia, pessoa.exposicao, pessoa.proximidade).nivel
         == 1
     ]
     return [
@@ -800,9 +773,7 @@ def _kpis_dos_clientes(sessao, lente, alvo: date, meses, calibracao) -> list[Kpi
     teor_do_mes = next(
         (
             linha
-            for linha in repositorio_lentes.teor_por_mes(
-                sessao, lente.id, [alvo], calibracao
-            )
+            for linha in repositorio_lentes.teor_por_mes(sessao, lente.id, [alvo], calibracao)
             if linha["mes"] == alvo
         ),
         {"acionaveis": 0, "teores": {}, "total": 0},
@@ -819,9 +790,7 @@ def _kpis_dos_clientes(sessao, lente, alvo: date, meses, calibracao) -> list[Kpi
         KpiSaida(
             rotulo="Recebidas no mês",
             valor=_num(taxa.recebidas),
-            detalhe=(
-                f"pico de {_num(pico[1])} em {pico[0]:%Y-%m}" if pico else "sem base"
-            ),
+            detalhe=(f"pico de {_num(pico[1])} em {pico[0]:%Y-%m}" if pico else "sem base"),
         ),
         KpiSaida(
             rotulo="Resposta bruta",
@@ -947,8 +916,7 @@ def obter_dossie(
     meses = repositorio_lentes.meses_ate(alvo, MESES_DA_EVOLUCAO)
 
     medidas = {
-        medida.codigo: medida
-        for medida in repositorio_score.medir_lentes(sessao, alvo, calibracao)
+        medida.codigo: medida for medida in repositorio_score.medir_lentes(sessao, alvo, calibracao)
     }
     anteriores = {
         medida.codigo: medida
@@ -972,7 +940,7 @@ def obter_dossie(
         alvo,
         meses,
         calibracao,
-        limites=Limites.a_partir_de(calibracao.limites),
+        limites=regua_dos_sinais(calibracao),
         nome_do_painel_a=paineis[0].titulo,
         nome_do_painel_b=paineis[1].titulo,
     )

@@ -34,6 +34,7 @@ from app.banco import repositorio_score
 from app.banco.sessao import SessaoDoPedido
 from app.banco.tabelas_score import Lente, ScoreConfig, ScoreFato, ScoreFonte, ScoreMesFonte
 from app.casos_de_uso import ingerir_mencoes
+from app.casos_de_uso.ler_sinais_da_lente import regua_dos_sinais
 from app.dominio.erros import NaoEncontrado, RegraViolada
 from app.dominio.score import (
     REGUAS_DE_ENGAJAMENTO,
@@ -219,7 +220,9 @@ def _limites_saida(calibracao: Calibracao) -> list[LimiteSaida]:
     primeira vez que alguém mudasse um padrão no código.
     """
     padrao = Limites()
-    vigente = Limites.a_partir_de(calibracao.limites)
+    # TOLERANTE NA LEITURA, estrita na gravação: um valor impossível gravado
+    # por fora não pode fechar a porta da tela onde ele se conserta.
+    vigente = regua_dos_sinais(calibracao)
     return [
         LimiteSaida(
             chave=chave,

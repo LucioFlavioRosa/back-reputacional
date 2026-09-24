@@ -19,6 +19,7 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
+from app.api.lentes import DossieSaida
 from app.banco.tabelas_lentes import (
     EstudoPercepcao,
     EventoMercado,
@@ -173,8 +174,8 @@ def _dossie(sessao, codigo: str, mes: str = "2026-06", *, edita: bool = False):
 
 
 def test_o_dossie_devolve_a_tela_inteira(sessao):
-    """A regra 2 do pacote: o front não calcula. Evolução, dois painéis, texto
-    e encaminhamentos chegam prontos."""
+    """A regra 2 do pacote: o front não calcula. Evolução, dois painéis e as
+    frases dos detectores chegam prontos."""
     dossie = _dossie(sessao, "imprensa")
 
     assert dossie.codigo == "imprensa"
@@ -263,8 +264,8 @@ def test_os_kpis_sao_os_da_especificacao_em_cada_lente(sessao):
 
 
 def test_todo_bloco_de_informacao_tem_ficha(sessao):
-    """O "?" vale para os blocos, e não só para os gráficos: o destaque, a
-    curadoria e os encaminhamentos também precisam dizer de onde vêm."""
+    """O "?" vale para os blocos, e não só para os gráficos: o destaque também
+    precisa dizer de onde vêm a nota, a variação e os KPIs."""
     dossie = _dossie(sessao, "imprensa")
     for ficha in (
         dossie.ficha_do_destaque,
@@ -478,3 +479,90 @@ def test_um_limite_zerado_e_recusado_antes_de_gravar(sessao):
             usuario=_QuemEdita(),
             entrada=CalibracaoEntrada(limites={"pico_desvios": 0}),
         )
+
+
+def test_o_limite_gravado_PELO_ENDPOINT_muda_a_lente(sessao):
+    """O critério da §7 pelo caminho que a pessoa percorre.
+
+    O teste acima prova que o número gravado chega ao detector. Este prova o
+    resto do trajeto: a validação do endpoint, a versão nova de `score_config`,
+    e a leitura seguinte já com a régua mudada — que é o que "sem deploy"
+    significa para quem usa a tela.
+    """
+    from app.api.score import CalibracaoEntrada, gravar_calibracao
+    from app.banco.tabelas_lentes import JornalistaMatriz
+
+    for nome, proximidade in (("Zulmira Teste", 1), ("Aurélia Teste", 5)):
+        sessao.add(
+            JornalistaMatriz(
+                nome=nome,
+                veiculo="Diário do Teste",
+                relevancia=5,
+                exposicao=5,
+                proximidade=proximidade,
+                exemplo=True,
+            )
+        )
+    sessao.flush()
+
+    @dataclass
+    class _QuemEdita:
+        id: None = None
+
+    antes = _sinais_reais(_dossie(sessao, "imprensa"))
+    assert len(antes) == 2, [sinal.tipo for sinal in antes]
+
+    saida = gravar_calibracao(
+        sessao=sessao,
+        usuario=_QuemEdita(),
+        entrada=CalibracaoEntrada(limites={"max_sinais": 1}),
+    )
+    ajustados = [limite for limite in saida.limites if limite.valor != limite.padrao]
+    assert [limite.chave for limite in ajustados] == ["max_sinais"]
+    assert not saida.padrao
+
+    assert len(_sinais_reais(_dossie(sessao, "imprensa"))) == 1
+
+
+def test_uma_regua_impossivel_gravada_por_fora_nao_derruba_a_tela(sessao):
+    """A tela onde se conserta a régua não pode ser a primeira a cair.
+
+    `score_config` é uma tabela como outra qualquer: um insert na mão, um script
+    de ambiente ou um job podem pôr lá um zero. Se a leitura estourasse junto
+    com a gravação, esse engano derrubaria a Calibração e as cinco lentes para
+    todo mundo — e ninguém abriria a página onde ele se desfaz.
+    """
+    from app.api.score import _calibracao_saida
+    from app.banco import repositorio_score
+    from app.banco.tabelas_score import ScoreConfig
+
+    sessao.add(ScoreConfig(limites={"pico_desvios": 0, "inventado": 9}))
+    sessao.flush()
+
+    saida = _calibracao_saida(sessao, repositorio_score.calibracao_vigente(sessao))
+    assert all(limite.valor == limite.padrao for limite in saida.limites)
+
+    # E a lente continua abrindo.
+    assert _dossie(sessao, "imprensa").manchete
+
+
+def test_o_dossie_nao_carrega_mais_curadoria_nem_encaminhamentos(sessao):
+    """A §2 da mudança: os dois blocos saíram, e nada os traz de volta pela
+    porta dos fundos — nem um campo esquecido no payload, nem uma tabela que
+    ficou no banco esperando alguém reconectá-la."""
+    from sqlalchemy import inspect
+
+    campos = set(DossieSaida.model_fields)
+    assert not campos & {
+        "curadoria",
+        "encaminhamentos",
+        "ficha_dos_encaminhamentos",
+    }, sorted(campos)
+
+    tabelas = set(inspect(sessao.get_bind()).get_table_names())
+    assert "curadoria_lente" not in tabelas
+    assert "encaminhamento" not in tabelas
+
+
+def _sinais_reais(dossie):
+    return [sinal for sinal in dossie.sinais if sinal.tipo != "Lacuna de dado"]

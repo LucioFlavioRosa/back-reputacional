@@ -940,6 +940,19 @@ class TestFrasesDoMercado:
 
 
 class TestFrasesDaSociedade:
+    """O painel de temas vem em PERCENTUAL aqui, e em contagem em produção.
+
+    NÃO É DESCUIDO, E A DIFERENÇA É DE FONTE. A planilha da Approach entrega os
+    temas já normalizados linha a linha, e é dela que a §7 tirou "Privatização
+    concentra o maior negativo: 80%." — sem "geral", porque somar percentuais de
+    linhas diferentes não produz número nenhum. A nossa base guarda menção a
+    menção, então `temas_por_sentimento` devolve contagens e a frase real ganha
+    o "(geral X%)" que aqui não existe.
+
+    O que este teste trava é o MODO PERCENTUAL do detector, contra os números da
+    §7. Quem trava o caminho de produção é `test_lentes_v2`, sobre a base.
+    """
+
     SINAIS = [
         *detectar_na_serie(SOCIEDADE, unidade="menções", secao=Secao.EVOLUCAO, limites=LIMITES),
         *detectar_nos_itens(
