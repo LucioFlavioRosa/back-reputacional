@@ -505,7 +505,7 @@ def test_o_mes_leva_TODOS_os_fatos_cadastrados(sessao):
 
 
 def test_os_assuntos_que_pesaram_vêm_da_base(sessao):
-    """A outra metade da coluna: o fato diz o que aconteceu no mundo, o assunto
+    """A outra metade da coluna: o fato diz o que aconteceu no mundo, o tema
     diz por onde aquilo entrou no número — dos dois lados."""
     from app.api.score import serie
 
@@ -513,8 +513,8 @@ def test_os_assuntos_que_pesaram_vêm_da_base(sessao):
     de_junho = next(
         ponto for ponto in serie(sessao=sessao, usuario=_QuemLe()) if ponto.mes == "2026-06"
     )
-    # A base de teste não tem menção com tema, então não há assunto a apontar —
-    # e a ausência é `None` dos dois lados, e não um assunto inventado.
+    # A base de teste não tem menção com tema, então não há tema a apontar —
+    # e a ausência é `None` dos dois lados, e não um tema inventado.
     for lado in (de_junho.sustentou, de_junho.pressionou):
         assert lado is None or lado.pontos != 0
 

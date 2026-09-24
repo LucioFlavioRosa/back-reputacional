@@ -35,7 +35,6 @@ from app.banco.sessao import SessaoDoPedido
 from app.banco.tabelas_score import Lente, ScoreConfig, ScoreFato, ScoreFonte, ScoreMesFonte
 from app.casos_de_uso import ingerir_mencoes
 from app.casos_de_uso.ler_sinais_da_lente import regua_dos_sinais
-from app.dominio.assunto_do_mes import AssuntoDoMes, assuntos_que_pesaram
 from app.dominio.erros import NaoEncontrado, RegraViolada
 from app.dominio.score import (
     REGUAS_DE_ENGAJAMENTO,
@@ -47,6 +46,7 @@ from app.dominio.score import (
     para_score,
 )
 from app.dominio.sinais_da_lente import Limites
+from app.dominio.tema_do_mes import TemaDoMes, temas_que_pesaram
 
 rotas = APIRouter(
     prefix="/api/score",
@@ -148,15 +148,15 @@ class FatoDoPonto(BaseModel):
     efeito: str
 
 
-class AssuntoSaida(BaseModel):
-    """O assunto que mais pesou no índice do mês — derivado, não cadastrado.
+class TemaSaida(BaseModel):
+    """O tema que mais pesou no índice do mês — derivado, não cadastrado.
 
     A OUTRA METADE DA PERGUNTA. O fato diz o que aconteceu no mundo; este diz
     por onde aquilo entrou no número, e quanto custou ou rendeu em pontos do
-    índice. A conta é decomposição exata — ver `dominio/assunto_do_mes`.
+    índice. A conta é decomposição exata — ver `dominio/tema_do_mes`.
     """
 
-    assunto: str
+    tema: str
     lente: str
     #: Pontos do índice, com sinal.
     pontos: float
@@ -191,11 +191,14 @@ class PontoDaSerie(BaseModel):
     delta: int | None = None
     #: TODOS os fatos do mês, do mais antigo para o mais novo.
     fatos: list[FatoDoPonto] = Field(default_factory=list)
-    #: O que a BASE diz sobre o mês: o assunto que mais segurou e o que mais
+    #: O que a BASE diz sobre o mês: o tema que mais segurou e o que mais
     #: puxou. Qualquer um pode faltar — um mês em que nada pesou não ganha um
-    #: "assunto do mês" inventado.
-    sustentou: AssuntoSaida | None = None
-    pressionou: AssuntoSaida | None = None
+    #: "tema do mês" inventado.
+    sustentou: TemaSaida | None = None
+    pressionou: TemaSaida | None = None
+    #: Pontos do índice que nenhum tema explica — menções sem tema. Dizer
+    #: isto é o que impede a coluna de afirmar mais do que sabe.
+    pontos_sem_tema: float = 0.0
     maior_movimento: MovimentoDaLente | None = None
     #: A nota de cada lente medida no mês, por código. É o que permite desenhar
     #: a curva de comparação sem uma segunda chamada por lente.
@@ -398,6 +401,19 @@ def obter(
     )
 
 
+def _pesos_exatos(indice: Indice) -> dict[str, float]:
+    """A fração real de cada lente, sem arredondar.
+
+    É COM ESTA QUE O ÍNDICE PONDERA. A versão inteira existe para a TELA não
+    exibir uma composição que soma 101; usá-la na decomposição por tema
+    introduziria um erro que a conta promete não ter.
+    """
+    total = sum(lente.peso for lente in indice.lentes_no_calculo)
+    if not total:
+        return {}
+    return {lente.codigo: lente.peso / total * 100 for lente in indice.lentes_no_calculo}
+
+
 def _pesos_efetivos(indice: Indice) -> dict[str, int]:
     """Quanto cada lente pesou DE FATO, em porcento inteiro, somando 100.
 
@@ -477,7 +493,7 @@ def serie(sessao: Sessao, usuario: UsuarioLogado) -> list[PontoDaSerie]:
         fatos.setdefault(f"{fato.mes:%Y-%m}", []).append(fato)
 
     # E o que a BASE diz, ao lado do que as pessoas escreveram.
-    assuntos = repositorio_score.mencoes_por_assunto(sessao, meses, calibracao)
+    temas = repositorio_score.pesos_por_tema(sessao, meses, calibracao)
 
     pontos: list[PontoDaSerie] = []
     anterior: dict[str, int] = {}
@@ -485,7 +501,19 @@ def serie(sessao: Sessao, usuario: UsuarioLogado) -> list[PontoDaSerie]:
     for mes in meses:
         indice = repositorio_score.indice_do_mes(sessao, mes, calibracao, catalogo)
         notas = {lente.codigo: lente.score for lente in indice.lentes if lente.score is not None}
-        do_mes = assuntos_que_pesaram(assuntos.get(mes, []), _pesos_efetivos(indice))
+        # O PESO EXATO, E NÃO O ARREDONDADO DA TELA. `_pesos_efetivos` reparte
+        # inteiros que somam 100 pelo método de Hamilton, para a composição
+        # exibida não dar 101. O índice, porém, pondera pela fração real — e
+        # usar o inteiro aqui quebraria a exatidão que esta conta promete.
+        exatos = _pesos_exatos(indice)
+        do_mes = temas_que_pesaram(
+            temas.get(mes, []),
+            exatos,
+            {
+                lente.codigo: (lente.ns or 0) * 50 * exatos.get(lente.codigo, 0) / 100
+                for lente in indice.lentes_no_calculo
+            },
+        )
         pontos.append(
             PontoDaSerie(
                 mes=indice.mes,
@@ -497,8 +525,9 @@ def serie(sessao: Sessao, usuario: UsuarioLogado) -> list[PontoDaSerie]:
                     FatoDoPonto(id=f.id, texto=f.texto, efeito=f.efeito)
                     for f in fatos.get(indice.mes, ())
                 ],
-                sustentou=_saida_do_assunto(do_mes.sustentou),
-                pressionou=_saida_do_assunto(do_mes.pressionou),
+                sustentou=_saida_do_tema(do_mes.sustentou),
+                pressionou=_saida_do_tema(do_mes.pressionou),
+                pontos_sem_tema=do_mes.pontos_sem_tema,
                 maior_movimento=_maior_movimento(notas, anterior, nomes),
                 notas_das_lentes=notas,
             )
@@ -507,11 +536,11 @@ def serie(sessao: Sessao, usuario: UsuarioLogado) -> list[PontoDaSerie]:
     return pontos
 
 
-def _saida_do_assunto(escolhido: AssuntoDoMes | None) -> AssuntoSaida | None:
+def _saida_do_tema(escolhido: TemaDoMes | None) -> TemaSaida | None:
     if escolhido is None:
         return None
-    return AssuntoSaida(
-        assunto=escolhido.assunto,
+    return TemaSaida(
+        tema=escolhido.tema,
         lente=escolhido.lente,
         pontos=escolhido.pontos,
         efeito=escolhido.efeito,
@@ -1111,15 +1140,4 @@ def opcoes(sessao: Sessao, usuario: UsuarioLogado) -> OpcoesSaida:
             )
             else None
         ),
-    )
-
-
-def _fontes_da_lente(sessao, lente_codigo: str) -> list[ScoreFonte]:  # pragma: no cover
-    return list(
-        sessao.scalars(
-            select(ScoreFonte)
-            .join(Lente, Lente.id == ScoreFonte.lente_id)
-            .where(Lente.codigo == lente_codigo)
-            .order_by(ScoreFonte.ordem)
-        )
     )

@@ -35,8 +35,8 @@ from app.banco.tabelas_score import (
     ScoreFonte,
     ScoreMesFonte,
 )
-from app.dominio.assunto_do_mes import MencoesDoAssunto
 from app.dominio.score import (
+    REGUAS_DE_TIER,
     Calibracao,
     Contagem,
     Indice,
@@ -45,8 +45,11 @@ from app.dominio.score import (
     calcular_indice,
     medir_lente,
     ns,
+    peso_do_cargo,
+    peso_do_engajamento,
     ponderar,
 )
+from app.dominio.tema_do_mes import PesosDoTema
 
 logger = logging.getLogger(__name__)
 
@@ -288,21 +291,6 @@ def medir_lentes(
     return medidas
 
 
-def _codigos_das_fontes(sessao: Session, lente_id: int) -> tuple[str, ...]:
-    """As fontes CADASTRADAS da lente, tenham dado no mês ou não.
-
-    `ativo` não entra no filtro: um fornecedor descontinuado para de receber
-    importação, e o histórico dele continua valendo — ver o comentário da 0048.
-    """
-    return tuple(
-        sessao.scalars(
-            select(ScoreFonte.codigo)
-            .where(ScoreFonte.lente_id == lente_id)
-            .order_by(ScoreFonte.ordem)
-        )
-    )
-
-
 def _tem_fonte_interna(sessao: Session, lente_id: int) -> bool:
     return (
         sessao.scalar(
@@ -392,7 +380,7 @@ def temas_da_lente(
 
     O NOME SAI DE DOIS LUGARES. `tema_id` aponta para o vocabulário do CRM,
     que é o bom: é por ele que um tema do Score e um tema de reunião são o
-    mesmo tema. Mas o fornecedor manda o assunto no vocabulário DELE, e enquanto
+    mesmo tema. Mas o fornecedor manda o tema no vocabulário DELE, e enquanto
     ninguém casou as duas listas é o texto bruto que a tela tem para mostrar.
     Exigir a correspondência deixaria a aba de Drivers vazia com o banco cheio.
     """
@@ -416,7 +404,7 @@ def temas_da_lente(
             *so_fontes_ligadas(calibracao),
         )
         .group_by(rotulo)
-        # ORDENADO PELO QUE TOMA PARTIDO, e não pelo volume. Os assuntos mais
+        # ORDENADO PELO QUE TOMA PARTIDO, e não pelo volume. Os temas mais
         # numerosos da Approach são etiquetas de operação — "spam", "Stories -
         # marcado" —, com centenas de menções neutras e nenhuma positiva ou
         # negativa. Ordenar por volume encheria "Drivers e riscos" com cinco
@@ -531,27 +519,39 @@ def meses_com_dado(sessao: Session) -> list[date]:
 # dez, e a barra deixaria de ser contagem sem avisar.
 
 
-def mencoes_por_assunto(
+def pesos_por_tema(
     sessao: Session, meses: Sequence[date], calibracao: Calibracao
-) -> dict[date, list[MencoesDoAssunto]]:
-    """Os assuntos de cada mês, com o total da lente ao lado.
+) -> dict[date, list[PesosDoTema]]:
+    """Os temas de cada mês, já ponderados pelas MESMAS réguas do índice.
 
-    UMA CONSULTA PARA O PERÍODO INTEIRO. A série já mede mês a mês; somar a
-    isso uma ida ao banco por coluna faria a tela mais cara a cada mês
-    ingerido, que é o que acontece todo mês.
+    POR QUE NÃO BASTA CONTAR MENÇÕES. A primeira versão desta consulta contava
+    positivas e negativas por tema, e a decomposição errava por 4,3 pontos
+    num mês real: a lente de imprensa pondera cada matéria pelo tier do veículo
+    (10, 5 ou 1 na régua da Aegea) e as de rede aplicam a régua de engajamento.
+    Um tema de blog local contado como uma unidade parecia pesar o mesmo que
+    uma capa do Valor.
 
-    O TOTAL DA LENTE VEM JUNTO porque é o denominador do NS: sem ele, o peso de
-    um assunto teria de ser recalculado a partir de outra consulta, e as duas
-    poderiam discordar.
+    AS FÓRMULAS NÃO SE REPETEM EM SQL. O agrupamento desce até `tier`, `cargo` e
+    `engajamento`, e quem multiplica é `peso_do_tier` e a medida de engajamento
+    de `dominio/score` — as mesmas funções que `ponderar` usa. Escrever
+    `1 + log10(1 + engajamento)` numa expressão SQL criaria um segundo lugar
+    para a mesma regra, e dois lugares para uma regra é como eles divergem.
+
+    O GRÃO DESCE ATÉ A FONTE porque é nela que o NS se forma: a lente é a média
+    simples dos NS das fontes dela, e juntar tudo num denominador só dá outro
+    número.
     """
     rotulo = func.coalesce(Tema.nome, Mencao.tema_texto)
     consulta = (
         select(
             Mencao.mes,
             Lente.codigo,
-            rotulo.label("assunto"),
-            func.count().filter(Mencao.sentimento == "pos"),
-            func.count().filter(Mencao.sentimento == "neg"),
+            ScoreFonte.codigo,
+            rotulo.label("tema"),
+            Mencao.sentimento,
+            Mencao.tier,
+            Mencao.cargo,
+            Mencao.engajamento,
             func.count(),
         )
         .select_from(Mencao)
@@ -559,29 +559,72 @@ def mencoes_por_assunto(
         .join(Lente, Lente.id == ScoreFonte.lente_id)
         .outerjoin(Tema, Tema.id == Mencao.tema_id)
         .where(Mencao.mes.in_(list(meses)), *so_fontes_ligadas(calibracao))
-        .group_by(Mencao.mes, Lente.codigo, rotulo)
+        .group_by(
+            Mencao.mes,
+            Lente.codigo,
+            ScoreFonte.codigo,
+            rotulo,
+            Mencao.sentimento,
+            Mencao.tier,
+            Mencao.cargo,
+            Mencao.engajamento,
+        )
     )
 
-    linhas = list(sessao.execute(consulta))
-    # O DENOMINADOR É A LENTE INTEIRA, inclusive as menções sem assunto: elas
-    # entraram no NS e tirá-las do total faria as contribuições somarem mais do
-    # que a lente de fato pôs no índice.
-    total_da_lente: dict[tuple[date, str], int] = {}
-    for mes, lente, _assunto, _pos, _neg, total in linhas:
-        chave = (mes, lente)
-        total_da_lente[chave] = total_da_lente.get(chave, 0) + total
+    pesos_de_tier = REGUAS_DE_TIER[calibracao.regua_tier]
 
-    por_mes: dict[date, list[MencoesDoAssunto]] = {}
-    for mes, lente, assunto, pos, neg, _total in linhas:
-        if assunto is None:
+    def medida(cargo: str | None, engajamento: int | None, quantas: int) -> float:
+        """O que cada uma destas menções soma, pela régua em vigor."""
+        if calibracao.regua_engajamento == "log":
+            return peso_do_engajamento(engajamento) * quantas
+        if calibracao.regua_engajamento == "bruto":
+            return (engajamento or 0) * quantas
+        if calibracao.regua_engajamento == "cargo":
+            return peso_do_cargo(cargo) * quantas
+        return float(quantas)
+
+    linhas = list(sessao.execute(consulta))
+
+    # O DENOMINADOR É A FONTE INTEIRA, inclusive as menções sem tema: elas
+    # entraram no NS, e tirá-las faria as contribuições somarem mais do que a
+    # fonte de fato pôs.
+    total_da_fonte: dict[tuple[date, str], float] = {}
+    fontes_da_lente: dict[tuple[date, str], set[str]] = {}
+    for mes, lente, fonte, _assunto, _sent, tier, cargo, engajamento, quantas in linhas:
+        peso = pesos_de_tier.get(tier, 1.0) if tier else 1.0
+        total_da_fonte[(mes, fonte)] = total_da_fonte.get((mes, fonte), 0.0) + (
+            peso * medida(cargo, engajamento, quantas)
+        )
+        fontes_da_lente.setdefault((mes, lente), set()).add(fonte)
+
+    # (mês, lente, fonte, tema) -> [pos ponderado, neg ponderado, pos, neg]
+    por_assunto: dict[tuple[date, str, str, str], list[float]] = {}
+    for mes, lente, fonte, tema, sentimento, tier, cargo, engajamento, quantas in linhas:
+        if tema is None or sentimento not in ("pos", "neg"):
             continue
+        peso = pesos_de_tier.get(tier, 1.0) if tier else 1.0
+        valor = peso * medida(cargo, engajamento, quantas)
+        atual = por_assunto.setdefault((mes, lente, fonte, tema), [0.0, 0.0, 0.0, 0.0])
+        if sentimento == "pos":
+            atual[0] += valor
+            atual[2] += quantas
+        else:
+            atual[1] += valor
+            atual[3] += quantas
+
+    por_mes: dict[date, list[PesosDoTema]] = {}
+    for (mes, lente, fonte, tema), (pos, neg, cruas_pos, cruas_neg) in por_assunto.items():
         por_mes.setdefault(mes, []).append(
-            MencoesDoAssunto(
+            PesosDoTema(
                 lente=lente,
-                assunto=assunto,
+                fonte=fonte,
+                tema=tema,
                 positivas=pos,
                 negativas=neg,
-                total_da_lente=total_da_lente[(mes, lente)],
+                total_da_fonte=total_da_fonte.get((mes, fonte), 0.0),
+                fontes_da_lente=len(fontes_da_lente.get((mes, lente), ())),
+                mencoes_positivas=int(cruas_pos),
+                mencoes_negativas=int(cruas_neg),
             )
         )
     return por_mes
@@ -724,7 +767,7 @@ def so_fontes_ligadas(calibracao: Calibracao) -> list:
 MESES_DA_PERPETUACAO = 6
 
 #: Em quantos meses o tema precisa aparecer para ser "em perpetuação". Com dois,
-#: qualquer assunto de duas semanas entraria; a lista é sobre o que NÃO passa.
+#: qualquer tema de duas semanas entraria; a lista é sobre o que NÃO passa.
 MESES_PARA_PERPETUAR = 3
 
 
@@ -735,7 +778,7 @@ def temas_em_perpetuacao(
 
     A DIFERENÇA ENTRE ISTO E "TEMAS DA LENTE" é o tempo. Aquela lista responde
     "do que falaram neste mês"; esta responde "o que já vinha e continua". Um
-    assunto que explode e some é ruído; o que reaparece cinco meses seguidos é
+    tema que explode e some é ruído; o que reaparece cinco meses seguidos é
     posição consolidada, e é com esse que a comunicação precisa lidar.
 
     Conta MESES DISTINTOS, e não menções: um tema com 900 negativas num mês só
@@ -744,9 +787,9 @@ def temas_em_perpetuacao(
     A CONSULTA INTEIRA OLHA SÓ PARA A NEGATIVA, e não apenas a contagem final.
     Contar meses de qualquer sentimento deixava entrar um tema com UMA negativa
     em março e menções neutras de abril a junho: quatro meses de "perpetuação"
-    de um assunto que parou de incomodar no primeiro. Pelo mesmo motivo a lista
+    de um tema que parou de incomodar no primeiro. Pelo mesmo motivo a lista
     de lentes sai daqui — dizer que o risco está na imprensa porque a imprensa
-    falou bem do assunto seria o contrário do que a tela promete.
+    falou bem do tema seria o contrário do que a tela promete.
     """
     alvo = primeiro_dia(mes)
     inicio = alvo
