@@ -688,3 +688,22 @@ def test_mes_em_que_nada_se_moveu_nao_tem_maior_movimento():
 
     parado = _maior_movimento({"imprensa": 70}, {"imprensa": 70}, {"imprensa": "Imprensa"})
     assert parado is None
+
+
+def test_a_calibracao_nao_ganha_limite_sem_a_tela_saber():
+    """Todo corte que a API expõe é um campo na Calibração, e todo campo lá tem
+    um verbete de ajuda no front (`dominio/guiaDaCalibracao.ts`).
+
+    ESTE TESTE É A METADE DE CÁ desse contrato: acrescentar um limite ao domínio
+    sem pô-lo na lista da API o deixaria calibrável pela rota e invisível na
+    tela; pôr na lista um nome que o domínio não tem estoura na leitura, para
+    todo mundo, na primeira vez que alguém abrir a Calibração.
+    """
+    from dataclasses import fields
+
+    from app.api.score import LIMITES_DOS_SINAIS
+    from app.dominio.sinais_da_lente import Limites
+
+    da_api = {chave for chave, *_ in LIMITES_DOS_SINAIS}
+    do_dominio = {campo.name for campo in fields(Limites)}
+    assert da_api == do_dominio, sorted(da_api ^ do_dominio)
