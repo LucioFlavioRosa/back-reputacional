@@ -197,21 +197,42 @@ class InteracaoRegistro(Tabela):
         DateTime(timezone=True), nullable=True
     )
 
-    # extensões: uma por frente, carregadas junto com o registro
+    # extensões: uma por frente, carregadas em lote junto com a página — não
+    # com `lazy="joined"` (como eram até 24/09/2026).
+    #
+    # SEIS EXTENSÕES 1-1 EM `LEFT JOIN` NA MESMA CONSULTA fazia o Postgres
+    # encadear seis junções para estimar o custo da consulta principal —
+    # e a estimativa de linhas EXPLODE a cada junção encadeada (chegou a
+    # 216 milhões de linhas estimadas, numa tabela com 60 linhas reais).
+    # Custo estimado tão alto empurra a consulta para cima do limite que
+    # decide compilar o plano em código de máquina (JIT) antes de rodar —
+    # e a COMPILAÇÃO, não a consulta, é o que ficava lento: 437ms
+    # compilando um plano que executa em 0,7ms. MEDIDO via `EXPLAIN
+    # (ANALYZE, BUFFERS)` direto no Postgres.
+    #
+    # `selectin` evita o encadeamento: cada extensão vira sua própria
+    # consulta em lote (`where interacao_id in (...)`), sem entrar na
+    # consulta principal — o mesmo padrão que `temas`/`areas`/
+    # `participacoes`/`outra_parte`/`materiais` já usam logo abaixo, pelo
+    # mesmo motivo (ver o comentário de `derivadas`, mais acima: "MEDIDO").
+    # Six extensões quase sempre vazias (só uma frente vale por vez) a
+    # menos, seis consultas rápidas a mais — a troca certa mesmo com o
+    # volume de dados crescendo: o problema é o FORMATO da consulta, não
+    # o tamanho da tabela.
     imprensa: Mapped[ImprensaRegistro | None] = relationship(
-        back_populates="interacao", cascade="all, delete-orphan", lazy="joined"
+        back_populates="interacao", cascade="all, delete-orphan", lazy="selectin"
     )
     institucional: Mapped[InstitucionalRegistro | None] = relationship(
-        back_populates="interacao", cascade="all, delete-orphan", lazy="joined"
+        back_populates="interacao", cascade="all, delete-orphan", lazy="selectin"
     )
     legislativo: Mapped[LegislativoRegistro | None] = relationship(
-        back_populates="interacao", cascade="all, delete-orphan", lazy="joined"
+        back_populates="interacao", cascade="all, delete-orphan", lazy="selectin"
     )
     investidores: Mapped[InvestidoresRegistro | None] = relationship(
-        back_populates="interacao", cascade="all, delete-orphan", lazy="joined"
+        back_populates="interacao", cascade="all, delete-orphan", lazy="selectin"
     )
     interna: Mapped[InternaRegistro | None] = relationship(
-        back_populates="interacao", cascade="all, delete-orphan", lazy="joined"
+        back_populates="interacao", cascade="all, delete-orphan", lazy="selectin"
     )
 
     temas: Mapped[list[InteracaoTema]] = relationship(
@@ -234,8 +255,10 @@ class InteracaoRegistro(Tabela):
     #: não pela frente: uma consulta de banco tem frente `bancos_credores` e
     #: já usa `investidores`. Por isso convive com a extensão da frente em vez
     #: de disputar o lugar dela — ver o cabeçalho de `migrations/0046`.
+    #: `selectin`, mesmo motivo das extensões acima — é a sétima junção que
+    #: entrava na mesma consulta e ajudava a estourar a estimativa.
     consulta: Mapped[ConsultaRegistro | None] = relationship(
-        back_populates="interacao", cascade="all, delete-orphan", lazy="joined"
+        back_populates="interacao", cascade="all, delete-orphan", lazy="selectin"
     )
     alegacoes: Mapped[list[InteracaoAlegacao]] = relationship(
         cascade="all, delete-orphan", lazy="selectin"
