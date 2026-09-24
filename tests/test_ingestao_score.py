@@ -25,6 +25,7 @@ from app.dominio.ingestao_score import (
     normalizar_cargo,
     para_data,
     para_inteiro,
+    sem_prefixo,
     somar,
 )
 
@@ -261,6 +262,81 @@ def test_cargo_vira_a_chave_da_regua():
     assert normalizar_cargo("Deputado Estadual") == "deputado_estadual"
     assert normalizar_cargo("  GOVERNADOR ") == "governador"
     assert normalizar_cargo("") is None
+
+
+# -- o vocabulário de cada fornecedor, reconciliado no cadastro ---------------
+
+#: O que a Approach cadastra: `2 - Aegea - Falta de Água` e `1 - Aegea - Corsan`
+#: — o número é a posição na árvore dela e o `Aegea -` é a marca.
+PREFIXO_DA_APPROACH = r"^(\d+\s*-\s*)?(Aegea\s*-\s*)?"
+
+
+@pytest.mark.parametrize(
+    ("escrito", "esperado"),
+    [
+        ("2 - Aegea - Falta de Água", "Falta de Água"),
+        ("1 - Aegea - Corsan", "Corsan"),
+        ("Aegea - Corsan", "Corsan"),
+        ("2 - Reclamação de Serviços", "Reclamação de Serviços"),
+        # Quem não usa prefixo passa intacto.
+        ("Corsan", "Corsan"),
+        ("Águas do Rio", "Águas do Rio"),
+    ],
+)
+def test_o_prefixo_de_taxonomia_sai_do_rotulo(escrito, esperado):
+    assert sem_prefixo(escrito, PREFIXO_DA_APPROACH) == esperado
+
+
+def test_prefixo_invalido_devolve_o_rotulo_inteiro():
+    """Erro de cadastro não pode custar o dado: rótulo cru é pior que limpo, e
+    muito melhor que nenhum."""
+    assert sem_prefixo("Corsan", "([") == "Corsan"
+
+
+def test_o_prefixo_nao_come_o_rotulo_inteiro():
+    """Se o que sobra é vazio, fica o original — uma unidade sem nome sumiria
+    do ranking de exposição sem ninguém notar."""
+    assert sem_prefixo("Aegea - ", PREFIXO_DA_APPROACH) == "Aegea - "
+
+
+def test_o_apelido_junta_o_mesmo_lugar_com_dois_nomes():
+    """A Bites chama de `Aegea` o que a Approach chama de `Holding`. Sem o
+    apelido, a controladora vira duas barras e a maior fica menor do que é."""
+    mapeamento = Mapeamento(
+        colunas={"data": "Data", "sentimento": "Sentimento", "unidade": "Unidades/Empresas"},
+        apelidos={"Aegea": "Holding"},
+    )
+    lido = ler_linha(
+        {"Data": date(2026, 6, 1), "Sentimento": "Positivo", "Unidades/Empresas": "Aegea"},
+        mapeamento,
+    )
+    assert isinstance(lido, MencaoLida)
+    assert lido.unidade_texto == "Holding"
+
+
+def test_a_unidade_entra_com_o_prefixo_ja_removido():
+    mapeamento = Mapeamento(
+        colunas={
+            "data": "Data",
+            "sentimento": "Sentimento",
+            "unidade": "Concessionárias",
+            "tema": "Tags (tema)",
+        },
+        prefixo_a_remover=PREFIXO_DA_APPROACH,
+    )
+    lido = ler_linha(
+        {
+            "Data": date(2026, 6, 1),
+            "Sentimento": "Negativo",
+            "Concessionárias": "1 - Aegea - Corsan",
+            "Tags (tema)": "2 - Aegea - Falta de Água",
+        },
+        mapeamento,
+    )
+    assert isinstance(lido, MencaoLida)
+    assert lido.unidade_texto == "Corsan"
+    #: O mesmo cadastro limpa os dois campos de taxonomia do fornecedor.
+    assert lido.tema_texto == "Falta de Água"
 
 
 # -- a planilha inteira, com os descartes na cara ----------------------------

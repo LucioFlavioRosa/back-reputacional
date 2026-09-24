@@ -227,6 +227,14 @@ def test_desligar_as_fontes_da_sociedade_tira_a_lente_e_redistribui(
     assert "desligadas" in sociedade["ausencia"]
     assert "Fora do cálculo" in corpo_["leitura"]
 
+    # O PESO REDISTRIBUÍDO APARECE. A lente fora vale 0; as que ficaram
+    # dividem 100 entre si — sem isso a tela diria "Imprensa, peso 30" num mês
+    # em que ela pesou 37, e a soma dos pesos na tela não fecharia.
+    efetivos = {lente["codigo"]: lente["peso_efetivo"] for lente in corpo_["lentes"]}
+    assert efetivos["sociedade"] == 0
+    assert sum(efetivos.values()) == 100
+    assert efetivos["imprensa"] > 30
+
 
 def test_a_regua_de_tier_muda_o_indice_sem_tocar_no_dado(cliente_do_score, junho):
     """O agregado é o mesmo; o que muda é quanto cada tier vale."""
@@ -388,12 +396,17 @@ def _planilha(aba: str, cabecalho: list[str], linhas: list[list]) -> bytes:
     return buffer.getvalue()
 
 
+#: O cabeçalho que o cadastro da Bites espera, inteiro. Uma linha pode vir com
+#: menos células — o que falta chega como célula vazia, que é exatamente o que
+#: a planilha de verdade faz.
+CABECALHO_DA_BITES = [
+    "Data", "Autor", "Cargo", "Sentimento", "Atributo", "Categoria", "Engajamento",
+    "Unidades/Empresas",
+]
+
+
 def _export_da_bites(linhas: list[list]) -> bytes:
-    return _planilha(
-        "Posts",
-        ["Data", "Autor", "Cargo", "Sentimento", "Atributo", "Categoria", "Engajamento"],
-        linhas,
-    )
+    return _planilha("Posts", CABECALHO_DA_BITES, linhas)
 
 
 def _subir(cliente, codigo: str, conteudo: bytes):
@@ -596,3 +609,113 @@ def test_quem_so_le_o_score_nao_importa_planilha(sessao):
         assert _subir(cliente, "bites", conteudo).status_code == 403
     finally:
         app.dependency_overrides.clear()
+
+
+# -- a aba de Drivers e riscos --------------------------------------------------
+#
+# As três leituras saem de `mencao`, uma a uma — e por isso só existem depois de
+# a planilha entrar. O que se prova aqui: que elas leem o atributo, a unidade e
+# a travessia de meses; que respeitam o desligamento de fonte; e que um mês sem
+# menção individual diz isso, em vez de desenhar zeros.
+
+
+def _post_da_bites(quando: date, sentimento: str, atributo: str, unidade: str, tema: str):
+    return [quando, "@a", "", sentimento, atributo, tema, 1, unidade]
+
+
+def test_os_drivers_leem_atributo_unidade_e_perpetuacao(cliente_do_score, sessao):
+    linhas = []
+    # Um tema negativo em quatro meses seguidos, sempre na Corsan.
+    for mes_ in (3, 4, 5, 6):
+        linhas.append(
+            _post_da_bites(date(2026, mes_, 5), "Negativo", "Governança", "Corsan", "Tarifa")
+        )
+    # E um mês com atributo positivo noutra unidade.
+    linhas.append(
+        _post_da_bites(date(2026, 6, 6), "Positivo", "Prosperidade", "Prolagos", "Obras")
+    )
+    _subir(cliente_do_score, "bites", _export_da_bites(linhas))
+
+    corpo_ = cliente_do_score.get("/api/score/drivers?mes=2026-06").json()
+    assert corpo_["mencoes_no_mes"] >= 2
+
+    por_atributo = {a["nome"]: a for a in corpo_["atributos"]}
+    assert por_atributo["Governança"]["negativo"] == 1
+    # NS −1 → score 0; NS +1 → score 100. É o que a barra divergente desenha.
+    assert por_atributo["Governança"]["score"] == 0
+    assert por_atributo["Prosperidade"]["score"] == 100
+
+    por_unidade = {u["nome"]: u for u in corpo_["unidades"]}
+    assert por_unidade["Corsan"]["negativas"] == 1
+    # Prolagos não tem negativa nenhuma: não entra num ranking de pressão.
+    assert "Prolagos" not in por_unidade
+
+    perpetuados = {p["tema"]: p for p in corpo_["perpetuacao"]}
+    assert perpetuados["Tarifa"]["meses"] == 4
+    assert perpetuados["Tarifa"]["primeiro_mes"] == "2026-03"
+    assert perpetuados["Tarifa"]["ultimo_mes"] == "2026-06"
+    assert perpetuados["Tarifa"]["lentes"] == ["Sociedade digital"]
+
+
+def test_o_tema_que_morreu_antes_do_mes_nao_esta_em_perpetuacao(cliente_do_score):
+    """Um incêndio apagado em abril não é risco vivo em junho — listá-lo mandaria
+    a comunicação atuar sobre o que já acabou."""
+    linhas = [
+        _post_da_bites(date(2026, mes_, 5), "Negativo", "Governança", "Corsan", "Encerrado")
+        for mes_ in (2, 3, 4)
+    ]
+    linhas.append(
+        _post_da_bites(date(2026, 6, 5), "Negativo", "Governança", "Corsan", "Vivo")
+    )
+    _subir(cliente_do_score, "bites", _export_da_bites(linhas))
+
+    corpo_ = cliente_do_score.get("/api/score/drivers?mes=2026-06").json()
+    assert "Encerrado" not in {p["tema"] for p in corpo_["perpetuacao"]}
+
+
+def test_um_tema_de_um_mes_so_nao_e_perpetuacao(cliente_do_score):
+    _subir(
+        cliente_do_score,
+        "bites",
+        _export_da_bites(
+            [_post_da_bites(date(2026, 6, 5), "Negativo", "Governança", "Corsan", "Episódio")]
+        ),
+    )
+    corpo_ = cliente_do_score.get("/api/score/drivers?mes=2026-06").json()
+    assert corpo_["perpetuacao"] == []
+    # Mas a menção existe, e o atributo e a unidade aparecem.
+    assert corpo_["mencoes_no_mes"] >= 1
+    assert corpo_["unidades"]
+
+
+def test_os_drivers_respeitam_a_fonte_desligada(cliente_do_score):
+    """Explicar o número com o dado de uma fonte que não entrou nele é pior do
+    que não explicar: quem lê o gráfico não tem como saber."""
+    _subir(
+        cliente_do_score,
+        "bites",
+        _export_da_bites(
+            [_post_da_bites(date(2026, 6, 5), "Negativo", "Governança", "Corsan", "Tarifa")]
+        ),
+    )
+    assert cliente_do_score.get("/api/score/drivers?mes=2026-06").json()["unidades"]
+
+    cliente_do_score.put("/api/score/calibracao", json={"fontes_desligadas": ["bites"]})
+    depois = cliente_do_score.get("/api/score/drivers?mes=2026-06").json()
+    assert depois["unidades"] == []
+    assert depois["atributos"] == []
+    assert depois["mencoes_no_mes"] == 0
+
+
+def test_mes_sem_mencao_individual_diz_isso(cliente_do_score, junho):
+    """O `junho` semeia o AGREGADO da Clipei, e não menções: o índice funciona,
+    e a aba de Drivers precisa dizer que o detalhe não chegou."""
+    corpo_ = cliente_do_score.get("/api/score/drivers?mes=2026-06").json()
+    assert corpo_["mencoes_no_mes"] == 0
+    assert corpo_["atributos"] == []
+    assert corpo_["unidades"] == []
+    assert corpo_["perpetuacao"] == []
+
+
+def test_quem_nao_tem_o_portal_do_score_nao_le_os_drivers(cliente_sem_score):
+    assert cliente_sem_score.get("/api/score/drivers?mes=2026-06").status_code == 403

@@ -117,7 +117,10 @@ create table if not exists score_fonte (
 -- export: subir o arquivo da Clipei alimenta Imprensa e Mercado na mesma
 -- transação, e o da Approach alimenta Sociedade e Clientes. Sem isso, importar
 -- por uma fonte deixaria a irmã com o mês anterior, e duas lentes leriam
--- versões diferentes do mesmo arquivo. Ver `dominio/ingestao_score.py`.
+-- versões diferentes do mesmo arquivo. `prefixo_a_remover` tira o cabeçalho de
+-- taxonomia que a Approach carimba nos rótulos ("2 - Aegea - Falta de Água"):
+-- sem isso, "Corsan" viraria quatro unidades e o gráfico de exposição não
+-- fecharia. Ver `dominio/ingestao_score.py`.
 
 insert into score_fonte (codigo, nome, fornecedor, lente_id, tipo_arquivo, mapeamento_colunas, interna, ordem, observacao) values
   ('clipei', 'Clipei', 'Clipei', (select id from lente where codigo='imprensa'),
@@ -147,15 +150,19 @@ insert into score_fonte (codigo, nome, fornecedor, lente_id, tipo_arquivo, mapea
   ('approach_sl', 'Approach · Social Listening', 'Approach', (select id from lente where codigo='sociedade'),
    'xlsx',
    '{"aba": "SL", "arquivo": "approach",
+     "prefixo_a_remover": "^(\\d+\\s*-\\s*)?(Aegea\\s*-\\s*)?",
      "colunas": {"data": "Data", "sentimento": "Sentimento",
-                 "engajamento": "Engajamento", "tema": "Tags (tema)"}}'::jsonb,
+                 "engajamento": "Engajamento", "tema": "Tags (tema)",
+                 "unidade": "Concessionárias"}}'::jsonb,
    false, 3, 'Redes em mar aberto'),
 
   ('bites', 'Bites', 'Bites', (select id from lente where codigo='sociedade'),
    'xlsx',
    '{"aba": "Posts", "arquivo": "bites",
+     "apelidos": {"Aegea": "Holding"},
      "colunas": {"data": "Data", "sentimento": "Sentimento", "engajamento": "Engajamento",
-                 "cargo": "Cargo", "atributo": "Atributo", "tema": "Categoria"}}'::jsonb,
+                 "cargo": "Cargo", "atributo": "Atributo", "tema": "Categoria",
+                 "unidade": "Unidades/Empresas"}}'::jsonb,
    false, 4, 'Redes em mar aberto; única fonte que traz o cargo do autor'),
 
   -- `Interações`, e não `Engajamento`: é o mesmo fato com o nome que a aba de
@@ -164,8 +171,10 @@ insert into score_fonte (codigo, nome, fornecedor, lente_id, tipo_arquivo, mapea
   ('approach_cm', 'Approach · Community Management', 'Approach', (select id from lente where codigo='clientes'),
    'xlsx',
    '{"aba": "CM", "arquivo": "approach",
+     "prefixo_a_remover": "^(\\d+\\s*-\\s*)?(Aegea\\s*-\\s*)?",
      "colunas": {"data": "Data", "sentimento": "Sentimento",
-                 "engajamento": "Interações", "tema": "TAG (assunto 1)"}}'::jsonb,
+                 "engajamento": "Interações", "tema": "TAG (assunto 1)",
+                 "unidade": "Concessionárias"}}'::jsonb,
    false, 5, 'Canais próprios'),
 
   ('crm', 'CRM dos Stakeholders', 'Aegea', (select id from lente where codigo='institucional'),
@@ -203,6 +212,11 @@ create table if not exists mencao (
   --: alguém sentar e casar as duas listas, que é decisão editorial e não
   --: conversão automática.
   tema_texto text,
+  --: A concessionária COMO O FORNECEDOR A NOMEIA. Mesma história de
+  --: `tema_texto`: a Bites escreve "Corsan", a Approach escreve
+  --: "1 - Aegea - Corsan", e `unidade_negocio` tem o nome do CRM. É este
+  --: rótulo que a aba de Drivers usa para medir exposição por unidade.
+  unidade_texto text,
   --: O atributo reputacional da Clipei — alimenta a barra divergente de
   --: "Drivers e riscos".
   atributo text,

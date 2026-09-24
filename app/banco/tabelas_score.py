@@ -97,6 +97,8 @@ class Mencao(Tabela):
     )
     #: O assunto no vocabulário do FORNECEDOR, que não é o do CRM.
     tema_texto: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: A concessionária como o fornecedor a nomeia — idem.
+    unidade_texto: Mapped[str | None] = mapped_column(Text, nullable=True)
     atributo: Mapped[str | None] = mapped_column(Text, nullable=True)
     veiculo: Mapped[str | None] = mapped_column(Text, nullable=True)
     publico_alvo: Mapped[str | None] = mapped_column(Text, nullable=True)

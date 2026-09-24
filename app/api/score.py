@@ -39,7 +39,10 @@ from app.dominio.score import (
     REGUAS_DE_ENGAJAMENTO,
     REGUAS_DE_TIER,
     Calibracao,
+    Contagem,
     Indice,
+    ns,
+    para_score,
 )
 
 rotas = APIRouter(
@@ -54,7 +57,13 @@ Sessao = SessaoDoPedido
 class LenteSaida(BaseModel):
     codigo: str
     nome: str
+    #: O peso que a calibração gravou — o que a aba Calibração ajusta.
     peso: int
+    #: O QUE ESSE PESO VALEU DE FATO, em porcento, depois de a lente sem dado
+    #: sair do denominador. Com as cinco lentes medidas os dois batem; com uma
+    #: fora, Imprensa vale 30 de 70 — 43%, e não 30%. Mostrar só o nominal
+    #: faria a tela afirmar uma participação que não aconteceu.
+    peso_efetivo: int
     #: Nulo quando a lente ficou de fora — sem fonte ligada ou sem menção.
     score: int | None
     ns: float | None
@@ -185,11 +194,19 @@ def obter(
     )
 
     scores_anteriores = {lente.codigo: lente.score for lente in anterior.lentes}
+    # O denominador do ISR: só as lentes que entraram. Zero quando nenhuma
+    # entrou — e aí todo peso efetivo é zero, que é a verdade do mês.
+    peso_no_calculo = sum(lente.peso for lente in indice.lentes_no_calculo)
     lentes = [
         LenteSaida(
             codigo=lente.codigo,
             nome=lente.nome,
             peso=lente.peso,
+            peso_efetivo=(
+                round(lente.peso / peso_no_calculo * 100)
+                if lente.score is not None and peso_no_calculo
+                else 0
+            ),
             score=lente.score,
             ns=round(lente.ns, 4) if lente.ns is not None else None,
             delta=_delta(lente.score, scores_anteriores.get(lente.codigo)),
@@ -579,6 +596,120 @@ def remover_fato(
     if registro is None:
         raise NaoEncontrado("Fato não encontrado.")
     sessao.execute(delete(ScoreFato).where(ScoreFato.id == id))
+
+
+class AtributoSaida(BaseModel):
+    """Um atributo reputacional, com o saldo que ele carrega."""
+
+    nome: str
+    positivo: int
+    neutro: int
+    negativo: int
+    #: O saldo na escala do índice, para a tela desenhar a barra divergente.
+    score: int
+    ns: float
+
+
+class UnidadeSaida(BaseModel):
+    nome: str
+    negativas: int
+    mencoes: int
+    #: Quanto do negativo do mês inteiro está nesta unidade.
+    participacao: int
+
+
+class PerpetuacaoSaida(BaseModel):
+    """Um tema negativo que atravessa meses."""
+
+    tema: str
+    meses: int
+    primeiro_mes: str
+    ultimo_mes: str
+    negativas: int
+    #: Em que lentes ele aparece — "imprensa e redes" é pior que só redes.
+    lentes: list[str]
+
+
+class DriversSaida(BaseModel):
+    """A aba de Drivers e riscos: o porquê do número, e não o número.
+
+    As três listas vêm de `mencao`, uma a uma, e não do agregado mensal — que
+    já perdeu o atributo, o tema e a unidade ao somar. Sem planilha importada
+    no mês, as três voltam vazias, e a tela diz por quê em vez de desenhar
+    zeros.
+    """
+
+    mes: str
+    atributos: list[AtributoSaida]
+    unidades: list[UnidadeSaida]
+    perpetuacao: list[PerpetuacaoSaida]
+    #: Quantas menções individuais o mês tem, de fontes ligadas. Zero explica
+    #: as três listas vazias melhor que qualquer frase.
+    mencoes_no_mes: int
+
+
+@rotas.get("/drivers")
+def drivers(
+    sessao: Sessao,
+    usuario: UsuarioLogado,
+    mes: Annotated[str, Query(description="AAAA-MM")],
+) -> DriversSaida:
+    """O que explica o índice do mês: atributo, unidade e o que não passa."""
+    alvo = _mes_de(mes)
+    calibracao = repositorio_score.calibracao_vigente(sessao)
+
+    atributos = [
+        AtributoSaida(
+            nome=nome,
+            positivo=pos,
+            neutro=neu,
+            negativo=neg,
+            ns=round(saldo, 4),
+            score=para_score(saldo),
+        )
+        for nome, pos, neu, neg in repositorio_score.atributos_do_mes(
+            sessao, alvo, calibracao
+        )
+        # `ns` devolve None quando o total é zero — o que não acontece aqui,
+        # porque o agrupamento só produz linha com menção. O guarda é para o
+        # dia em que a consulta mudar e o zero passar a existir: dividir por
+        # zero na tela apareceria como um atributo em 50, que é mentira.
+        if (saldo := ns(Contagem(positivo=pos, neutro=neu, negativo=neg))) is not None
+    ]
+
+    unidades_cruas = repositorio_score.unidades_do_mes(sessao, alvo, calibracao)
+    total_negativo = sum(neg for _, neg, _ in unidades_cruas) or 1
+    unidades = [
+        UnidadeSaida(
+            nome=nome,
+            negativas=neg,
+            mencoes=total,
+            participacao=round(neg / total_negativo * 100),
+        )
+        for nome, neg, total in unidades_cruas
+    ]
+
+    perpetuacao = [
+        PerpetuacaoSaida(
+            tema=tema,
+            meses=meses,
+            primeiro_mes=f"{primeiro:%Y-%m}",
+            ultimo_mes=f"{ultimo:%Y-%m}",
+            negativas=neg,
+            lentes=lentes,
+        )
+        for tema, meses, primeiro, ultimo, neg, lentes in (
+            repositorio_score.temas_em_perpetuacao(sessao, alvo, calibracao)
+        )
+    ]
+
+    return DriversSaida(
+        mes=f"{alvo:%Y-%m}",
+        atributos=atributos,
+        unidades=unidades,
+        perpetuacao=perpetuacao,
+        mencoes_no_mes=repositorio_score.mencoes_do_mes(sessao, alvo, calibracao),
+    )
 
 
 class ImportacaoSaida(BaseModel):

@@ -372,3 +372,166 @@ def meses_com_dado(sessao: Session) -> list[date]:
     for consulta in (das_planilhas, das_estimativas, do_crm):
         meses.update(linha[0] for linha in sessao.execute(consulta) if linha[0])
     return sorted(meses)
+
+
+# -- a aba de Drivers e riscos --------------------------------------------------
+#
+# As três leituras desta aba respondem "POR QUE o índice deu isso", e todas as
+# três se fazem MENÇÃO A MENÇÃO — não saem de `score_mes_fonte`, que já perdeu o
+# atributo, o tema e a unidade ao somar. É por isso que elas só acenderam quando
+# a ingestão passou a gravar `mencao`.
+#
+# TODAS RESPEITAM A CALIBRAÇÃO. Explicar o número com o dado de uma fonte que a
+# coordenação tirou do cálculo é pior do que não explicar: quem lê o gráfico não
+# tem como saber que aquela barra não entrou na conta.
+#
+# E NENHUMA APLICA A RÉGUA DE TIER OU DE ENGAJAMENTO. Aqui se conta matéria e
+# post, um a um: a pergunta é "sobre o que falaram e com que tom", e não "quanto
+# isso pesou no índice". Ponderar aqui faria uma matéria do Valor aparecer como
+# dez, e a barra deixaria de ser contagem sem avisar.
+
+
+def mencoes_do_mes(sessao: Session, mes: date, calibracao: Calibracao) -> int:
+    """Quantas menções individuais o mês tem, de fonte que está no cálculo.
+
+    É o que distingue "não houve nada a dizer" de "a planilha ainda não foi
+    importada" — duas situações que produzem a mesma tela vazia.
+    """
+    total = sessao.scalar(
+        select(func.count())
+        .select_from(Mencao)
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .where(
+            Mencao.mes == primeiro_dia(mes),
+            ScoreFonte.codigo.not_in(calibracao.fontes_desligadas or {""}),
+        )
+    )
+    return int(total or 0)
+
+
+def atributos_do_mes(
+    sessao: Session, mes: date, calibracao: Calibracao
+) -> list[tuple[str, int, int, int]]:
+    """O atributo reputacional da clipagem, com positivo, neutro e negativo.
+
+    É a taxonomia do fornecedor — Governança, Eficiência Operacional,
+    Prosperidade Compartilhada — e responde o que a companhia é ACUSADA ou
+    CREDITADA de ser. Só Clipei e Bites classificam atributo; as outras fontes
+    simplesmente não entram, e é isso que a tela diz.
+    """
+    consulta = (
+        select(
+            Mencao.atributo,
+            func.count().filter(Mencao.sentimento == "pos"),
+            func.count().filter(Mencao.sentimento == "neu"),
+            func.count().filter(Mencao.sentimento == "neg"),
+        )
+        .select_from(Mencao)
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .where(
+            Mencao.mes == primeiro_dia(mes),
+            Mencao.atributo.is_not(None),
+            ScoreFonte.codigo.not_in(calibracao.fontes_desligadas or {""}),
+        )
+        .group_by(Mencao.atributo)
+        .order_by(func.count().desc())
+    )
+    return [(nome, pos, neu, neg) for nome, pos, neu, neg in sessao.execute(consulta)]
+
+
+def unidades_do_mes(
+    sessao: Session, mes: date, calibracao: Calibracao, quantos: int = 8
+) -> list[tuple[str, int, int]]:
+    """Onde a pressão se concentra: negativas por concessionária.
+
+    ORDENADO PELO NEGATIVO, e não pelo volume: a pergunta é onde está o
+    problema. O total vai junto porque 300 negativas em 400 menções é uma
+    situação, e 300 em 3.000 é outra.
+    """
+    consulta = (
+        select(
+            Mencao.unidade_texto,
+            func.count().filter(Mencao.sentimento == "neg"),
+            func.count(),
+        )
+        .select_from(Mencao)
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .where(
+            Mencao.mes == primeiro_dia(mes),
+            Mencao.unidade_texto.is_not(None),
+            ScoreFonte.codigo.not_in(calibracao.fontes_desligadas or {""}),
+        )
+        .group_by(Mencao.unidade_texto)
+        .having(func.count().filter(Mencao.sentimento == "neg") > 0)
+        .order_by(func.count().filter(Mencao.sentimento == "neg").desc())
+        .limit(quantos)
+    )
+    return [(nome, neg, total) for nome, neg, total in sessao.execute(consulta)]
+
+
+#: Quantos meses a janela de perpetuação olha para trás, o mês pedido incluso.
+MESES_DA_PERPETUACAO = 6
+
+#: Em quantos meses o tema precisa aparecer para ser "em perpetuação". Com dois,
+#: qualquer assunto de duas semanas entraria; a lista é sobre o que NÃO passa.
+MESES_PARA_PERPETUAR = 3
+
+
+def temas_em_perpetuacao(
+    sessao: Session, mes: date, calibracao: Calibracao, quantos: int = 6
+) -> list[tuple[str, int, date, date, int, list[str]]]:
+    """Os temas negativos que atravessam meses — o risco que não passa.
+
+    A DIFERENÇA ENTRE ISTO E "TEMAS DA LENTE" é o tempo. Aquela lista responde
+    "do que falaram neste mês"; esta responde "o que já vinha e continua". Um
+    assunto que explode e some é ruído; o que reaparece cinco meses seguidos é
+    posição consolidada, e é com esse que a comunicação precisa lidar.
+
+    Conta MESES DISTINTOS, e não menções: um tema com 900 negativas num mês só
+    é um episódio, e um com 40 por mês durante cinco é uma narrativa.
+    """
+    alvo = primeiro_dia(mes)
+    inicio = alvo
+    for _ in range(MESES_DA_PERPETUACAO - 1):
+        inicio = (
+            inicio.replace(year=inicio.year - 1, month=12)
+            if inicio.month == 1
+            else inicio.replace(month=inicio.month - 1)
+        )
+
+    rotulo = func.coalesce(Tema.nome, Mencao.tema_texto)
+    negativas = func.count().filter(Mencao.sentimento == "neg")
+    meses_distintos = func.count(func.distinct(Mencao.mes))
+    consulta = (
+        select(
+            rotulo.label("tema"),
+            meses_distintos,
+            func.min(Mencao.mes),
+            func.max(Mencao.mes),
+            negativas,
+            func.array_agg(func.distinct(Lente.nome)),
+        )
+        .select_from(Mencao)
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .join(Lente, Lente.id == ScoreFonte.lente_id)
+        .outerjoin(Tema, Tema.id == Mencao.tema_id)
+        .where(
+            Mencao.mes <= alvo,
+            Mencao.mes >= inicio,
+            rotulo.is_not(None),
+            ScoreFonte.codigo.not_in(calibracao.fontes_desligadas or {""}),
+        )
+        .group_by(rotulo)
+        # SÓ O QUE ALCANÇA O MÊS PEDIDO: um tema que morreu em março não está
+        # "em perpetuação" em junho — está encerrado, e listá-lo como risco
+        # vivo mandaria a comunicação apagar um incêndio que já acabou.
+        .having(func.max(Mencao.mes) == alvo)
+        .having(meses_distintos >= MESES_PARA_PERPETUAR)
+        .having(negativas > 0)
+        .order_by(meses_distintos.desc(), negativas.desc())
+        .limit(quantos)
+    )
+    return [
+        (tema, meses, primeiro, ultimo, neg, sorted(lentes))
+        for tema, meses, primeiro, ultimo, neg, lentes in sessao.execute(consulta)
+    ]

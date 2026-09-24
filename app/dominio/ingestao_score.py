@@ -37,6 +37,7 @@ CAMPOS = frozenset(
         "veiculo",
         "publico_alvo",
         "tema",
+        "unidade",
     }
 )
 
@@ -107,6 +108,25 @@ class Mapeamento:
     filtros: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     #: Sinônimos de sentimento deste fornecedor, além dos conhecidos.
     sentimentos: Mapping[str, str] = field(default_factory=dict)
+    #: O PREFIXO DE TAXONOMIA QUE O FORNECEDOR CARIMBA no rótulo. A Approach
+    #: manda `2 - Aegea - Falta de Água` e `1 - Aegea - Corsan`: o número é a
+    #: posição na árvore dele, e o `Aegea -` é a marca — nada disso é o assunto
+    #: nem a unidade. Sem remover, "Corsan" vira quatro unidades diferentes e o
+    #: gráfico de exposição não fecha.
+    #:
+    #: DECLARADO NO CADASTRO, e não no código, pelo mesmo motivo do resto do
+    #: mapeamento: é a convenção DESTE fornecedor. Um `replace` embutido aqui
+    #: serviria a Approach e mutilaria o rótulo de quem não usa prefixo.
+    prefixo_a_remover: str | None = None
+    #: O MESMO LUGAR COM DOIS NOMES. A Bites chama a controladora de "Aegea"; a
+    #: Approach chama de "Holding". No ranking de exposição isso vira duas
+    #: barras para uma unidade só, e a maior delas fica menor do que é.
+    #:
+    #: Vale para `unidade` e `tema` — os dois campos em que cada fornecedor usa
+    #: o vocabulário da casa dele. É a versão declarada, e mínima, do trabalho
+    #: de casar as listas com o dicionário do CRM: aqui se resolve a colisão que
+    #: atrapalha a leitura, sem esperar a taxonomia inteira ser conciliada.
+    apelidos: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         desconhecidos = set(self.colunas) - CAMPOS
@@ -138,12 +158,18 @@ class Mapeamento:
         }
         aba = dados.get("aba")
         arquivo = dados.get("arquivo")
+        prefixo = dados.get("prefixo_a_remover")
         return cls(
             colunas=dict(dados.get("colunas") or {}),
             aba=str(aba) if aba else None,
             arquivo=str(arquivo) if arquivo else None,
             filtros=filtros,
             sentimentos=dict(dados.get("sentimentos") or {}),  # type: ignore[arg-type]
+            prefixo_a_remover=str(prefixo) if prefixo else None,
+            apelidos={
+                str(de): str(para)
+                for de, para in dict(dados.get("apelidos") or {}).items()
+            },
         )
 
     @property
@@ -166,6 +192,7 @@ class MencaoLida:
     veiculo: str | None = None
     publico_alvo: str | None = None
     tema_texto: str | None = None
+    unidade_texto: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -276,6 +303,32 @@ def _texto(valor: object) -> str | None:
     return limpo or None
 
 
+def sem_prefixo(valor: str | None, prefixo: str | None) -> str | None:
+    """Tira do rótulo o cabeçalho de taxonomia do fornecedor.
+
+    Só o COMEÇO do texto, e só uma vez: o objetivo é `2 - Aegea - Falta de
+    Água` virar `Falta de Água`, e não sair caçando a palavra no meio do nome.
+    Um prefixo que não casa devolve o rótulo intacto.
+    """
+    if not valor or not prefixo:
+        return valor
+    try:
+        limpo = re.sub(prefixo, "", valor, count=1).strip()
+    except re.error:
+        # Prefixo inválido é erro de cadastro, e não motivo para perder o dado:
+        # o rótulo cru é pior que o limpo, e muito melhor que nenhum.
+        return valor
+    return limpo or valor
+
+
+def _rotulo(valor: object, mapeamento: Mapeamento) -> str | None:
+    """O rótulo do fornecedor já sem prefixo e sob o nome combinado."""
+    limpo = sem_prefixo(_texto(valor), mapeamento.prefixo_a_remover)
+    if limpo is None:
+        return None
+    return mapeamento.apelidos.get(limpo, limpo)
+
+
 def ler_linha(
     linha: Mapping[str, object], mapeamento: Mapeamento
 ) -> MencaoLida | Descarte:
@@ -310,7 +363,8 @@ def ler_linha(
         atributo=_texto(opcional("atributo")),
         veiculo=_texto(opcional("veiculo")),
         publico_alvo=_texto(opcional("publico_alvo")),
-        tema_texto=_texto(opcional("tema")),
+        tema_texto=_rotulo(opcional("tema"), mapeamento),
+        unidade_texto=_rotulo(opcional("unidade"), mapeamento),
     )
 
 
