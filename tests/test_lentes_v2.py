@@ -566,3 +566,125 @@ def test_o_dossie_nao_carrega_mais_curadoria_nem_encaminhamentos(sessao):
 
 def _sinais_reais(dossie):
     return [sinal for sinal in dossie.sinais if sinal.tipo != "Lacuna de dado"]
+
+
+# -- a jornada do índice ---------------------------------------------------------
+
+
+@dataclass
+class _QuemLe:
+    administra_dicionarios: bool = False
+
+
+def _dois_meses_de_imprensa(sessao) -> None:
+    """Dois meses de menções, para a série ter de fato dois pontos."""
+    from app.banco.tabelas_score import ScoreFonte, ScoreMesFonte
+
+    fonte = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "clipei")).one()
+    for mes, positivas, negativas in (
+        (date(2026, 5, 1), 60, 40),
+        (date(2026, 6, 1), 80, 20),
+    ):
+        for sentimento, quantas in (("pos", positivas), ("neg", negativas)):
+            sessao.add(
+                ScoreMesFonte(
+                    fonte_id=fonte.id,
+                    mes=mes,
+                    sentimento=sentimento,
+                    tier="relevante",
+                    mencoes=quantas,
+                    soma_log=quantas,
+                    soma_engajamento=quantas,
+                    soma_cargo=quantas,
+                )
+            )
+    sessao.flush()
+
+
+def test_a_serie_carrega_o_que_a_jornada_mostra(sessao):
+    """A §1 do pacote diz que nada muda no servidor, e não era verdade.
+
+    A coluna de cada mês precisa do fato, da variação e de quem mais se mexeu;
+    a curva de comparação precisa da nota de cada lente. Tudo isso já era
+    calculado dentro do laço da série — só não saía dele.
+    """
+    from app.api.score import serie
+
+    _dois_meses_de_imprensa(sessao)
+    pontos = serie(sessao=sessao, usuario=_QuemLe())
+
+    assert len(pontos) >= 2
+    assert pontos[-1].notas_das_lentes.get("imprensa") is not None
+    assert pontos[-1].delta is not None
+
+
+def test_o_primeiro_ponto_e_partida_e_nao_variacao_zero(sessao):
+    """ "0 no mês" no primeiro ponto afirmaria que o índice não se moveu — e não
+    há de onde se mover."""
+    from app.api.score import serie
+
+    _dois_meses_de_imprensa(sessao)
+    assert serie(sessao=sessao, usuario=_QuemLe())[0].delta is None
+
+
+def test_o_fato_do_mes_viaja_com_o_ponto(sessao):
+    """Ele deixou de ser uma lista embaixo do gráfico e passou a ser a coluna
+    do próprio mês — e para isso precisa chegar junto do ponto."""
+    from app.api.score import serie
+    from app.banco.tabelas_score import ScoreFato
+
+    _dois_meses_de_imprensa(sessao)
+    sessao.add(ScoreFato(mes=date(2026, 6, 1), texto="Aporte anunciado", efeito="sustenta"))
+    sessao.flush()
+
+    de_junho = next(
+        ponto for ponto in serie(sessao=sessao, usuario=_QuemLe()) if ponto.mes == "2026-06"
+    )
+    assert de_junho.fato is not None
+    assert de_junho.fato.texto == "Aporte anunciado"
+    assert de_junho.fato.efeito == "sustenta"
+
+
+def test_a_lente_que_estreia_no_mes_nao_conta_como_movimento():
+    """Ela não "subiu 42 pontos" — ela apareceu. Chamar isso de movimento faria
+    toda primeira ingestão de uma fonte parecer um salto de reputação."""
+    from app.api.score import _maior_movimento
+
+    nomes = {"imprensa": "Imprensa", "clientes": "Clientes"}
+    estreante = _maior_movimento({"imprensa": 70, "clientes": 42}, {"imprensa": 70}, nomes)
+    assert estreante is None
+
+
+def test_o_maior_movimento_e_o_de_maior_modulo():
+    from app.api.score import _maior_movimento
+
+    nomes = {"imprensa": "Imprensa", "clientes": "Clientes"}
+    movimento = _maior_movimento(
+        {"imprensa": 72, "clientes": 30}, {"imprensa": 70, "clientes": 42}, nomes
+    )
+    assert movimento is not None
+    assert movimento.lente == "Clientes"
+    assert movimento.delta == -12
+
+
+def test_o_empate_de_movimento_fica_sempre_com_a_mesma_lente():
+    """Duas leituras seguidas têm de dar a mesma coluna: um desempate por
+    ordem de dicionário faria o texto do mês mudar sem nada ter mudado."""
+    from app.api.score import _maior_movimento
+
+    nomes = {"imprensa": "Imprensa", "clientes": "Clientes"}
+    primeiro = _maior_movimento(
+        {"imprensa": 75, "clientes": 47}, {"imprensa": 70, "clientes": 42}, nomes
+    )
+    segundo = _maior_movimento(
+        {"clientes": 47, "imprensa": 75}, {"clientes": 42, "imprensa": 70}, nomes
+    )
+    assert primeiro is not None and segundo is not None
+    assert primeiro.lente == segundo.lente == "Clientes"
+
+
+def test_mes_em_que_nada_se_moveu_nao_tem_maior_movimento():
+    from app.api.score import _maior_movimento
+
+    parado = _maior_movimento({"imprensa": 70}, {"imprensa": 70}, {"imprensa": "Imprensa"})
+    assert parado is None

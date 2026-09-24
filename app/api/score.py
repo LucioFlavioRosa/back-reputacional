@@ -134,6 +134,23 @@ class IndiceSaida(BaseModel):
     leitura: str
 
 
+class FatoDoPonto(BaseModel):
+    """O que explica o degrau do mês, na própria coluna dele."""
+
+    texto: str
+    efeito: str
+
+
+class MovimentoDaLente(BaseModel):
+    """Quem mais se mexeu no mês — a lente, e quanto.
+
+    É A PERGUNTA QUE VEM DEPOIS DE "por que caiu": o fato diz o que aconteceu
+    no mundo, e este número diz por onde aquilo entrou no índice."""
+
+    lente: str
+    delta: int
+
+
 class PontoDaSerie(BaseModel):
     mes: str
     isr: int | None
@@ -145,6 +162,14 @@ class PontoDaSerie(BaseModel):
     #: Verdadeiro quando alguma lente do mês veio de estimativa, e não de
     #: medição.
     tem_estimativa: bool
+    #: Contra o mês anterior da série. Nulo no primeiro ponto — que é ponto de
+    #: partida, e não variação zero.
+    delta: int | None = None
+    fato: FatoDoPonto | None = None
+    maior_movimento: MovimentoDaLente | None = None
+    #: A nota de cada lente medida no mês, por código. É o que permite desenhar
+    #: a curva de comparação sem uma segunda chamada por lente.
+    notas_das_lentes: dict[str, int] = Field(default_factory=dict)
 
 
 def _mes_de(texto: str) -> date:
@@ -310,8 +335,7 @@ def obter(
     # `LenteMedida`: é rótulo de cadastro, e não número. Buscá-lo aqui mantém o
     # domínio do índice falando só de conta.
     stakeholders = {
-        lente.codigo: lente.stakeholder
-        for lente in repositorio_score.lentes_cadastradas(sessao)
+        lente.codigo: lente.stakeholder for lente in repositorio_score.lentes_cadastradas(sessao)
     }
     lentes = [
         LenteSaida(
@@ -406,18 +430,66 @@ def serie(sessao: Sessao, usuario: UsuarioLogado) -> list[PontoDaSerie]:
     régua da época faria a linha subir e descer por mudança de critério.
     """
     calibracao = repositorio_score.calibracao_vigente(sessao)
-    pontos = []
-    for mes in repositorio_score.meses_com_dado(sessao):
+    meses = repositorio_score.meses_com_dado(sessao)
+    nomes = {lente.codigo: lente.nome for lente in repositorio_score.lentes_cadastradas(sessao)}
+    # UMA CONSULTA PARA O PERÍODO INTEIRO, e não uma por mês: a série já faz
+    # uma medição por mês, e somar a isso uma ida ao banco por coluna faria a
+    # tela mais cara a cada mês ingerido.
+    # O PRIMEIRO DE CADA MÊS, quando há mais de um: a consulta vem ordenada por
+    # data de criação, e a coluna tem espaço para uma linha. Mostrar o último
+    # faria o destaque do mês mudar quando alguém cadastrasse uma nota de
+    # rodapé depois.
+    fatos: dict[str, ScoreFato] = {}
+    for fato in repositorio_score.fatos_do_periodo(sessao, meses):
+        fatos.setdefault(f"{fato.mes:%Y-%m}", fato)
+
+    pontos: list[PontoDaSerie] = []
+    anterior: dict[str, int] = {}
+    isr_anterior: int | None = None
+    for mes in meses:
         indice = repositorio_score.indice_do_mes(sessao, mes, calibracao)
+        notas = {lente.codigo: lente.score for lente in indice.lentes if lente.score is not None}
+        fato = fatos.get(indice.mes)
         pontos.append(
             PontoDaSerie(
                 mes=indice.mes,
                 isr=indice.isr,
                 lentes=len(indice.lentes_no_calculo),
                 tem_estimativa=any(lente.estimado for lente in indice.lentes_no_calculo),
+                delta=_delta(indice.isr, isr_anterior) if pontos else None,
+                fato=(FatoDoPonto(texto=fato.texto, efeito=fato.efeito) if fato else None),
+                maior_movimento=_maior_movimento(notas, anterior, nomes),
+                notas_das_lentes=notas,
             )
         )
+        anterior, isr_anterior = notas, indice.isr
     return pontos
+
+
+def _maior_movimento(
+    notas: dict[str, int], anteriores: dict[str, int], nomes: dict[str, str]
+) -> MovimentoDaLente | None:
+    """A lente que mais andou de um mês para o outro.
+
+    SÓ CONTA QUEM TEM OS DOIS MESES. Uma lente que estreia no mês não "subiu 42
+    pontos" — ela apareceu, e chamar isso de movimento faria toda primeira
+    ingestão de uma fonte parecer um salto de reputação.
+
+    O EMPATE FICA COM O CÓDIGO, em ordem alfabética: duas lentes com a mesma
+    variação precisam devolver sempre a mesma resposta, senão a coluna do mês
+    muda de texto entre duas leituras sem nada ter mudado.
+    """
+    movimentos = [
+        (nota - anteriores[codigo], codigo)
+        for codigo, nota in notas.items()
+        if codigo in anteriores
+    ]
+    if not movimentos:
+        return None
+    delta, codigo = sorted(movimentos, key=lambda par: (-abs(par[0]), par[1]))[0]
+    if not delta:
+        return None
+    return MovimentoDaLente(lente=nomes.get(codigo, codigo), delta=delta)
 
 
 class FonteSaida(BaseModel):
