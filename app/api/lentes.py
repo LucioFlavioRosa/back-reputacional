@@ -83,8 +83,9 @@ class ColunaSaida(BaseModel):
     """Uma coluna de uma tabela do dossiê.
 
     VEM DO SERVIDOR porque é ele que sabe o que a tabela mostra. A primeira
-    versão montava as colunas na tela OLHANDO O TÍTULO do bloco — e um título
-    reescrito pela curadoria trocaria silenciosamente o schema da tabela.
+    versão montava as colunas na tela OLHANDO O TÍTULO do bloco — e o título
+    passou a ser a frase de um detector, que muda com o dado: o schema da
+    tabela trocaria sozinho no mês em que a leitura mudasse.
     """
 
     chave: str
@@ -102,7 +103,7 @@ class BlocoSaida(BaseModel):
     #: aplicar é do servidor.
     subtipo: str | None = None
     titulo: str
-    #: O título-conclusão da curadoria — a frase que o gráfico prova.
+    #: A frase que o gráfico prova, escrita pelos detectores a cada leitura.
     conclusao: str | None = None
     dados: list[dict] = Field(default_factory=list)
     #: Como se chamam as três faixas NESTE bloco. A lente institucional mede

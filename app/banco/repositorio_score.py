@@ -16,6 +16,7 @@ mexer na régua e ver o índice inteiro mudar sem reprocessar nada.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import date
 
 from sqlalchemy import Date as ColunaDeData
@@ -98,11 +99,7 @@ def pesos_padrao(sessao: Session) -> dict[str, int]:
 
 
 def lentes_cadastradas(sessao: Session) -> list[Lente]:
-    return list(
-        sessao.scalars(
-            select(Lente).where(Lente.ativo.is_(True)).order_by(Lente.ordem)
-        )
-    )
+    return list(sessao.scalars(select(Lente).where(Lente.ativo.is_(True)).order_by(Lente.ordem)))
 
 
 def fontes_cadastradas(sessao: Session) -> list[ScoreFonte]:
@@ -151,7 +148,8 @@ def _somas_do_crm(sessao: Session, mes: date) -> list[SomasDaFonte]:
     não foi avaliada, e contá-la como neutra diluiria o saldo com silêncio.
     """
     proximo = (
-        mes.replace(year=mes.year + 1, month=1) if mes.month == 12
+        mes.replace(year=mes.year + 1, month=1)
+        if mes.month == 12
         else mes.replace(month=mes.month + 1)
     )
     consulta = (
@@ -182,7 +180,9 @@ def _somas_do_crm(sessao: Session, mes: date) -> list[SomasDaFonte]:
             logger.warning(
                 "Clima %r sem mapeamento em SENTIMENTO_DO_CLIMA: "
                 "%s interações ficaram fora da lente institucional de %s.",
-                codigo, total, mes,
+                codigo,
+                total,
+                mes,
             )
             continue
         somas.append(
@@ -205,18 +205,72 @@ def _estimativas(sessao: Session, mes: date) -> dict[str, float]:
     return {codigo: float(ns) for codigo, ns in sessao.execute(consulta)}
 
 
-def medir_lentes(sessao: Session, mes: date, calibracao: Calibracao) -> list[LenteMedida]:
-    """As cinco lentes do mês, cada uma com a fonte que lhe cabe."""
+@dataclass(frozen=True, slots=True)
+class LenteNoCadastro:
+    """O que uma lente é, antes de qualquer mês. Não muda entre medições."""
+
+    codigo: str
+    nome: str
+    peso_padrao: int
+    fontes: tuple[str, ...]
+    tem_fonte_interna: bool
+
+
+def catalogo_das_lentes(sessao: Session) -> list[LenteNoCadastro]:
+    """O cadastro inteiro em DUAS consultas, e não em onze.
+
+    POR QUE ISTO EXISTE. `medir_lentes` perguntava, PARA CADA MÊS, quais lentes
+    existem, quais fontes cada uma tem e qual delas é interna — respostas que
+    não mudam entre um mês e outro. A série de dez meses saía em 147 consultas,
+    das quais 110 repetiam a mesma pergunta; e a conta piora a cada mês
+    ingerido, que é exatamente o que vai acontecer.
+
+    O CADASTRO É LIDO UMA VEZ e atravessa a série inteira. Não é cache: é o
+    mesmo pedido lendo o que não varia dentro dele uma vez só, o que também
+    elimina a chance de dois meses da mesma resposta enxergarem cadastros
+    diferentes.
+    """
+    lentes = lentes_cadastradas(sessao)
+    por_lente: dict[int, list[ScoreFonte]] = {}
+    for fonte in sessao.scalars(select(ScoreFonte).order_by(ScoreFonte.ordem)):
+        por_lente.setdefault(fonte.lente_id, []).append(fonte)
+
+    return [
+        LenteNoCadastro(
+            codigo=lente.codigo,
+            nome=lente.nome,
+            peso_padrao=lente.peso_padrao,
+            # `ativo` não entra no filtro: um fornecedor descontinuado para de
+            # receber importação, e o histórico dele continua valendo — ver o
+            # comentário da 0048.
+            fontes=tuple(f.codigo for f in por_lente.get(lente.id, ())),
+            tem_fonte_interna=any(f.interna for f in por_lente.get(lente.id, ())),
+        )
+        for lente in lentes
+    ]
+
+
+def medir_lentes(
+    sessao: Session,
+    mes: date,
+    calibracao: Calibracao,
+    catalogo: list[LenteNoCadastro] | None = None,
+) -> list[LenteMedida]:
+    """As cinco lentes do mês, cada uma com a fonte que lhe cabe.
+
+    `catalogo` é opcional para quem mede UM mês; quem mede uma série o lê uma
+    vez e passa adiante — ver `catalogo_das_lentes`.
+    """
     mes = primeiro_dia(mes)
     das_planilhas = _somas_das_planilhas(sessao, mes)
     estimativas = _estimativas(sessao, mes)
     do_crm = _somas_do_crm(sessao, mes)
 
     medidas: list[LenteMedida] = []
-    for lente in lentes_cadastradas(sessao):
+    for lente in catalogo if catalogo is not None else catalogo_das_lentes(sessao):
         somas = dict(das_planilhas.get(lente.codigo, {}))
         # A fonte interna entra depois: ela não passa por `score_mes_fonte`.
-        if do_crm and _tem_fonte_interna(sessao, lente.id):
+        if do_crm and lente.tem_fonte_interna:
             somas[FONTE_INTERNA_DO_CRM] = do_crm
         medidas.append(
             medir_lente(
@@ -226,7 +280,7 @@ def medir_lentes(sessao: Session, mes: date, calibracao: Calibracao) -> list[Len
                 somas_por_fonte=somas,
                 calibracao=calibracao,
                 estimativa=estimativas.get(lente.codigo),
-                fontes_cadastradas=_codigos_das_fontes(sessao, lente.id),
+                fontes_cadastradas=lente.fontes,
             )
         )
     return medidas
@@ -248,16 +302,17 @@ def _codigos_das_fontes(sessao: Session, lente_id: int) -> tuple[str, ...]:
 
 
 def _tem_fonte_interna(sessao: Session, lente_id: int) -> bool:
-    return sessao.scalar(
-        select(func.count())
-        .select_from(ScoreFonte)
-        .where(ScoreFonte.lente_id == lente_id, ScoreFonte.interna.is_(True))
-    ) > 0
+    return (
+        sessao.scalar(
+            select(func.count())
+            .select_from(ScoreFonte)
+            .where(ScoreFonte.lente_id == lente_id, ScoreFonte.interna.is_(True))
+        )
+        > 0
+    )
 
 
-def _somas_da_lente(
-    sessao: Session, lente_id: int, mes: date
-) -> dict[str, list[SomasDaFonte]]:
+def _somas_da_lente(sessao: Session, lente_id: int, mes: date) -> dict[str, list[SomasDaFonte]]:
     """As somas de uma lente, por fonte — incluindo a interna."""
     lente = sessao.get(Lente, lente_id)
     das_planilhas = _somas_das_planilhas(sessao, primeiro_dia(mes)).get(
@@ -306,11 +361,13 @@ def fontes_da_lente(
         select(ScoreFonte).where(ScoreFonte.lente_id == lente_id).order_by(ScoreFonte.ordem)
     ):
         linhas = somas.get(fonte.codigo, [])
-        saida.append((
-            fonte,
-            ns(ponderar(linhas, calibracao)) if linhas else None,
-            int(sum(linha.mencoes for linha in linhas)),
-        ))
+        saida.append(
+            (
+                fonte,
+                ns(ponderar(linhas, calibracao)) if linhas else None,
+                int(sum(linha.mencoes for linha in linhas)),
+            )
+        )
     return saida
 
 
@@ -362,18 +419,21 @@ def temas_da_lente(
         # marcado" —, com centenas de menções neutras e nenhuma positiva ou
         # negativa. Ordenar por volume encheria "Drivers e riscos" com cinco
         # barras vazias e esconderia Falta de Água.
-        .having(
-            func.count().filter(Mencao.sentimento.in_(("pos", "neg"))) > 0
-        )
+        .having(func.count().filter(Mencao.sentimento.in_(("pos", "neg"))) > 0)
         .order_by(func.count().filter(Mencao.sentimento.in_(("pos", "neg"))).desc())
         .limit(quantos)
     )
     return [(nome, pos, neg, tipo) for nome, pos, neg, tipo in sessao.execute(consulta)]
 
 
-def indice_do_mes(sessao: Session, mes: date, calibracao: Calibracao) -> Indice:
+def indice_do_mes(
+    sessao: Session,
+    mes: date,
+    calibracao: Calibracao,
+    catalogo: list[LenteNoCadastro] | None = None,
+) -> Indice:
     return calcular_indice(
-        f"{primeiro_dia(mes):%Y-%m}", medir_lentes(sessao, mes, calibracao)
+        f"{primeiro_dia(mes):%Y-%m}", medir_lentes(sessao, mes, calibracao, catalogo)
     )
 
 

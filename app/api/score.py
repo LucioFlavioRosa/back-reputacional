@@ -431,7 +431,11 @@ def serie(sessao: Sessao, usuario: UsuarioLogado) -> list[PontoDaSerie]:
     """
     calibracao = repositorio_score.calibracao_vigente(sessao)
     meses = repositorio_score.meses_com_dado(sessao)
-    nomes = {lente.codigo: lente.nome for lente in repositorio_score.lentes_cadastradas(sessao)}
+    # O CADASTRO ATRAVESSA A SÉRIE INTEIRA. Relê-lo a cada mês somava consultas
+    # por ponto, todas com a mesma resposta — e a conta piorava a cada mês
+    # ingerido, que é o que vai acontecer todo mês.
+    catalogo = repositorio_score.catalogo_das_lentes(sessao)
+    nomes = {lente.codigo: lente.nome for lente in catalogo}
     # UMA CONSULTA PARA O PERÍODO INTEIRO, e não uma por mês: a série já faz
     # uma medição por mês, e somar a isso uma ida ao banco por coluna faria a
     # tela mais cara a cada mês ingerido.
@@ -447,7 +451,7 @@ def serie(sessao: Sessao, usuario: UsuarioLogado) -> list[PontoDaSerie]:
     anterior: dict[str, int] = {}
     isr_anterior: int | None = None
     for mes in meses:
-        indice = repositorio_score.indice_do_mes(sessao, mes, calibracao)
+        indice = repositorio_score.indice_do_mes(sessao, mes, calibracao, catalogo)
         notas = {lente.codigo: lente.score for lente in indice.lentes if lente.score is not None}
         fato = fatos.get(indice.mes)
         pontos.append(

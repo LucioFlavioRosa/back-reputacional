@@ -382,3 +382,22 @@ def test_o_cargo_pesa_a_voz_de_quem_postou():
     assert peso_do_cargo("Vereador") == 2
     assert peso_do_cargo("cidadão") == 1
     assert peso_do_cargo(None) == 1
+
+
+def test_o_cadastro_das_lentes_nao_se_relê_a_cada_mês():
+    """A série media o cadastro uma vez POR MÊS, e ele não muda entre meses.
+
+    Com dez meses eram 147 consultas, das quais 110 repetiam a mesma pergunta —
+    quais lentes existem, que fontes cada uma tem, qual delas é interna. A conta
+    piorava a cada mês ingerido, que é o que acontece todo mês.
+
+    ESTE TESTE TRAVA A FORMA, e não o número: `medir_lentes` precisa ACEITAR um
+    catálogo pronto, senão o conserto se desfaz no próximo refactor sem ninguém
+    perceber — o endpoint continuaria correto e só ficaria lento.
+    """
+    import inspect
+
+    from app.banco import repositorio_score
+
+    assert "catalogo" in inspect.signature(repositorio_score.medir_lentes).parameters
+    assert "catalogo" in inspect.signature(repositorio_score.indice_do_mes).parameters

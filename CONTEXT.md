@@ -65,6 +65,13 @@ _Avoid_: status (só no nome interno)
 O tier (1 a 4) da INSTITUIÇÃO, que a interação herda ao ser registrada.
 _Avoid_: tier (só no nome interno), prioridade (é campo do legislativo)
 
+⚠ NÃO CONFUNDIR COM **Tier do veículo**, do Score (ver abaixo). São dois
+números diferentes, com o mesmo nome no banco: `instituicao.tier` e
+`interacao.tier` são `smallint` com FK para `relevancia` e valem para o CRM;
+`mencao.tier` e `score_mes_fonte.tier` são texto (`muito_relevante` |
+`relevante` | `menos_relevante`) e valem para o índice. Um `join` entre os dois
+casaria uma capa do Valor com um nível de relevância de instituição.
+
 **Consulta recebida**:
 Um questionário que chegou de fora — de um banco, de um investidor, de uma
 plataforma de rating — perguntando sobre assunto que a companhia não
@@ -149,3 +156,86 @@ de negócio, climas…). Os ABERTOS a coordenação edita na Administração; os
 FECHADOS são estrutura do modelo e mudam por código.
 _Avoid_: enum, lista fixa, catálogo (o catálogo é o conjunto que o front
 carrega)
+
+### O Score Executivo
+
+A segunda leitura do painel: enquanto a Base conta interações, o Score lê o que
+se fala da companhia e devolve uma nota por mês. Vocabulário próprio, e alguns
+nomes colidem com os de cima — onde colidem, está dito.
+
+**Índice de Saúde Reputacional (ISR)**:
+A nota de 0 a 100 da companhia no mês: a média das cinco lentes, ponderada
+pelos pesos da calibração. É o número que a diretoria cita, e por isso não se
+recalcula no navegador — ele vem pronto do servidor, com a régua gravada.
+_Avoid_: score (é a nota de UMA lente), índice de reputação, nota geral
+
+**Lente**:
+Uma das cinco famílias de stakeholder pelas quais a reputação é lida —
+Imprensa, Mercado, Sociedade digital, Clientes, Institucional. É fechada: uma
+lente nova é mudança de modelo, não de cadastro.
+_Avoid_: dimensão, eixo, pilar, categoria
+
+**Fonte**:
+De onde as menções de uma lente vêm — um fornecedor (Clipei, Approach, Bites)
+ou o próprio CRM, que é a fonte INTERNA da lente Institucional. Desligar uma
+fonte tira o dado dela do cálculo sem apagar o histórico.
+_Avoid_: fornecedor (é quem entrega, e uma entrega pode virar duas fontes),
+provedor, origem (origem é da ficha de procedência)
+
+**Menção**:
+Uma publicação, post ou mensagem individual que a ingestão gravou, com
+sentimento, tema e — quando a fonte classifica — tier do veículo. É a linha
+que o Score conta, como a interação é a linha da Base.
+_Avoid_: matéria (é só de imprensa), post, citação
+
+**Tier do veículo**:
+Quanto uma matéria vale pelo porte de quem a publicou: `muito_relevante`,
+`relevante`, `menos_relevante`. Hoje só as duas fontes de clipping o
+classificam (Imprensa e Mercado); onde não há tier, a menção vale 1. A coluna
+existe em TODA menção — a limitação é de dado, não de modelo.
+_Avoid_: relevância (essa é a da instituição, no CRM — ver acima), peso (peso é
+da lente), importância
+
+**Régua**:
+Como cada menção é convertida em número: a régua de TIER (quanto vale a
+matéria pelo veículo) e a de ENGAJAMENTO (o que se soma de cada menção de
+rede). Mudar uma régua recalcula todos os meses — é o que mantém a curva
+comparável.
+_Avoid_: fórmula (a fórmula é o NS), critério, modelo
+
+**Peso**, **Peso efetivo**:
+Quanto uma lente vale no ISR. O peso é o número gravado na calibração; o
+EFETIVO é o que ele valeu de fato depois de as lentes sem dado saírem do
+denominador — com uma lente fora, 30 de 70 valem 43%. A tela mostra os dois.
+_Avoid_: participação, share
+
+**Faixa**:
+Em que território a nota caiu: Crítico (<40), Atenção (40–54), Estável
+(55–69), Sólido (70–84), Referência (≥85). Vale para o ISR e para a nota de
+cada lente.
+_Avoid_: nível, status, classificação
+
+**Calibração**:
+A régua em vigor, versionada com autor e data: pesos, réguas, fontes
+desligadas, os limites dos detectores e o desenho do radial. É configuração da
+ORGANIZAÇÃO, e não preferência de quem olha — mudar ali muda o número que todo
+mundo lê. A tabela só cresce; nada se apaga.
+_Avoid_: configuração, ajustes, preferências
+
+**Sinal**:
+Uma frase que um detector escreveu a partir dos dados da lente — "o negativo
+subiu de 10% em julho para 23% em agosto". NÃO é texto salvo: recalcula-se a
+cada leitura, por regra determinística, sem LLM.
+_Avoid_: insight, destaque, análise, comentário
+
+**Lacuna de dado**:
+Um sinal que diz o que FALTA, e não o que aconteceu: mês sem base, mês sem
+sentimento integrado, lente sem série. Vai sempre no fim da lista e não disputa
+as vagas dos sinais reais.
+_Avoid_: gap, pendência, alerta
+
+**Mês parcial**:
+Um mês medido por menos de quatro lentes. O ISR dele é legítimo pela fórmula e
+ENGANOSO na curva — é o score de uma lente desenhado como se fosse o da
+companhia. Ele aparece no gráfico, marcado, mas não rege a escala do eixo.
+_Avoid_: mês incompleto (o nome interno), mês vazio (esse não tem dado nenhum)
