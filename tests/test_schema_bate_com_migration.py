@@ -143,14 +143,13 @@ def colunas_do_ddl() -> dict[str, set[str]]:
 def _colunas_do_sql(sql: str) -> dict[str, set[str]]:
     """Extrai tabela -> colunas, APLICANDO as operações em ordem.
 
-    O baseline atual define cada objeto uma vez, com `create table`, e não usa
-    `alter table` nem `drop table`. O parser trata os três mesmo assim, e isso
-    NÃO é código morto: a próxima migration que alguém escrever provavelmente
-    acrescenta coluna a uma tabela existente, e um parser que só lê
-    `create table` acusaria divergência num schema correto.
+    O baseline define cada objeto uma vez, com `create table`; a partir da 0050
+    há `alter table add column`, e o parser tem de aplicá-lo — sem isso ele
+    acusaria divergência num schema correto, porque o ORM conhece a coluna e o
+    retrato não.
 
-    Quem exercita esse caminho é `test_o_parser_aplica_alter_e_drop`, com SQL
-    próprio — as migrations reais não o alcançam.
+    `drop table` e `drop column` continuam sem uso nas migrations reais. Quem
+    os exercita é `test_o_parser_aplica_alter_e_drop`, com SQL próprio.
     """
     # Tira os comentários de linha para não confundir o parser.
     sql = re.sub(r"--[^\n]*", "", sql)

@@ -972,7 +972,7 @@ def obter_dossie(
         alvo,
         meses,
         calibracao,
-        limites=Limites(),
+        limites=Limites.a_partir_de(calibracao.limites),
         nome_do_painel_a=paineis[0].titulo,
         nome_do_painel_b=paineis[1].titulo,
     )

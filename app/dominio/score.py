@@ -78,9 +78,13 @@ FAIXAS: tuple[tuple[int, str, str], ...] = (
 #: O peso do cargo de quem postou (§3, régua `cargo`). Aplicado na INGESTÃO,
 #: e não aqui: o que chega em `score_mes_fonte` já é a soma.
 PESO_DO_CARGO: dict[str, float] = {
-    "presidente": 5, "ministro": 5, "governador": 5,
-    "senador": 4, "deputado_federal": 4,
-    "deputado_estadual": 3, "prefeito": 3,
+    "presidente": 5,
+    "ministro": 5,
+    "governador": 5,
+    "senador": 4,
+    "deputado_federal": 4,
+    "deputado_estadual": 3,
+    "prefeito": 3,
     "vereador": 2,
 }
 PESO_DE_CARGO_PADRAO = 1.0
@@ -156,13 +160,14 @@ class Calibracao:
     regua_tier: str = "aegea"
     regua_engajamento: str = "n"
     fontes_desligadas: frozenset[str] = frozenset()
+    #: Os cortes dos detectores de sinal, só os que foram ajustados. O que não
+    #: está aqui vale o padrão de fábrica — ver `dominio/sinais_da_lente`.
+    limites: dict[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.regua_tier not in REGUAS_DE_TIER:
             validas = ", ".join(sorted(REGUAS_DE_TIER))
-            raise RegraViolada(
-                f"Régua de tier inválida: {self.regua_tier!r}. Use {validas}."
-            )
+            raise RegraViolada(f"Régua de tier inválida: {self.regua_tier!r}. Use {validas}.")
         if self.regua_engajamento not in REGUAS_DE_ENGAJAMENTO:
             validas = ", ".join(sorted(REGUAS_DE_ENGAJAMENTO))
             raise RegraViolada(
@@ -170,9 +175,7 @@ class Calibracao:
             )
         for lente, peso in self.pesos.items():
             if not 0 <= peso <= 60:
-                raise RegraViolada(
-                    f"Peso da lente {lente!r} fora da faixa: {peso}. Use de 0 a 60."
-                )
+                raise RegraViolada(f"Peso da lente {lente!r} fora da faixa: {peso}. Use de 0 a 60.")
 
     def ligada(self, fonte: str) -> bool:
         return fonte not in self.fontes_desligadas
@@ -263,11 +266,7 @@ def medir_lente(
     A ESTIMATIVA SÓ ENTRA ONDE NÃO HÁ MEDIÇÃO. Havendo contagem, ela é
     ignorada: medido ganha de suposto, sempre.
     """
-    ligadas = {
-        fonte: somas
-        for fonte, somas in somas_por_fonte.items()
-        if calibracao.ligada(fonte)
-    }
+    ligadas = {fonte: somas for fonte, somas in somas_por_fonte.items() if calibracao.ligada(fonte)}
     # DESLIGAR TODAS AS FONTES É DIFERENTE DE NÃO TER NENHUMA. Quem desligou
     # fez isso de propósito, e cair na estimativa devolveria pela porta dos
     # fundos justamente o número que a pessoa tirou do cálculo. Já a lente que
@@ -282,7 +281,11 @@ def medir_lente(
     cadastradas = fontes_cadastradas or tuple(somas_por_fonte)
     if cadastradas and not any(calibracao.ligada(fonte) for fonte in cadastradas):
         return LenteMedida(
-            codigo=codigo, nome=nome, peso=peso, ns=None, score=None,
+            codigo=codigo,
+            nome=nome,
+            peso=peso,
+            ns=None,
+            score=None,
             ausencia="todas as fontes desta lente estão desligadas",
         )
 
@@ -297,18 +300,30 @@ def medir_lente(
     if valores:
         media = sum(valores) / len(valores)
         return LenteMedida(
-            codigo=codigo, nome=nome, peso=peso, ns=media,
-            score=para_score(media), fontes=tuple(com_dado),
+            codigo=codigo,
+            nome=nome,
+            peso=peso,
+            ns=media,
+            score=para_score(media),
+            fontes=tuple(com_dado),
         )
 
     if estimativa is not None:
         return LenteMedida(
-            codigo=codigo, nome=nome, peso=peso, ns=estimativa,
-            score=para_score(estimativa), estimado=True,
+            codigo=codigo,
+            nome=nome,
+            peso=peso,
+            ns=estimativa,
+            score=para_score(estimativa),
+            estimado=True,
         )
 
     return LenteMedida(
-        codigo=codigo, nome=nome, peso=peso, ns=None, score=None,
+        codigo=codigo,
+        nome=nome,
+        peso=peso,
+        ns=None,
+        score=None,
         ausencia="sem menção classificada neste mês",
     )
 
@@ -345,7 +360,9 @@ def calcular_indice(mes: str, lentes: list[LenteMedida]) -> Indice:
 
     if not com_dado or soma_dos_pesos == 0:
         return Indice(
-            mes=mes, isr=None, faixa="Sem dado",
+            mes=mes,
+            isr=None,
+            faixa="Sem dado",
             leitura_da_faixa="nenhuma lente foi medida neste mês",
             lentes=tuple(lentes),
         )
@@ -354,6 +371,4 @@ def calcular_indice(mes: str, lentes: list[LenteMedida]) -> Indice:
         sum(lente.score * lente.peso for lente in com_dado) / soma_dos_pesos  # type: ignore[operator]
     )
     rotulo, leitura = faixa_de(isr)
-    return Indice(
-        mes=mes, isr=isr, faixa=rotulo, leitura_da_faixa=leitura, lentes=tuple(lentes)
-    )
+    return Indice(mes=mes, isr=isr, faixa=rotulo, leitura_da_faixa=leitura, lentes=tuple(lentes))

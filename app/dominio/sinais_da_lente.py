@@ -24,12 +24,13 @@ números e devolve frases, e é essa fronteira que o torna testável linha a lin
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
-from dataclasses import dataclass, field, replace
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, fields, replace
 from datetime import date
 from enum import StrEnum
 
 from app.dominio import frases_de_sinais as frases
+from app.dominio.erros import RegraViolada
 from app.dominio.lentes import prioridade_do_jornalista
 
 
@@ -77,6 +78,57 @@ class Limites:
     concentracao_razao: float = 3
     concentracao_top3: float = 50
     max_sinais: int = 5
+
+    def __post_init__(self) -> None:
+        """Todo corte é DIVISOR de alguma intensidade.
+
+        Um zero gravado na Calibração não daria erro na tela de calibração: ele
+        estouraria, horas depois, na tela de outra pessoa abrindo uma lente. A
+        recusa tem de vir aqui, no momento de montar a régua.
+        """
+        for nome in (
+            "pico_desvios",
+            "pico_razao_minima",
+            "virada_pontos",
+            "deslocamento_pp",
+            "concentracao_razao",
+        ):
+            if getattr(self, nome) <= 0:
+                raise RegraViolada(
+                    f"Limite {nome!r} tem de ser maior que zero: {getattr(self, nome)}."
+                )
+        if self.tendencia_meses < 2:
+            raise RegraViolada(
+                "Uma tendência precisa de pelo menos dois meses para existir: "
+                f"{self.tendencia_meses}."
+            )
+        if not 0 < self.concentracao_top3 <= 100:
+            raise RegraViolada(
+                f"A concentração do topo é uma porcentagem entre 1 e 100: {self.concentracao_top3}."
+            )
+        if self.max_sinais < 1:
+            raise RegraViolada(f"A lista precisa caber ao menos um sinal: {self.max_sinais}.")
+
+    @classmethod
+    def a_partir_de(cls, ajustados: Mapping[str, float]) -> Limites:
+        """A régua da Calibração, com o padrão de fábrica no que não foi mexido.
+
+        CHAVE DESCONHECIDA É RECUSADA, e não ignorada: um `picoDesvios` escrito
+        em camelCase seria aceito em silêncio, a pessoa veria "salvo" e o limite
+        continuaria o de fábrica — e ela passaria a semana achando que o
+        detector está errado.
+        """
+        campos = {campo.name for campo in fields(cls)}
+        desconhecidos = sorted(set(ajustados) - campos)
+        if desconhecidos:
+            raise RegraViolada(f"Limite desconhecido: {', '.join(desconhecidos)}.")
+        inteiros = {"virada_pontos", "tendencia_meses", "max_sinais"}
+        return cls(
+            **{
+                nome: int(valor) if nome in inteiros else float(valor)
+                for nome, valor in ajustados.items()
+            }
+        )
 
 
 @dataclass(frozen=True, slots=True)

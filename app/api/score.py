@@ -44,6 +44,7 @@ from app.dominio.score import (
     ns,
     para_score,
 )
+from app.dominio.sinais_da_lente import Limites
 
 rotas = APIRouter(
     prefix="/api/score",
@@ -82,11 +83,30 @@ class FatoSaida(BaseModel):
     efeito: str
 
 
+class LimiteSaida(BaseModel):
+    """Um corte de detector, com o que a tela precisa para desenhar o campo."""
+
+    chave: str
+    rotulo: str
+    #: O que muda quando este número muda, em uma frase.
+    explicacao: str
+    valor: float
+    padrao: float
+    #: `decimal` aceita vírgula; `inteiro` não — "3,5 meses seguidos" não
+    #: significa nada, e um campo que aceita o valor convida a digitá-lo.
+    formato: str
+    unidade: str | None = None
+
+
 class CalibracaoSaida(BaseModel):
     pesos: dict[str, int]
     regua_tier: str
     regua_engajamento: str
     fontes_desligadas: list[str]
+    #: OS OITO, sempre — os ajustados e os de fábrica. Mandar só o que foi
+    #: mexido faria a tela ter de conhecer os padrões, e eles passariam a viver
+    #: em dois lugares.
+    limites: list[LimiteSaida] = Field(default_factory=list)
     #: Verdadeiro quando a régua é a de fábrica — a tela mostra o chip
     #: "calibração ajustada" quando falso.
     padrao: bool
@@ -126,9 +146,92 @@ def _mes_de(texto: str) -> date:
         ano, mes = texto.split("-")
         return date(int(ano), int(mes), 1)
     except (ValueError, TypeError) as erro:
-        raise RegraViolada(
-            f"Mês inválido: {texto!r}. Use o formato AAAA-MM."
-        ) from erro
+        raise RegraViolada(f"Mês inválido: {texto!r}. Use o formato AAAA-MM.") from erro
+
+
+#: Como cada limite se apresenta na Calibração, na ordem em que se lê: dos
+#: cortes da série mensal para os da composição, e por fim o tamanho da lista.
+LIMITES_DOS_SINAIS: tuple[tuple[str, str, str, str, str | None], ...] = (
+    (
+        "pico_desvios",
+        "Pico · desvios",
+        "Quantos desvios-padrão acima da média um mês precisa ter para virar pico.",
+        "decimal",
+        "desvios",
+    ),
+    (
+        "pico_razao_minima",
+        "Pico · razão mínima",
+        "E quantas vezes a média ele precisa ser — as duas condições valem juntas.",
+        "decimal",
+        "× a média",
+    ),
+    (
+        "virada_pontos",
+        "Virada · pontos de nota",
+        "Quantos pontos a nota precisa andar de um mês para o outro.",
+        "inteiro",
+        "pontos",
+    ),
+    (
+        "deslocamento_pp",
+        "Deslocamento · pontos percentuais",
+        "Quanto a fatia negativa precisa recuar, ou subir, para virar sinal.",
+        "decimal",
+        "p.p.",
+    ),
+    (
+        "tendencia_meses",
+        "Tendência · meses seguidos",
+        "Quantos meses na mesma direção formam uma tendência.",
+        "inteiro",
+        "meses",
+    ),
+    (
+        "concentracao_razao",
+        "Concentração · razão",
+        "Quantas vezes o primeiro colocado precisa valer o segundo.",
+        "decimal",
+        "×",
+    ),
+    (
+        "concentracao_top3",
+        "Concentração · topo",
+        "Quanto do volume os três primeiros precisam somar, quando a razão não dispara.",
+        "decimal",
+        "%",
+    ),
+    (
+        "max_sinais",
+        "Sinais na lista",
+        "Quantos sinais o bloco do fim da lente mostra. As lacunas não ocupam vaga.",
+        "inteiro",
+        None,
+    ),
+)
+
+
+def _limites_saida(calibracao: Calibracao) -> list[LimiteSaida]:
+    """Os oito, com o valor em vigor e o de fábrica ao lado.
+
+    O PADRÃO VIAJA JUNTO porque é a única forma de a tela oferecer "voltar ao
+    de fábrica" sem guardar uma segunda cópia dos números — que envelheceria na
+    primeira vez que alguém mudasse um padrão no código.
+    """
+    padrao = Limites()
+    vigente = Limites.a_partir_de(calibracao.limites)
+    return [
+        LimiteSaida(
+            chave=chave,
+            rotulo=rotulo,
+            explicacao=explicacao,
+            valor=getattr(vigente, chave),
+            padrao=getattr(padrao, chave),
+            formato=formato,
+            unidade=unidade,
+        )
+        for chave, rotulo, explicacao, formato, unidade in LIMITES_DOS_SINAIS
+    ]
 
 
 def _calibracao_saida(sessao, calibracao: Calibracao) -> CalibracaoSaida:
@@ -138,11 +241,13 @@ def _calibracao_saida(sessao, calibracao: Calibracao) -> CalibracaoSaida:
         regua_tier=calibracao.regua_tier,
         regua_engajamento=calibracao.regua_engajamento,
         fontes_desligadas=sorted(calibracao.fontes_desligadas),
+        limites=_limites_saida(calibracao),
         padrao=(
             calibracao.pesos == padrao
             and calibracao.regua_tier == "aegea"
             and calibracao.regua_engajamento == "n"
             and not calibracao.fontes_desligadas
+            and not calibracao.limites
         ),
     )
 
@@ -183,15 +288,10 @@ def obter(
     calibracao = repositorio_score.calibracao_vigente(sessao)
 
     indice = repositorio_score.indice_do_mes(sessao, alvo, calibracao)
-    anterior = repositorio_score.indice_do_mes(
-        sessao, _mes_anterior(alvo), calibracao
-    )
+    anterior = repositorio_score.indice_do_mes(sessao, _mes_anterior(alvo), calibracao)
 
     meses = repositorio_score.meses_com_dado(sessao)
-    primeiro = (
-        repositorio_score.indice_do_mes(sessao, meses[0], calibracao)
-        if meses else indice
-    )
+    primeiro = repositorio_score.indice_do_mes(sessao, meses[0], calibracao) if meses else indice
 
     scores_anteriores = {lente.codigo: lente.score for lente in anterior.lentes}
     efetivos = _pesos_efetivos(indice)
@@ -248,9 +348,7 @@ def _pesos_efetivos(indice: Indice) -> dict[str, int]:
 
     # Empate na fração desempata pelo código: duas lentes igualmente
     # prejudicadas precisam de uma ordem, e qualquer uma estável serve.
-    por_fracao = sorted(
-        exatos, key=lambda codigo: (-(exatos[codigo] - inteiros[codigo]), codigo)
-    )
+    por_fracao = sorted(exatos, key=lambda codigo: (-(exatos[codigo] - inteiros[codigo]), codigo))
     for codigo in por_fracao[:sobra]:
         inteiros[codigo] += 1
     return inteiros
@@ -265,7 +363,8 @@ def _delta(atual: int | None, anterior: int | None) -> int | None:
 
 def _mes_anterior(mes: date) -> date:
     return (
-        mes.replace(year=mes.year - 1, month=12) if mes.month == 1
+        mes.replace(year=mes.year - 1, month=12)
+        if mes.month == 1
         else mes.replace(month=mes.month - 1)
     )
 
@@ -275,8 +374,7 @@ def _fatos_do_mes(sessao, mes: date) -> list[FatoSaida]:
         select(ScoreFato).where(ScoreFato.mes == mes).order_by(ScoreFato.criado_em)
     )
     return [
-        FatoSaida(id=f.id, mes=f"{f.mes:%Y-%m}", texto=f.texto, efeito=f.efeito)
-        for f in registros
+        FatoSaida(id=f.id, mes=f"{f.mes:%Y-%m}", texto=f.texto, efeito=f.efeito) for f in registros
     ]
 
 
@@ -297,9 +395,7 @@ def serie(sessao: Sessao, usuario: UsuarioLogado) -> list[PontoDaSerie]:
                 mes=indice.mes,
                 isr=indice.isr,
                 lentes=len(indice.lentes_no_calculo),
-                tem_estimativa=any(
-                    lente.estimado for lente in indice.lentes_no_calculo
-                ),
+                tem_estimativa=any(lente.estimado for lente in indice.lentes_no_calculo),
             )
         )
     return pontos
@@ -361,11 +457,7 @@ def listar_fontes(
 
 def _meses_distintos(sessao, fonte_id: int) -> int:
     return len(
-        set(
-            sessao.scalars(
-                select(ScoreMesFonte.mes).where(ScoreMesFonte.fonte_id == fonte_id)
-            )
-        )
+        set(sessao.scalars(select(ScoreMesFonte.mes).where(ScoreMesFonte.fonte_id == fonte_id)))
     )
 
 
@@ -430,16 +522,13 @@ def obter_lente(
         raise NaoEncontrado(f"Lente {codigo!r} não existe.")
 
     medida = next(
-        (m for m in repositorio_score.medir_lentes(sessao, alvo, calibracao)
-         if m.codigo == codigo),
+        (m for m in repositorio_score.medir_lentes(sessao, alvo, calibracao) if m.codigo == codigo),
         None,
     )
     if medida is None:  # pragma: no cover - `medir_lentes` cobre as ativas
         raise NaoEncontrado(f"Lente {codigo!r} não está ativa.")
 
-    composicao = repositorio_score.composicao_da_lente(
-        sessao, lente.id, alvo, calibracao
-    )
+    composicao = repositorio_score.composicao_da_lente(sessao, lente.id, alvo, calibracao)
     return LenteDetalheSaida(
         codigo=lente.codigo,
         nome=lente.nome,
@@ -457,7 +546,10 @@ def obter_lente(
         formula=_formula(lente.codigo, calibracao),
         fontes=[
             FonteDaLenteSaida(
-                codigo=fonte.codigo, nome=fonte.nome, ns=ns_da_fonte, mencoes=mencoes,
+                codigo=fonte.codigo,
+                nome=fonte.nome,
+                ns=ns_da_fonte,
+                mencoes=mencoes,
                 ligada=calibracao.ligada(fonte.codigo),
             )
             for fonte, ns_da_fonte, mencoes in repositorio_score.fontes_da_lente(
@@ -509,6 +601,10 @@ class CalibracaoEntrada(BaseModel):
     regua_tier: str = "aegea"
     regua_engajamento: str = "n"
     fontes_desligadas: list[str] = Field(default_factory=list)
+    #: SÓ O QUE FOI MEXIDO. Gravar os oito sempre faria toda régua parecer
+    #: ajustada, e "voltar ao padrão" deixaria de ser distinguível de "gravei
+    #: os mesmos números".
+    limites: dict[str, float] = Field(default_factory=dict)
 
 
 @rotas.get("/calibracao")
@@ -532,13 +628,15 @@ def gravar_calibracao(
         regua_tier=entrada.regua_tier,
         regua_engajamento=entrada.regua_engajamento,
         fontes_desligadas=frozenset(entrada.fontes_desligadas),
+        limites=entrada.limites,
     )
+    # RECUSA ANTES DE GRAVAR: um limite zerado não daria erro aqui, daria horas
+    # depois, na tela de outra pessoa abrindo uma lente.
+    Limites.a_partir_de(entrada.limites)
     conhecidas = {fonte.codigo for fonte in repositorio_score.fontes_cadastradas(sessao)}
     desconhecidas = sorted(calibracao.fontes_desligadas - conhecidas)
     if desconhecidas:
-        raise RegraViolada(
-            f"Fonte não cadastrada: {', '.join(desconhecidas)}."
-        )
+        raise RegraViolada(f"Fonte não cadastrada: {', '.join(desconhecidas)}.")
     conhecidas_lentes = set(repositorio_score.pesos_padrao(sessao))
     fora = sorted(set(entrada.pesos) - conhecidas_lentes)
     if fora:
@@ -550,6 +648,7 @@ def gravar_calibracao(
             regua_tier=entrada.regua_tier,
             regua_engajamento=entrada.regua_engajamento,
             fontes_desligadas=sorted(entrada.fontes_desligadas),
+            limites=entrada.limites,
             criado_por=usuario.id,
         )
     )
@@ -558,10 +657,8 @@ def gravar_calibracao(
 
 
 @rotas.delete("/calibracao", status_code=status.HTTP_201_CREATED)
-def restaurar_padrao(
-    sessao: Sessao, usuario: UsuarioQueAdministraCadastros
-) -> CalibracaoSaida:
-    """"Restaurar padrão" (§3): grava uma versão com a régua de fábrica.
+def restaurar_padrao(sessao: Sessao, usuario: UsuarioQueAdministraCadastros) -> CalibracaoSaida:
+    """ "Restaurar padrão" (§3): grava uma versão com a régua de fábrica.
 
     Não apaga o histórico — volta ao padrão gravando, que é como se desfaz
     numa tabela que só cresce.
@@ -596,9 +693,7 @@ def criar_fato(
 ) -> FatoSaida:
     """O que explica a curva — "caiu em março porque saíram as DFs"."""
     if entrada.efeito not in EFEITOS:
-        raise RegraViolada(
-            f"Efeito inválido: {entrada.efeito!r}. Use {', '.join(EFEITOS)}."
-        )
+        raise RegraViolada(f"Efeito inválido: {entrada.efeito!r}. Use {', '.join(EFEITOS)}.")
     registro = ScoreFato(
         mes=_mes_de(entrada.mes),
         texto=entrada.texto.strip(),
@@ -608,15 +703,15 @@ def criar_fato(
     sessao.add(registro)
     sessao.flush()
     return FatoSaida(
-        id=registro.id, mes=f"{registro.mes:%Y-%m}", texto=registro.texto,
+        id=registro.id,
+        mes=f"{registro.mes:%Y-%m}",
+        texto=registro.texto,
         efeito=registro.efeito,
     )
 
 
 @rotas.delete("/fatos/{id}", status_code=status.HTTP_204_NO_CONTENT)
-def remover_fato(
-    sessao: Sessao, usuario: UsuarioQueAdministraCadastros, id: UUID
-) -> None:
+def remover_fato(sessao: Sessao, usuario: UsuarioQueAdministraCadastros, id: UUID) -> None:
     registro = sessao.get(ScoreFato, id)
     if registro is None:
         raise NaoEncontrado("Fato não encontrado.")
@@ -711,9 +806,7 @@ def drivers(
             ns=round(saldo, 4),
             score=para_score(saldo),
         )
-        for nome, pos, neu, neg in repositorio_score.atributos_do_mes(
-            sessao, alvo, calibracao
-        )
+        for nome, pos, neu, neg in repositorio_score.atributos_do_mes(sessao, alvo, calibracao)
         # `ns` devolve None quando o total é zero — o que não acontece aqui,
         # porque o agrupamento só produz linha com menção. O guarda é para o
         # dia em que a consulta mudar e o zero passar a existir: dividir por

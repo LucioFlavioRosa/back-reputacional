@@ -25,6 +25,7 @@ from datetime import date
 
 import pytest
 
+from app.dominio.erros import RegraViolada
 from app.dominio.sinais_da_lente import (
     TIPO_DE_LACUNA,
     AcaoDeRating,
@@ -1107,3 +1108,89 @@ class TestIdioma:
     def test_a_escala_de_um_a_cinco_sempre_com_uma_casa(self):
         frase = frases_de(TestFrasesDoMercado.SINAIS)
         assert any("(4,0)" in linha for linha in frase)
+
+
+# =============================================================================
+# os limites vêm da Calibração (§5)
+# =============================================================================
+
+
+class TestLimites:
+    def test_o_que_nao_foi_mexido_fica_no_padrao_de_fabrica(self):
+        limites = Limites.a_partir_de({"virada_pontos": 6})
+        assert limites.virada_pontos == 6
+        assert limites.pico_desvios == Limites().pico_desvios
+
+    def test_sem_ajuste_nenhum_e_a_regua_de_fabrica(self):
+        assert Limites.a_partir_de({}) == Limites()
+
+    def test_recusa_uma_chave_que_nao_existe(self):
+        """UM `picoDesvios` EM CAMELCASE SERIA ACEITO EM SILÊNCIO: a pessoa
+        veria "salvo", o limite continuaria o de fábrica, e ela passaria a
+        semana achando que o detector está errado."""
+        with pytest.raises(RegraViolada, match="picoDesvios"):
+            Limites.a_partir_de({"picoDesvios": 2})
+
+    @pytest.mark.parametrize(
+        "chave",
+        [
+            "pico_desvios",
+            "pico_razao_minima",
+            "virada_pontos",
+            "deslocamento_pp",
+            "concentracao_razao",
+        ],
+    )
+    def test_recusa_o_zero_em_todo_corte_que_e_divisor(self, chave):
+        """Um zero gravado não daria erro na tela da Calibração: estouraria
+        horas depois, na tela de outra pessoa abrindo uma lente."""
+        with pytest.raises(RegraViolada, match="maior que zero"):
+            Limites.a_partir_de({chave: 0})
+
+    def test_recusa_uma_tendencia_de_um_mes(self):
+        with pytest.raises(RegraViolada, match="dois meses"):
+            Limites.a_partir_de({"tendencia_meses": 1})
+
+    def test_recusa_uma_concentracao_fora_da_porcentagem(self):
+        with pytest.raises(RegraViolada, match="entre 1 e 100"):
+            Limites.a_partir_de({"concentracao_top3": 140})
+
+    def test_recusa_uma_lista_sem_vaga_nenhuma(self):
+        with pytest.raises(RegraViolada, match="ao menos um sinal"):
+            Limites.a_partir_de({"max_sinais": 0})
+
+    def test_os_meses_chegam_inteiros_mesmo_escritos_com_virgula(self):
+        """ "3,0 meses seguidos" não significa nada, e o JSON pode trazer float
+        de qualquer jeito — o campo da tela não é a única defesa."""
+        assert Limites.a_partir_de({"tendencia_meses": 3.0}).tendencia_meses == 3
+
+    def test_baixar_o_limite_faz_o_sinal_aparecer(self):
+        """O critério da §7: mudar um limite na Calibração altera os sinais sem
+        deploy."""
+        pontos = serie((70, 0, 30), (66, 0, 34))
+        de_fabrica = detectar_na_serie(
+            pontos, unidade="matérias", secao=Secao.EVOLUCAO, limites=Limites()
+        )
+        assert "Virada" not in tipos_de(de_fabrica)
+
+        calibrado = detectar_na_serie(
+            pontos,
+            unidade="matérias",
+            secao=Secao.EVOLUCAO,
+            limites=Limites.a_partir_de({"virada_pontos": 3}),
+        )
+        assert "Virada" in tipos_de(calibrado)
+
+    def test_encurtar_a_lista_corta_os_sinais_mais_fracos(self):
+        sinais = detectar_nos_itens(
+            [Item("Privatização", 5, 5, 90), Item("Patrocínio", 90, 5, 5)],
+            secao=Secao.PAINEL_A,
+        )
+        assert len(sinais) == 2
+        leitura = escolher(
+            sinais,
+            limites=Limites.a_partir_de({"max_sinais": 1}),
+            nome_do_painel_a="A",
+            nome_do_painel_b="B",
+        )
+        assert len(leitura.lista) == 1

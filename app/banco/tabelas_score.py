@@ -92,9 +92,7 @@ class Mencao(Tabela):
     unidade_negocio_id: Mapped[int | None] = mapped_column(
         SmallInteger, ForeignKey("unidade_negocio.id"), nullable=True
     )
-    tema_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("tema.id"), nullable=True
-    )
+    tema_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("tema.id"), nullable=True)
     #: O assunto no vocabulário do FORNECEDOR, que não é o do CRM.
     tema_texto: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: A concessionária como o fornecedor a nomeia — idem.
@@ -142,9 +140,7 @@ class ScoreEstimativa(Tabela):
 
     __tablename__ = "score_estimativa"
 
-    lente_id: Mapped[int] = mapped_column(
-        SmallInteger, ForeignKey("lente.id"), primary_key=True
-    )
+    lente_id: Mapped[int] = mapped_column(SmallInteger, ForeignKey("lente.id"), primary_key=True)
     mes: Mapped[date] = mapped_column(Date, primary_key=True)
     ns: Mapped[float] = mapped_column(Numeric(4, 3))
     #: De onde veio o número — uma estimativa sem procedência é um palpite.
@@ -171,6 +167,11 @@ class ScoreConfig(Tabela):
     regua_tier: Mapped[str] = mapped_column(Text, default="aegea")
     regua_engajamento: Mapped[str] = mapped_column(Text, default="n")
     fontes_desligadas: Mapped[list] = mapped_column(JSONB, default=list)
+    #: Cortes dos detectores de sinal. CHAVE AUSENTE É O PADRÃO DO CÓDIGO, e
+    #: não zero: uma régua gravada antes da 0050 não conhece limite nenhum, e
+    #: zero produziria divisão por zero em todo detector que normaliza pelo
+    #: próprio corte.
+    limites: Mapped[dict] = mapped_column(JSONB, default=dict)
     criado_por: Mapped[uuid.UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("usuario.id"), nullable=True
     )

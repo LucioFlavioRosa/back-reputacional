@@ -83,6 +83,7 @@ def calibracao_vigente(sessao: Session) -> Calibracao:
         regua_tier=registro.regua_tier,
         regua_engajamento=registro.regua_engajamento,
         fontes_desligadas=frozenset(registro.fontes_desligadas or []),
+        limites=dict(registro.limites or {}),
     )
 
 

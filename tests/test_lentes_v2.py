@@ -136,9 +136,7 @@ def test_a_fonte_pode_declarar_os_proprios_teores_nao_acionaveis():
         {"Data": date(2026, 6, 1), "Sentimento": "Neutro", "Motivo": "Não se aplica"},
         outro,
     )
-    dentro = ler_linha(
-        {"Data": date(2026, 6, 1), "Sentimento": "Neutro", "Motivo": "NPR"}, outro
-    )
+    dentro = ler_linha({"Data": date(2026, 6, 1), "Sentimento": "Neutro", "Motivo": "NPR"}, outro)
     assert isinstance(fora, MencaoLida) and fora.acionavel is False
     # `NPR` não está na lista DESTA fonte: para ela, é contato.
     assert isinstance(dentro, MencaoLida) and dentro.acionavel is True
@@ -158,8 +156,6 @@ def test_todo_conteudo_semeado_esta_marcado_como_exemplo(sessao):
         assert all(linha.exemplo for linha in semeadas)
 
 
-
-
 # -- o dossiê: um endpoint, uma tela --------------------------------------------
 
 
@@ -173,9 +169,7 @@ class _QuemOlha:
 def _dossie(sessao, codigo: str, mes: str = "2026-06", *, edita: bool = False):
     from app.api.lentes import obter_dossie
 
-    return obter_dossie(
-        sessao=sessao, usuario=_QuemOlha(edita), codigo=codigo, mes=mes
-    )
+    return obter_dossie(sessao=sessao, usuario=_QuemOlha(edita), codigo=codigo, mes=mes)
 
 
 def test_o_dossie_devolve_a_tela_inteira(sessao):
@@ -231,7 +225,6 @@ def test_a_evolucao_mostra_a_janela_inteira_com_os_buracos(sessao):
     assert len(evolucao.dados) == MESES_DA_EVOLUCAO
     # No banco de teste não há menção nenhuma: todos os meses saem sem base.
     assert all(linha["sem_base"] for linha in evolucao.dados)
-
 
 
 def test_a_lente_inexistente_devolve_nao_encontrado(sessao):
@@ -356,9 +349,7 @@ def test_as_lacunas_de_dado_ficam_no_fim_da_lista(sessao, codigo):
 
 @pytest.mark.parametrize("codigo", LENTES)
 def test_no_maximo_cinco_sinais_reais(sessao, codigo):
-    reais = [
-        sinal for sinal in _dossie(sessao, codigo).sinais if sinal.tipo != "Lacuna de dado"
-    ]
+    reais = [sinal for sinal in _dossie(sessao, codigo).sinais if sinal.tipo != "Lacuna de dado"]
     assert len(reais) <= 5, codigo
 
 
@@ -404,3 +395,86 @@ def test_o_mercado_avisa_que_a_nota_e_um_proxy(sessao):
     sinais = _dossie(sessao, "mercado").sinais
     assert any("proxy dos veículos Tier 1" in sinal.frase for sinal in sinais)
     assert sinais[-1].onde == "Lente"
+
+
+# -- os limites na Calibração ----------------------------------------------------
+
+
+def test_a_calibracao_devolve_os_oito_limites_com_o_padrao_ao_lado(sessao):
+    """O PADRÃO VIAJA JUNTO porque é a única forma de a tela oferecer "voltar
+    ao de fábrica" sem guardar uma segunda cópia dos números — que envelheceria
+    na primeira vez que alguém mudasse um padrão no código."""
+    from app.api.score import LIMITES_DOS_SINAIS, _calibracao_saida
+    from app.banco import repositorio_score
+
+    saida = _calibracao_saida(sessao, repositorio_score.calibracao_vigente(sessao))
+
+    assert [limite.chave for limite in saida.limites] == [chave for chave, *_ in LIMITES_DOS_SINAIS]
+    for limite in saida.limites:
+        assert limite.valor == limite.padrao
+        assert limite.rotulo and limite.explicacao
+        assert limite.formato in {"decimal", "inteiro"}
+
+
+def test_o_limite_gravado_chega_ao_detector(sessao):
+    """O critério da §7: mudar um limite na Calibração altera os sinais sem
+    deploy. O que este teste prova é o CAMINHO — que o número gravado em
+    `score_config` é o mesmo que o detector lê —, e não a regra em si, que os
+    testes do domínio cobrem um a um."""
+    from app.banco.tabelas_lentes import JornalistaMatriz
+    from app.banco.tabelas_score import ScoreConfig
+
+    sessao.add(
+        JornalistaMatriz(
+            nome="Zulmira Teste",
+            veiculo="Diário do Teste",
+            relevancia=5,
+            exposicao=5,
+            proximidade=1,
+            exemplo=True,
+        )
+    )
+    # A SEGUNDA É P1, e é ela que faz o detector de prioridade falar: com um
+    # sinal só na matriz, encurtar a lista não provaria nada.
+    sessao.add(
+        JornalistaMatriz(
+            nome="Aurélia Teste",
+            veiculo="Gazeta do Teste",
+            relevancia=5,
+            exposicao=5,
+            proximidade=5,
+            exemplo=True,
+        )
+    )
+    sessao.flush()
+
+    antes = [
+        sinal for sinal in _dossie(sessao, "imprensa").sinais if sinal.tipo != "Lacuna de dado"
+    ]
+    assert len(antes) == 2, [sinal.tipo for sinal in antes]
+
+    sessao.add(ScoreConfig(limites={"max_sinais": 1}))
+    sessao.flush()
+
+    depois = [
+        sinal for sinal in _dossie(sessao, "imprensa").sinais if sinal.tipo != "Lacuna de dado"
+    ]
+    assert len(depois) == 1
+
+
+def test_um_limite_zerado_e_recusado_antes_de_gravar(sessao):
+    """Ele não daria erro na tela da Calibração: estouraria horas depois, na
+    tela de outra pessoa abrindo uma lente."""
+    from app.api.score import CalibracaoEntrada, gravar_calibracao
+    from app.dominio.erros import RegraViolada
+
+    @dataclass
+    class _QuemEdita:
+        id: None = None
+
+    with pytest.raises(RegraViolada, match="maior que zero"):
+        gravar_calibracao(
+            sessao=sessao,
+            usuario=_QuemEdita(),
+            entrada=CalibracaoEntrada(limites={"pico_desvios": 0}),
+        )
