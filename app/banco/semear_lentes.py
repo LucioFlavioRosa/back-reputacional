@@ -146,7 +146,7 @@ PERSPECTIVA_POR_NOTA = {"B2": "negativa"}
 
 ESTUDO = {
     "instituto": "Brunswick",
-    "data": date(2026, 7, 15),
+    "data": date(2026, 6, 30),
     "amostra": 20,
     "publico": "Investidores e analistas, entrevistas em profundidade",
     "observacao": (

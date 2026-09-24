@@ -180,3 +180,84 @@ def test_o_encaminhamento_some_por_conclusao_e_nao_por_mes(sessao):
         select(Encaminhamento).where(Encaminhamento.status != "concluido")
     ).all()
     assert aberto in abertos
+
+
+# -- o dossiê: um endpoint, uma tela --------------------------------------------
+
+
+def _dossie(sessao, codigo: str, mes: str = "2026-06"):
+    from app.api.lentes import obter_dossie
+
+    return obter_dossie(sessao=sessao, usuario=None, codigo=codigo, mes=mes)
+
+
+def test_o_dossie_devolve_a_tela_inteira(sessao):
+    """A regra 2 do pacote: o front não calcula. Evolução, dois painéis, texto
+    e encaminhamentos chegam prontos."""
+    dossie = _dossie(sessao, "imprensa")
+
+    assert dossie.codigo == "imprensa"
+    assert dossie.evolucao.tipo == "barras_empilhadas"
+    assert len(dossie.paineis) == 2
+    assert [painel.tipo for painel in dossie.paineis] == [
+        "barras_100",
+        "matriz_prioridade",
+    ]
+    assert dossie.curadoria is not None
+
+
+def test_cada_bloco_carrega_a_ficha_de_procedencia(sessao):
+    """A ficha VIAJA COM O DADO, e não numa página de documentação: é o que
+    garante que os dois não se separem quando a fonte mudar."""
+    dossie = _dossie(sessao, "imprensa")
+    for bloco in [dossie.evolucao, *dossie.paineis]:
+        assert bloco.ficha.origem, f"{bloco.titulo} sem origem"
+        assert bloco.ficha.fonte, f"{bloco.titulo} sem fonte"
+
+
+def test_a_lacuna_do_autor_aparece_onde_a_pessoa_esta_olhando(sessao):
+    """A Clipei não manda quem assina — e isso precisa estar escrito na matriz
+    de jornalistas, não num README que ninguém abre."""
+    matriz = next(
+        painel
+        for painel in _dossie(sessao, "imprensa").paineis
+        if painel.tipo == "matriz_prioridade"
+    )
+    assert matriz.ficha.origem == "cadastro"
+    assert any("assina" in lacuna for lacuna in matriz.ficha.lacunas)
+
+
+def test_a_lente_institucional_le_o_crm_e_nao_as_mencoes(sessao):
+    """A fonte dela é interna: são agendas registradas, e não menções
+    ingeridas. Rodar as consultas de `mencao` aqui devolveria zero — e zero,
+    numa tela, se lê como "não houve"."""
+    dossie = _dossie(sessao, "institucional")
+    for bloco in [dossie.evolucao, *dossie.paineis]:
+        assert bloco.ficha.origem == "crm", bloco.titulo
+
+
+def test_a_evolucao_mostra_a_janela_inteira_com_os_buracos(sessao):
+    """Um gráfico que pula de março para junho porque abril e maio não tiveram
+    export conta uma história de três meses seguidos que não aconteceu."""
+    from app.api.lentes import MESES_DA_EVOLUCAO
+
+    evolucao = _dossie(sessao, "imprensa").evolucao
+    assert len(evolucao.dados) == MESES_DA_EVOLUCAO
+    # No banco de teste não há menção nenhuma: todos os meses saem sem base.
+    assert all(linha["sem_base"] for linha in evolucao.dados)
+
+
+def test_sem_curadoria_a_manchete_e_automatica_e_diz_que_e(sessao):
+    """Um dossiê sem manchete parece quebrado; um com a manchete do mês passado
+    mente. O rascunho diz o que os números dizem, e se declara automático."""
+    curadoria = _dossie(sessao, "imprensa").curadoria
+    assert curadoria.automatica is True
+    assert curadoria.manchete
+    assert not curadoria.revela, "o sistema não inventa insights"
+
+
+def test_a_lente_inexistente_devolve_nao_encontrado(sessao):
+    from app.dominio.erros import NaoEncontrado
+
+    with pytest.raises(NaoEncontrado):
+        _dossie(sessao, "inexistente")

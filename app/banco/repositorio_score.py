@@ -29,6 +29,7 @@ from app.banco.tabelas_score import (
     Mencao,
     ScoreConfig,
     ScoreEstimativa,
+    ScoreFato,
     ScoreFonte,
     ScoreMesFonte,
 )
@@ -464,6 +465,23 @@ def meses_com_dado(sessao: Session) -> list[date]:
 # post, um a um: a pergunta é "sobre o que falaram e com que tom", e não "quanto
 # isso pesou no índice". Ponderar aqui faria uma matéria do Valor aparecer como
 # dez, e a barra deixaria de ser contagem sem avisar.
+
+
+def fatos_do_periodo(sessao: Session, meses: list[date]) -> list[ScoreFato]:
+    """O que explica a curva, nos meses que a evolução mostra.
+
+    O DOSSIÊ MOSTRA A JANELA INTEIRA, e não só o mês escolhido: um fato de
+    fevereiro é o que explica o degrau de fevereiro no gráfico — lê-lo só ao
+    trocar o seletor para fevereiro obrigaria a pessoa a caçar a explicação mês
+    a mês.
+    """
+    return list(
+        sessao.scalars(
+            select(ScoreFato)
+            .where(ScoreFato.mes.in_(meses))
+            .order_by(ScoreFato.mes, ScoreFato.criado_em)
+        )
+    )
 
 
 def mencoes_do_mes(sessao: Session, mes: date, calibracao: Calibracao) -> int:
