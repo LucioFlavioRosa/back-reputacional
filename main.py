@@ -37,6 +37,7 @@ from app.banco import (  # noqa: F401
     tabelas_catalogo,
     tabelas_exportacoes,
     tabelas_interacoes,
+    tabelas_lentes,
     tabelas_referencias,
     tabelas_stakeholders,
 )

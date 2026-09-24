@@ -149,7 +149,7 @@ de acesso vale na hora exata, e a revogação feita pela tela vale no ato. Ver
 ## Banco
 
 PostgreSQL **15 ou superior** — a razão do piso está em [Versão e
-privilégio](#versão-e-privilégio). 64 tabelas, organizadas em oito assuntos:
+privilégio](#versão-e-privilégio). 71 tabelas, organizadas em nove assuntos:
 
 | Assunto | Tabelas principais |
 |---|---|
@@ -160,9 +160,10 @@ privilégio](#versão-e-privilégio). 64 tabelas, organizadas em oito assuntos:
 | biblioteca | `referencia`, `referencia_versao`, `referencia_tema`, `arquivo` |
 | sinais | `alegacao`, `alegacao_tema`, `interacao_alegacao`, `apuracao`, `canal_consulta` |
 | score | `lente`, `score_fonte`, `mencao`, `score_mes_fonte`, `score_estimativa`, `score_config`, `score_fato` |
+| lentes | `evento_mercado`, `estudo_percepcao`, `estudo_atributo`, `jornalista_matriz`, `cm_resposta_mes`, `curadoria_lente`, `encaminhamento` |
 | trilhas | `auditoria`, `exportacao`, `importacao` (schema sem aplicação) |
 
-As 47 migrations (`0001` a `0048`; a `0019` não existe) ficam em
+As 48 migrations (`0001` a `0049`; a `0019` não existe) ficam em
 `app/banco/migrations/` e rodam **em ordem alfabética**, uma vez, na primeira
 subida do banco. Cada arquivo abre com um
 cabeçalho dizendo o que muda e por quê — é lá que está o histórico, e não aqui.

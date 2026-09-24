@@ -38,6 +38,8 @@ CAMPOS = frozenset(
         "publico_alvo",
         "tema",
         "unidade",
+        "teor",
+        "autor",
     }
 )
 
@@ -76,6 +78,19 @@ TIERS: dict[str, str] = {
     "relevante": Tier.RELEVANTE,
     "menos relevante": Tier.MENOS_RELEVANTE,
 }
+
+#: O QUE CHEGA PELO CANAL MAS NÃO É GENTE PROCURANDO A COMPANHIA.
+#:
+#: `Marcação` é alguém citando a Aegea num post próprio; `NPR` é o que o
+#: fornecedor etiqueta como não pertinente. Juntos são 18% da base de janeiro a
+#: junho — e incluí-los no denominador da taxa de resposta faz o atendimento
+#: parecer 22% pior do que é.
+#:
+#: NÃO SÃO DESCARTADOS. A menção entra, conta no volume e aparece na tela com o
+#: teor escrito; o que muda é o `acionavel`, que é o recorte de quem cobra a
+#: operação. Esconder 800 mensagens para melhorar um percentual seria
+#: exatamente o oposto do que esta marca existe para fazer.
+TEORES_NAO_ACIONAVEIS: frozenset[str] = frozenset({"marcacao", "npr", "spam"})
 
 
 class Descarte(StrEnum):
@@ -127,6 +142,10 @@ class Mapeamento:
     #: de casar as listas com o dicionário do CRM: aqui se resolve a colisão que
     #: atrapalha a leitura, sem esperar a taxonomia inteira ser conciliada.
     apelidos: Mapping[str, str] = field(default_factory=dict)
+    #: Os teores que NÃO contam como contato de verdade nesta fonte, já
+    #: achatados. Vazio usa `TEORES_NAO_ACIONAVEIS` — o vocabulário de hoje.
+    #: Declarável porque é convenção do fornecedor, como o resto do mapeamento.
+    teores_nao_acionaveis: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         desconhecidos = set(self.colunas) - CAMPOS
@@ -170,6 +189,9 @@ class Mapeamento:
                 str(de): str(para)
                 for de, para in dict(dados.get("apelidos") or {}).items()
             },
+            teores_nao_acionaveis=frozenset(
+                _achatar(teor) for teor in (dados.get("teores_nao_acionaveis") or [])
+            ),
         )
 
     @property
@@ -193,6 +215,11 @@ class MencaoLida:
     publico_alvo: str | None = None
     tema_texto: str | None = None
     unidade_texto: str | None = None
+    teor: str | None = None
+    #: Nulo quando a fonte não mapeia teor — a pergunta não se aplica, e
+    #: `False` diria que a menção não é um contato de verdade.
+    acionavel: bool | None = None
+    autor: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -353,6 +380,9 @@ def ler_linha(
         coluna = colunas.get(campo)
         return linha.get(coluna) if coluna else None
 
+    teor = _rotulo(opcional("teor"), mapeamento)
+    nao_acionaveis = mapeamento.teores_nao_acionaveis or TEORES_NAO_ACIONAVEIS
+
     return MencaoLida(
         mes=data.replace(day=1),
         data=data,
@@ -365,6 +395,9 @@ def ler_linha(
         publico_alvo=_texto(opcional("publico_alvo")),
         tema_texto=_rotulo(opcional("tema"), mapeamento),
         unidade_texto=_rotulo(opcional("unidade"), mapeamento),
+        teor=teor,
+        acionavel=None if teor is None else _achatar(teor) not in nao_acionaveis,
+        autor=_texto(opcional("autor")),
     )
 
 

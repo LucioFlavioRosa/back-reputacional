@@ -170,6 +170,9 @@ def _regravar(sessao: Session, fonte: ScoreFonte, leitura: Leitura) -> None:
             publico_alvo=mencao.publico_alvo,
             tema_texto=mencao.tema_texto,
             unidade_texto=mencao.unidade_texto,
+            teor=mencao.teor,
+            acionavel=mencao.acionavel,
+            autor=mencao.autor,
         )
         for mencao in leitura.mencoes
     )

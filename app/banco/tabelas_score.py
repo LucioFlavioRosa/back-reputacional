@@ -100,6 +100,14 @@ class Mencao(Tabela):
     #: A concessionária como o fornecedor a nomeia — idem.
     unidade_texto: Mapped[str | None] = mapped_column(Text, nullable=True)
     atributo: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: O teor da mensagem no vocabulário do fornecedor — Reclamação, Dúvida,
+    #: Elogio, Informação, Marcação, NPR (0049).
+    teor: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Se é um contato de verdade. Marcação e NPR chegam pelo mesmo canal e não
+    #: são gente procurando a companhia — mas continuam contadas.
+    acionavel: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    #: Quem assina a matéria. Nulo em tudo hoje: a Clipei não manda a coluna.
+    autor: Mapped[str | None] = mapped_column(Text, nullable=True)
     veiculo: Mapped[str | None] = mapped_column(Text, nullable=True)
     publico_alvo: Mapped[str | None] = mapped_column(Text, nullable=True)
     criado_em: Mapped[datetime] = mapped_column(server_default=func.now())
