@@ -163,6 +163,10 @@ class Calibracao:
     #: Os cortes dos detectores de sinal, só os que foram ajustados. O que não
     #: está aqui vale o padrão de fábrica — ver `dominio/sinais_da_lente`.
     limites: dict[str, float] = field(default_factory=dict)
+    #: A fatia de cada lente no radial da Visão geral tem a largura do peso
+    #: efetivo. Falso deixa todas iguais — e esconde a ponderação que o número
+    #: ao lado aplicou.
+    radial_por_peso: bool = True
 
     def __post_init__(self) -> None:
         if self.regua_tier not in REGUAS_DE_TIER:

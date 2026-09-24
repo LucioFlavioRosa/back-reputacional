@@ -59,6 +59,10 @@ Sessao = SessaoDoPedido
 class LenteSaida(BaseModel):
     codigo: str
     nome: str
+    #: De quem é a lente — "Formadores de opinião", "Investidores e rating".
+    #: A lista da Visão geral abre por ele: quem lê o índice pergunta "de quem
+    #: é este 37?" antes de perguntar de que fonte ele saiu.
+    stakeholder: str
     #: O peso que a calibração gravou — o que a aba Calibração ajusta.
     peso: int
     #: O QUE ESSE PESO VALEU DE FATO, em porcento, depois de a lente sem dado
@@ -108,6 +112,8 @@ class CalibracaoSaida(BaseModel):
     #: mexido faria a tela ter de conhecer os padrões, e eles passariam a viver
     #: em dois lugares.
     limites: list[LimiteSaida] = Field(default_factory=list)
+    #: A fatia de cada lente no radial tem a largura do peso efetivo.
+    radial_por_peso: bool = True
     #: Verdadeiro quando a régua é a de fábrica — a tela mostra o chip
     #: "calibração ajustada" quando falso.
     padrao: bool
@@ -245,12 +251,14 @@ def _calibracao_saida(sessao, calibracao: Calibracao) -> CalibracaoSaida:
         regua_engajamento=calibracao.regua_engajamento,
         fontes_desligadas=sorted(calibracao.fontes_desligadas),
         limites=_limites_saida(calibracao),
+        radial_por_peso=calibracao.radial_por_peso,
         padrao=(
             calibracao.pesos == padrao
             and calibracao.regua_tier == "aegea"
             and calibracao.regua_engajamento == "n"
             and not calibracao.fontes_desligadas
             and not calibracao.limites
+            and calibracao.radial_por_peso
         ),
     )
 
@@ -298,10 +306,18 @@ def obter(
 
     scores_anteriores = {lente.codigo: lente.score for lente in anterior.lentes}
     efetivos = _pesos_efetivos(indice)
+    # O STAKEHOLDER NÃO PASSA PELO CÁLCULO, e por isso não está em
+    # `LenteMedida`: é rótulo de cadastro, e não número. Buscá-lo aqui mantém o
+    # domínio do índice falando só de conta.
+    stakeholders = {
+        lente.codigo: lente.stakeholder
+        for lente in repositorio_score.lentes_cadastradas(sessao)
+    }
     lentes = [
         LenteSaida(
             codigo=lente.codigo,
             nome=lente.nome,
+            stakeholder=stakeholders[lente.codigo],
             peso=lente.peso,
             peso_efetivo=efetivos.get(lente.codigo, 0),
             score=lente.score,
@@ -608,6 +624,7 @@ class CalibracaoEntrada(BaseModel):
     #: ajustada, e "voltar ao padrão" deixaria de ser distinguível de "gravei
     #: os mesmos números".
     limites: dict[str, float] = Field(default_factory=dict)
+    radial_por_peso: bool = True
 
 
 @rotas.get("/calibracao")
@@ -632,6 +649,7 @@ def gravar_calibracao(
         regua_engajamento=entrada.regua_engajamento,
         fontes_desligadas=frozenset(entrada.fontes_desligadas),
         limites=entrada.limites,
+        radial_por_peso=entrada.radial_por_peso,
     )
     # RECUSA ANTES DE GRAVAR: um limite zerado não daria erro aqui, daria horas
     # depois, na tela de outra pessoa abrindo uma lente.
@@ -652,6 +670,7 @@ def gravar_calibracao(
             regua_engajamento=entrada.regua_engajamento,
             fontes_desligadas=sorted(entrada.fontes_desligadas),
             limites=entrada.limites,
+            radial_por_peso=entrada.radial_por_peso,
             criado_por=usuario.id,
         )
     )

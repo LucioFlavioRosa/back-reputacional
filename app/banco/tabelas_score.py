@@ -172,6 +172,8 @@ class ScoreConfig(Tabela):
     #: zero produziria divisão por zero em todo detector que normaliza pelo
     #: próprio corte.
     limites: Mapped[dict] = mapped_column(JSONB, default=dict)
+    #: Largura da fatia no gráfico radial: o peso efetivo, ou fatias iguais.
+    radial_por_peso: Mapped[bool] = mapped_column(Boolean, default=True)
     criado_por: Mapped[uuid.UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("usuario.id"), nullable=True
     )
