@@ -847,3 +847,22 @@ def test_tudo_desligado_nao_e_o_mesmo_que_planilha_faltando(cliente_do_score):
     corpo_ = cliente_do_score.get("/api/score/drivers?mes=2026-06").json()
     assert corpo_["mencoes_no_mes"] == 0
     assert corpo_["fontes_ligadas"] == 0
+
+
+def test_todo_clima_do_banco_tem_sentimento_no_score(sessao):
+    """O dicionário `clima` é fechado — e se alguém o abrir, este teste quebra.
+
+    A lente institucional traduz clima em sentimento por um dicionário em
+    código. Um clima novo no banco não derruba nada em produção: as interações
+    dele apenas ficam de fora, com um aviso no log, e o índice sai menor e
+    plausível. É justamente por ser plausível que precisa quebrar aqui — no
+    mesmo dia em que o clima for criado, e não meses depois, quando alguém
+    desconfiar do número.
+    """
+    from app.banco.repositorio_score import SENTIMENTO_DO_CLIMA
+    from app.banco.tabelas_catalogo import Clima
+
+    codigos = set(sessao.scalars(select(Clima.codigo).where(Clima.ativo.is_(True))))
+    assert codigos <= set(SENTIMENTO_DO_CLIMA), (
+        f"clima sem tradução para sentimento: {sorted(codigos - set(SENTIMENTO_DO_CLIMA))}"
+    )

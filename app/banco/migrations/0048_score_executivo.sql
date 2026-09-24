@@ -366,7 +366,23 @@ comment on column tema.tipo is
 -- `score_config` fica de fora de propósito: é versionada, e apagar uma versão
 -- apagaria a explicação de um número que alguém já leu.
 
-grant delete on mencao, score_mes_fonte, score_fato, score_estimativa to painel_app;
+-- AS SETE, e não só as quatro em que a aplicação apaga hoje. A regra do
+-- projeto é que toda migration nova conceda `delete` a `painel_app`, e ela
+-- existe por um motivo prático: a 0009 concedeu em massa e só alcança o que já
+-- existia, e `select`/`insert`/`update` vêm depois pelo `alter default
+-- privileges` — `delete` não vem. Conceder só onde há caminho de exclusão hoje
+-- faz o caminho de amanhã falhar na hora de salvar, em produção, com erro de
+-- permissão: o tipo de defeito que passa por toda revisão e aparece no uso.
+--
+-- Isso NÃO autoriza apagar `score_config`: a régua é versionada e a tabela só
+-- cresce, porque é ela que responde "com que critério o número foi lido em
+-- julho". Quem garante isso é a API, que não tem rota de exclusão — o `grant`
+-- só evita que a garantia vire um erro de banco no dia em que alguém escrever
+-- uma rota dessas sem perceber o que está fazendo.
+grant delete on
+  lente, score_fonte, mencao, score_mes_fonte,
+  score_estimativa, score_config, score_fato
+to painel_app;
 
 comment on table lente is 'As cinco lentes do ISR. Fechado: uma sexta muda a fórmula (0048).';
 comment on table score_fonte is 'De onde vem o sentimento de cada lente. Extensível sem deploy (0048).';

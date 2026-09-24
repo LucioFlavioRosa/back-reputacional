@@ -162,7 +162,7 @@ privilégio](#versão-e-privilégio). 64 tabelas, organizadas em oito assuntos:
 | score | `lente`, `score_fonte`, `mencao`, `score_mes_fonte`, `score_estimativa`, `score_config`, `score_fato` |
 | trilhas | `auditoria`, `exportacao`, `importacao` (schema sem aplicação) |
 
-As 46 migrations (`0001` a `0048`; a `0019` não existe) ficam em
+As 47 migrations (`0001` a `0048`; a `0019` não existe) ficam em
 `app/banco/migrations/` e rodam **em ordem alfabética**, uma vez, na primeira
 subida do banco. Cada arquivo abre com um
 cabeçalho dizendo o que muda e por quê — é lá que está o histórico, e não aqui.
@@ -180,8 +180,10 @@ outra.
 - **Oito frentes.** `bancos_credores` (Bancos/Credores) entrou pela `0031` e
   usa a extensão `interacao_institucional`, a mesma de Governo, Parceiros e
   Eventos — o mapa é `EXTENSAO_POR_FRENTE`, em `app/dominio/frentes.py`.
-- **Clima é Proativo / Reativo** (`0030`). Os códigos `propositivo` e `tenso`
-  continuam no banco; só o nome exibido mudou.
+- **Clima é Positivo / Neutro / Negativo** (`0047`; era Proativo / Reativo
+  desde a `0030`). Os códigos `propositivo`, `neutro` e `tenso` continuam no
+  banco desde a `0001` — só o nome exibido mudou, das duas vezes. É por isso
+  que todo mapeamento no código lê `codigo`, e não `nome`.
 - **Área interna da agenda.** `area_pessoa` é a área da Aegea (Comunicação,
   Relações Institucionais, Operações Financeiras, Relações com Investidores;
   "Performance e Dados" está com `ativo = false` desde a `0033`), e

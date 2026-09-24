@@ -15,6 +15,7 @@ mexer na régua e ver o índice inteiro mudar sem reprocessar nada.
 
 from __future__ import annotations
 
+import logging
 from datetime import date
 
 from sqlalchemy import Date as ColunaDeData
@@ -43,10 +44,17 @@ from app.dominio.score import (
     ponderar,
 )
 
+logger = logging.getLogger(__name__)
+
 #: O código da fonte que se lê deste banco, e não de planilha.
 FONTE_INTERNA_DO_CRM = "crm"
 
 #: Como o clima de uma interação vira sentimento do índice (`SCORE.md` §2).
+#:
+#: PELO `codigo`, E NÃO PELO `nome`. O rótulo já mudou duas vezes — Proativo /
+#: Reativo na 0030, Positivo / Negativo na 0047 — e nas duas o `codigo`
+#: continuou o mesmo, exatamente para que mapeamentos como este não precisem
+#: ser caçados a cada renomeação.
 SENTIMENTO_DO_CLIMA: dict[str, str] = {
     "propositivo": "pos",
     "neutro": "neu",
@@ -155,16 +163,34 @@ def _somas_do_crm(sessao: Session, mes: date) -> list[SomasDaFonte]:
         .group_by(Clima.codigo)
     )
 
-    return [
-        SomasDaFonte(
-            fonte=FONTE_INTERNA_DO_CRM,
-            sentimento=SENTIMENTO_DO_CLIMA[codigo],
-            tier="",
-            mencoes=float(total),
+    somas: list[SomasDaFonte] = []
+    for codigo, total in sessao.execute(consulta):
+        sentimento = SENTIMENTO_DO_CLIMA.get(codigo)
+        if sentimento is None:
+            # UM CLIMA NOVO NÃO PODE SUMIR EM SILÊNCIO. `clima` é dicionário
+            # fechado, então chegar aqui significa que alguém o abriu — e a
+            # lente institucional passaria a ignorar as interações desse clima
+            # sem nenhum sinal, devolvendo um número menor e plausível.
+            #
+            # Não é erro fatal de propósito: derrubar o Score inteiro da
+            # companhia porque uma linha de dicionário mudou seria pior que o
+            # desvio. O sinal é o log — e o teste de mapeamento, que quebra no
+            # CI no mesmo dia em que o clima for criado.
+            logger.warning(
+                "Clima %r sem mapeamento em SENTIMENTO_DO_CLIMA: "
+                "%s interações ficaram fora da lente institucional de %s.",
+                codigo, total, mes,
+            )
+            continue
+        somas.append(
+            SomasDaFonte(
+                fonte=FONTE_INTERNA_DO_CRM,
+                sentimento=sentimento,
+                tier="",
+                mencoes=float(total),
+            )
         )
-        for codigo, total in sessao.execute(consulta)
-        if codigo in SENTIMENTO_DO_CLIMA
-    ]
+    return somas
 
 
 def _estimativas(sessao: Session, mes: date) -> dict[str, float]:
