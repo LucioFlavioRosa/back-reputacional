@@ -139,6 +139,25 @@ class CmRespostaMes(Tabela):
     atualizado_em: Mapped[datetime] = mapped_column(server_default=func.now())
 
 
+class MencaoNaoClassificada(Tabela):
+    """Quantas menções chegaram sem sentimento — o segundo estado da §2.
+
+    São publicações reais que o fornecedor não leu. Não viram `mencao` porque
+    `sentimento` é obrigatório e "neutro" seria inventar leitura; e não podem
+    sumir, porque um mês com mil menções sem classificação desenhado como mês
+    vazio mente sobre o volume da conversa.
+    """
+
+    __tablename__ = "mencao_nao_classificada"
+
+    fonte_id: Mapped[int] = mapped_column(
+        SmallInteger, ForeignKey("score_fonte.id"), primary_key=True
+    )
+    mes: Mapped[date] = mapped_column(Date, primary_key=True)
+    total: Mapped[int] = mapped_column(Integer)
+    atualizado_em: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
 class CuradoriaLente(Tabela):
     """O texto editorial de uma lente num mês. A tabela só cresce."""
 

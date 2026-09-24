@@ -82,6 +82,10 @@ class BlocoSaida(BaseModel):
     #: O título-conclusão da curadoria — a frase que o gráfico prova.
     conclusao: str | None = None
     dados: list[dict] = Field(default_factory=list)
+    #: Como se chamam as três faixas NESTE bloco. A lente institucional mede
+    #: clima (propositivo/neutro/tenso) e as outras medem sentimento — e a tela
+    #: não pode descobrir isso adivinhando pelo título.
+    legenda: list[str] = Field(default_factory=list)
     ficha: FichaSaida
 
 
@@ -205,14 +209,24 @@ def _saida_da_ficha(ficha: Ficha) -> FichaSaida:
     )
 
 
+SENTIMENTO = ["Positivo", "Neutro", "Negativo"]
+CLIMA = ["Propositivo", "Neutro", "Tenso"]
+
+
 def _bloco(
-    tipo: str, titulo: str, dados: list[dict], ficha: Ficha, conclusao: str | None
+    tipo: str,
+    titulo: str,
+    dados: list[dict],
+    ficha: Ficha,
+    conclusao: str | None,
+    legenda: list[str] | None = None,
 ) -> BlocoSaida:
     return BlocoSaida(
         tipo=tipo,
         titulo=titulo,
         conclusao=conclusao,
         dados=dados,
+        legenda=legenda or [],
         ficha=_saida_da_ficha(ficha),
     )
 
@@ -221,7 +235,7 @@ def _bloco(
 
 
 def _nomes_das_fontes(sessao, lente_id: int) -> str:
-    fontes = repositorio_lentes._fontes_da_lente(sessao, lente_id)
+    fontes = repositorio_lentes.fontes_da_lente(sessao, lente_id)
     return " · ".join(fonte.nome for fonte in fontes) or "sem fonte cadastrada"
 
 
@@ -322,6 +336,7 @@ def _evolucao(
             conceitos=(CONCEITO_NS,),
         ),
         conclusao,
+        CLIMA if interna else SENTIMENTO,
     )
 
 
@@ -374,6 +389,7 @@ def _paineis(
                     (CONCEITO_TIER,),
                 ),
                 titulo_a,
+                SENTIMENTO,
             ),
             _bloco(
                 "matriz_prioridade",
@@ -480,6 +496,7 @@ def _paineis(
                     _nomes_das_fontes(sessao, lente.id), ("Data", "Sentimento")
                 ),
                 titulo_a,
+                SENTIMENTO,
             ),
             _bloco(
                 "tabela",
@@ -538,6 +555,7 @@ def _paineis(
                 ),
             ),
             titulo_a,
+            CLIMA if interna else SENTIMENTO,
         ),
         _bloco(
             "barras_horizontais",
@@ -572,81 +590,225 @@ def _paineis(
     ]
 
 
-def _kpis(sessao, lente, mes: date, meses, calibracao: Calibracao, medida) -> list[KpiSaida]:
-    """Os quatro números do destaque. Cada lente tem os seus (§3)."""
+def _kpis(
+    sessao, lente, mes: date, meses, calibracao: Calibracao, medida
+) -> list[KpiSaida]:
+    """Os quatro números do destaque — e eles são DIFERENTES em cada lente.
+
+    A §3 dá a lista de cada uma, e não é capricho: "matérias no ano" responde a
+    pergunta da imprensa, e não a de clientes, que quer saber quanto do que
+    chegou foi respondido. Quatro KPIs genéricos serviriam a todas e a nenhuma.
+
+    ONDE O DADO NÃO EXISTE, O KPI DIZ "—". Inventar um número parecido para
+    encher o quadrante é pior do que deixar a lacuna à vista.
+    """
+    alvo = repositorio_score.primeiro_dia(mes)
     serie = repositorio_lentes.serie_da_lente(sessao, lente.id, meses, calibracao)
+    do_mes = next((linha for linha in serie if linha["mes"] == alvo), None)
     total = sum(linha["pos"] + linha["neu"] + linha["neg"] for linha in serie)
-    do_mes = next(
-        (linha for linha in serie if linha["mes"] == repositorio_score.primeiro_dia(mes)),
-        None,
-    )
+    com_base = [linha for linha in serie if not linha["sem_base"]]
 
-    kpis: list[KpiSaida] = []
+    if lente.codigo == "imprensa":
+        return _kpis_da_imprensa(sessao, serie, com_base, do_mes, total)
+    if lente.codigo == "mercado":
+        return _kpis_do_mercado(sessao, mes, meses)
     if lente.codigo == "clientes":
-        recebidas = repositorio_lentes.recebidas_por_mes(sessao, lente.id, meses, calibracao)
-        respondidas = repositorio_lentes.respondidas_por_mes(sessao, meses)
-        teor = repositorio_lentes.teor_por_mes(sessao, lente.id, [mes], calibracao)[0]
-        taxa = TaxaDeResposta(
-            recebidas=recebidas.get(repositorio_score.primeiro_dia(mes), 0),
-            acionaveis=teor["acionaveis"],
-            respondidas=(
-                respondidas.get(repositorio_score.primeiro_dia(mes)) or {}
-            ).get("respondidas"),
-        )
-        kpis.append(
-            KpiSaida(
-                rotulo="Recebidas no mês",
-                valor=f"{taxa.recebidas:n}".replace(",", "."),
-                detalhe=f"{sum(recebidas.values())} no período",
-            )
-        )
-        kpis.append(
-            KpiSaida(
-                rotulo="Resposta bruta",
-                valor=_pct(taxa.bruta),
-                detalhe="sobre tudo o que chegou",
-            )
-        )
-        kpis.append(
-            KpiSaida(
-                rotulo="Resposta operacional",
-                valor=_pct(taxa.operacional),
-                detalhe=f"sobre {taxa.acionaveis} mensagens acionáveis",
-            )
-        )
-    else:
-        kpis.append(
-            KpiSaida(
-                rotulo="Menções no período",
-                valor=f"{total}",
-                detalhe=f"{len([x for x in serie if not x['sem_base']])} meses com base",
-            )
-        )
-        if do_mes and not do_mes["sem_base"]:
-            no_mes = do_mes["pos"] + do_mes["neu"] + do_mes["neg"]
-            kpis.append(
-                KpiSaida(
-                    rotulo="No mês de referência",
-                    valor=f"{no_mes}",
-                    detalhe=f"{do_mes['neg']} negativas",
-                )
-            )
-            kpis.append(
-                KpiSaida(
-                    rotulo="Positivas ou neutras",
-                    valor=_pct((do_mes["pos"] + do_mes["neu"]) / no_mes if no_mes else None),
-                    detalhe=f"{do_mes['pos']} positivas",
-                )
-            )
+        return _kpis_dos_clientes(sessao, lente, alvo, meses, calibracao)
+    if lente.codigo == "institucional":
+        return _kpis_do_institucional(serie, do_mes, total)
+    return _kpis_da_sociedade(sessao, lente, alvo, meses, calibracao, serie, do_mes, total)
 
-    kpis.append(
+
+def _kpis_da_imprensa(sessao, serie, com_base, do_mes, total) -> list[KpiSaida]:
+    pico = max(serie, key=lambda linha: linha["neg"], default=None)
+    positivas = sum(linha["pos"] for linha in serie)
+    neutras = sum(linha["neu"] for linha in serie)
+    p1 = [
+        pessoa
+        for pessoa in repositorio_lentes.matriz_de_jornalistas(sessao)
+        if prioridade_do_jornalista(
+            pessoa.relevancia, pessoa.exposicao, pessoa.proximidade
+        ).nivel
+        == 1
+    ]
+    return [
         KpiSaida(
-            rotulo="Fontes no cálculo",
-            valor=str(len(medida.fontes)),
-            detalhe=", ".join(medida.fontes) or "nenhuma",
-        )
+            rotulo="Matérias no período",
+            valor=_num(total),
+            detalhe=(
+                f"média de {_num(round(total / len(com_base)))} por mês"
+                if com_base
+                else "nenhum mês com base"
+            ),
+        ),
+        KpiSaida(
+            rotulo="Positivas ou neutras",
+            valor=_pct((positivas + neutras) / total if total else None),
+            detalhe=f"{_num(positivas)} positivas",
+        ),
+        KpiSaida(
+            rotulo="Pico negativo",
+            valor=_num(pico["neg"]) if pico and pico["neg"] else "—",
+            detalhe=f"{pico['mes']:%Y-%m}" if pico and pico["neg"] else "sem negativa",
+        ),
+        KpiSaida(
+            rotulo="Jornalistas P1",
+            valor=str(len(p1)),
+            detalhe="relacionamento contínuo",
+        ),
+    ]
+
+
+def _kpis_do_mercado(sessao, mes: date, meses) -> list[KpiSaida]:
+    estudo, atributos = repositorio_lentes.estudo_vigente(sessao, mes)
+    rebaixamentos = [
+        evento
+        for evento in repositorio_lentes.eventos_de_mercado(sessao, meses)
+        if evento.tipo == "rating" and evento.efeito == "pressiona"
+    ]
+    por_nome = {atributo.atributo.lower(): atributo for atributo in atributos}
+    solidez = next((a for nome, a in por_nome.items() if "solidez" in nome), None)
+    eficiencia = next((a for nome, a in por_nome.items() if "efici" in nome), None)
+
+    return [
+        KpiSaida(
+            rotulo="Solidez financeira",
+            valor=_nota(solidez),
+            detalhe="de 5" if solidez else "sem estudo neste mês",
+        ),
+        KpiSaida(
+            rotulo="Eficiência operacional",
+            valor=_nota(eficiencia),
+            detalhe="de 5" if eficiencia else "sem estudo neste mês",
+        ),
+        KpiSaida(
+            rotulo="Rebaixamentos no período",
+            valor=str(len(rebaixamentos)),
+            detalhe=", ".join(
+                sorted({evento.agencia for evento in rebaixamentos if evento.agencia})
+            )
+            or "nenhuma ação de rating",
+        ),
+        KpiSaida(
+            rotulo="Entrevistas do estudo",
+            valor=str(estudo.amostra) if estudo and estudo.amostra else "—",
+            detalhe=estudo.instituto if estudo else "nenhum estudo cadastrado",
+        ),
+    ]
+
+
+def _kpis_dos_clientes(sessao, lente, alvo: date, meses, calibracao) -> list[KpiSaida]:
+    recebidas = repositorio_lentes.recebidas_por_mes(sessao, lente.id, meses, calibracao)
+    respondidas = repositorio_lentes.respondidas_por_mes(sessao, meses)
+    teor_do_mes = next(
+        (
+            linha
+            for linha in repositorio_lentes.teor_por_mes(
+                sessao, lente.id, [alvo], calibracao
+            )
+            if linha["mes"] == alvo
+        ),
+        {"acionaveis": 0, "teores": {}, "total": 0},
     )
-    return kpis[:4]
+    taxa = TaxaDeResposta(
+        recebidas=recebidas.get(alvo, 0),
+        acionaveis=teor_do_mes["acionaveis"],
+        respondidas=(respondidas.get(alvo) or {}).get("respondidas"),
+    )
+    pico = max(recebidas.items(), key=lambda item: item[1], default=None)
+    elogios = teor_do_mes["teores"].get("Elogio", 0)
+
+    return [
+        KpiSaida(
+            rotulo="Recebidas no mês",
+            valor=_num(taxa.recebidas),
+            detalhe=(
+                f"pico de {_num(pico[1])} em {pico[0]:%Y-%m}" if pico else "sem base"
+            ),
+        ),
+        KpiSaida(
+            rotulo="Resposta bruta",
+            valor=_pct(taxa.bruta),
+            detalhe="sobre tudo o que chegou",
+        ),
+        KpiSaida(
+            rotulo="Resposta operacional",
+            valor=_pct(taxa.operacional),
+            detalhe=f"sobre {_num(taxa.acionaveis)} mensagens acionáveis",
+        ),
+        KpiSaida(
+            rotulo="Elogio",
+            valor=_pct(elogios / teor_do_mes["total"] if teor_do_mes["total"] else None),
+            detalhe=f"{_num(elogios)} mensagens",
+        ),
+    ]
+
+
+def _kpis_do_institucional(serie, do_mes, total) -> list[KpiSaida]:
+    no_mes = (do_mes["pos"] + do_mes["neu"] + do_mes["neg"]) if do_mes else 0
+    return [
+        KpiSaida(
+            rotulo="Agendas no período",
+            valor=_num(total),
+            detalhe=f"{_num(no_mes)} no mês de referência",
+        ),
+        KpiSaida(
+            rotulo="Clima propositivo",
+            valor=_pct(do_mes["pos"] / no_mes if no_mes else None),
+            detalhe=f"{_num(do_mes['pos'])} agendas" if do_mes else "sem base",
+        ),
+        KpiSaida(
+            rotulo="Clima tenso",
+            valor=_pct(do_mes["neg"] / no_mes if no_mes else None),
+            detalhe=f"{_num(do_mes['neg'])} agendas" if do_mes else "sem base",
+        ),
+        # O "% Avançou" da §3 depende do RESULTADO da agenda, que hoje nem toda
+        # interação preenche. Prometer o número sem a base seria pior do que
+        # dizer que ele ainda não existe — e o encaminhamento da própria lente
+        # já cobra o preenchimento.
+        KpiSaida(
+            rotulo="Agendas que avançaram",
+            valor="—",
+            detalhe="depende do resultado preenchido no CRM",
+        ),
+    ]
+
+
+def _kpis_da_sociedade(
+    sessao, lente, alvo: date, meses, calibracao, serie, do_mes, total
+) -> list[KpiSaida]:
+    unidades = repositorio_lentes.unidades_da_lente(sessao, lente.id, meses, calibracao)
+    no_mes = (do_mes["pos"] + do_mes["neu"] + do_mes["neg"]) if do_mes else 0
+    return [
+        KpiSaida(
+            rotulo="Menções no período",
+            valor=_num(total),
+            detalhe=f"{len([x for x in serie if not x['sem_base']])} meses com base",
+        ),
+        KpiSaida(
+            rotulo="Positivo no mês",
+            valor=_pct(do_mes["pos"] / no_mes if no_mes else None),
+            detalhe=f"{_num(do_mes['pos'])} menções" if do_mes else "sem base",
+        ),
+        KpiSaida(
+            rotulo="Negativo no mês",
+            valor=_pct(do_mes["neg"] / no_mes if no_mes else None),
+            detalhe=f"{_num(do_mes['neg'])} menções" if do_mes else "sem base",
+        ),
+        KpiSaida(
+            rotulo="Unidade com mais menções",
+            valor=unidades[0]["unidade"] if unidades else "—",
+            detalhe=_num(unidades[0]["total"]) if unidades else "sem unidade informada",
+        ),
+    ]
+
+
+def _num(valor: int | None) -> str:
+    return "—" if valor is None else f"{valor:,}".replace(",", ".")
+
+
+def _nota(atributo) -> str:
+    return "—" if atributo is None else f"{float(atributo.nota):.1f}".replace(".", ",")
 
 
 def _pct(valor: float | None) -> str:
@@ -693,7 +855,11 @@ def obter_dossie(
         else None
     )
 
-    curadoria = repositorio_lentes.curadoria_vigente(sessao, lente.id, alvo)
+    # QUEM EDITA VÊ O RASCUNHO; quem só lê, o publicado. É a §7 — publicar
+    # existe para separar "estou escrevendo" de "pode citar".
+    curadoria = repositorio_lentes.curadoria_vigente(
+        sessao, lente.id, alvo, ve_rascunho=usuario.administra_dicionarios
+    )
     temas = repositorio_lentes.temas_por_sentimento(
         sessao, lente.id, alvo, calibracao, quantos=1
     )

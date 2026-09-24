@@ -352,7 +352,7 @@ def temas_da_lente(
             ScoreFonte.lente_id == lente_id,
             Mencao.mes == primeiro_dia(mes),
             rotulo.is_not(None),
-            *_so_fontes_ligadas(calibracao),
+            *so_fontes_ligadas(calibracao),
         )
         .group_by(rotulo)
         # ORDENADO PELO QUE TOMA PARTIDO, e não pelo volume. Os assuntos mais
@@ -390,7 +390,7 @@ def mes_mais_completo(sessao: Session, calibracao: Calibracao) -> date | None:
     das_planilhas = (
         select(ScoreMesFonte.mes.label("mes"), ScoreFonte.lente_id.label("lente_id"))
         .join(ScoreFonte, ScoreFonte.id == ScoreMesFonte.fonte_id)
-        .where(*_so_fontes_ligadas(calibracao))
+        .where(*so_fontes_ligadas(calibracao))
         .distinct()
     )
     das_estimativas = select(
@@ -409,7 +409,7 @@ def mes_mais_completo(sessao: Session, calibracao: Calibracao) -> date | None:
         .join(ScoreFonte, ScoreFonte.codigo == FONTE_INTERNA_DO_CRM)
         .where(
             InteracaoRegistro.arquivado_em.is_(None),
-            *_so_fontes_ligadas(calibracao),
+            *so_fontes_ligadas(calibracao),
         )
         .distinct()
     )
@@ -494,7 +494,7 @@ def mencoes_do_mes(sessao: Session, mes: date, calibracao: Calibracao) -> int:
         select(func.count())
         .select_from(Mencao)
         .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
-        .where(Mencao.mes == primeiro_dia(mes), *_so_fontes_ligadas(calibracao))
+        .where(Mencao.mes == primeiro_dia(mes), *so_fontes_ligadas(calibracao))
     )
     return int(total or 0)
 
@@ -521,7 +521,7 @@ def atributos_do_mes(
         .where(
             Mencao.mes == primeiro_dia(mes),
             Mencao.atributo.is_not(None),
-            *_so_fontes_ligadas(calibracao),
+            *so_fontes_ligadas(calibracao),
         )
         .group_by(Mencao.atributo)
         # O DESEMPATE PELO NOME é o que faz a lista não trocar de ordem entre
@@ -548,7 +548,7 @@ def negativas_do_mes(sessao: Session, mes: date, calibracao: Calibracao) -> int:
             Mencao.mes == primeiro_dia(mes),
             Mencao.sentimento == "neg",
             Mencao.unidade_texto.is_not(None),
-            *_so_fontes_ligadas(calibracao),
+            *so_fontes_ligadas(calibracao),
         )
     )
     return int(total or 0)
@@ -574,7 +574,7 @@ def unidades_do_mes(
         .where(
             Mencao.mes == primeiro_dia(mes),
             Mencao.unidade_texto.is_not(None),
-            *_so_fontes_ligadas(calibracao),
+            *so_fontes_ligadas(calibracao),
         )
         .group_by(Mencao.unidade_texto)
         .having(func.count().filter(Mencao.sentimento == "neg") > 0)
@@ -587,7 +587,7 @@ def unidades_do_mes(
     return [(nome, neg, total) for nome, neg, total in sessao.execute(consulta)]
 
 
-def _so_fontes_ligadas(calibracao: Calibracao) -> list:
+def so_fontes_ligadas(calibracao: Calibracao) -> list:
     """As condições que tiram do resultado as fontes que a calibração desligou.
 
     DEVOLVE UMA LISTA, vazia quando não há nada desligado — e não um `not_in`
@@ -658,7 +658,7 @@ def temas_em_perpetuacao(
             Mencao.mes <= alvo,
             Mencao.mes >= inicio,
             rotulo.is_not(None),
-            *_so_fontes_ligadas(calibracao),
+            *so_fontes_ligadas(calibracao),
         )
         .group_by(rotulo)
         # SÓ O QUE ALCANÇA O MÊS PEDIDO: um tema que morreu em março não está

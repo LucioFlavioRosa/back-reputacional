@@ -220,6 +220,13 @@ create table if not exists curadoria_lente (
 create index if not exists curadoria_por_lente_e_mes
   on curadoria_lente (lente_id, mes, versao desc);
 
+--: UMA PUBLICAÇÃO VIGENTE POR LENTE E MÊS. As versões se acumulam — é o
+--: histórico —, mas duas linhas `publicado` do mesmo mês fariam a leitura
+--: depender de qual tem a versão maior, e publicar deixaria de ser um ato com
+--: resultado previsível. Rascunhos podem coexistir: são trabalho em curso.
+create unique index if not exists curadoria_publicada_unica
+  on curadoria_lente (lente_id, mes) where status = 'publicado';
+
 
 -- -- 6. o que se decidiu fazer -------------------------------------------------
 --
@@ -279,6 +286,29 @@ create index if not exists mencao_por_teor on mencao (mes, teor)
   where teor is not null;
 
 
+-- -- 7b. o que chegou e ninguém classificou -----------------------------------
+--
+-- A §2 pede TRÊS estados de falta, e este é o segundo: "total sem sentimento".
+-- A Bites mandou 1.426 posts com `Não informado` em junho — são publicações
+-- reais, que existiram e foram vistas, mas que o fornecedor não leu.
+--
+-- Elas não podem virar `mencao`: `sentimento` é obrigatório, e inventar
+-- "neutro" seria atribuir ao fornecedor uma leitura que ele não fez. Também não
+-- podem sumir: um mês com 1.078 menções sem classificação desenhado como mês
+-- vazio conta uma história falsa sobre o volume da conversa.
+--
+-- Então o que se guarda é o CONTADOR. A tela desenha a barra cinza com o total
+-- no tooltip, e ninguém confunde volume sem leitura com ausência de volume.
+
+create table if not exists mencao_nao_classificada (
+  fonte_id smallint not null references score_fonte(id),
+  mes date not null,
+  total integer not null check (total >= 0),
+  atualizado_em timestamptz not null default now(),
+  primary key (fonte_id, mes)
+);
+
+
 -- -- 8. permissão ---------------------------------------------------------------
 --
 -- A regra do projeto: migration nova concede `delete` a `painel_app`. A 0009
@@ -287,7 +317,7 @@ create index if not exists mencao_por_teor on mencao (mes, teor)
 
 grant select, insert, update, delete on
   evento_mercado, estudo_percepcao, estudo_atributo, jornalista_matriz,
-  cm_resposta_mes, curadoria_lente, encaminhamento
+  cm_resposta_mes, curadoria_lente, encaminhamento, mencao_nao_classificada
 to painel_app;
 
 -- NADA DE `grant ... on all sequences`. Foi a primeira versão desta migration, e

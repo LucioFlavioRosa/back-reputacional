@@ -47,6 +47,7 @@ from datetime import date
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
+from app.banco.tabelas_lentes import MencaoNaoClassificada
 from app.banco.tabelas_score import Mencao, ScoreFonte, ScoreMesFonte
 from app.dominio.erros import RegraViolada
 from app.dominio.ingestao_score import Leitura, Mapeamento, ler_planilha, somar
@@ -145,8 +146,14 @@ def _quanto_havia(sessao: Session, fonte: ScoreFonte, meses: list[date]) -> int:
 
 
 def _regravar(sessao: Session, fonte: ScoreFonte, leitura: Leitura) -> None:
-    """Troca os meses que o arquivo traz — menções e agregado."""
+    """Troca os meses que o arquivo traz — menções, agregado e não classificadas."""
     meses = list(leitura.meses)
+    sessao.execute(
+        delete(MencaoNaoClassificada).where(
+            MencaoNaoClassificada.fonte_id == fonte.id,
+            MencaoNaoClassificada.mes.in_(meses),
+        )
+    )
     sessao.execute(
         delete(Mencao).where(Mencao.fonte_id == fonte.id, Mencao.mes.in_(meses))
     )
@@ -188,6 +195,14 @@ def _regravar(sessao: Session, fonte: ScoreFonte, leitura: Leitura) -> None:
             soma_cargo=soma.soma_cargo,
         )
         for soma in somar(leitura.mencoes)
+    )
+    # O QUE CHEGOU E NINGUÉM LEU, por mês. Sem isto a tela não distingue "mês
+    # sem base" de "mês com volume que o fornecedor não classificou" — e os
+    # dois viram a mesma barra vazia.
+    sessao.add_all(
+        MencaoNaoClassificada(fonte_id=fonte.id, mes=mes, total=total)
+        for mes, total in leitura.nao_classificadas.items()
+        if total and mes in meses
     )
     sessao.flush()
 

@@ -30,8 +30,8 @@ from sqlalchemy.orm import Session
 
 from app.banco.repositorio_score import (
     SENTIMENTO_DO_CLIMA,
-    _so_fontes_ligadas,
     primeiro_dia,
+    so_fontes_ligadas,
 )
 from app.banco.tabelas_catalogo import Clima, Tema
 from app.banco.tabelas_interacoes import InteracaoRegistro, InteracaoTema
@@ -43,6 +43,7 @@ from app.banco.tabelas_lentes import (
     EstudoPercepcao,
     EventoMercado,
     JornalistaMatriz,
+    MencaoNaoClassificada,
 )
 from app.banco.tabelas_score import Lente, Mencao, ScoreFonte
 from app.banco.tabelas_stakeholders import Instituicao
@@ -69,7 +70,7 @@ def meses_ate(mes: date, quantos: int) -> list[date]:
     return saida
 
 
-def _fontes_da_lente(sessao: Session, lente_id: int) -> list[ScoreFonte]:
+def fontes_da_lente(sessao: Session, lente_id: int) -> list[ScoreFonte]:
     return list(
         sessao.scalars(
             select(ScoreFonte)
@@ -79,8 +80,8 @@ def _fontes_da_lente(sessao: Session, lente_id: int) -> list[ScoreFonte]:
     )
 
 
-def _e_interna(sessao: Session, lente_id: int) -> bool:
-    return any(fonte.interna for fonte in _fontes_da_lente(sessao, lente_id))
+def lente_e_interna(sessao: Session, lente_id: int) -> bool:
+    return any(fonte.interna for fonte in fontes_da_lente(sessao, lente_id))
 
 
 # -- a evolução mensal ----------------------------------------------------------
@@ -101,7 +102,7 @@ def serie_da_lente(
     Contar a segunda como zero seria dizer que o mês foi neutro, quando o que
     houve foi ausência de leitura.
     """
-    if _e_interna(sessao, lente_id):
+    if lente_e_interna(sessao, lente_id):
         return _serie_do_crm(sessao, meses)
 
     consulta = (
@@ -116,7 +117,7 @@ def serie_da_lente(
         .where(
             ScoreFonte.lente_id == lente_id,
             Mencao.mes.in_(list(meses)),
-            *_so_fontes_ligadas(calibracao),
+            *so_fontes_ligadas(calibracao),
         )
         .group_by(Mencao.mes)
     )
@@ -124,11 +125,38 @@ def serie_da_lente(
         mes: {"pos": pos, "neu": neu, "neg": neg}
         for mes, pos, neu, neg in sessao.execute(consulta)
     }
+    nao_classificadas = _nao_classificadas(sessao, lente_id, meses, calibracao)
     vazio = {"pos": 0, "neu": 0, "neg": 0}
     return [
-        {"mes": mes, "sem_base": mes not in medido, **medido.get(mes, vazio)}
+        {
+            "mes": mes,
+            # SEM BASE é não ter passado NADA por ali. Um mês em que só chegaram
+            # menções que ninguém classificou tem base — tem volume —, e o que
+            # falta é a leitura do fornecedor. São dois estados diferentes, e a
+            # §2 desenha cada um do seu jeito.
+            "sem_base": mes not in medido and mes not in nao_classificadas,
+            "sem_classificacao": nao_classificadas.get(mes, 0),
+            **medido.get(mes, vazio),
+        }
         for mes in meses
     ]
+
+
+def _nao_classificadas(
+    sessao: Session, lente_id: int, meses: Sequence[date], calibracao: Calibracao
+) -> dict[date, int]:
+    """Quanto chegou em cada mês sem que o fornecedor lesse o sentimento."""
+    consulta = (
+        select(MencaoNaoClassificada.mes, func.sum(MencaoNaoClassificada.total))
+        .join(ScoreFonte, ScoreFonte.id == MencaoNaoClassificada.fonte_id)
+        .where(
+            ScoreFonte.lente_id == lente_id,
+            MencaoNaoClassificada.mes.in_(list(meses)),
+            *so_fontes_ligadas(calibracao),
+        )
+        .group_by(MencaoNaoClassificada.mes)
+    )
+    return {mes: int(total or 0) for mes, total in sessao.execute(consulta)}
 
 
 def _serie_do_crm(sessao: Session, meses: Sequence[date]) -> list[dict]:
@@ -184,7 +212,7 @@ def composicao_por_tier(
             ScoreFonte.lente_id == lente_id,
             Mencao.mes == primeiro_dia(mes),
             Mencao.tier.is_not(None),
-            *_so_fontes_ligadas(calibracao),
+            *so_fontes_ligadas(calibracao),
         )
         .group_by(Mencao.tier)
     )
@@ -215,7 +243,7 @@ def temas_por_sentimento(
             ScoreFonte.lente_id == lente_id,
             Mencao.mes == primeiro_dia(mes),
             rotulo.is_not(None),
-            *_so_fontes_ligadas(calibracao),
+            *so_fontes_ligadas(calibracao),
         )
         .group_by(rotulo)
         .order_by(func.count().desc(), rotulo.asc())
@@ -245,16 +273,23 @@ def unidades_da_lente(
             ScoreFonte.lente_id == lente_id,
             Mencao.mes.in_(list(meses)),
             Mencao.unidade_texto.is_not(None),
-            *_so_fontes_ligadas(calibracao),
+            *so_fontes_ligadas(calibracao),
         )
         .group_by(Mencao.unidade_texto, Mencao.mes)
     )
     por_unidade: dict[str, dict] = {}
-    for unidade, mes, total in sessao.execute(consulta):
+    # ORDENADO ANTES DE RESOLVER O EMPATE. Sem isto, duas altas iguais deixavam
+    # o "mês de pico" à mercê da ordem física das linhas — a mesma tela podia
+    # dizer março numa carga e maio na seguinte, sem nada ter mudado.
+    for unidade, mes, total in sorted(
+        sessao.execute(consulta), key=lambda linha: (linha[0], linha[1])
+    ):
         atual = por_unidade.setdefault(
             unidade, {"unidade": unidade, "total": 0, "pico_mes": None, "pico": 0}
         )
         atual["total"] += total
+        # `>` e não `>=`: empatado, fica o mês MAIS ANTIGO — é quando o
+        # problema apareceu, que é o que orienta ação.
         if total > atual["pico"]:
             atual["pico"] = total
             atual["pico_mes"] = mes
@@ -279,19 +314,31 @@ def teor_por_mes(
         .where(
             ScoreFonte.lente_id == lente_id,
             Mencao.mes.in_(list(meses)),
-            Mencao.teor.is_not(None),
-            *_so_fontes_ligadas(calibracao),
+            *so_fontes_ligadas(calibracao),
         )
         .group_by(Mencao.mes, Mencao.teor, Mencao.acionavel)
     )
     por_mes: dict[date, dict] = {
-        mes: {"mes": mes, "teores": {}, "acionaveis": 0, "total": 0} for mes in meses
+        mes: {
+            "mes": mes,
+            "teores": {},
+            "acionaveis": 0,
+            "sem_classificacao": 0,
+            "total": 0,
+        }
+        for mes in meses
     }
     for mes, teor, acionavel, total in sessao.execute(consulta):
         if mes not in por_mes:
             continue
         linha = por_mes[mes]
-        linha["teores"][teor] = linha["teores"].get(teor, 0) + total
+        # A MENSAGEM SEM MOTIVO ENTRA NO TOTAL, e não some. Filtrá-la na
+        # consulta fazia a soma da tabela não bater com o volume do mês, e a
+        # célula que deveria dizer "—" simplesmente não existia.
+        if teor is None:
+            linha["sem_classificacao"] += total
+        else:
+            linha["teores"][teor] = linha["teores"].get(teor, 0) + total
         linha["total"] += total
         if acionavel:
             linha["acionaveis"] += total
@@ -309,7 +356,7 @@ def recebidas_por_mes(
         .where(
             ScoreFonte.lente_id == lente_id,
             Mencao.mes.in_(list(meses)),
-            *_so_fontes_ligadas(calibracao),
+            *so_fontes_ligadas(calibracao),
         )
         .group_by(Mencao.mes)
     )
@@ -398,7 +445,9 @@ def orgaos_do_crm(sessao: Session, meses: Sequence[date], quantos: int = 6) -> l
         .group_by(Instituicao.nome, mes_da_interacao)
     )
     por_orgao: dict[str, dict] = {}
-    for nome, mes, total in sessao.execute(consulta):
+    for nome, mes, total in sorted(
+        sessao.execute(consulta), key=lambda linha: (linha[0], linha[1])
+    ):
         atual = por_orgao.setdefault(
             nome, {"unidade": nome, "total": 0, "pico_mes": None, "pico": 0}
         )
@@ -439,7 +488,7 @@ def estudo_vigente(sessao: Session, mes: date) -> tuple[EstudoPercepcao | None, 
     """
     estudo = sessao.scalars(
         select(EstudoPercepcao)
-        .where(EstudoPercepcao.data <= _fim_do_mes(mes))
+        .where(EstudoPercepcao.data < _inicio_do_mes_seguinte(mes))
         .order_by(EstudoPercepcao.data.desc())
         .limit(1)
     ).first()
@@ -455,14 +504,20 @@ def estudo_vigente(sessao: Session, mes: date) -> tuple[EstudoPercepcao | None, 
     return estudo, atributos
 
 
-def _fim_do_mes(mes: date) -> date:
+def _inicio_do_mes_seguinte(mes: date) -> date:
+    """O primeiro dia do mês seguinte — o limite ABERTO de um mês.
+
+    Chamava-se `_fim_do_mes` e era comparado com `<=`: um estudo datado no dia
+    1º de julho aparecia ao abrir junho. O nome mentia, e o operador errado em
+    cima do nome errado é o tipo de defeito que ninguém encontra lendo — só
+    olhando o dado e estranhando.
+    """
     primeiro = primeiro_dia(mes)
-    proximo = (
+    return (
         primeiro.replace(year=primeiro.year + 1, month=1)
         if primeiro.month == 12
         else primeiro.replace(month=primeiro.month + 1)
     )
-    return proximo
 
 
 def matriz_de_jornalistas(sessao: Session) -> list[JornalistaMatriz]:
@@ -483,17 +538,26 @@ def matriz_de_jornalistas(sessao: Session) -> list[JornalistaMatriz]:
 
 
 def curadoria_vigente(
-    sessao: Session, lente_id: int, mes: date
+    sessao: Session, lente_id: int, mes: date, *, ve_rascunho: bool = False
 ) -> CuradoriaLente | None:
-    """A versão mais recente do texto daquele mês. Nula quando ninguém escreveu."""
+    """O texto daquele mês. Nula quando ninguém escreveu.
+
+    QUEM NÃO EDITA SÓ VÊ O PUBLICADO (§7). A versão anterior devolvia a de
+    maior número, qualquer que fosse o status — e um rascunho salvo às pressas
+    apareceria na tela da diretoria como se fosse leitura fechada. Publicar
+    existe justamente para separar "estou escrevendo" de "pode citar".
+
+    Para quem edita, o rascunho mais recente vence o publicado: é o trabalho em
+    curso, e escondê-lo de quem o escreveu não protegeria ninguém.
+    """
+    consulta = select(CuradoriaLente).where(
+        CuradoriaLente.lente_id == lente_id,
+        CuradoriaLente.mes == primeiro_dia(mes),
+    )
+    if not ve_rascunho:
+        consulta = consulta.where(CuradoriaLente.status == "publicado")
     return sessao.scalars(
-        select(CuradoriaLente)
-        .where(
-            CuradoriaLente.lente_id == lente_id,
-            CuradoriaLente.mes == primeiro_dia(mes),
-        )
-        .order_by(CuradoriaLente.versao.desc())
-        .limit(1)
+        consulta.order_by(CuradoriaLente.versao.desc()).limit(1)
     ).first()
 
 
@@ -508,14 +572,22 @@ def encaminhamentos_da_lente(
     feito e não só dívida.
     """
     alvo = primeiro_dia(mes)
+    proximo = _inicio_do_mes_seguinte(alvo)
     return list(
         sessao.scalars(
             select(Encaminhamento)
             .where(
                 Encaminhamento.lente_id == lente_id,
                 Encaminhamento.mes_origem <= alvo,
+                # ABERTO aparece sempre; CONCLUÍDO aparece no mês em que se
+                # concluiu. A versão anterior usava `concluido_em >= alvo`, e
+                # com isso uma ação fechada em setembro já aparecia como
+                # concluída na tela de junho — a tela mostrava o futuro.
                 (Encaminhamento.status != "concluido")
-                | (Encaminhamento.concluido_em >= alvo),
+                | (
+                    (Encaminhamento.concluido_em >= alvo)
+                    & (Encaminhamento.concluido_em < proximo)
+                ),
             )
             .order_by(Encaminhamento.status, Encaminhamento.criado_em)
         )

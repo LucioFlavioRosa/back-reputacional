@@ -12,6 +12,7 @@ O que este arquivo prova é que eles são MARCADOS, e não descartados.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date
 
 import pytest
@@ -185,10 +186,23 @@ def test_o_encaminhamento_some_por_conclusao_e_nao_por_mes(sessao):
 # -- o dossiê: um endpoint, uma tela --------------------------------------------
 
 
-def _dossie(sessao, codigo: str, mes: str = "2026-06"):
+@dataclass
+class _QuemOlha:
+    """O mínimo que o dossiê pergunta sobre quem pediu a tela.
+
+    Só `administra_dicionarios` importa aqui, e é o que decide se o rascunho da
+    curadoria aparece — a §7 separa "estou escrevendo" de "pode citar".
+    """
+
+    administra_dicionarios: bool = False
+
+
+def _dossie(sessao, codigo: str, mes: str = "2026-06", *, edita: bool = False):
     from app.api.lentes import obter_dossie
 
-    return obter_dossie(sessao=sessao, usuario=None, codigo=codigo, mes=mes)
+    return obter_dossie(
+        sessao=sessao, usuario=_QuemOlha(edita), codigo=codigo, mes=mes
+    )
 
 
 def test_o_dossie_devolve_a_tela_inteira(sessao):

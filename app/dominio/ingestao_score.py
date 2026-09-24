@@ -252,6 +252,10 @@ class Leitura:
     linhas: int
     #: O que entrou, mas merece um olhar. Ver `AVISO_DE_TIER`.
     avisos: Mapping[str, int] = field(default_factory=dict)
+    #: Quantas linhas TINHAM data e não tinham sentimento, por mês. É o que
+    #: permite a tela desenhar "houve volume, ninguém classificou" em vez de
+    #: "não houve nada" — dois estados que a §2 separa de propósito.
+    nao_classificadas: Mapping[date, int] = field(default_factory=dict)
 
     @property
     def meses(self) -> tuple[date, ...]:
@@ -408,6 +412,7 @@ def ler_planilha(
     mencoes: list[MencaoLida] = []
     descartes: dict[str, int] = {motivo.value: 0 for motivo in Descarte}
     avisos: dict[str, int] = {AVISO_DE_TIER: 0}
+    nao_classificadas: dict[date, int] = {}
     coluna_do_tier = mapeamento.colunas.get("tier")
     total = 0
     for linha in linhas:
@@ -415,6 +420,14 @@ def ler_planilha(
         lido = ler_linha(linha, mapeamento)
         if isinstance(lido, Descarte):
             descartes[lido.value] += 1
+            # A linha sem sentimento MAS COM DATA é volume que existiu e
+            # ninguém leu: ela não vira menção, e some da contagem — mas o mês
+            # dela precisa saber que ela passou por ali.
+            if lido is Descarte.SEM_SENTIMENTO:
+                data = para_data(linha.get(mapeamento.colunas["data"]))
+                if data is not None:
+                    mes = data.replace(day=1)
+                    nao_classificadas[mes] = nao_classificadas.get(mes, 0) + 1
             continue
         mencoes.append(lido)
         # A fonte mapeia tier, a célula tem texto, e o texto não é nenhum dos
@@ -423,7 +436,11 @@ def ler_planilha(
         if coluna_do_tier and lido.tier is None and _achatar(linha.get(coluna_do_tier)):
             avisos[AVISO_DE_TIER] += 1
     return Leitura(
-        mencoes=tuple(mencoes), descartes=descartes, linhas=total, avisos=avisos
+        mencoes=tuple(mencoes),
+        descartes=descartes,
+        linhas=total,
+        avisos=avisos,
+        nao_classificadas=nao_classificadas,
     )
 
 
