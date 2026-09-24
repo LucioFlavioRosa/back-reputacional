@@ -275,3 +275,80 @@ def test_a_lente_inexistente_devolve_nao_encontrado(sessao):
 
     with pytest.raises(NaoEncontrado):
         _dossie(sessao, "inexistente")
+
+
+# -- o contrato fixo da §1 -------------------------------------------------------
+
+
+def test_o_dossie_tem_sempre_quatro_kpis_e_dois_paineis(sessao):
+    """A estrutura fixa não é convenção: é o que faz as cinco lentes se lerem
+    igual. Um quinto KPI quebraria a grade; três deixariam um buraco onde a
+    pessoa procura o número que sempre olha. O Pydantic recusa antes de sair."""
+    for codigo in ("imprensa", "mercado", "sociedade", "clientes", "institucional"):
+        dossie = _dossie(sessao, codigo)
+        assert len(dossie.kpis) == 4, codigo
+        assert len(dossie.paineis) == 2, codigo
+
+
+def test_os_kpis_sao_os_da_especificacao_em_cada_lente(sessao):
+    """Quatro números iguais para cinco lentes serviriam a todas e a nenhuma:
+    "matérias no ano" responde a pergunta da imprensa, não a de clientes."""
+    rotulos = {
+        codigo: [kpi.rotulo for kpi in _dossie(sessao, codigo).kpis]
+        for codigo in ("imprensa", "mercado", "clientes")
+    }
+    assert "Jornalistas P1" in rotulos["imprensa"]
+    assert "Solidez financeira" in rotulos["mercado"]
+    # As DUAS taxas, lado a lado — é a diferença entre cobrar a equipe por
+    # marcação de post e cobrá-la pelo trabalho que existia.
+    assert "Resposta bruta" in rotulos["clientes"]
+    assert "Resposta operacional" in rotulos["clientes"]
+
+
+def test_todo_bloco_de_informacao_tem_ficha(sessao):
+    """O "?" vale para os blocos, e não só para os gráficos: o destaque, a
+    curadoria e os encaminhamentos também precisam dizer de onde vêm."""
+    dossie = _dossie(sessao, "imprensa")
+    for ficha in (
+        dossie.ficha_do_destaque,
+        dossie.curadoria.ficha,
+        dossie.ficha_dos_encaminhamentos,
+        dossie.evolucao.ficha,
+        *[painel.ficha for painel in dossie.paineis],
+    ):
+        assert ficha.origem and ficha.fonte
+
+
+def test_a_tabela_manda_as_proprias_colunas_e_o_subtipo(sessao):
+    """A tela escolhia o schema procurando "rating" no TÍTULO do bloco. Um
+    título reescrito pela curadoria trocaria a tabela inteira em silêncio."""
+    tabelas = [
+        painel
+        for codigo in ("mercado", "clientes")
+        for painel in _dossie(sessao, codigo).paineis
+        if painel.tipo == "tabela"
+    ]
+    assert tabelas, "as lentes Mercado e Clientes têm tabela"
+    for tabela in tabelas:
+        assert tabela.subtipo in {"rating", "teor"}
+        assert tabela.colunas, tabela.titulo
+
+
+def test_a_legenda_da_institucional_fala_de_clima(sessao):
+    """A institucional mede clima, e as outras medem sentimento — e a tela não
+    pode descobrir isso adivinhando pelo título do bloco."""
+    institucional = _dossie(sessao, "institucional")
+    assert institucional.evolucao.legenda == ["Propositivo", "Neutro", "Tenso"]
+
+    imprensa = _dossie(sessao, "imprensa")
+    assert imprensa.evolucao.legenda == ["Positivo", "Neutro", "Negativo"]
+
+
+def test_a_serie_separa_mes_sem_base_de_mes_sem_classificacao(sessao):
+    """Os dois primeiros estados da §2. Um mês que ninguém leu TEM volume; um
+    mês sem base não teve nada. Desenhá-los igual afirmaria que o mês foi
+    tranquilo quando ele só não foi analisado."""
+    evolucao = _dossie(sessao, "sociedade").evolucao
+    for linha in evolucao.dados:
+        assert "sem_base" in linha
+        assert "sem_classificacao" in linha

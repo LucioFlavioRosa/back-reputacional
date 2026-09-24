@@ -74,10 +74,28 @@ class FichaSaida(BaseModel):
     conceitos: list[ConceitoSaida] = Field(default_factory=list)
 
 
+class ColunaSaida(BaseModel):
+    """Uma coluna de uma tabela do dossiê.
+
+    VEM DO SERVIDOR porque é ele que sabe o que a tabela mostra. A primeira
+    versão montava as colunas na tela OLHANDO O TÍTULO do bloco — e um título
+    reescrito pela curadoria trocaria silenciosamente o schema da tabela.
+    """
+
+    chave: str
+    titulo: str
+    alinhamento: str = "esquerda"
+
+
 class BlocoSaida(BaseModel):
     """Um gráfico ou quadro, com o tipo que a tela deve desenhar."""
 
     tipo: str
+    #: Distingue duas tabelas que se desenham igual e se leem diferente:
+    #: `rating` destaca rebaixamento, `teor` destaca reclamação acima de
+    #: metade. A regra de destaque é de leitura e mora na tela; QUAL regra
+    #: aplicar é do servidor.
+    subtipo: str | None = None
     titulo: str
     #: O título-conclusão da curadoria — a frase que o gráfico prova.
     conclusao: str | None = None
@@ -86,6 +104,8 @@ class BlocoSaida(BaseModel):
     #: clima (propositivo/neutro/tenso) e as outras medem sentimento — e a tela
     #: não pode descobrir isso adivinhando pelo título.
     legenda: list[str] = Field(default_factory=list)
+    #: Só nas tabelas.
+    colunas: list[ColunaSaida] = Field(default_factory=list)
     ficha: FichaSaida
 
 
@@ -124,6 +144,7 @@ class CuradoriaSaida(BaseModel):
     status: str
     automatica: bool
     exemplo: bool
+    ficha: FichaSaida
 
 
 class DossieSaida(BaseModel):
@@ -142,12 +163,19 @@ class DossieSaida(BaseModel):
     fontes: list[str] = Field(default_factory=list)
     formula: str
 
-    kpis: list[KpiSaida] = Field(default_factory=list)
+    #: QUATRO, sempre — é a estrutura fixa da §1, e não uma convenção. Um
+    #: quinto KPI quebraria a grade, e três deixariam um buraco onde a pessoa
+    #: procura o número que ela sempre olha.
+    kpis: list[KpiSaida] = Field(min_length=4, max_length=4)
+    #: A nota, a variação e os KPIs saem daqui.
+    ficha_do_destaque: FichaSaida
     evolucao: BlocoSaida
     fatos: list[FatoSaida] = Field(default_factory=list)
-    paineis: list[BlocoSaida] = Field(default_factory=list)
+    #: DOIS, sempre, pelo mesmo motivo.
+    paineis: list[BlocoSaida] = Field(min_length=2, max_length=2)
     curadoria: CuradoriaSaida
     encaminhamentos: list[EncaminhamentoSaida] = Field(default_factory=list)
+    ficha_dos_encaminhamentos: FichaSaida
 
 
 # -- as fichas que se repetem ---------------------------------------------------
@@ -173,6 +201,40 @@ CONCEITO_ACIONAVEL = Conceito(
         "Contato de verdade, e não marcação de post nem mensagem etiquetada "
         "como não pertinente. As não acionáveis continuam contadas — o que "
         "muda é o denominador da taxa de resposta."
+    ),
+)
+
+FICHA_DO_DESTAQUE = Ficha(
+    origem=Procedencia.CALCULO,
+    fonte="Derivado das fontes da lente pela régua em vigor",
+    conceitos=(
+        Conceito(
+            termo="Nota da lente",
+            texto=(
+                "O saldo de sentimento das fontes ligadas, na escala de 0 a "
+                "100. Com mais de uma fonte é a média simples dos saldos — a "
+                "que classifica mais posts não decide a lente sozinha."
+            ),
+        ),
+        Conceito(
+            termo="Variação",
+            texto="Contra o mesmo cálculo no mês anterior. Nula sem os dois meses.",
+        ),
+    ),
+)
+
+FICHA_DOS_ENCAMINHAMENTOS = Ficha(
+    origem=Procedencia.CADASTRO,
+    fonte="Plano de ação da lente",
+    conceitos=(
+        Conceito(
+            termo="Por que uma ação antiga continua aqui",
+            texto=(
+                "Encaminhamento some por CONCLUSÃO, nunca por passagem do mês. "
+                "Uma ação que desaparece no virar do mês é uma ação que ninguém "
+                "cobrou."
+            ),
+        ),
     ),
 )
 
@@ -220,15 +282,53 @@ def _bloco(
     ficha: Ficha,
     conclusao: str | None,
     legenda: list[str] | None = None,
+    subtipo: str | None = None,
+    colunas: list[ColunaSaida] | None = None,
 ) -> BlocoSaida:
     return BlocoSaida(
         tipo=tipo,
+        subtipo=subtipo,
         titulo=titulo,
         conclusao=conclusao,
         dados=dados,
         legenda=legenda or [],
+        colunas=colunas or [],
         ficha=_saida_da_ficha(ficha),
     )
+
+
+COLUNAS_DO_RATING = [
+    ColunaSaida(chave="agencia", titulo="Agência"),
+    ColunaSaida(chave="data", titulo="Quando"),
+    ColunaSaida(chave="de", titulo="De"),
+    ColunaSaida(chave="para", titulo="Para"),
+    ColunaSaida(chave="perspectiva", titulo="Perspectiva"),
+]
+
+
+def _colunas_do_teor(linhas: list[dict]) -> list[ColunaSaida]:
+    """As colunas da tabela de teor, na ordem em que se lê.
+
+    OS QUATRO PRIMEIROS SÃO FIXOS porque são a leitura — reclamação, dúvida,
+    elogio e informação respondem "o que as pessoas queriam". Marcação e NPR
+    não viram coluna: elas entram no total e na contagem de acionáveis, que é
+    onde importam.
+    """
+    presentes = {chave for linha in linhas for chave in linha}
+    principais = [
+        teor
+        for teor in ("Reclamação", "Dúvida", "Elogio", "Informação")
+        if teor in presentes
+    ]
+    return [
+        ColunaSaida(chave="mes", titulo="Mês"),
+        *[
+            ColunaSaida(chave=teor, titulo=teor, alinhamento="direita")
+            for teor in principais
+        ],
+        ColunaSaida(chave="sem_classificacao", titulo="Sem motivo", alinhamento="direita"),
+        ColunaSaida(chave="acionaveis", titulo="Acionáveis", alinhamento="direita"),
+    ]
 
 
 # -- a montagem -----------------------------------------------------------------
@@ -248,6 +348,10 @@ def _serie_em_blocos(serie: list[dict]) -> list[dict]:
             "negativo": linha["neg"],
             "total": linha["pos"] + linha["neu"] + linha["neg"],
             "sem_base": linha["sem_base"],
+            # O VOLUME QUE NINGUÉM LEU viaja junto, e não é somado ao total:
+            # ele não tem sentimento, e engordar o total com ele faria a
+            # composição da barra mentir. A tela desenha a faixa cinza à parte.
+            "sem_classificacao": linha.get("sem_classificacao", 0),
         }
         for linha in serie
     ]
@@ -472,12 +576,24 @@ def _paineis(
                     exemplo=any(evento.exemplo for evento in eventos),
                 ),
                 titulo_b,
+                subtipo="rating",
+                colunas=COLUNAS_DO_RATING,
             ),
         ]
 
     if lente.codigo == "clientes":
         teor = repositorio_lentes.teor_por_mes(sessao, lente.id, meses, calibracao)
         serie = repositorio_lentes.serie_da_lente(sessao, lente.id, meses, calibracao)
+        linhas_do_teor = [
+            {
+                "mes": f"{linha['mes']:%Y-%m}",
+                "total": linha["total"],
+                "acionaveis": linha["acionaveis"],
+                "sem_classificacao": linha["sem_classificacao"],
+                **linha["teores"],
+            }
+            for linha in teor
+        ]
         return [
             _bloco(
                 "barras_100",
@@ -489,6 +605,7 @@ def _paineis(
                         "neutro": linha["neu"],
                         "negativo": linha["neg"],
                         "sem_base": linha["sem_base"],
+                        "sem_classificacao": linha.get("sem_classificacao", 0),
                     }
                     for linha in serie
                 ],
@@ -501,21 +618,15 @@ def _paineis(
             _bloco(
                 "tabela",
                 "Teor das mensagens",
-                [
-                    {
-                        "mes": f"{linha['mes']:%Y-%m}",
-                        "total": linha["total"],
-                        "acionaveis": linha["acionaveis"],
-                        **linha["teores"],
-                    }
-                    for linha in teor
-                ],
+                linhas_do_teor,
                 _ficha_da_base(
                     _nomes_das_fontes(sessao, lente.id),
                     ("TAG (motivo)",),
                     (CONCEITO_ACIONAVEL,),
                 ),
                 titulo_b,
+                subtipo="teor",
+                colunas=_colunas_do_teor(linhas_do_teor),
             ),
         ]
 
@@ -879,6 +990,17 @@ def obter_dossie(
             status="rascunho",
             automatica=True,
             exemplo=False,
+            ficha=_saida_da_ficha(
+                Ficha(
+                    origem=Procedencia.CALCULO,
+                    fonte="Gerado dos números desta lente",
+                    lacunas=(
+                        "Ninguém escreveu a curadoria deste mês. O texto "
+                        "descreve o que os números dizem e nada além — "
+                        "interpretar é o trabalho que a curadoria faz.",
+                    ),
+                )
+            ),
         )
     else:
         saida_da_curadoria = CuradoriaSaida(
@@ -888,6 +1010,20 @@ def obter_dossie(
             status=curadoria.status,
             automatica=False,
             exemplo=curadoria.exemplo,
+            ficha=_saida_da_ficha(
+                Ficha(
+                    origem=Procedencia.RELATORIO
+                    if curadoria.exemplo
+                    else Procedencia.CADASTRO,
+                    fonte=(
+                        "Balanço Reputacional Jan-Ago, transcrito"
+                        if curadoria.exemplo
+                        else f"Curadoria de {curadoria.mes:%Y-%m}, "
+                        f"{'publicada' if curadoria.status == 'publicado' else 'em rascunho'}"
+                    ),
+                    exemplo=curadoria.exemplo,
+                )
+            ),
         )
 
     return DossieSaida(
@@ -904,6 +1040,8 @@ def obter_dossie(
         fontes=list(medida.fontes),
         formula=_formula(lente.codigo, calibracao),
         kpis=_kpis(sessao, lente, alvo, meses, calibracao, medida),
+        ficha_do_destaque=_saida_da_ficha(FICHA_DO_DESTAQUE),
+        ficha_dos_encaminhamentos=_saida_da_ficha(FICHA_DOS_ENCAMINHAMENTOS),
         evolucao=_evolucao(
             sessao,
             lente,
