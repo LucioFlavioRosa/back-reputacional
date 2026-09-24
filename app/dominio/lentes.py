@@ -1,8 +1,11 @@
 """As regras do dossiê de cada lente — sem banco e sem HTTP.
 
 O que mora aqui é o que se confere na mão: a prioridade de um jornalista a
-partir de três notas, as duas taxas de resposta, e a frase que a tela mostra
-quando ninguém escreveu a curadoria do mês.
+partir de três notas e as duas taxas de resposta.
+
+AS FRASES DA TELA NÃO MORAM AQUI. Elas são calculadas por detectores, em
+`dominio/sinais_da_lente.py` — este arquivo guarda as regras de negócio que os
+detectores leem, e não o texto que eles produzem.
 
 O ÍNDICE NÃO MORA AQUI. Nota, NS e ponderação continuam em `dominio/score.py`:
 a lente é uma LEITURA do índice, e duplicar a fórmula criaria duas verdades.
@@ -133,72 +136,6 @@ class TaxaDeResposta:
         # informação, não erro — e cortar em 1 esconderia justamente o esforço
         # gasto fora da fila.
         return self.respondidas / self.acionaveis
-
-
-# -- o rascunho automático ------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class Numeros:
-    """O que a tela sabe da lente quando ninguém escreveu nada sobre ela."""
-
-    nome: str
-    nota: int | None
-    delta: int | None
-    tema_dominante: str | None = None
-    unidade_mais_negativa: str | None = None
-    maior_variacao: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class Rascunho:
-    """A curadoria que o sistema escreve sozinho, marcada como tal."""
-
-    manchete: str
-    leitura: tuple[str, ...] = ()
-    automatico: bool = True
-
-
-def rascunho_automatico(numeros: Numeros) -> Rascunho:
-    """A frase que substitui a manchete enquanto ninguém a escreveu.
-
-    POR QUE GERAR, EM VEZ DE DEIXAR VAZIO. Um dossiê sem manchete parece
-    quebrado; um dossiê com uma manchete do mês passado mente. O rascunho diz o
-    que os números dizem, nada além — e a tela o marca como automático, para
-    que ninguém o cite como se fosse leitura editorial.
-
-    FRASES CURTAS E LITERAIS, de propósito: aqui se descreve, não se
-    interpreta. Interpretar é o trabalho que a curadoria existe para fazer.
-    """
-    if numeros.nota is None:
-        return Rascunho(
-            manchete=(
-                f"{numeros.nome} não foi medida neste mês — nenhuma fonte ligada "
-                "trouxe menção classificada."
-            )
-        )
-
-    partes = [f"{numeros.nome} está em {numeros.nota} neste mês"]
-    if numeros.delta is not None and numeros.delta != 0:
-        direcao = "acima" if numeros.delta > 0 else "abaixo"
-        pontos = abs(numeros.delta)
-        plural = "s" if pontos > 1 else ""
-        partes.append(f"{pontos} ponto{plural} {direcao} do mês anterior")
-    elif numeros.delta == 0:
-        partes.append("estável em relação ao mês anterior")
-
-    leitura: list[str] = []
-    if numeros.tema_dominante:
-        leitura.append(f"O assunto mais falado foi {numeros.tema_dominante}.")
-    if numeros.unidade_mais_negativa:
-        leitura.append(
-            f"A maior concentração de menções negativas está em "
-            f"{numeros.unidade_mais_negativa}."
-        )
-    if numeros.maior_variacao:
-        leitura.append(f"A maior variação do período foi em {numeros.maior_variacao}.")
-
-    return Rascunho(manchete=", ".join(partes) + ".", leitura=tuple(leitura))
 
 
 # -- o que a tela precisa saber de cada bloco -----------------------------------

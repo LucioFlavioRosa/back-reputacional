@@ -7,7 +7,7 @@ TRÊS PROCEDÊNCIAS, e a tela precisa saber qual é qual:
                     e `score_mes_fonte`, que a ingestão grava
     do CRM          a lente institucional, contada das interações na hora
     do cadastro     eventos de mercado, estudo de percepção, matriz de
-                    jornalistas, respostas do CM, curadoria e encaminhamentos
+                    jornalistas e respostas do CM
 
 A CALIBRAÇÃO VALE EM TUDO O QUE VEM DE MENÇÃO. Explicar o número da lente com o
 dado de uma fonte que a coordenação tirou do cálculo é pior do que não
@@ -37,8 +37,6 @@ from app.banco.tabelas_catalogo import Clima, Tema
 from app.banco.tabelas_interacoes import InteracaoRegistro, InteracaoTema
 from app.banco.tabelas_lentes import (
     CmRespostaMes,
-    CuradoriaLente,
-    Encaminhamento,
     EstudoAtributo,
     EstudoPercepcao,
     EventoMercado,
@@ -533,63 +531,6 @@ def matriz_de_jornalistas(sessao: Session) -> list[JornalistaMatriz]:
                 ).desc(),
                 JornalistaMatriz.nome,
             )
-        )
-    )
-
-
-def curadoria_vigente(
-    sessao: Session, lente_id: int, mes: date, *, ve_rascunho: bool = False
-) -> CuradoriaLente | None:
-    """O texto daquele mês. Nula quando ninguém escreveu.
-
-    QUEM NÃO EDITA SÓ VÊ O PUBLICADO (§7). A versão anterior devolvia a de
-    maior número, qualquer que fosse o status — e um rascunho salvo às pressas
-    apareceria na tela da diretoria como se fosse leitura fechada. Publicar
-    existe justamente para separar "estou escrevendo" de "pode citar".
-
-    Para quem edita, o rascunho mais recente vence o publicado: é o trabalho em
-    curso, e escondê-lo de quem o escreveu não protegeria ninguém.
-    """
-    consulta = select(CuradoriaLente).where(
-        CuradoriaLente.lente_id == lente_id,
-        CuradoriaLente.mes == primeiro_dia(mes),
-    )
-    if not ve_rascunho:
-        consulta = consulta.where(CuradoriaLente.status == "publicado")
-    return sessao.scalars(
-        consulta.order_by(CuradoriaLente.versao.desc()).limit(1)
-    ).first()
-
-
-def encaminhamentos_da_lente(
-    sessao: Session, lente_id: int, mes: date
-) -> list[Encaminhamento]:
-    """O que está aberto, venha do mês que vier, mais o que se concluiu neste.
-
-    ABERTO NÃO TEM VALIDADE. Uma ação de março que ninguém fechou continua na
-    tela em setembro — some por conclusão, nunca por passagem do tempo. O que
-    se conclui aparece no mês da conclusão, para que a tela mostre trabalho
-    feito e não só dívida.
-    """
-    alvo = primeiro_dia(mes)
-    proximo = _inicio_do_mes_seguinte(alvo)
-    return list(
-        sessao.scalars(
-            select(Encaminhamento)
-            .where(
-                Encaminhamento.lente_id == lente_id,
-                Encaminhamento.mes_origem <= alvo,
-                # ABERTO aparece sempre; CONCLUÍDO aparece no mês em que se
-                # concluiu. A versão anterior usava `concluido_em >= alvo`, e
-                # com isso uma ação fechada em setembro já aparecia como
-                # concluída na tela de junho — a tela mostrava o futuro.
-                (Encaminhamento.status != "concluido")
-                | (
-                    (Encaminhamento.concluido_em >= alvo)
-                    & (Encaminhamento.concluido_em < proximo)
-                ),
-            )
-            .order_by(Encaminhamento.status, Encaminhamento.criado_em)
         )
     )
 

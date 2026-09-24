@@ -6,8 +6,8 @@ DE ONDE SAI CADA COISA (e é isto que o "?" de cada bloco mostra na tela):
                         teor das mensagens — a ingestão já grava
     do CRM              a lente institucional inteira, contada na hora
     DESTE ARQUIVO       a matriz de jornalistas, a trajetória de rating, o
-                        estudo de percepção, quantas mensagens foram
-                        respondidas, e todo o texto editorial
+                        estudo de percepção e quantas mensagens foram
+                        respondidas
 
 O que este semeador grava veio do **Balanço Reputacional Jan-Ago 2026** do
 cliente, transcrito — não é invenção, mas também não é medição desta
@@ -43,7 +43,7 @@ from __future__ import annotations
 import logging
 from datetime import date
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from app.banco.sessao import obter_fabrica_de_sessao
@@ -53,14 +53,11 @@ from app.banco.sessao import obter_fabrica_de_sessao
 from app.banco.tabelas_acesso import Usuario  # noqa: F401
 from app.banco.tabelas_lentes import (
     CmRespostaMes,
-    CuradoriaLente,
-    Encaminhamento,
     EstudoAtributo,
     EstudoPercepcao,
     EventoMercado,
     JornalistaMatriz,
 )
-from app.banco.tabelas_score import Lente
 from app.banco.tabelas_stakeholders import Interlocutor  # noqa: F401
 
 logger = logging.getLogger(__name__)
@@ -180,369 +177,10 @@ ATRIBUTOS: list[tuple[str, float, str]] = [
 RESPOSTAS: list[int] = [383, 325, 504, 492, 607, 465, 398, 561]
 
 
-# -- o texto de cada lente -----------------------------------------------------
-
-CURADORIA: dict[str, dict] = {
-    "imprensa": {
-        "manchete": (
-            "A cobertura segue majoritariamente favorável, mas o tom continua condicionado "
-            "aos resultados financeiros: cada divulgação de balanço reabre governança e "
-            "rating."
-        ),
-        "evolucao_titulo": (
-            "Fevereiro concentra o pico negativo; junho puxa o volume para cima com pauta "
-            "favorável."
-        ),
-        "painel_a_titulo": (
-            "Nos veículos Muito Relevantes o negativo é o menor, mas o neutro quase empata "
-            "com o positivo — espaço para dados mais claros."
-        ),
-        "painel_b_titulo": (
-            "Quem priorizar: relevância, exposição e proximidade. Quanto menor a proximidade, "
-            "maior a urgência de aproximação."
-        ),
-        "leitura": [
-            (
-                "As pautas neutras e positivas voltaram depois do episódio de fevereiro, e o "
-                "volume de junho é o maior do semestre."
-            ),
-            (
-                "O escrutínio não passou: governança e estrutura financeira seguem sob lupa a "
-                "cada divulgação de resultado."
-            ),
-        ],
-        "revela": [
-            (
-                "Crise superada, escrutínio não",
-                (
-                    "As pautas neutras e positivas voltaram, mas governança e estrutura "
-                    "financeira seguem sob lupa a cada divulgação."
-                ),
-            ),
-            (
-                "Tier 1 lê com cautela",
-                (
-                    "Nos veículos mais relevantes o neutro quase empata com o positivo — "
-                    "espaço para dados mais claros e didáticos."
-                ),
-            ),
-            (
-                "Relacionamento é ativo",
-                (
-                    "Valor, Folha e Bloomberg Línea concentram volume e retratam a Aegea como "
-                    "protagonista do setor."
-                ),
-            ),
-            (
-                "Framing em transição",
-                (
-                    "Sair de pautas de case para a demonstração do impacto macro da "
-                    "companhia."
-                ),
-            ),
-        ],
-        "encaminhamentos": [
-            (
-                "Retomar encontros com jornalistas e diretores de redação (P1 e P2)",
-                "Comunicação + CEO",
-                "contínuo",
-            ),
-            (
-                "Novo ciclo com mídia especializada em mercado financeiro",
-                "Comunicação + RI",
-                "2026",
-            ),
-            ("Kit de dados para divulgações de resultado", "RI", "antes do 3T26"),
-            ("Monitorar REDD (plataforma fechada, leitura cautelosa)", "Comunicação", "mensal"),
-        ],
-    },
-    "mercado": {
-        "manchete": (
-            "O mercado reconhece o operador, mas ainda não confia no emissor: eficiência "
-            "operacional recebe 4,0 e solidez financeira 1,8 — a nota mais baixa do estudo."
-        ),
-        "evolucao_titulo": (
-            "A agenda de mercado alternou pressão e reforço: cada divulgação de resultado "
-            "veio acompanhada de uma ação de rating."
-        ),
-        "painel_a_titulo": "Operador reconhecido, emissor de dívida ainda gera dúvidas.",
-        "painel_b_titulo": "Três agências, cinco movimentos no ano — todos para baixo.",
-        "leitura": [
-            (
-                "Nenhum analista reconstrói a Aegea consolidada a partir do material público "
-                "— a complexidade é o problema-raiz e a maior alavanca sobre o custo de "
-                "capital."
-            ),
-            (
-                "O mercado quer números, não intenções: conversão de EBITDA em caixa, "
-                "reconciliação proforma e guidance de CAPEX."
-            ),
-            (
-                "O impacto está contido no mercado financeiro, por enquanto. Em crédito já "
-                "sensibilizado, um segundo evento fecharia essa diferença."
-            ),
-        ],
-        "revela": [
-            (
-                "Reconstruir a confiança",
-                (
-                    "Reconhecer o episódio com foco na resposta, não na magnitude do ajuste."
-                ),
-            ),
-            (
-                "Disclosure verificável",
-                (
-                    "Permitir que o investidor valide o resultado sozinho — estrutura "
-                    "societária, preferenciais nas SPEs."
-                ),
-            ),
-            (
-                "RI é ativo reputacional",
-                (
-                    "O time é reconhecido; o C-Level tem espaço para fortalecer "
-                    "relacionamentos em períodos de estresse."
-                ),
-            ),
-            (
-                "ESG depois da confiança",
-                (
-                    "Comunicar impacto socioambiental antes de restabelecer a confiança pode "
-                    "soar como desvio de atenção."
-                ),
-            ),
-        ],
-        "encaminhamentos": [
-            (
-                "Guidance formal de CAPEX e conversão de EBITDA em caixa",
-                "RI + Financeiro",
-                "imediato",
-            ),
-            (
-                "Doutrina de fato relevante com simetria entre credores",
-                "RI + Governança",
-                "curto prazo",
-            ),
-            ("Microfone aberto nas calls de resultado", "CEO + RI", "3T26"),
-            (
-                "Ampliar terceiros validadores (sell side, mídia especializada)",
-                "Comunicação + RI",
-                "contínuo",
-            ),
-        ],
-    },
-    "sociedade": {
-        "manchete": (
-            "A imagem da marca ficou praticamente dividida: no 1º semestre o positivo recuou "
-            "e o negativo subiu. A pressão não é contínua — vem em picos, e a Corsan "
-            "concentra volume e recorrência."
-        ),
-        "evolucao_titulo": (
-            "O volume deve ser lido junto da composição: março e junho concentram a pressão."
-        ),
-        "painel_a_titulo": (
-            "Patrocínio e marca empregadora sustentam a favorabilidade; serviço, obras e "
-            "privatização organizam a crítica."
-        ),
-        "painel_b_titulo": (
-            "Corsan concentra a repercussão territorial; as demais unidades têm picos "
-            "pontuais."
-        ),
-        "leitura": [
-            (
-                "Janeiro foi o mês mais favorável do ano: patrocínio e marca empregadora "
-                "dominaram a conversa."
-            ),
-            (
-                "Em julho o volume recua e a crítica fica menos difusa e mais territorial — "
-                "serviço, obras, cobrança e impacto ambiental."
-            ),
-            (
-                "Para o restante do ano a tendência é de alta, puxada pelas narrativas "
-                "eleitorais que atrelam a Aegea às concessionárias."
-            ),
-        ],
-        "revela": [
-            (
-                "Territórios positivos",
-                (
-                    "Patrocínio e Marca Empregadora sustentam a favorabilidade quando a marca "
-                    "se associa a pessoas e oportunidades."
-                ),
-            ),
-            (
-                "Serviço organiza a crítica",
-                (
-                    "Atendimento, cobrança, obras e privatização concentram a negatividade."
-                ),
-            ),
-            (
-                "Transferência de risco",
-                (
-                    "Corsan é a unidade mais associada à holding, inclusive negativamente."
-                ),
-            ),
-            (
-                "Antecipar picos",
-                (
-                    "Monitorar recorrências antes dos picos reduz a reação tardia."
-                ),
-            ),
-        ],
-        "encaminhamentos": [
-            ("Mapeamento preventivo de picos por unidade", "Comunicação + SL", "quinzenal"),
-            (
-                "Informar antes sobre obras, cobrança e privatização",
-                "Comunicação Regional",
-                "contínuo",
-            ),
-            (
-                "Protocolo de contaminação político-eleitoral",
-                "Comunicação + Institucional",
-                "até as eleições",
-            ),
-            ("Manter ativos patrocínio e marca empregadora", "Comunicação", "contínuo"),
-        ],
-    },
-    "clientes": {
-        "manchete": (
-            "A pressão nos canais atingiu o máximo em maio e se recompôs a partir de junho: a "
-            "reclamação perde peso e a dúvida passa a organizar a demanda."
-        ),
-        "evolucao_titulo": (
-            "O volume cresce até maio, enquanto a proporção bruta de respostas recua."
-        ),
-        "painel_a_titulo": (
-            "A composição muda a partir de junho: cai o negativo e o neutro passa a "
-            "predominar."
-        ),
-        "painel_b_titulo": (
-            "Reclamação ganha espaço até maio, quando passa de metade das mensagens."
-        ),
-        "leitura": [
-            (
-                "A volumetria sai de 497 em janeiro para 1.016 em maio e não volta ao patamar "
-                "do começo do ano."
-            ),
-            (
-                "A taxa bruta inclui marcações e mensagens não pertinentes. A taxa "
-                "operacional considera só as mensagens acionáveis — 18% da base fica de fora, "
-                "e é isso que separa exposição de demanda real."
-            ),
-            (
-                "Separar crescimento de exposição de demanda real permite dimensionar a "
-                "equipe sem transformar alcance em fila."
-            ),
-        ],
-        "revela": [
-            (
-                "Pico em maio",
-                (
-                    "Coincidiu com o maior volume do tema Institucional — agenda de conteúdo "
-                    "gera demanda nos canais."
-                ),
-            ),
-            (
-                "Falta de água é localizada",
-                (
-                    "Picos em março e maio: driver operacional ligado à prestação do serviço "
-                    "pelas unidades."
-                ),
-            ),
-            (
-                "Águas do Rio lidera a demanda",
-                "Concentra o 1º trimestre; Corsan segue estável em segundo.",
-            ),
-            (
-                "Recomposição",
-                (
-                    "Com menos reclamação, dúvida e elogio ganham espaço — oportunidade de "
-                    "conteúdo útil."
-                ),
-            ),
-        ],
-        "encaminhamentos": [
-            (
-                "Sincronizar impulsionamentos e collabs com a capacidade do CM",
-                "Conteúdo + CM",
-                "por campanha",
-            ),
-            ("Medir taxa operacional só com mensagens acionáveis", "CM", "set/26"),
-            ("Fluxo quinzenal CM + SL alimentando a pauta de conteúdo", "Comunicação", "contínuo"),
-            (
-                "Preparar as unidades antes de agendas institucionais",
-                "Comunicação Regional",
-                "por agenda",
-            ),
-        ],
-    },
-    "institucional": {
-        "manchete": (
-            "O relacionamento institucional é o colchão da reputação: a maioria das agendas "
-            "segue propositiva, com a tensão concentrada em tarifa, reequilíbrio e no "
-            "processo da Copasa."
-        ),
-        "evolucao_titulo": "O clima das agendas se mantém propositivo ao longo do semestre.",
-        "painel_a_titulo": "Onde o relacionamento sustenta e onde exige preparo.",
-        "painel_b_titulo": "A agenda está concentrada em poucos interlocutores federais.",
-        "leitura": [
-            (
-                "Reputação institucional e operacional sólidas amortecem os episódios de "
-                "mercado."
-            ),
-            (
-                "A tensão tem endereço: tarifa, reequilíbrio e Copasa concentram o clima "
-                "tenso."
-            ),
-        ],
-        "revela": [
-            (
-                "Colchão reputacional",
-                (
-                    "Reputação institucional e operacional sólidas amortecem os episódios de "
-                    "mercado."
-                ),
-            ),
-            (
-                "Tensão tem endereço",
-                (
-                    "Tarifa e Copasa concentram o clima tenso — preparo de porta-voz e "
-                    "posicionamento."
-                ),
-            ),
-            (
-                "Fechar o ciclo",
-                (
-                    "Registrar resultado em todas as agendas é o que transforma "
-                    "relacionamento em indicador."
-                ),
-            ),
-        ],
-        "encaminhamentos": [
-            (
-                "Posicionamento único sobre temas sensíveis do setor",
-                "Comunicação + Institucional",
-                "curto prazo",
-            ),
-            (
-                "Alinhamento de VPs e porta-vozes antes de agendas tensas",
-                "Institucional",
-                "por agenda",
-            ),
-            ("Preencher resultado de todas as agendas no CRM", "Institucional", "contínuo"),
-        ],
-    },
-}
-
 
 def _apagar_exemplos(sessao: Session) -> None:
     """Tira só o que este arquivo pôs. Cadastro de gente fica."""
-    for tabela in (
-        EventoMercado,
-        JornalistaMatriz,
-        CmRespostaMes,
-        CuradoriaLente,
-        Encaminhamento,
-    ):
+    for tabela in (EventoMercado, JornalistaMatriz, CmRespostaMes):
         sessao.execute(delete(tabela).where(tabela.exemplo.is_(True)))
     # O atributo cai junto com o estudo, por `on delete cascade`.
     sessao.execute(delete(EstudoPercepcao).where(EstudoPercepcao.exemplo.is_(True)))
@@ -551,7 +189,6 @@ def _apagar_exemplos(sessao: Session) -> None:
 def principal() -> None:
     sessao = obter_fabrica_de_sessao()()
     try:
-        lentes = {lente.codigo: lente.id for lente in sessao.scalars(select(Lente))}
         _apagar_exemplos(sessao)
 
         for nome, veiculo, relevancia, exposicao, proximidade in JORNALISTAS:
@@ -605,51 +242,8 @@ def principal() -> None:
                 )
             )
 
-        for codigo, conteudo in CURADORIA.items():
-            lente_id = lentes.get(codigo)
-            if lente_id is None:  # pragma: no cover - a 0048 semeia as cinco
-                raise RuntimeError(f"Lente {codigo!r} não cadastrada.")
-            sessao.add(
-                CuradoriaLente(
-                    lente_id=lente_id,
-                    mes=MES,
-                    # PUBLICADO de propósito: o texto veio do relatório do
-                    # cliente, e deixá-lo como rascunho faria a tela cair no
-                    # rascunho automático — pior que o texto real, e escondendo
-                    # que ele existe. A marca `exemplo` é que conta a história.
-                    status="publicado",
-                    manchete=conteudo["manchete"],
-                    evolucao_titulo=conteudo["evolucao_titulo"],
-                    painel_a_titulo=conteudo["painel_a_titulo"],
-                    painel_b_titulo=conteudo["painel_b_titulo"],
-                    leitura=conteudo["leitura"],
-                    revela=[
-                        {"titulo": titulo, "texto": corpo}
-                        for titulo, corpo in conteudo["revela"]
-                    ],
-                    exemplo=True,
-                )
-            )
-            for acao, responsavel, prazo in conteudo["encaminhamentos"]:
-                sessao.add(
-                    Encaminhamento(
-                        lente_id=lente_id,
-                        mes_origem=MES,
-                        acao=acao,
-                        responsavel=responsavel,
-                        prazo=prazo,
-                        exemplo=True,
-                    )
-                )
-
         sessao.commit()
-        quantos = (
-            len(JORNALISTAS)
-            + len(EVENTOS)
-            + len(ATRIBUTOS)
-            + len(RESPOSTAS)
-            + sum(1 + len(c["encaminhamentos"]) for c in CURADORIA.values())
-        )
+        quantos = len(JORNALISTAS) + len(EVENTOS) + len(ATRIBUTOS) + len(RESPOSTAS)
         logger.info("Lentes: %s linhas de exemplo gravadas.", quantos)
         print(f"Lentes: {quantos} linhas de exemplo gravadas (todas com exemplo=true).")
     finally:

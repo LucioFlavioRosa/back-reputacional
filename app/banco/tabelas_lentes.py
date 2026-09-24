@@ -9,8 +9,6 @@ nenhuma:
     estudo_atributo     nota de 1 a 5 por atributo do estudo
     jornalista_matriz   com quem a imprensa fala, e quão perto estamos
     cm_resposta_mes     quantas mensagens foram respondidas no mês
-    curadoria_lente     o texto editorial, versionado
-    encaminhamento      o que se decidiu fazer
 
 TRÊS DELAS NASCEM COM DADO DE EXEMPLO, e dizem isso. `exemplo` não é um detalhe
 de semeadura: é o que a tela lê para avisar, no "?" de cada bloco, que aquele
@@ -26,14 +24,12 @@ from sqlalchemy import (
     Boolean,
     Date,
     ForeignKey,
-    Identity,
     Integer,
     Numeric,
     SmallInteger,
     Text,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -156,53 +152,3 @@ class MencaoNaoClassificada(Tabela):
     mes: Mapped[date] = mapped_column(Date, primary_key=True)
     total: Mapped[int] = mapped_column(Integer)
     atualizado_em: Mapped[datetime] = mapped_column(server_default=func.now())
-
-
-class CuradoriaLente(Tabela):
-    """O texto editorial de uma lente num mês. A tabela só cresce."""
-
-    __tablename__ = "curadoria_lente"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    lente_id: Mapped[int] = mapped_column(SmallInteger, ForeignKey("lente.id"))
-    mes: Mapped[date] = mapped_column(Date)
-    #: Cresce sozinha e não empata — a vigente é a de maior versão.
-    versao: Mapped[int] = mapped_column(Identity(always=True))
-    status: Mapped[str] = mapped_column(Text, default="rascunho")
-    manchete: Mapped[str | None] = mapped_column(Text, nullable=True)
-    evolucao_titulo: Mapped[str | None] = mapped_column(Text, nullable=True)
-    painel_a_titulo: Mapped[str | None] = mapped_column(Text, nullable=True)
-    painel_b_titulo: Mapped[str | None] = mapped_column(Text, nullable=True)
-    leitura: Mapped[list] = mapped_column(JSONB, default=list)
-    revela: Mapped[list] = mapped_column(JSONB, default=list)
-    #: O texto veio do relatório transcrito, e não da curadoria do mês.
-    exemplo: Mapped[bool] = mapped_column(Boolean, default=False)
-    criado_por: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("usuario.id"), nullable=True
-    )
-    criado_em: Mapped[datetime] = mapped_column(server_default=func.now())
-
-
-class Encaminhamento(Tabela):
-    """Uma ação decidida a partir de uma lente. Some por conclusão."""
-
-    __tablename__ = "encaminhamento"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    lente_id: Mapped[int] = mapped_column(SmallInteger, ForeignKey("lente.id"))
-    #: O mês em que a decisão foi tomada, e não o prazo.
-    mes_origem: Mapped[date] = mapped_column(Date)
-    acao: Mapped[str] = mapped_column(Text)
-    responsavel: Mapped[str | None] = mapped_column(Text, nullable=True)
-    prazo: Mapped[str | None] = mapped_column(Text, nullable=True)
-    status: Mapped[str] = mapped_column(Text, default="aberto")
-    concluido_em: Mapped[date | None] = mapped_column(Date, nullable=True)
-    exemplo: Mapped[bool] = mapped_column(Boolean, default=False)
-    criado_por: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("usuario.id"), nullable=True
-    )
-    criado_em: Mapped[datetime] = mapped_column(server_default=func.now())

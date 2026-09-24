@@ -9,14 +9,18 @@
 -- revela e encaminhamentos. O índice em si não muda; muda o que se lê em volta
 -- dele.
 --
--- POR QUE ISTO É TABELA, E NÃO TEXTO NO CÓDIGO
--- --------------------------------------------
--- Metade do que a tela mostra não sai de planilha nenhuma: a manchete de cada
--- lente, a leitura em dois parágrafos, os insights numerados, o plano de ação,
--- a matriz de jornalistas, a trajetória de rating, o estudo de percepção. É
--- trabalho editorial mensal, feito por gente — e escrito no código ficaria
--- congelado no mês em que alguém o escreveu, envelhecendo em silêncio numa tela
--- que a diretoria lê como se fosse deste mês.
+-- O QUE É DADO, E O QUE NÃO É
+-- ---------------------------
+-- As tabelas abaixo guardam DADO que nenhuma planilha traz: o que aconteceu no
+-- mercado, o que um estudo mediu, com quem a imprensa fala, quantas mensagens
+-- foram respondidas. Tudo isso é fato, e fato se cadastra.
+--
+-- O QUE SE LÊ DESSE DADO — manchete, título de gráfico, "o que está
+-- acontecendo" — NÃO se guarda. É calculado na leitura por detectores
+-- determinísticos (`dominio/sinais_da_lente.py`), pelo mesmo motivo que o
+-- score não se guarda: texto salvo envelhece em silêncio numa tela que a
+-- diretoria lê como se fosse deste mês, e ninguém percebe que a frase é de
+-- dois meses atrás.
 --
 -- A PROCEDÊNCIA É PARTE DO DADO
 -- -----------------------------
@@ -180,86 +184,6 @@ create table if not exists cm_resposta_mes (
 );
 
 
--- -- 5. o texto que a lente carrega --------------------------------------------
---
--- A curadoria mensal: manchete, títulos-conclusão, leitura e insights. Um
--- registro por (lente, mês, versão) — a tabela SÓ CRESCE, e a linha vigente é a
--- de maior versão. Publicar é gravar uma versão com `status = 'publicado'`.
---
--- POR QUE VERSIONAR. O texto é o que a diretoria cita; saber o que estava
--- escrito quando ela leu é a mesma necessidade que fez `score_config` ser
--- versionada. Editar no lugar apagaria a frase que alguém repetiu numa reunião.
-
-create table if not exists curadoria_lente (
-  id uuid primary key default gen_random_uuid(),
-  lente_id smallint not null references lente(id),
-  mes date not null,
-  versao bigint generated always as identity,
-  status text not null default 'rascunho' check (status in ('rascunho', 'publicado')),
-
-  --: Uma frase. O limite existe porque manchete que não cabe numa linha deixa
-  --: de ser manchete.
-  manchete text check (manchete is null or length(manchete) <= 280),
-  --: Os títulos-conclusão: a frase que cada gráfico prova. Regra de design da
-  --: §1 — o título nunca pode contradizer o dado.
-  evolucao_titulo text,
-  painel_a_titulo text,
-  painel_b_titulo text,
-  --: 2 a 4 parágrafos, como lista de textos.
-  leitura jsonb not null default '[]'::jsonb,
-  --: 3 a 4 itens `{titulo, texto}`.
-  revela jsonb not null default '[]'::jsonb,
-  --: Enquanto o texto for o do relatório Jan-Ago, transcrito, e não escrito
-  --: pela curadoria naquele mês. O "?" de cada bloco lê esta marca.
-  exemplo boolean not null default false,
-
-  criado_por uuid references usuario(id),
-  criado_em timestamptz not null default now()
-);
-
-create index if not exists curadoria_por_lente_e_mes
-  on curadoria_lente (lente_id, mes, versao desc);
-
---: UMA PUBLICAÇÃO VIGENTE POR LENTE E MÊS. As versões se acumulam — é o
---: histórico —, mas duas linhas `publicado` do mesmo mês fariam a leitura
---: depender de qual tem a versão maior, e publicar deixaria de ser um ato com
---: resultado previsível. Rascunhos podem coexistir: são trabalho em curso.
-create unique index if not exists curadoria_publicada_unica
-  on curadoria_lente (lente_id, mes) where status = 'publicado';
-
-
--- -- 6. o que se decidiu fazer -------------------------------------------------
---
--- O plano de ação de cada lente. `mes_origem` é o mês em que a decisão foi
--- tomada, e não o prazo: encaminhamento aberto CONTINUA VISÍVEL nos meses
--- seguintes até alguém concluí-lo — some da tela por conclusão, nunca por
--- passagem do tempo. Uma ação que desaparece no virar do mês é uma ação que
--- ninguém cobrou.
-
-create table if not exists encaminhamento (
-  id uuid primary key default gen_random_uuid(),
-  lente_id smallint not null references lente(id),
-  mes_origem date not null,
-  acao text not null,
-  --: Quem toca. Texto, e não pessoa cadastrada: aqui se escreve "RI +
-  --: Financeiro", que é uma dupla de áreas, e não um nome do diretório.
-  responsavel text,
-  --: Também texto: o relatório fala em "imediato", "curto prazo", "3T26" —
-  --: prazos que uma data transformaria em falsa precisão.
-  prazo text,
-  status text not null default 'aberto'
-    check (status in ('aberto', 'em_andamento', 'concluido')),
-  concluido_em date,
-  --: Idem: veio do relatório, não de uma decisão tomada nesta ferramenta.
-  exemplo boolean not null default false,
-  criado_por uuid references usuario(id),
-  criado_em timestamptz not null default now()
-);
-
-create index if not exists encaminhamento_aberto
-  on encaminhamento (lente_id, status) where status <> 'concluido';
-
-
 -- -- 7. o que a menção passa a guardar ------------------------------------------
 
 --: O TEOR da mensagem, no vocabulário do fornecedor: Reclamação, Dúvida,
@@ -286,7 +210,7 @@ create index if not exists mencao_por_teor on mencao (mes, teor)
   where teor is not null;
 
 
--- -- 7b. o que chegou e ninguém classificou -----------------------------------
+-- -- 6. o que chegou e ninguém classificou ------------------------------------
 --
 -- A §2 pede TRÊS estados de falta, e este é o segundo: "total sem sentimento".
 -- A Bites mandou 1.426 posts com `Não informado` em junho — são publicações
@@ -309,7 +233,7 @@ create table if not exists mencao_nao_classificada (
 );
 
 
--- -- 8. permissão ---------------------------------------------------------------
+-- -- 7. permissão ---------------------------------------------------------------
 --
 -- A regra do projeto: migration nova concede `delete` a `painel_app`. A 0009
 -- concedeu em massa e só alcança o que já existia; `select`, `insert` e
@@ -317,7 +241,7 @@ create table if not exists mencao_nao_classificada (
 
 grant select, insert, update, delete on
   evento_mercado, estudo_percepcao, estudo_atributo, jornalista_matriz,
-  cm_resposta_mes, curadoria_lente, encaminhamento, mencao_nao_classificada
+  cm_resposta_mes, mencao_nao_classificada
 to painel_app;
 
 -- NADA DE `grant ... on all sequences`. Foi a primeira versão desta migration, e
@@ -332,7 +256,5 @@ comment on table evento_mercado is 'Eventograma e trajetória de rating da lente
 comment on table estudo_percepcao is 'Estudo de percepção do mercado financeiro (0049).';
 comment on table jornalista_matriz is 'Matriz de relacionamento com jornalistas: cadastro, porque a Clipei não manda o autor (0049).';
 comment on table cm_resposta_mes is 'Quantas mensagens foram respondidas no mês — do relatório, marcado como exemplo, até a Approach mandar a coluna (0049).';
-comment on table curadoria_lente is 'O texto editorial de cada lente, versionado (0049).';
-comment on table encaminhamento is 'Plano de ação por lente; some por conclusão, nunca por passagem do mês (0049).';
 
 commit;

@@ -20,8 +20,6 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.banco.tabelas_lentes import (
-    CuradoriaLente,
-    Encaminhamento,
     EstudoPercepcao,
     EventoMercado,
     JornalistaMatriz,
@@ -154,33 +152,12 @@ def test_todo_conteudo_semeado_esta_marcado_como_exemplo(sessao):
     cliente, e não desta ferramenta. Apresentá-los como medição é a forma mais
     barata de destruir a confiança num painel — a marca é o que a tela lê para
     avisar no "?" de cada bloco."""
-    for tabela in (EventoMercado, JornalistaMatriz, EstudoPercepcao, CuradoriaLente):
+    for tabela in (EventoMercado, JornalistaMatriz, EstudoPercepcao):
         semeadas = sessao.scalars(select(tabela).where(tabela.exemplo.is_(True)))
         # O banco de teste nasce vazio; o que importa é o contrato da coluna.
         assert all(linha.exemplo for linha in semeadas)
 
 
-def test_o_encaminhamento_some_por_conclusao_e_nao_por_mes(sessao):
-    """Uma ação que desaparece no virar do mês é uma ação que ninguém cobrou."""
-    from app.banco.tabelas_score import Lente
-
-    imprensa = sessao.scalar(select(Lente).where(Lente.codigo == "imprensa"))
-    aberto = Encaminhamento(
-        lente_id=imprensa.id,
-        mes_origem=date(2026, 1, 1),
-        acao="Kit de dados para divulgações de resultado",
-    )
-    sessao.add(aberto)
-    sessao.flush()
-
-    assert aberto.status == "aberto"
-    assert aberto.concluido_em is None
-    # Seis meses depois, continua aberto — é o mês de ORIGEM que fica para trás,
-    # não a pendência.
-    abertos = sessao.scalars(
-        select(Encaminhamento).where(Encaminhamento.status != "concluido")
-    ).all()
-    assert aberto in abertos
 
 
 # -- o dossiê: um endpoint, uma tela --------------------------------------------
@@ -217,7 +194,6 @@ def test_o_dossie_devolve_a_tela_inteira(sessao):
         "barras_100",
         "matriz_prioridade",
     ]
-    assert dossie.curadoria is not None
 
 
 def test_cada_bloco_carrega_a_ficha_de_procedencia(sessao):
@@ -261,14 +237,6 @@ def test_a_evolucao_mostra_a_janela_inteira_com_os_buracos(sessao):
     assert all(linha["sem_base"] for linha in evolucao.dados)
 
 
-def test_sem_curadoria_a_manchete_e_automatica_e_diz_que_e(sessao):
-    """Um dossiê sem manchete parece quebrado; um com a manchete do mês passado
-    mente. O rascunho diz o que os números dizem, e se declara automático."""
-    curadoria = _dossie(sessao, "imprensa").curadoria
-    assert curadoria.automatica is True
-    assert curadoria.manchete
-    assert not curadoria.revela, "o sistema não inventa insights"
-
 
 def test_a_lente_inexistente_devolve_nao_encontrado(sessao):
     from app.dominio.erros import NaoEncontrado
@@ -311,8 +279,6 @@ def test_todo_bloco_de_informacao_tem_ficha(sessao):
     dossie = _dossie(sessao, "imprensa")
     for ficha in (
         dossie.ficha_do_destaque,
-        dossie.curadoria.ficha,
-        dossie.ficha_dos_encaminhamentos,
         dossie.evolucao.ficha,
         *[painel.ficha for painel in dossie.paineis],
     ):

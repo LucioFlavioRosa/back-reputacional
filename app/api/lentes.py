@@ -1,8 +1,12 @@
 """O dossiê de uma lente, pronto para a tela.
 
 UM ENDPOINT, UMA TELA. A regra 2 do pacote: o front não calcula. Ele recebe a
-nota, os KPIs, a série, os dois painéis, o texto e os encaminhamentos já
-montados — e só decide cor, ordem e tamanho.
+nota, os KPIs, a série, os dois painéis e as frases já montados — e só decide
+cor, ordem e tamanho.
+
+NENHUM TEXTO ANALÍTICO É SALVO. Manchete e títulos de gráfico saem de
+detectores sobre os próprios dados, a cada leitura: mudar um dado muda a frase.
+Guardá-los faria a tela afirmar em setembro o que era verdade em junho.
 
 CADA BLOCO VIAJA COM A SUA FICHA. `Ficha` diz de onde o número veio (planilha,
 CRM, cadastro, relatório transcrito), que colunas o alimentam, o que FALTA hoje
@@ -33,11 +37,9 @@ from app.dominio.erros import NaoEncontrado
 from app.dominio.lentes import (
     Conceito,
     Ficha,
-    Numeros,
     Procedencia,
     TaxaDeResposta,
     prioridade_do_jornalista,
-    rascunho_automatico,
 )
 from app.dominio.score import Calibracao
 
@@ -121,32 +123,6 @@ class FatoSaida(BaseModel):
     efeito: str
 
 
-class EncaminhamentoSaida(BaseModel):
-    id: str
-    acao: str
-    responsavel: str | None
-    prazo: str | None
-    status: str
-    mes_origem: str
-    exemplo: bool
-
-
-class CuradoriaSaida(BaseModel):
-    """O texto da lente, e de quem ele é.
-
-    `automatica` é o que impede a frase gerada de ser citada como leitura
-    editorial: a tela mostra o selo, e quem lê sabe que ninguém escreveu aquilo.
-    """
-
-    manchete: str | None
-    leitura: list[str] = Field(default_factory=list)
-    revela: list[dict] = Field(default_factory=list)
-    status: str
-    automatica: bool
-    exemplo: bool
-    ficha: FichaSaida
-
-
 class DossieSaida(BaseModel):
     codigo: str
     nome: str
@@ -169,13 +145,14 @@ class DossieSaida(BaseModel):
     kpis: list[KpiSaida] = Field(min_length=4, max_length=4)
     #: A nota, a variação e os KPIs saem daqui.
     ficha_do_destaque: FichaSaida
+    #: A frase que abre a lente. CALCULADA dos dados a cada leitura, nunca
+    #: salva: texto guardado envelhece em silêncio numa tela que a diretoria lê
+    #: como se fosse deste mês. Nula enquanto os detectores não entram.
+    manchete: str | None = None
     evolucao: BlocoSaida
     fatos: list[FatoSaida] = Field(default_factory=list)
     #: DOIS, sempre, pelo mesmo motivo.
     paineis: list[BlocoSaida] = Field(min_length=2, max_length=2)
-    curadoria: CuradoriaSaida
-    encaminhamentos: list[EncaminhamentoSaida] = Field(default_factory=list)
-    ficha_dos_encaminhamentos: FichaSaida
 
 
 # -- as fichas que se repetem ---------------------------------------------------
@@ -219,21 +196,6 @@ FICHA_DO_DESTAQUE = Ficha(
         Conceito(
             termo="Variação",
             texto="Contra o mesmo cálculo no mês anterior. Nula sem os dois meses.",
-        ),
-    ),
-)
-
-FICHA_DOS_ENCAMINHAMENTOS = Ficha(
-    origem=Procedencia.CADASTRO,
-    fonte="Plano de ação da lente",
-    conceitos=(
-        Conceito(
-            termo="Por que uma ação antiga continua aqui",
-            texto=(
-                "Encaminhamento some por CONCLUSÃO, nunca por passagem do mês. "
-                "Uma ação que desaparece no virar do mês é uma ação que ninguém "
-                "cobrou."
-            ),
         ),
     ),
 )
@@ -445,11 +407,13 @@ def _evolucao(
 
 
 def _paineis(
-    sessao, lente, mes: date, meses, calibracao: Calibracao, curadoria
+    sessao, lente, mes: date, meses, calibracao: Calibracao
 ) -> list[BlocoSaida]:
     """Os dois painéis de cada lente, na ordem da especificação."""
-    titulo_a = getattr(curadoria, "painel_a_titulo", None)
-    titulo_b = getattr(curadoria, "painel_b_titulo", None)
+    # OS TÍTULOS PASSAM A VIR DOS DETECTORES, e não de texto salvo. Nulos
+    # aqui, preenchidos quando `sinais_da_lente` entrar — a tela já sabe cair no
+    # nome do painel quando não há conclusão.
+    titulo_a = titulo_b = None
 
     if lente.codigo == "imprensa":
         tiers = repositorio_lentes.composicao_por_tier(sessao, lente.id, mes, calibracao)
@@ -966,66 +930,6 @@ def obter_dossie(
         else None
     )
 
-    # QUEM EDITA VÊ O RASCUNHO; quem só lê, o publicado. É a §7 — publicar
-    # existe para separar "estou escrevendo" de "pode citar".
-    curadoria = repositorio_lentes.curadoria_vigente(
-        sessao, lente.id, alvo, ve_rascunho=usuario.administra_dicionarios
-    )
-    temas = repositorio_lentes.temas_por_sentimento(
-        sessao, lente.id, alvo, calibracao, quantos=1
-    )
-    if curadoria is None:
-        rascunho = rascunho_automatico(
-            Numeros(
-                nome=lente.nome,
-                nota=medida.score,
-                delta=delta,
-                tema_dominante=temas[0]["tema"] if temas else None,
-            )
-        )
-        saida_da_curadoria = CuradoriaSaida(
-            manchete=rascunho.manchete,
-            leitura=list(rascunho.leitura),
-            revela=[],
-            status="rascunho",
-            automatica=True,
-            exemplo=False,
-            ficha=_saida_da_ficha(
-                Ficha(
-                    origem=Procedencia.CALCULO,
-                    fonte="Gerado dos números desta lente",
-                    lacunas=(
-                        "Ninguém escreveu a curadoria deste mês. O texto "
-                        "descreve o que os números dizem e nada além — "
-                        "interpretar é o trabalho que a curadoria faz.",
-                    ),
-                )
-            ),
-        )
-    else:
-        saida_da_curadoria = CuradoriaSaida(
-            manchete=curadoria.manchete,
-            leitura=list(curadoria.leitura or []),
-            revela=list(curadoria.revela or []),
-            status=curadoria.status,
-            automatica=False,
-            exemplo=curadoria.exemplo,
-            ficha=_saida_da_ficha(
-                Ficha(
-                    origem=Procedencia.RELATORIO
-                    if curadoria.exemplo
-                    else Procedencia.CADASTRO,
-                    fonte=(
-                        "Balanço Reputacional Jan-Ago, transcrito"
-                        if curadoria.exemplo
-                        else f"Curadoria de {curadoria.mes:%Y-%m}, "
-                        f"{'publicada' if curadoria.status == 'publicado' else 'em rascunho'}"
-                    ),
-                    exemplo=curadoria.exemplo,
-                )
-            ),
-        )
-
     return DossieSaida(
         codigo=lente.codigo,
         nome=lente.nome,
@@ -1041,32 +945,10 @@ def obter_dossie(
         formula=_formula(lente.codigo, calibracao),
         kpis=_kpis(sessao, lente, alvo, meses, calibracao, medida),
         ficha_do_destaque=_saida_da_ficha(FICHA_DO_DESTAQUE),
-        ficha_dos_encaminhamentos=_saida_da_ficha(FICHA_DOS_ENCAMINHAMENTOS),
-        evolucao=_evolucao(
-            sessao,
-            lente,
-            meses,
-            calibracao,
-            getattr(curadoria, "evolucao_titulo", None),
-        ),
+        evolucao=_evolucao(sessao, lente, meses, calibracao, None),
         fatos=[
             FatoSaida(mes=f"{fato.mes:%Y-%m}", texto=fato.texto, efeito=fato.efeito)
             for fato in repositorio_score.fatos_do_periodo(sessao, meses)
         ],
-        paineis=_paineis(sessao, lente, alvo, meses, calibracao, curadoria),
-        curadoria=saida_da_curadoria,
-        encaminhamentos=[
-            EncaminhamentoSaida(
-                id=str(item.id),
-                acao=item.acao,
-                responsavel=item.responsavel,
-                prazo=item.prazo,
-                status=item.status,
-                mes_origem=f"{item.mes_origem:%Y-%m}",
-                exemplo=item.exemplo,
-            )
-            for item in repositorio_lentes.encaminhamentos_da_lente(
-                sessao, lente.id, alvo
-            )
-        ],
+        paineis=_paineis(sessao, lente, alvo, meses, calibracao),
     )
