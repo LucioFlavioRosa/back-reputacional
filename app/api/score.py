@@ -35,6 +35,7 @@ from app.banco.sessao import SessaoDoPedido
 from app.banco.tabelas_score import Lente, ScoreConfig, ScoreFato, ScoreFonte, ScoreMesFonte
 from app.casos_de_uso import ingerir_mencoes
 from app.casos_de_uso.ler_sinais_da_lente import regua_dos_sinais
+from app.dominio.assunto_do_mes import AssuntoDoMes, assuntos_que_pesaram
 from app.dominio.erros import NaoEncontrado, RegraViolada
 from app.dominio.score import (
     REGUAS_DE_ENGAJAMENTO,
@@ -135,10 +136,33 @@ class IndiceSaida(BaseModel):
 
 
 class FatoDoPonto(BaseModel):
-    """O que explica o degrau do mês, na própria coluna dele."""
+    """O que explica o degrau do mês, na própria coluna dele.
 
+    ESCRITO POR GENTE. Um mês pode ter vários: a curva de março não se explica
+    só pelo atraso das demonstrações, e obrigar quem cadastra a escolher UM
+    faria o segundo motivo sumir do painel.
+    """
+
+    id: UUID
     texto: str
     efeito: str
+
+
+class AssuntoSaida(BaseModel):
+    """O assunto que mais pesou no índice do mês — derivado, não cadastrado.
+
+    A OUTRA METADE DA PERGUNTA. O fato diz o que aconteceu no mundo; este diz
+    por onde aquilo entrou no número, e quanto custou ou rendeu em pontos do
+    índice. A conta é decomposição exata — ver `dominio/assunto_do_mes`.
+    """
+
+    assunto: str
+    lente: str
+    #: Pontos do índice, com sinal.
+    pontos: float
+    efeito: str
+    positivas: int
+    negativas: int
 
 
 class MovimentoDaLente(BaseModel):
@@ -165,7 +189,13 @@ class PontoDaSerie(BaseModel):
     #: Contra o mês anterior da série. Nulo no primeiro ponto — que é ponto de
     #: partida, e não variação zero.
     delta: int | None = None
-    fato: FatoDoPonto | None = None
+    #: TODOS os fatos do mês, do mais antigo para o mais novo.
+    fatos: list[FatoDoPonto] = Field(default_factory=list)
+    #: O que a BASE diz sobre o mês: o assunto que mais segurou e o que mais
+    #: puxou. Qualquer um pode faltar — um mês em que nada pesou não ganha um
+    #: "assunto do mês" inventado.
+    sustentou: AssuntoSaida | None = None
+    pressionou: AssuntoSaida | None = None
     maior_movimento: MovimentoDaLente | None = None
     #: A nota de cada lente medida no mês, por código. É o que permite desenhar
     #: a curva de comparação sem uma segunda chamada por lente.
@@ -439,13 +469,15 @@ def serie(sessao: Sessao, usuario: UsuarioLogado) -> list[PontoDaSerie]:
     # UMA CONSULTA PARA O PERÍODO INTEIRO, e não uma por mês: a série já faz
     # uma medição por mês, e somar a isso uma ida ao banco por coluna faria a
     # tela mais cara a cada mês ingerido.
-    # O PRIMEIRO DE CADA MÊS, quando há mais de um: a consulta vem ordenada por
-    # data de criação, e a coluna tem espaço para uma linha. Mostrar o último
-    # faria o destaque do mês mudar quando alguém cadastrasse uma nota de
-    # rodapé depois.
-    fatos: dict[str, ScoreFato] = {}
+    # TODOS OS FATOS DE CADA MÊS, na ordem em que foram cadastrados. A coluna
+    # mostra a lista inteira: escolher um faria o segundo motivo do mês sumir
+    # do painel, e é justamente o segundo que costuma explicar o resto.
+    fatos: dict[str, list[ScoreFato]] = {}
     for fato in repositorio_score.fatos_do_periodo(sessao, meses):
-        fatos.setdefault(f"{fato.mes:%Y-%m}", fato)
+        fatos.setdefault(f"{fato.mes:%Y-%m}", []).append(fato)
+
+    # E o que a BASE diz, ao lado do que as pessoas escreveram.
+    assuntos = repositorio_score.mencoes_por_assunto(sessao, meses, calibracao)
 
     pontos: list[PontoDaSerie] = []
     anterior: dict[str, int] = {}
@@ -453,7 +485,7 @@ def serie(sessao: Sessao, usuario: UsuarioLogado) -> list[PontoDaSerie]:
     for mes in meses:
         indice = repositorio_score.indice_do_mes(sessao, mes, calibracao, catalogo)
         notas = {lente.codigo: lente.score for lente in indice.lentes if lente.score is not None}
-        fato = fatos.get(indice.mes)
+        do_mes = assuntos_que_pesaram(assuntos.get(mes, []), _pesos_efetivos(indice))
         pontos.append(
             PontoDaSerie(
                 mes=indice.mes,
@@ -461,13 +493,31 @@ def serie(sessao: Sessao, usuario: UsuarioLogado) -> list[PontoDaSerie]:
                 lentes=len(indice.lentes_no_calculo),
                 tem_estimativa=any(lente.estimado for lente in indice.lentes_no_calculo),
                 delta=_delta(indice.isr, isr_anterior) if pontos else None,
-                fato=(FatoDoPonto(texto=fato.texto, efeito=fato.efeito) if fato else None),
+                fatos=[
+                    FatoDoPonto(id=f.id, texto=f.texto, efeito=f.efeito)
+                    for f in fatos.get(indice.mes, ())
+                ],
+                sustentou=_saida_do_assunto(do_mes.sustentou),
+                pressionou=_saida_do_assunto(do_mes.pressionou),
                 maior_movimento=_maior_movimento(notas, anterior, nomes),
                 notas_das_lentes=notas,
             )
         )
         anterior, isr_anterior = notas, indice.isr
     return pontos
+
+
+def _saida_do_assunto(escolhido: AssuntoDoMes | None) -> AssuntoSaida | None:
+    if escolhido is None:
+        return None
+    return AssuntoSaida(
+        assunto=escolhido.assunto,
+        lente=escolhido.lente,
+        pontos=escolhido.pontos,
+        efeito=escolhido.efeito,
+        positivas=escolhido.positivas,
+        negativas=escolhido.negativas,
+    )
 
 
 def _maior_movimento(

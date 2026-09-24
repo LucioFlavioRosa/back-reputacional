@@ -16,6 +16,7 @@ mexer na régua e ver o índice inteiro mudar sem reprocessar nada.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 
@@ -34,6 +35,7 @@ from app.banco.tabelas_score import (
     ScoreFonte,
     ScoreMesFonte,
 )
+from app.dominio.assunto_do_mes import MencoesDoAssunto
 from app.dominio.score import (
     Calibracao,
     Contagem,
@@ -527,6 +529,62 @@ def meses_com_dado(sessao: Session) -> list[date]:
 # post, um a um: a pergunta é "sobre o que falaram e com que tom", e não "quanto
 # isso pesou no índice". Ponderar aqui faria uma matéria do Valor aparecer como
 # dez, e a barra deixaria de ser contagem sem avisar.
+
+
+def mencoes_por_assunto(
+    sessao: Session, meses: Sequence[date], calibracao: Calibracao
+) -> dict[date, list[MencoesDoAssunto]]:
+    """Os assuntos de cada mês, com o total da lente ao lado.
+
+    UMA CONSULTA PARA O PERÍODO INTEIRO. A série já mede mês a mês; somar a
+    isso uma ida ao banco por coluna faria a tela mais cara a cada mês
+    ingerido, que é o que acontece todo mês.
+
+    O TOTAL DA LENTE VEM JUNTO porque é o denominador do NS: sem ele, o peso de
+    um assunto teria de ser recalculado a partir de outra consulta, e as duas
+    poderiam discordar.
+    """
+    rotulo = func.coalesce(Tema.nome, Mencao.tema_texto)
+    consulta = (
+        select(
+            Mencao.mes,
+            Lente.codigo,
+            rotulo.label("assunto"),
+            func.count().filter(Mencao.sentimento == "pos"),
+            func.count().filter(Mencao.sentimento == "neg"),
+            func.count(),
+        )
+        .select_from(Mencao)
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .join(Lente, Lente.id == ScoreFonte.lente_id)
+        .outerjoin(Tema, Tema.id == Mencao.tema_id)
+        .where(Mencao.mes.in_(list(meses)), *so_fontes_ligadas(calibracao))
+        .group_by(Mencao.mes, Lente.codigo, rotulo)
+    )
+
+    linhas = list(sessao.execute(consulta))
+    # O DENOMINADOR É A LENTE INTEIRA, inclusive as menções sem assunto: elas
+    # entraram no NS e tirá-las do total faria as contribuições somarem mais do
+    # que a lente de fato pôs no índice.
+    total_da_lente: dict[tuple[date, str], int] = {}
+    for mes, lente, _assunto, _pos, _neg, total in linhas:
+        chave = (mes, lente)
+        total_da_lente[chave] = total_da_lente.get(chave, 0) + total
+
+    por_mes: dict[date, list[MencoesDoAssunto]] = {}
+    for mes, lente, assunto, pos, neg, _total in linhas:
+        if assunto is None:
+            continue
+        por_mes.setdefault(mes, []).append(
+            MencoesDoAssunto(
+                lente=lente,
+                assunto=assunto,
+                positivas=pos,
+                negativas=neg,
+                total_da_lente=total_da_lente[(mes, lente)],
+            )
+        )
+    return por_mes
 
 
 def fatos_do_periodo(sessao: Session, meses: list[date]) -> list[ScoreFato]:

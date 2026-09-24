@@ -481,6 +481,44 @@ def test_um_limite_zerado_e_recusado_antes_de_gravar(sessao):
         )
 
 
+def test_o_mes_leva_TODOS_os_fatos_cadastrados(sessao):
+    """Escolher um faria o segundo motivo do mês sumir do painel — e é
+    justamente o segundo que costuma explicar o resto do degrau."""
+    from app.api.score import serie
+    from app.banco.tabelas_score import ScoreFato
+
+    _dois_meses_de_imprensa(sessao)
+    for texto, efeito in (
+        ("Atraso das demonstrações", "pressiona"),
+        ("Aporte de capital anunciado", "sustenta"),
+    ):
+        sessao.add(ScoreFato(mes=date(2026, 6, 1), texto=texto, efeito=efeito))
+    sessao.flush()
+
+    de_junho = next(
+        ponto for ponto in serie(sessao=sessao, usuario=_QuemLe()) if ponto.mes == "2026-06"
+    )
+    assert [f.texto for f in de_junho.fatos] == [
+        "Atraso das demonstrações",
+        "Aporte de capital anunciado",
+    ]
+
+
+def test_os_assuntos_que_pesaram_vêm_da_base(sessao):
+    """A outra metade da coluna: o fato diz o que aconteceu no mundo, o assunto
+    diz por onde aquilo entrou no número — dos dois lados."""
+    from app.api.score import serie
+
+    _dois_meses_de_imprensa(sessao)
+    de_junho = next(
+        ponto for ponto in serie(sessao=sessao, usuario=_QuemLe()) if ponto.mes == "2026-06"
+    )
+    # A base de teste não tem menção com tema, então não há assunto a apontar —
+    # e a ausência é `None` dos dois lados, e não um assunto inventado.
+    for lado in (de_junho.sustentou, de_junho.pressionou):
+        assert lado is None or lado.pontos != 0
+
+
 def test_o_limite_gravado_PELO_ENDPOINT_muda_a_lente(sessao):
     """O critério da §7 pelo caminho que a pessoa percorre.
 
@@ -627,9 +665,9 @@ def test_o_primeiro_ponto_e_partida_e_nao_variacao_zero(sessao):
     assert serie(sessao=sessao, usuario=_QuemLe())[0].delta is None
 
 
-def test_o_fato_do_mes_viaja_com_o_ponto(sessao):
-    """Ele deixou de ser uma lista embaixo do gráfico e passou a ser a coluna
-    do próprio mês — e para isso precisa chegar junto do ponto."""
+def test_os_fatos_do_mes_viajam_com_o_ponto(sessao):
+    """Eles deixaram de ser uma lista embaixo do gráfico e passaram a ser a
+    coluna do próprio mês — e para isso precisam chegar junto do ponto."""
     from app.api.score import serie
     from app.banco.tabelas_score import ScoreFato
 
@@ -640,9 +678,8 @@ def test_o_fato_do_mes_viaja_com_o_ponto(sessao):
     de_junho = next(
         ponto for ponto in serie(sessao=sessao, usuario=_QuemLe()) if ponto.mes == "2026-06"
     )
-    assert de_junho.fato is not None
-    assert de_junho.fato.texto == "Aporte anunciado"
-    assert de_junho.fato.efeito == "sustenta"
+    assert [f.texto for f in de_junho.fatos] == ["Aporte anunciado"]
+    assert de_junho.fatos[0].efeito == "sustenta"
 
 
 def test_a_lente_que_estreia_no_mes_nao_conta_como_movimento():
