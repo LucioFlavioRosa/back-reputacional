@@ -4,9 +4,10 @@ UM ENDPOINT, UMA TELA. A regra 2 do pacote: o front não calcula. Ele recebe a
 nota, os KPIs, a série, os dois painéis e as frases já montados — e só decide
 cor, ordem e tamanho.
 
-NENHUM TEXTO ANALÍTICO É SALVO. Manchete e títulos de gráfico saem de
-detectores sobre os próprios dados, a cada leitura: mudar um dado muda a frase.
-Guardá-los faria a tela afirmar em setembro o que era verdade em junho.
+NENHUM TEXTO ANALÍTICO É SALVO. Manchete, títulos de gráfico e a lista de
+sinais saem de detectores sobre os próprios dados, a cada leitura: mudar um
+dado muda a frase. Guardá-los faria a tela afirmar em setembro o que era
+verdade em junho.
 
 CADA BLOCO VIAJA COM A SUA FICHA. `Ficha` diz de onde o número veio (planilha,
 CRM, cadastro, relatório transcrito), que colunas o alimentam, o que FALTA hoje
@@ -33,6 +34,7 @@ from app.api.dependencias import UsuarioLogado, exigir_portal_score
 from app.api.score import _formula, _mes_de
 from app.banco import repositorio_lentes, repositorio_score
 from app.banco.sessao import SessaoDoPedido
+from app.casos_de_uso.ler_sinais_da_lente import ler_sinais
 from app.dominio.erros import NaoEncontrado
 from app.dominio.lentes import (
     Conceito,
@@ -42,6 +44,7 @@ from app.dominio.lentes import (
     prioridade_do_jornalista,
 )
 from app.dominio.score import Calibracao
+from app.dominio.sinais_da_lente import Limites, Secao
 
 rotas = APIRouter(
     prefix="/api/score/lentes",
@@ -111,6 +114,20 @@ class BlocoSaida(BaseModel):
     ficha: FichaSaida
 
 
+class SinalSaida(BaseModel):
+    """Uma linha do bloco "Sinais do período"."""
+
+    tipo: str
+    frase: str
+    #: O número que a frase prova, em destaque ao lado dela.
+    evidencia: str
+    #: Em que gráfico conferir — "Evolução", o nome de um painel, ou "Lente".
+    #: É O QUE LIGA A FRASE À PROVA: sem isso a lista vira cinco afirmações
+    #: soltas, e quem duvida de uma não sabe onde olhar.
+    onde: str
+    tom: str
+
+
 class KpiSaida(BaseModel):
     rotulo: str
     valor: str
@@ -147,12 +164,17 @@ class DossieSaida(BaseModel):
     ficha_do_destaque: FichaSaida
     #: A frase que abre a lente. CALCULADA dos dados a cada leitura, nunca
     #: salva: texto guardado envelhece em silêncio numa tela que a diretoria lê
-    #: como se fosse deste mês. Nula enquanto os detectores não entram.
+    #: como se fosse deste mês.
     manchete: str | None = None
     evolucao: BlocoSaida
+    #: O quadro ao lado da evolução — até três sinais da série, mais as lacunas.
+    sinais_da_evolucao: list[str] = Field(default_factory=list)
     fatos: list[FatoSaida] = Field(default_factory=list)
     #: DOIS, sempre, pelo mesmo motivo.
     paineis: list[BlocoSaida] = Field(min_length=2, max_length=2)
+    #: O bloco do fim da tela: o que mudou no período, por intensidade, com as
+    #: lacunas de dado no fim.
+    sinais: list[SinalSaida] = Field(default_factory=list)
 
 
 # -- as fichas que se repetem ---------------------------------------------------
@@ -890,6 +912,18 @@ def _pct(valor: float | None) -> str:
     return "—" if valor is None else f"{round(valor * 100)}%"
 
 
+def _com_conclusao(bloco: BlocoSaida, frase: str | None) -> BlocoSaida:
+    """O título-conclusão do bloco, quando o detector tem algo a dizer.
+
+    NÃO REPETE O NOME DO PRÓPRIO BLOCO. Sem sinal naquela seção, a §3 manda
+    usar o nome do painel — que a tela já mostra no título logo acima. Copiá-lo
+    para a conclusão desenharia a mesma frase duas vezes, uma embaixo da outra.
+    """
+    if not frase or frase == bloco.titulo:
+        return bloco
+    return bloco.model_copy(update={"conclusao": frase})
+
+
 #: CAMINHO TRANSITÓRIO. A especificação pede `GET /score/lentes/{lente}`, que
 #: hoje é a rota antiga da aba — a que devolve só composição, fórmula e temas. O
 #: dossiê fica em `/dossie` até a tela migrar; aí a antiga sai e este endpoint
@@ -930,6 +964,25 @@ def obter_dossie(
         else None
     )
 
+    evolucao = _evolucao(sessao, lente, meses, calibracao, None)
+    paineis = _paineis(sessao, lente, alvo, meses, calibracao)
+    leitura = ler_sinais(
+        sessao,
+        lente,
+        alvo,
+        meses,
+        calibracao,
+        limites=Limites(),
+        nome_do_painel_a=paineis[0].titulo,
+        nome_do_painel_b=paineis[1].titulo,
+    )
+    onde = {
+        Secao.EVOLUCAO: "Evolução",
+        Secao.PAINEL_A: paineis[0].titulo,
+        Secao.PAINEL_B: paineis[1].titulo,
+        Secao.GERAL: "Lente",
+    }
+
     return DossieSaida(
         codigo=lente.codigo,
         nome=lente.nome,
@@ -945,10 +998,25 @@ def obter_dossie(
         formula=_formula(lente.codigo, calibracao),
         kpis=_kpis(sessao, lente, alvo, meses, calibracao, medida),
         ficha_do_destaque=_saida_da_ficha(FICHA_DO_DESTAQUE),
-        evolucao=_evolucao(sessao, lente, meses, calibracao, None),
+        manchete=leitura.manchete,
+        evolucao=_com_conclusao(evolucao, leitura.titulo_da_evolucao),
+        sinais_da_evolucao=leitura.sinais_da_evolucao,
         fatos=[
             FatoSaida(mes=f"{fato.mes:%Y-%m}", texto=fato.texto, efeito=fato.efeito)
             for fato in repositorio_score.fatos_do_periodo(sessao, meses)
         ],
-        paineis=_paineis(sessao, lente, alvo, meses, calibracao),
+        paineis=[
+            _com_conclusao(paineis[0], leitura.titulo_do_painel_a),
+            _com_conclusao(paineis[1], leitura.titulo_do_painel_b),
+        ],
+        sinais=[
+            SinalSaida(
+                tipo=sinal.tipo,
+                frase=sinal.frase,
+                evidencia=sinal.evidencia,
+                onde=onde[sinal.secao],
+                tom=sinal.tom.value,
+            )
+            for sinal in leitura.lista
+        ],
     )

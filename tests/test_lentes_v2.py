@@ -165,11 +165,7 @@ def test_todo_conteudo_semeado_esta_marcado_como_exemplo(sessao):
 
 @dataclass
 class _QuemOlha:
-    """O mínimo que o dossiê pergunta sobre quem pediu a tela.
-
-    Só `administra_dicionarios` importa aqui, e é o que decide se o rascunho da
-    curadoria aparece — a §7 separa "estou escrevendo" de "pode citar".
-    """
+    """O mínimo que o dossiê pergunta sobre quem pediu a tela."""
 
     administra_dicionarios: bool = False
 
@@ -318,3 +314,93 @@ def test_a_serie_separa_mes_sem_base_de_mes_sem_classificacao(sessao):
     for linha in evolucao.dados:
         assert "sem_base" in linha
         assert "sem_classificacao" in linha
+
+
+# -- os sinais do período --------------------------------------------------------
+
+LENTES = ("imprensa", "mercado", "sociedade", "clientes", "institucional")
+
+
+@pytest.mark.parametrize("codigo", LENTES)
+def test_toda_lente_abre_com_uma_frase_calculada(sessao, codigo):
+    """A manchete NÃO É NULA EM LENTE NENHUMA, nem quando não há sinal: a tela
+    tem esse lugar para preencher, e devolver nada a obrigaria a inventar o
+    próprio texto de vazio — cinco vezes, uma por lente."""
+    dossie = _dossie(sessao, codigo)
+    assert dossie.manchete
+    assert dossie.manchete.endswith(".")
+    assert dossie.sinais_da_evolucao
+
+
+@pytest.mark.parametrize("codigo", LENTES)
+def test_cada_sinal_diz_onde_conferi_lo(sessao, codigo):
+    """SEM O "ONDE" A LISTA VIRA CINCO AFIRMAÇÕES SOLTAS, e quem duvida de uma
+    não sabe em que gráfico olhar."""
+    dossie = _dossie(sessao, codigo)
+    lugares = {"Evolução", "Lente", *(painel.titulo for painel in dossie.paineis)}
+    for sinal in dossie.sinais:
+        assert sinal.onde in lugares, sinal
+        assert sinal.tom in {"pos", "neg", "neu"}
+        assert sinal.frase and sinal.evidencia
+
+
+@pytest.mark.parametrize("codigo", LENTES)
+def test_as_lacunas_de_dado_ficam_no_fim_da_lista(sessao, codigo):
+    """Elas dizem o que FALTA, e o que falta não compete com o que aconteceu."""
+    sinais = _dossie(sessao, codigo).sinais
+    tipos = [sinal.tipo for sinal in sinais]
+    lacunas = [i for i, tipo in enumerate(tipos) if tipo == "Lacuna de dado"]
+    if lacunas:
+        assert lacunas == list(range(len(tipos) - len(lacunas), len(tipos))), tipos
+
+
+@pytest.mark.parametrize("codigo", LENTES)
+def test_no_maximo_cinco_sinais_reais(sessao, codigo):
+    reais = [
+        sinal for sinal in _dossie(sessao, codigo).sinais if sinal.tipo != "Lacuna de dado"
+    ]
+    assert len(reais) <= 5, codigo
+
+
+@pytest.mark.parametrize("codigo", LENTES)
+def test_a_conclusao_nunca_repete_o_titulo_do_proprio_bloco(sessao, codigo):
+    """Sem sinal na seção, a §3 manda usar o nome do painel — que a tela já
+    mostra logo acima. Copiá-lo para a conclusão desenharia a mesma frase duas
+    vezes, uma embaixo da outra."""
+    dossie = _dossie(sessao, codigo)
+    for bloco in (dossie.evolucao, *dossie.paineis):
+        assert bloco.conclusao != bloco.titulo, bloco.titulo
+
+
+def test_mudar_um_dado_muda_a_frase_na_proxima_leitura(sessao):
+    """O critério central da §7, e a razão de nada disto ser salvo: texto
+    guardado envelhece em silêncio numa tela que a diretoria lê como se fosse
+    deste mês."""
+    from app.banco.tabelas_lentes import JornalistaMatriz
+
+    antes = _dossie(sessao, "imprensa").paineis[1].conclusao
+
+    sessao.add(
+        JornalistaMatriz(
+            nome="Zulmira Teste",
+            veiculo="Diário do Teste",
+            relevancia=5,
+            exposicao=5,
+            proximidade=1,
+            exemplo=True,
+        )
+    )
+    sessao.flush()
+
+    depois = _dossie(sessao, "imprensa").paineis[1].conclusao
+    assert depois != antes
+    assert "Zulmira Teste" in depois
+
+
+def test_o_mercado_avisa_que_a_nota_e_um_proxy(sessao):
+    """É a única lente sem série mensal de sentimento. A nota existe e é
+    defensável, mas quem a lê tem de saber que ela mede os veículos econômicos
+    de Tier 1, e não o que o mercado disse."""
+    sinais = _dossie(sessao, "mercado").sinais
+    assert any("proxy dos veículos Tier 1" in sinal.frase for sinal in sinais)
+    assert sinais[-1].onde == "Lente"

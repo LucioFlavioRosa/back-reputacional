@@ -93,6 +93,21 @@ def pico(quando: date, volume: int, unidade: str, razao: float) -> str:
 
 
 def virada(delta: int, quando: date, antes: float, depois: float) -> str:
+    """A nota andou — ou o saldo trocou de lado sem a nota andar.
+
+    O SEGUNDO CASO EXISTE E NÃO É RARO: a nota é o saldo reescalado e
+    arredondado, e um saldo que cruza o zero por pouco pode cair no mesmo
+    inteiro dos dois lados. "A nota caiu 0 ponto" seria a frase, e ela é
+    absurda — o que aconteceu ali foi a troca de lado, e é isso que se diz.
+    """
+    if not delta:
+        return (
+            f"O saldo virou para o negativo em {mes_de(quando)}: o negativo foi de "
+            f"{porcento(antes)} para {porcento(depois)}."
+            if depois > antes
+            else f"O saldo virou para o positivo em {mes_de(quando)}: o negativo "
+            f"foi de {porcento(antes)} para {porcento(depois)}."
+        )
     verbo = "subiu" if delta > 0 else "caiu"
     return (
         f"A nota {verbo} {abs(delta)} {plural(abs(delta), 'ponto', 'pontos')} em "
@@ -143,15 +158,21 @@ def sustenta(item: str, fatia: float) -> str:
     return f"{item} é o mais favorável: {porcento(fatia)} positivo."
 
 
-def concentracao_por_razao(primeiro: str, razao: float, segundo: str, item: str) -> str:
-    return (
-        f"{primeiro} tem {decimal(razao)}× o volume de {segundo}, "
-        f"{'a segunda' if item.endswith('e') else 'o segundo'} {item}."
-    )
+def concentracao_por_razao(
+    primeiro: str, razao: float, segundo: str, ordinal_do_segundo: str
+) -> str:
+    """`ordinal_do_segundo` chega pronto: "a segunda unidade", "o segundo órgão".
+
+    ADIVINHAR O GÊNERO PELA ÚLTIMA LETRA acerta "unidade" e erra "empresa" —
+    e um artigo errado numa frase de diretoria é o tipo de detalhe que faz
+    duvidar do número ao lado dele. Quem chama sabe o gênero; o modelo não.
+    """
+    return f"{primeiro} tem {decimal(razao)}× o volume de {segundo}, {ordinal_do_segundo}."
 
 
 def concentracao_do_topo(itens: list[str], fatia: float, unidade: str) -> str:
-    return f"{lista(itens)} concentram {porcento(fatia)} das {unidade}."
+    verbo = plural(len(itens), "concentra", "concentram")
+    return f"{lista(itens)} {verbo} {porcento(fatia)} das {unidade}."
 
 
 def deslocamento_percentual(

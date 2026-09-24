@@ -186,6 +186,10 @@ def detectar_na_serie(
 ) -> list[Sinal]:
     """Pico, virada, alta do negativo, tendência, deslocamento e lacuna."""
     achados: list[Sinal] = []
+    # ORDENAR AQUI, E NÃO CONFIAR NO CHAMADOR: "último vs. penúltimo" é uma
+    # afirmação sobre o calendário, e lê-la da ordem do argumento faria a mesma
+    # série devolver leituras diferentes conforme quem a montou.
+    serie = sorted(serie, key=lambda ponto: ponto.mes)
     com_base = [ponto for ponto in serie if not ponto.sem_base]
     com_leitura = [ponto for ponto in serie if ponto.tem_leitura]
 
@@ -363,6 +367,10 @@ def detectar_nos_itens(
     linha) — aí não existe "geral" com que comparar, porque somar percentuais de
     linhas diferentes não produz número nenhum.
     """
+    # ITEM SEM VOLUME NÃO TEM FATIA. `fatia_negativa` devolve 0 para não
+    # estourar, e esse 0 viraria "concentra o maior negativo: 0%" — uma leitura
+    # analítica sobre um item por onde não passou nada.
+    itens = [item for item in itens if item.total]
     if not itens:
         return []
 
@@ -402,7 +410,7 @@ def detectar_no_ranking(
     itens: Sequence[tuple[str, float]],
     *,
     secao: Secao,
-    nome_do_item: str,
+    ordinal_do_segundo: str,
     unidade: str,
     limites: Limites,
 ) -> list[Sinal]:
@@ -421,7 +429,7 @@ def detectar_no_ranking(
                 Sinal(
                     tipo="Concentração",
                     frase=frases.concentracao_por_razao(
-                        ordenados[0][0], razao, ordenados[1][0], nome_do_item
+                        ordenados[0][0], razao, ordenados[1][0], ordinal_do_segundo
                     ),
                     evidencia=f"{frases.decimal(razao)}×",
                     secao=secao,
@@ -602,6 +610,9 @@ def detectar_nos_eventos(eventos: Sequence[Evento], *, secao: Secao) -> list[Sin
         > sum(1 for evento in doacoes if evento.efeito == SUSTENTA)
     )
     achados: list[Sinal] = []
+    # SÓ QUANDO HOUVE ALGUM MÊS ASSIM. "A pressão predominou em 0 de 7 meses"
+    # é uma frase sobre o que não aconteceu, e ocuparia uma das cinco vagas da
+    # lista para dizer que não há notícia.
     if sob_pressao:
         achados.append(
             Sinal(
@@ -628,6 +639,10 @@ def detectar_nos_eventos(eventos: Sequence[Evento], *, secao: Secao) -> list[Sin
         mes, textos = max(acumulos, key=lambda par: (len(par[1]), par[0]))
         achados.append(
             Sinal(
+                # O PROTÓTIPO CHAMA DE "Concentração", como o de ranking. São
+                # dois detectores diferentes, e o chip é o que a pessoa lê para
+                # saber qual regra produziu a frase — a §5.5 os separa, e o
+                # nome aqui segue a §5.5.
                 tipo="Concentração de eventos",
                 frase=frases.concentracao_de_eventos(mes, textos),
                 evidencia=f"{len(textos)} eventos",
@@ -831,11 +846,19 @@ def escolher(
     lacunas = [sinal for sinal in numerados if sinal.tipo == TIPO_DE_LACUNA]
 
     def do_topo(secao: Secao) -> Sinal | None:
+        """A MESMA REGRA DA MANCHETE, por seção (§3) — inclusive a ORDEM.
+
+        Procurar "qualquer movimento recente" sobre a lista já ordenada por
+        intensidade deixaria uma Recuperação forte passar na frente de uma
+        Virada: o título diria que a taxa se recuperou enquanto o gráfico
+        embaixo mostra a nota virando.
+        """
         recente = next(
             (
                 sinal
+                for tipo in TIPOS_DE_MOVIMENTO_RECENTE
                 for sinal in reais
-                if sinal.secao == secao and sinal.tipo in TIPOS_DE_MOVIMENTO_RECENTE
+                if sinal.secao == secao and sinal.tipo == tipo
             ),
             None,
         )

@@ -95,13 +95,13 @@ class TestPico:
         assert pico.tom is Tom.NEUTRO
 
     def test_nao_dispara_quando_o_volume_e_parelho(self):
-        """Um mês 10% acima da média passa nos desvios e cai na razão.
+        """Um mês 9% acima da média passa nos desvios e cai na razão.
 
         SÃO DUAS CONDIÇÕES PORQUE UMA SÓ ERRA NOS DOIS SENTIDOS: numa série
-        muito regular, qualquer solavanco vira 1,5 desvio; numa série instável,
-        o dobro do volume não chega lá.
+        muito regular, qualquer solavanco vira 1,5 desvio — como aqui, onde o
+        z chega a 1,7 sobre uma diferença de nove matérias.
         """
-        sinais = na_serie(serie((10, 0, 0), (10, 0, 0), (11, 0, 0)))
+        sinais = na_serie(serie((100, 0, 0), (100, 0, 0), (100, 0, 0), (113, 0, 0)))
         assert "Pico" not in tipos_de(sinais)
 
     def test_se_cala_com_menos_de_tres_meses(self):
@@ -128,6 +128,21 @@ class TestVirada:
         sinais = na_serie(serie((52, 0, 48), (48, 0, 52)))
         assert "Virada" in tipos_de(sinais)
 
+    def test_a_troca_de_lado_sem_variacao_de_nota_nao_diz_zero_ponto(self):
+        """A nota é o saldo reescalado E ARREDONDADO: um saldo que cruza o zero
+        por pouco cai no mesmo inteiro dos dois lados, e "A nota caiu 0 ponto"
+        seria a frase."""
+        sinais = na_serie(serie((501, 0, 499), (499, 0, 501)))
+        virada = next(sinal for sinal in sinais if sinal.tipo == "Virada")
+        assert virada.frase == (
+            "O saldo virou para o negativo em fevereiro: o negativo foi de 50% para 50%."
+        )
+
+    def test_a_troca_para_o_positivo_diz_isso(self):
+        sinais = na_serie(serie((499, 0, 501), (501, 0, 499)))
+        virada = next(sinal for sinal in sinais if sinal.tipo == "Virada")
+        assert virada.frase.startswith("O saldo virou para o positivo")
+
     def test_nao_dispara_abaixo_do_limite_sem_trocar_de_lado(self):
         sinais = na_serie(serie((70, 0, 30), (66, 0, 34)))
         assert "Virada" not in tipos_de(sinais)
@@ -141,6 +156,16 @@ class TestVirada:
         sinais = na_serie(serie((60, 0, 40), None, (40, 0, 60)))
         virada = next(sinal for sinal in sinais if sinal.tipo == "Virada")
         assert "em março" in virada.frase
+
+
+class TestOrdemDaSerie:
+    def test_a_leitura_nao_depende_da_ordem_em_que_a_serie_chegou(self):
+        """ "Último vs. penúltimo" é uma afirmação sobre o calendário. Lê-la da
+        ordem do argumento faria a mesma série devolver leituras diferentes
+        conforme quem a montou."""
+        em_ordem = serie((60, 0, 40), (50, 0, 50), (40, 0, 60))
+        embaralhada = [em_ordem[2], em_ordem[0], em_ordem[1]]
+        assert frases_de(na_serie(embaralhada)) == frases_de(na_serie(em_ordem))
 
 
 class TestAltaDoNegativo:
@@ -160,6 +185,20 @@ class TestAltaDoNegativo:
         sinais = na_serie(serie((20, 60, 20), (20, 55, 25)))
         assert "Alta do negativo" not in tipos_de(sinais)
 
+    def test_pula_o_mes_sem_leitura_no_meio(self):
+        """O mês sem base não é um mês parado: é um mês sem dado, e tratá-lo
+        como leitura faria a comparação sair contra zero."""
+        sinais = na_serie(serie((20, 60, 20), None, (20, 44, 36)))
+        alta = next(sinal for sinal in sinais if sinal.tipo == "Alta do negativo")
+        assert alta.frase == ("O negativo subiu de 20% em janeiro para 36% em março.")
+
+    def test_se_cala_quando_so_um_mes_tem_leitura(self):
+        pontos = [
+            Ponto(mes=mes(1), pos=20, neu=60, neg=20),
+            Ponto(mes=mes(2), sem_classificacao=900),
+        ]
+        assert "Alta do negativo" not in tipos_de(na_serie(pontos))
+
 
 class TestTendencia:
     def test_dispara_em_tres_meses_na_mesma_direcao(self):
@@ -174,6 +213,17 @@ class TestTendencia:
 
     def test_se_cala_com_menos_meses_que_o_limite(self):
         sinais = na_serie(serie((70, 0, 30), (75, 0, 25)))
+        assert "Tendência" not in tipos_de(sinais)
+
+    def test_os_meses_sem_leitura_nao_contam_para_a_sequencia(self):
+        """TRÊS MESES SEGUIDOS É SOBRE A LEITURA, não sobre o calendário: um
+        buraco no meio não interrompe a tendência, mas também não a preenche."""
+        sinais = na_serie(serie((70, 0, 30), None, (75, 0, 25), (80, 0, 20)))
+        tendencia = next(sinal for sinal in sinais if sinal.tipo == "Tendência")
+        assert tendencia.evidencia == "3 meses"
+
+    def test_se_cala_quando_o_buraco_deixa_menos_de_tres(self):
+        sinais = na_serie(serie((70, 0, 30), None, (75, 0, 25)))
         assert "Tendência" not in tipos_de(sinais)
 
     def test_o_limite_de_meses_e_configuravel(self):
@@ -208,6 +258,17 @@ class TestDeslocamento:
     def test_se_cala_com_menos_de_tres_meses(self):
         sinais = na_serie(serie((40, 0, 60), (80, 0, 20)))
         assert "Deslocamento" not in tipos_de(sinais)
+
+    def test_se_cala_quando_o_buraco_deixa_menos_de_tres_meses_com_leitura(self):
+        sinais = na_serie(serie((40, 0, 60), None, (70, 0, 30)))
+        assert "Deslocamento" not in tipos_de(sinais)
+
+    def test_o_mes_sem_base_nao_conta_como_recuo(self):
+        """Sem leitura não há fatia negativa, e tratá-la como zero faria o
+        detector anunciar um recuo que ninguém mediu."""
+        sinais = na_serie(serie((40, 0, 60), (60, 0, 40), (70, 0, 30), None))
+        deslocamento = next(sinal for sinal in sinais if sinal.tipo == "Deslocamento")
+        assert "para 30% em março" in deslocamento.frase
 
 
 class TestLacunaDeDado:
@@ -273,6 +334,19 @@ class TestItens:
     def test_se_cala_sem_itens(self):
         assert detectar_nos_itens([], secao=Secao.PAINEL_A) == []
 
+    def test_o_item_sem_volume_nao_vira_leitura(self):
+        """Sem denominador não há fatia. `fatia_negativa` devolve 0 para não
+        estourar, e esse 0 viraria "concentra o maior negativo: 0%" sobre um
+        item por onde não passou nada."""
+        assert detectar_nos_itens([Item("Vazio", 0, 0, 0)], secao=Secao.PAINEL_A) == []
+
+    def test_ignora_o_item_vazio_e_le_os_outros(self):
+        sinais = detectar_nos_itens(
+            [Item("Vazio", 0, 0, 0), Item("Privatização", 5, 5, 90)],
+            secao=Secao.PAINEL_A,
+        )
+        assert frases_de(sinais) == ["Privatização concentra o maior negativo: 90% (geral 90%)."]
+
 
 # =============================================================================
 # 5.3 · ranking
@@ -284,7 +358,7 @@ class TestRanking:
         sinais = detectar_no_ranking(
             [("Corsan", 2515), ("Águas do Rio", 318)],
             secao=Secao.PAINEL_B,
-            nome_do_item="unidade",
+            ordinal_do_segundo="a segunda unidade",
             unidade="menções",
             limites=LIMITES,
         )
@@ -294,7 +368,7 @@ class TestRanking:
         sinais = detectar_no_ranking(
             [("ANA", 9), ("BNDES", 7), ("ABCON", 6), ("Câmara", 5), ("ALMG", 4)],
             secao=Secao.PAINEL_B,
-            nome_do_item="órgão",
+            ordinal_do_segundo="o segundo órgão",
             unidade="agendas",
             limites=LIMITES,
         )
@@ -304,18 +378,41 @@ class TestRanking:
         sinais = detectar_no_ranking(
             [(f"Órgão {i}", 10) for i in range(10)],
             secao=Secao.PAINEL_B,
-            nome_do_item="órgão",
+            ordinal_do_segundo="o segundo órgão",
             unidade="agendas",
             limites=LIMITES,
         )
         assert sinais == []
+
+    def test_o_singular_quando_o_topo_tem_um_item_so(self):
+        """ "ANA concentram 100%" denuncia que ninguém leu a tela."""
+        sinais = detectar_no_ranking(
+            [("ANA", 9)],
+            secao=Secao.PAINEL_B,
+            ordinal_do_segundo="o segundo órgão",
+            unidade="agendas",
+            limites=LIMITES,
+        )
+        assert frases_de(sinais) == ["ANA concentra 100% das agendas."]
+
+    def test_o_ordinal_do_segundo_chega_pronto(self):
+        """ADIVINHAR O GÊNERO PELA ÚLTIMA LETRA acerta "unidade" e erra
+        "empresa" — quem chama sabe o gênero, o modelo de frase não."""
+        sinais = detectar_no_ranking(
+            [("Aegea", 900), ("Outra", 100)],
+            secao=Secao.PAINEL_B,
+            ordinal_do_segundo="a segunda empresa",
+            unidade="menções",
+            limites=LIMITES,
+        )
+        assert frases_de(sinais) == ["Aegea tem 9,0× o volume de Outra, a segunda empresa."]
 
     def test_se_cala_sem_volume(self):
         assert (
             detectar_no_ranking(
                 [("ANA", 0), ("BNDES", 0)],
                 secao=Secao.PAINEL_B,
-                nome_do_item="órgão",
+                ordinal_do_segundo="o segundo órgão",
                 unidade="agendas",
                 limites=LIMITES,
             )
@@ -671,6 +768,20 @@ class TestEscolha:
         leitura = self._escolher(sinais)
         assert leitura.manchete == ("Privatização concentra o maior negativo: 90% (geral 48%).")
 
+    def test_o_titulo_da_secao_tambem_poe_movimento_antes_de_intensidade(self):
+        """Uma Recuperação forte não passa na frente de uma Virada: o título
+        diria que a taxa se recuperou enquanto o gráfico embaixo mostra a nota
+        virando."""
+        recuperacao = detectar_na_recuperacao(
+            [(mes(1), 0.20), (mes(2), 0.95)], secao=Secao.EVOLUCAO, limites=LIMITES
+        )
+        virada = [
+            sinal for sinal in na_serie(serie((60, 0, 40), (45, 0, 55))) if sinal.tipo == "Virada"
+        ]
+        assert recuperacao[0].intensidade > virada[0].intensidade
+        leitura = self._escolher([*recuperacao, *virada])
+        assert leitura.titulo_da_evolucao.startswith("A nota caiu")
+
     def test_sem_sinal_nenhum_a_tela_diz_isso(self):
         leitura = self._escolher([])
         assert leitura.manchete == ("Sem variação relevante no período pelas regras atuais.")
@@ -705,12 +816,15 @@ class TestEscolha:
         """DUAS LEITURAS SEGUIDAS DÃO A MESMA LISTA. Sem o desempate por ordem,
         dois sinais de mesma intensidade trocariam de lugar entre um F5 e
         outro, e a tela pareceria mudar sem que nada tivesse mudado."""
-        sinais = detectar_nos_itens(
-            [Item("A", 10, 0, 10), Item("B", 10, 0, 10)], secao=Secao.PAINEL_A
-        )
-        primeira = self._escolher(sinais)
-        segunda = self._escolher(sinais)
+        empatados = [
+            *detectar_nos_itens([Item("A", 5, 0, 5), Item("B", 5, 0, 5)], secao=Secao.PAINEL_A),
+            *detectar_nos_itens([Item("C", 5, 0, 5), Item("D", 5, 0, 5)], secao=Secao.PAINEL_B),
+        ]
+        assert len({sinal.intensidade for sinal in empatados}) == 1, empatados
+        primeira = self._escolher(empatados)
+        segunda = self._escolher(list(empatados))
         assert frases_de(primeira.lista) == frases_de(segunda.lista)
+        assert len(primeira.lista) == 2
 
 
 # =============================================================================
@@ -842,7 +956,7 @@ class TestFrasesDaSociedade:
         *detectar_no_ranking(
             [("Corsan", 2515), ("Águas do Rio", 318)],
             secao=Secao.PAINEL_B,
-            nome_do_item="unidade",
+            ordinal_do_segundo="a segunda unidade",
             unidade="menções",
             limites=LIMITES,
         ),
@@ -933,7 +1047,7 @@ class TestFrasesDoInstitucional:
                 ("Senado Federal", 3),
             ],
             secao=Secao.PAINEL_B,
-            nome_do_item="órgão",
+            ordinal_do_segundo="o segundo órgão",
             unidade="agendas",
             limites=LIMITES,
         ),
