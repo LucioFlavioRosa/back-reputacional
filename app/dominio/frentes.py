@@ -206,6 +206,10 @@ TIPO_DA_CATEGORIA_DE_PUBLICO: dict[str, str] = {
     "entidades_setoriais_representativas": "entidade",
     "sociedade_civil_comunidade": "entidade",
     "parceiros_cadeia_valor": "entidade",
+    #: REUNIÃO INTERNA DA AEGEA (conselho, comitê, alinhamento estratégico) —
+    #: o mesmo tipo que a Frente Interna já usa para área a área, e não um
+    #: tipo novo: não é público de ninguém, é a própria companhia.
+    "aegea_holding": "area_interna",
 }
 
 #: O FORMATO DE INTERAÇÃO QUE UMA FRENTE IMPLICA, quando ninguém disse qual
