@@ -11,10 +11,11 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
-from sqlalchemy import create_engine, delete, select
+from sqlalchemy import create_engine, delete, select, update
 from sqlalchemy.orm import Session
 
 from app.banco.sessao import obter_sessao
+from app.banco.tabelas_interacoes import InteracaoRegistro
 from app.banco.tabelas_score import Lente, ScoreConfig, ScoreFonte, ScoreMesFonte
 from app.banco.tabelas_stakeholders import Instituicao
 from main import app
@@ -905,3 +906,78 @@ def test_a_tela_abre_no_mes_mais_completo_e_nao_no_ultimo(
     assert opcoes["meses"][-1] == "2026-09", "e ser o último — é o que tornava o defeito possível"
     # Mas não é nele que a tela abre.
     assert opcoes["mes_sugerido"] == "2026-06"
+
+
+def test_registro_nao_visivel_nao_move_o_indice(cliente_do_score, sessao, semente, junho):
+    """`visivel = false` é o registro que alguém tirou da vista de propósito.
+
+    `filtros_sql.condicoes` o exclui de toda leitura do CRM — é a linha
+    `InteracaoRegistro.visivel.is_(True)`. As consultas do Score nasceram sem
+    ela: filtram `arquivado_em is null` e nada mais. O efeito é que um registro
+    retirado continua movendo o índice da companhia, e ainda pode devolver o
+    nome da instituição dele no painel da institucional.
+
+    A PROVA É A VOLTA: mede, acrescenta tensos, confirma que o índice desceu, e
+    então esconde os mesmos registros. Se esconder de fato os tira da conta, o
+    número volta ao que era. Comparar com um valor fixo provaria menos — passaria
+    também se o cálculo tivesse parado de olhar para o CRM.
+    """
+
+    def institucional() -> int | None:
+        corpo_ = cliente_do_score.get("/api/score?mes=2026-06").json()
+        lente = next(le for le in corpo_["lentes"] if le["codigo"] == "institucional")
+        return lente["score"]
+
+    antes = institucional()
+
+    ids = []
+    for _ in range(3):
+        criada = cliente_do_score.post(
+            "/api/interacoes",
+            json={**corpo(semente), "data_interacao": "2026-06-15", "clima": "tenso"},
+        )
+        assert criada.status_code == 201, criada.text
+        ids.append(criada.json()["id"])
+
+    com_os_tensos = institucional()
+    assert com_os_tensos != antes, "os três tensos tinham de mover o índice"
+
+    sessao.execute(
+        update(InteracaoRegistro)
+        .where(InteracaoRegistro.id.in_(ids))
+        .values(visivel=False)
+    )
+    sessao.flush()
+
+    assert institucional() == antes
+
+
+def test_registro_nao_visivel_nao_nomeia_orgao_no_dossie(
+    cliente_do_score, sessao, semente, junho
+):
+    """A outra ponta: o painel da institucional lista COM QUEM se conversou.
+
+    Um registro retirado da vista devolvia o nome da instituição dele por aqui —
+    e este é o caminho que não passa por `condicoes`.
+    """
+    criada = cliente_do_score.post(
+        "/api/interacoes",
+        json={**corpo(semente), "data_interacao": "2026-06-15", "clima": "propositivo"},
+    )
+    assert criada.status_code == 201, criada.text
+    sessao.execute(
+        update(InteracaoRegistro)
+        .where(InteracaoRegistro.id == criada.json()["id"])
+        .values(visivel=False)
+    )
+    sessao.flush()
+
+    dossie = cliente_do_score.get("/api/score/lentes/institucional/dossie?mes=2026-06").json()
+    orgaos = next(
+        (p for p in dossie["paineis"] if p["titulo"] == "Órgãos com mais interações"),
+        None,
+    )
+    assert orgaos is not None, "o papel do teste vê o diretório; o painel tem de vir"
+
+    nomes = [linha["rotulo"] for linha in orgaos["dados"]]
+    assert "Valor Econômico" not in nomes

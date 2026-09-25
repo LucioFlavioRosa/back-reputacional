@@ -194,3 +194,17 @@ class UsuarioAtual:
     def ve_campos_sensiveis(self) -> bool:
         """`relato` e `pendencias` saem do payload quando falso."""
         return self.papel is not None and self.papel.ve_campos_sensiveis
+
+    @property
+    def ve_diretorio(self) -> bool:
+        """Se alcança os NOMES — instituição, interlocutor, jornalista.
+
+        Existia só como `exigir_diretorio`, a dependência que barra a rota
+        inteira. Vira propriedade porque há tela em que o diretório é PARTE do
+        que se pede: o dossiê da Imprensa é legítimo para quem lê o Score, e
+        dentro dele mora a matriz que nomeia jornalistas. Barrar a rota negaria
+        a lente; deixar passar entregava o cadastro. A terceira saída é a tela
+        vir sem o painel que nomeia, e para isso a pergunta precisa ser
+        respondível no meio do caminho, e não só na porta.
+        """
+        return self.papel is not None and self.papel.ve_diretorio

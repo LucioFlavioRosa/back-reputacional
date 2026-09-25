@@ -32,6 +32,7 @@ from app.banco.repositorio_score import (
     SENTIMENTO_DO_CLIMA,
     primeiro_dia,
     so_fontes_ligadas,
+    so_interacoes_visiveis,
 )
 from app.banco.tabelas_catalogo import Clima, Tema
 from app.banco.tabelas_interacoes import InteracaoRegistro, InteracaoTema
@@ -167,7 +168,7 @@ def _serie_do_crm(sessao: Session, meses: Sequence[date]) -> list[dict]:
         .select_from(InteracaoRegistro)
         .join(Clima, Clima.id == InteracaoRegistro.clima_id)
         .where(
-            InteracaoRegistro.arquivado_em.is_(None),
+            *so_interacoes_visiveis(),
             mes_da_interacao.in_(list(meses)),
         )
         .group_by(mes_da_interacao, Clima.codigo)
@@ -400,7 +401,7 @@ def temas_do_crm(sessao: Session, meses: Sequence[date], quantos: int = 6) -> li
         .join(Tema, Tema.id == InteracaoTema.tema_id)
         .join(Clima, Clima.id == InteracaoRegistro.clima_id)
         .where(
-            InteracaoRegistro.arquivado_em.is_(None),
+            *so_interacoes_visiveis(),
             mes_da_interacao.in_(list(meses)),
         )
         .group_by(Tema.nome, Clima.codigo)
@@ -437,7 +438,7 @@ def orgaos_do_crm(sessao: Session, meses: Sequence[date], quantos: int = 6) -> l
         .select_from(InteracaoRegistro)
         .join(Instituicao, Instituicao.id == InteracaoRegistro.instituicao_id)
         .where(
-            InteracaoRegistro.arquivado_em.is_(None),
+            *so_interacoes_visiveis(),
             mes_da_interacao.in_(list(meses)),
         )
         .group_by(Instituicao.nome, mes_da_interacao)

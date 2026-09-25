@@ -162,9 +162,16 @@ def test_todo_conteudo_semeado_esta_marcado_como_exemplo(sessao):
 
 @dataclass
 class _QuemOlha:
-    """O mínimo que o dossiê pergunta sobre quem pediu a tela."""
+    """O mínimo que o dossiê pergunta sobre quem pediu a tela.
+
+    `ve_diretorio` nasce `True` para os testes que já existiam: eles descrevem o
+    dossiê inteiro, que é o que um papel com a flag recebe. Quem testa a recusa
+    passa `False` explicitamente — e é justamente por isso que a recusa fica
+    visível no teste em vez de escondida num padrão.
+    """
 
     administra_dicionarios: bool = False
+    ve_diretorio: bool = True
 
 
 def _dossie(sessao, codigo: str, mes: str = "2026-06", *, edita: bool = False):
@@ -744,3 +751,78 @@ def test_a_calibracao_nao_ganha_limite_sem_a_tela_saber():
     da_api = {chave for chave, *_ in LIMITES_DOS_SINAIS}
     do_dominio = {campo.name for campo in fields(Limites)}
     assert da_api == do_dominio, sorted(da_api ^ do_dominio)
+
+
+# -- o diretório não sai pela porta do Score ----------------------------------
+#
+# O QUE ESTES TESTES TRAVAM. `score_leitura` e `score_edicao` têm
+# `acessa_score = true` e `ve_diretorio = FALSE` — conferido na tabela `papel`.
+# Os mesmos papéis levam 403 em `GET /api/instituicoes` e em
+# `GET /api/interlocutores`, pelo motivo escrito em `exigir_diretorio`: "para um
+# terceiro, isso pode valer mais do que os registros em si".
+#
+# E o dossiê do Score entregava a eles a mesma classe de dado com uma flag a
+# menos: a matriz de relacionamento nomeia jornalista e veículo e ainda publica
+# a avaliação que a companhia faz da proximidade com cada um, e o painel da
+# institucional nomeia os órgãos com quem a companhia mais se reuniu.
+#
+# Nenhum teste de recusa existia nesta rota. Estes são eles.
+
+
+def _dossie_de(sessao, codigo: str, *, ve_diretorio: bool, mes: str = "2026-06"):
+    from app.api.lentes import obter_dossie
+
+    return obter_dossie(
+        sessao=sessao,
+        usuario=_QuemOlha(ve_diretorio=ve_diretorio),
+        codigo=codigo,
+        mes=mes,
+    )
+
+
+def test_sem_ve_diretorio_a_matriz_de_jornalistas_nao_vem(sessao):
+    """Ela nomeia gente de fora, uma por linha, com veículo e prioridade."""
+    tipos = [p.tipo for p in _dossie_de(sessao, "imprensa", ve_diretorio=False).paineis]
+
+    assert "matriz_prioridade" not in tipos
+
+
+def test_com_ve_diretorio_a_matriz_continua_vindo(sessao):
+    """O contrapeso: a correção esconde de quem não pode, não apaga o painel.
+
+    Sem este teste, remover o painel para todo mundo passaria como conserto.
+    """
+    tipos = [p.tipo for p in _dossie_de(sessao, "imprensa", ve_diretorio=True).paineis]
+
+    assert "matriz_prioridade" in tipos
+
+
+def test_sem_ve_diretorio_os_orgaos_do_crm_nao_sao_nomeados(sessao):
+    """O painel da institucional lista com quem a companhia se reuniu.
+
+    São os mesmos nomes de `GET /api/instituicoes`, que esse papel não abre —
+    chegando por outra porta, agregados por volume de agenda.
+    """
+    paineis = _dossie_de(sessao, "institucional", ve_diretorio=False).paineis
+    nomeiam_orgaos = [p for p in paineis if p.titulo == "Órgãos com mais interações"]
+
+    assert nomeiam_orgaos == []
+
+
+def test_com_ve_diretorio_os_orgaos_continuam_vindo(sessao):
+    paineis = _dossie_de(sessao, "institucional", ve_diretorio=True).paineis
+    titulos = [p.titulo for p in paineis]
+
+    assert "Órgãos com mais interações" in titulos
+
+
+def test_as_concessionarias_nao_sao_diretorio(sessao):
+    """Unidade de negócio da Aegea não é cadastro de terceiro.
+
+    A distinção importa: o mesmo tipo de bloco (`barras_horizontais`) serve os
+    dois painéis, e gatilhar pelo TIPO esconderia da lente errada um dado que é
+    da própria companhia.
+    """
+    tipos = [p.tipo for p in _dossie_de(sessao, "sociedade", ve_diretorio=False).paineis]
+
+    assert "barras_horizontais" in tipos

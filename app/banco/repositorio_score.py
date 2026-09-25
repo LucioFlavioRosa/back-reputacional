@@ -165,7 +165,7 @@ def _somas_do_crm(sessao: Session, mes: date) -> list[SomasDaFonte]:
         .where(
             InteracaoRegistro.data_interacao >= mes,
             InteracaoRegistro.data_interacao < proximo,
-            InteracaoRegistro.arquivado_em.is_(None),
+            *so_interacoes_visiveis(),
         )
         .group_by(Clima.codigo)
     )
@@ -461,7 +461,7 @@ def mes_mais_completo(sessao: Session, calibracao: Calibracao) -> date | None:
         .join(Clima, Clima.id == InteracaoRegistro.clima_id)
         .join(ScoreFonte, ScoreFonte.codigo == FONTE_INTERNA_DO_CRM)
         .where(
-            InteracaoRegistro.arquivado_em.is_(None),
+            *so_interacoes_visiveis(),
             *so_fontes_ligadas(calibracao),
         )
         .distinct()
@@ -493,7 +493,10 @@ def meses_com_dado(sessao: Session) -> list[date]:
             .cast(ColunaDeData)
             .label("mes")
         )
-        .where(InteracaoRegistro.clima_id.is_not(None))
+        .where(
+            InteracaoRegistro.clima_id.is_not(None),
+            *so_interacoes_visiveis(),
+        )
         .distinct()
     )
 
@@ -766,6 +769,34 @@ def unidades_do_mes(
         .limit(quantos)
     )
     return [(nome, neg, total) for nome, neg, total in sessao.execute(consulta)]
+
+
+def so_interacoes_visiveis() -> list:
+    """As interações que o Score pode contar.
+
+    UMA REGRA, SEIS CONSULTAS. O Score lê `interacao` em seis lugares — a lente
+    institucional, o seletor de mês, o mês em que a tela abre e três painéis de
+    dossiê — e cada um escrevia o próprio filtro. Cinco pegavam o arquivamento,
+    nenhum pegava `visivel`, e o sexto (`meses_com_dado`) não pegava nem o
+    arquivamento: um mês cujas agendas foram todas arquivadas continuava no
+    seletor e chegava à tela como ponto sem número, que é exatamente o que o
+    docstring dele diz existir para evitar.
+
+    `visivel = false` É O REGISTRO QUE ALGUÉM TIROU DA VISTA, de propósito, e
+    `filtros_sql.condicoes` o exclui de toda leitura do CRM desde sempre. Por
+    aqui ele continuava movendo o índice da companhia — e devolvendo o nome da
+    instituição dele no painel da institucional, que é a informação que o CRM
+    guarda com mais cuidado.
+
+    NÃO É O MESMO QUE ARQUIVAR, e os dois entram juntos porque as duas respostas
+    são "não leia": o arquivado saiu do ciclo de vida, o não visível continua nele
+    e foi retirado da vista. Uma leitura que aplica um e não o outro está errada
+    das duas formas.
+    """
+    return [
+        InteracaoRegistro.arquivado_em.is_(None),
+        InteracaoRegistro.visivel.is_(True),
+    ]
 
 
 def so_fontes_ligadas(calibracao: Calibracao) -> list:

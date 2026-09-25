@@ -171,8 +171,15 @@ class DossieSaida(BaseModel):
     #: O quadro ao lado da evolução — até três sinais da série, mais as lacunas.
     sinais_da_evolucao: list[str] = Field(default_factory=list)
     fatos: list[FatoSaida] = Field(default_factory=list)
-    #: DOIS, sempre, pelo mesmo motivo.
-    paineis: list[BlocoSaida] = Field(min_length=2, max_length=2)
+    #: DOIS para quem alcança a lente inteira — e UM para quem não alcança o
+    #: diretório. O piso desceu de 2 para 1 porque o painel que NOMEIA gente de
+    #: fora (a matriz de jornalistas; os órgãos do CRM) sai do payload de quem
+    #: não tem `ve_diretorio`, e o que sobra continua sendo a lente: o quadro
+    #: agregado, a nota, a evolução e os KPIs.
+    #:
+    #: O TETO CONTINUA EM DOIS: a especificação dá dois painéis por lente, e um
+    #: terceiro seria mudança de tela, não de permissão.
+    paineis: list[BlocoSaida] = Field(min_length=1, max_length=2)
     #: O bloco do fim da tela: o que mudou no período, por intensidade, com as
     #: lacunas de dado no fim.
     sinais: list[SinalSaida] = Field(default_factory=list)
@@ -665,6 +672,21 @@ def _paineis(sessao, lente, mes: date, meses, calibracao: Calibracao) -> list[Bl
     ]
 
 
+def _nomeia_o_diretorio(codigo_da_lente: str, bloco: BlocoSaida) -> bool:
+    """Este painel publica NOME de gente ou de instituição de fora?
+
+    É a pergunta que separa o que `ve_diretorio` guarda do que ele não guarda, e
+    ela não se responde pelo tipo do bloco: `barras_horizontais` serve tanto
+    "Órgãos com mais interações" — os mesmos nomes que `GET /api/instituicoes`
+    recusa a este papel — quanto "Concessionárias com maior repercussão", que é
+    unidade de negócio da própria Aegea e não é cadastro de terceiro. Gatilhar
+    pelo tipo esconderia da lente errada um dado que é da casa.
+    """
+    if bloco.tipo == "matriz_prioridade":
+        return True
+    return codigo_da_lente == "institucional" and bloco.tipo == "barras_horizontais"
+
+
 def _kpis(sessao, lente, mes: date, meses, calibracao: Calibracao, medida) -> list[KpiSaida]:
     """Os quatro números do destaque — e eles são DIFERENTES em cada lente.
 
@@ -935,6 +957,25 @@ def obter_dossie(
 
     evolucao = _evolucao(sessao, lente, meses, calibracao, None)
     paineis = _paineis(sessao, lente, alvo, meses, calibracao)
+
+    #: O QUE ESTE PAPEL NÃO ALCANÇA. `score_leitura` e `score_edicao` têm
+    #: `acessa_score` e NÃO têm `ve_diretorio` — e levam 403 em
+    #: `GET /api/instituicoes` pelo motivo escrito em `exigir_diretorio`. O
+    #: dossiê entregava a eles a mesma classe de dado por outra porta.
+    #:
+    #: OS SINAIS VÃO JUNTO, e essa é a metade que se esquece: o detector de
+    #: concentração narra o primeiro colocado do painel pelo nome, então
+    #: esconder o quadro e manter a frase publicaria exatamente o que o quadro
+    #: publicava, em uma linha de texto.
+    escondidos = (
+        set()
+        if usuario.ve_diretorio
+        else {
+            secao
+            for indice, secao in ((0, Secao.PAINEL_A), (1, Secao.PAINEL_B))
+            if _nomeia_o_diretorio(lente.codigo, paineis[indice])
+        }
+    )
     leitura = ler_sinais(
         sessao,
         lente,
@@ -975,8 +1016,12 @@ def obter_dossie(
             for fato in repositorio_score.fatos_do_periodo(sessao, meses)
         ],
         paineis=[
-            _com_conclusao(paineis[0], leitura.titulo_do_painel_a),
-            _com_conclusao(paineis[1], leitura.titulo_do_painel_b),
+            _com_conclusao(bloco, titulo)
+            for secao, bloco, titulo in (
+                (Secao.PAINEL_A, paineis[0], leitura.titulo_do_painel_a),
+                (Secao.PAINEL_B, paineis[1], leitura.titulo_do_painel_b),
+            )
+            if secao not in escondidos
         ],
         sinais=[
             SinalSaida(
@@ -987,5 +1032,6 @@ def obter_dossie(
                 tom=sinal.tom.value,
             )
             for sinal in leitura.lista
+            if sinal.secao not in escondidos
         ],
     )

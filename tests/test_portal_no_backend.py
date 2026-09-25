@@ -422,3 +422,58 @@ def _registro_de(sessao, autor):
 
 def _csrf(cliente) -> str:
     return cliente.get("/api/eu").json()["csrf_token"]
+
+
+#: Os prefixos cujo conteúdo é do Score Executivo.
+#:
+#: Dois módulos servem sob o mesmo prefixo — `api/score.py` (índice, série,
+#: calibração, fontes, importação, fatos) e `api/lentes.py` (os dossiês) —, e é
+#: por isso que a âncora olha o CAMINHO e não o módulo: um terceiro módulo sob
+#: `/api/score` nasceria fora de qualquer lista que se mantenha à mão.
+PREFIXOS_DO_SCORE = ("/api/score",)
+
+
+def test_toda_rota_sob_prefixo_do_score_exige_o_portal():
+    """A mesma âncora do CRM, para o módulo mais novo — que é onde ela faltava.
+
+    O CRM tinha esta prova desde o começo; o Score chegou depois e não ganhou a
+    dele. A consequência não é hipotética: uma revisão encontrou, nesta mesma
+    área, o dossiê servindo o diretório a quem não o alcança — o tipo de falha
+    que uma dependência esquecida produz e que nenhum teste de contrato pega,
+    porque o payload continua perfeito.
+    """
+    from fastapi.routing import APIRoute
+
+    from app.api.dependencias import exigir_portal_score
+
+    desprotegidas = []
+    for rota in _rotas_montadas(app):
+        if not isinstance(rota, APIRoute):
+            continue
+        if not rota.path.startswith(PREFIXOS_DO_SCORE):
+            continue
+        chamadas = {d.call for d in rota.dependant.dependencies}
+        if exigir_portal_score not in chamadas:
+            desprotegidas.append(f"{sorted(rota.methods)} {rota.path}")
+
+    assert not desprotegidas, (
+        "Rotas sob prefixo do Score que não exigem o portal: " + ", ".join(desprotegidas)
+    )
+
+
+def test_a_varredura_enxerga_as_rotas_do_score():
+    """Contrapeso, pelo mesmo motivo do contrapeso do CRM.
+
+    Um prefixo escrito errado faria a varredura achar zero rotas e declarar
+    tudo protegido. O piso é deliberadamente folgado: ele existe para detectar
+    "achei nada", não para congelar a contagem a cada rota nova.
+    """
+    from fastapi.routing import APIRoute
+
+    do_score = [
+        rota
+        for rota in _rotas_montadas(app)
+        if isinstance(rota, APIRoute) and rota.path.startswith(PREFIXOS_DO_SCORE)
+    ]
+
+    assert len(do_score) >= 10, f"a varredura achou só {len(do_score)} rotas do Score"
