@@ -216,6 +216,108 @@ _MATERIAIS = Aba(
 FORMATO: tuple[Aba, ...] = (_AGENDAS, _PARTICIPANTES, _PESSOAS_DA_AEGEA, _MATERIAIS)
 
 
+#: Toda chave de `InteracaoEntrada.model_fields` classificada em um de três
+#: destinos: `"da planilha"` (uma coluna de `FORMATO` alimenta o campo),
+#: `"derivado"` (o importador calcula o valor a partir de outros dados já
+#: importados ou já cadastrados) ou `"fora da v1"` (o importador não escreve
+#: o campo — ele fica no padrão do próprio esquema).
+#:
+#: O MESMO PADRÃO DE `_DE_TEXTO` (`app/dominio/recorte.py`) E DE `DESTINO`
+#: (`corpo.test.ts`, no front): uma lista de "todo campo passa por aqui" que um
+#: teste compara contra o modelo de verdade. Sem ela, um campo novo em
+#: `InteracaoEntrada` simplesmente não chega pela importação — nem o Pydantic
+#: reclama (o campo tem valor padrão), nem o Excel (a coluna que faltaria nunca
+#: existiu) — e o silêncio dura até alguém notar, na produção, que a agenda
+#: importada não carrega aquele dado.
+#:
+#: As chaves classificadas como `"da planilha"` são as únicas que
+#: precisam bater com um `Coluna.campo` de `FORMATO` — é o que
+#: `test_todo_campo_declarado_como_da_planilha_tem_coluna` prende. As outras
+#: duas categorias não têm coluna nenhuma para casar: `"derivado"` porque o
+#: valor não é cópia de célula, e `"fora da v1"` porque não há célula.
+DESTINO_DO_CAMPO: dict[str, str] = {
+    # -- da planilha: uma coluna de `FORMATO` copia direto para o campo -------
+    "data_interacao": "da planilha",
+    "instituicao_id": "da planilha",
+    "uf": "da planilha",
+    "status": "da planilha",
+    "formato_interacao_id": "da planilha",
+    "unidade_negocio_id": "da planilha",
+    "modalidade": "da planilha",
+    "local": "da planilha",
+    "iniciativa": "da planilha",
+    "nota_situacao": "da planilha",
+    "declinado_por": "da planilha",
+    "motivo_declinio": "da planilha",
+    "clima_esperado": "da planilha",
+    "expectativa": "da planilha",
+    "preve_desdobramento": "da planilha",
+    "clima": "da planilha",
+    "resultado": "da planilha",
+    "relato": "da planilha",
+    "encaminhamentos": "da planilha",
+    "pendencias": "da planilha",
+    "observacoes": "da planilha",
+    "temas": "da planilha",
+    "areas": "da planilha",
+    # -- derivado: o importador calcula, não copia de uma célula -------------
+    #
+    # Frente, Esfera e Tier vêm da INSTITUIÇÃO, não de coluna — pô-los na
+    # planilha abriria a chance de a agenda contradizer o cadastro do órgão,
+    # que é exatamente o que derivar deles resolve (ver "O que não entra na
+    # planilha" na spec, e o item 3 de 24/09).
+    "frente": "derivado",
+    "esfera_id": "derivado",
+    "tier": "derivado",
+    # O interlocutor principal não é coluna própria: é quem estiver marcado
+    # `Principal` na aba Participantes. Uma coluna separada em Agendas
+    # permitiria que as duas informações discordassem.
+    "interlocutor_id": "derivado",
+    # `outra_parte`, `participacoes` e `materiais` vêm de uma aba filha
+    # inteira (Participantes / Pessoas da Aegea / Materiais), não de UMA
+    # coluna: cada linha da aba filha vira um item da lista, remontado a
+    # partir de várias colunas daquela linha. `Coluna.campo` descreve o caso
+    # "uma coluna copia para um campo escalar" — que é o de `FORMATO._AGENDAS`
+    # — e por isso as colunas dessas três abas têm `campo=""` (ver o docstring
+    # de `Coluna`). Chamar estes três de "da planilha" prometeria uma coluna
+    # que não existe com este nome, e é justamente essa promessa vazia que
+    # `test_todo_campo_declarado_como_da_planilha_tem_coluna` recusa.
+    "outra_parte": "derivado",
+    "participacoes": "derivado",
+    "materiais": "derivado",
+    # -- fora da v1: o importador não escreve o campo -------------------------
+    #
+    # Os campos por frente (link da matéria, casa, tramitação, tipo de
+    # investidor) formam um registro variante; numa planilha plana virariam
+    # vinte colunas com dezoito sempre vazias. A agenda importada sem eles é
+    # válida — `extensao` é anulável — e quem precisar completa na ficha.
+    "extensao": "fora da v1",
+    # A "Consulta recebida" é outro tipo de registro (canal, remetente, teor,
+    # prazo e resposta próprios — os campos de `ConsultaEntrada`), e
+    # `validar_consulta` recusa o bloco fora do tipo certo. A planilha recusa
+    # esse tipo de interação inteiro, com mensagem dizendo para registrá-lo
+    # pela tela — então nem o bloco nem o que ele carrega chega pela
+    # importação.
+    "consulta": "fora da v1",
+    # Só faz sentido dentro de uma Consulta recebida — sem ela, não há de onde
+    # vir.
+    "alegacoes": "fora da v1",
+    # Nenhuma coluna da aba Agendas leva a pauta em palavras — o assunto da
+    # reunião é o que `temas` (colunas Tema 1–3) já cobre na planilha.
+    "pauta": "fora da v1",
+    # Aposentado (ver `api/dicionarios.py`, item "stakeholders": substituído
+    # pela categoria de público da instituição na migration 0036). Um campo
+    # em extinção não ganha coluna nova.
+    "stakeholder_id": "fora da v1",
+    "posicionamento": "fora da v1",
+    "registro_url": "fora da v1",
+    # Aponta para interações ANTERIORES já existentes no sistema — algo que só
+    # faz sentido escolher entre registros que já têm id, e uma planilha de
+    # agendas novas não tem como referenciar isso.
+    "origens": "fora da v1",
+}
+
+
 def aba_de(nome: str) -> Aba:
     """A aba de `FORMATO` com este nome, ou `RegraViolada` se não existir."""
     for aba in FORMATO:

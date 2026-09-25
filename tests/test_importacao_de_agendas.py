@@ -70,3 +70,44 @@ def test_todo_vocabulario_tem_rotulo_de_aba():
     lados só descobririam a divergência com um arquivo de verdade na mão."""
     conhecidos = VOCABULARIOS_EDITAVEIS | VOCABULARIOS_FECHADOS
     assert set(ROTULO_DO_VOCABULARIO) == conhecidos
+
+
+def test_todo_campo_da_interacao_tem_destino_declarado():
+    """O GUARDA DO CAMPO NOVO.
+
+    Sem isto, acrescentar um campo a `InteracaoEntrada` o deixa fora da
+    importação em silêncio: a planilha não o traz, ninguém reclama, e meses
+    depois alguém pergunta por que as agendas importadas não têm aquele dado.
+    """
+    from app.dominio.importacao_de_agendas import DESTINO_DO_CAMPO
+    from app.esquemas.interacoes import InteracaoEntrada
+
+    campos = set(InteracaoEntrada.model_fields)
+    sem_destino = sorted(campos - set(DESTINO_DO_CAMPO))
+
+    assert sem_destino == []
+
+
+def test_todo_campo_declarado_como_da_planilha_tem_coluna():
+    """O outro lado: declarar que vem da planilha e não ter coluna faria o
+    campo chegar sempre vazio, e a declaração mentiria."""
+    from app.dominio.importacao_de_agendas import DESTINO_DO_CAMPO, FORMATO
+
+    com_coluna = {
+        coluna.campo for aba in FORMATO for coluna in aba.colunas if coluna.campo
+    }
+    prometidos = {
+        campo for campo, destino in DESTINO_DO_CAMPO.items() if destino == "da planilha"
+    }
+
+    assert prometidos - com_coluna == set()
+
+
+def test_frente_esfera_e_tier_sao_derivados():
+    """Pô-los na planilha abriria a chance de a agenda contradizer o cadastro
+    do órgão — que é o que derivar resolveu, no item 3 de 24/09."""
+    from app.dominio.importacao_de_agendas import DESTINO_DO_CAMPO
+
+    assert DESTINO_DO_CAMPO["esfera_id"] == "derivado"
+    assert DESTINO_DO_CAMPO["frente"] == "derivado"
+    assert DESTINO_DO_CAMPO["tier"] == "derivado"
