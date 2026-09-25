@@ -22,7 +22,7 @@
 - **As tabelas da `0008` são lei, não rascunho.** Elas já existem com colunas nomeadas: na `importacao_linha` a origem é `aba` e `linha_origem` (é na `interacao` que os campos se chamam `origem_aba` e `origem_linha` — os dois pares existem e são diferentes). `arquivo_nome` e `criado_por` são `not null`. `situacao` nasce `'processando'` e só então vai a `'aguardando_conferencia'`. `decisao` aceita `pendente|aceita|corrigida|descartada`. **Nenhuma migration nova.**
 - **Consulta em `divergencias` e `dados_brutos` usa contenção (`@>`), nunca `->>`.** Os dois índices GIN da `0008` não entram com `->>`, e a consulta cai para varredura sequencial sem nada parecer errado. A própria migration deixa o exemplo: `where divergencias @> '[{"campo":"veiculo"}]'`.
 - **Normalização de nome é `app/dominio/texto.py › normalizar`** — nunca uma segunda regra.
-- **Vocabulários FECHADOS nunca recebem valor novo**, mesmo que a aba venha desprotegida: `situacao`, `clima`, `resultado`, `iniciativa`, `modalidade`, `presenca`, `papel`, `momento`.
+- **Vocabulários FECHADOS nunca recebem valor novo**, mesmo que a aba venha desprotegida. As chaves são as de `app/api/dicionarios.py`, que a spec nomeia como a fonte: `status`, `climas`, `resultados`, `iniciativas` — mais `modalidade`, `presenca`, `papel`, `momento`, que **não têm entrada no registro** porque são vocabulário de código, não tabela de dicionário. Os quatro primeiros se resolvem contra o banco; os quatro últimos, contra o código. A Tarefa 6 precisa dessa distinção.
 - **Cada tarefa termina com a suíte inteira verde:** `BANCO_URL_TESTE="postgresql+psycopg2://postgres:postgres@localhost:5433/painel_reputacional" py -3 -m pytest -q` e `py -3 -m ruff check app/ tests/`.
 
 ## Foco da revisão
@@ -165,7 +165,7 @@ git commit -m "O formato da planilha de agendas vira descrição declarativa"
 
 **Interfaces:**
 - Consome: `FORMATO` da Tarefa 1.
-- Produz: `DESTINO_DO_CAMPO: dict[str, str]` com valores `"da planilha" | "derivado" | "fora da v1"`.
+- Produz: `DESTINO_DO_CAMPO: dict[str, str]` com valores `"da planilha" | "das abas filhas" | "derivado" | "fora da v1"`. `das abas filhas` é para as coleções (`participacoes`, `outra_parte`, `materiais`): a pessoa as preenche na planilha, só que em aba própria e sem `Coluna.campo` correspondente. Chamá-las de `derivado` diria que o servidor as calcula, e o guarda existe justamente para não mentir sobre a procedência de um campo.
 
 Esta tarefa existe porque é o guarda que pega o campo acrescentado depois — o mesmo padrão de `_DE_TEXTO` no `Recorte` e do `DESTINO` em `corpo.test.ts`. Sem ele, um campo novo em `InteracaoEntrada` simplesmente nunca chega pela importação, e ninguém descobre.
 
