@@ -212,6 +212,40 @@ def test_valor_vazio_nao_conta_como_filtro_ativo():
     assert recorte.vazio
 
 
+def test_a_busca_vazia_tambem_nao_conta():
+    """`q=` É O CAMPO DE TEXTO MAIS FÁCIL DE MANDAR VAZIO — é uma caixa de busca.
+
+    Eu tinha deixado `busca` fora da lista, e ela cai no mesmo buraco: o
+    contador soma `is not None` e o SQL só aplica se for truthy. Apagar o que se
+    digitou na caixa deixava "1 filtro ativo" sobre a base inteira.
+    """
+    assert Recorte(busca="").quantidade_de_filtros == 0
+    assert Recorte(busca="   ").quantidade_de_filtros == 0
+    assert Recorte(busca="tarifa").quantidade_de_filtros == 1
+
+
+def test_todo_campo_de_texto_do_recorte_esta_na_normalizacao():
+    """A LISTA NÃO PODE FICAR PARA TRÁS DO DATACLASS.
+
+    Foi assim que `busca` ficou de fora: a lista foi escrita à mão olhando os
+    filtros do recorte, e a caixa de busca não parece um "filtro". Um campo de
+    texto novo entra aqui automaticamente, e este teste falha até alguém
+    decidir — conscientemente — que ele não deve ser normalizado.
+
+    `uf` é a exceção declarada: a rota já a normaliza para maiúscula antes de
+    construir o Recorte.
+    """
+    from dataclasses import fields
+
+    de_texto = {
+        campo.name
+        for campo in fields(Recorte)
+        if campo.type in ("str | None", "str")
+    }
+
+    assert de_texto - set(Recorte._DE_TEXTO) == {"uf"}
+
+
 def test_valor_so_com_espaco_tambem_nao_conta():
     """Um espaço colado da planilha tem o mesmo efeito, e é mais difícil de ver."""
     assert Recorte(esfera="   ").quantidade_de_filtros == 0

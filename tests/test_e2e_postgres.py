@@ -2024,3 +2024,77 @@ def test_editar_sem_mandar_a_esfera_nao_a_apaga(cliente, sessao, semente):
     assert editada.status_code == 200, editada.text
 
     assert editada.json()["esfera_id"] == federal
+
+def test_trocar_a_instituicao_traz_a_esfera_da_nova(cliente, sessao, semente):
+    """A ESFERA SEGUE A INSTITUIÇÃO, e não só no dia em que a agenda nasce.
+
+    Derivar só na criação deixava a agenda com a esfera do órgão ANTERIOR
+    depois de uma troca — federal numa agenda que passou a ser com uma
+    secretaria estadual. O ranking, a Base e o filtro passariam a mentir sobre
+    um registro que alguém acabou de corrigir, e o erro seria invisível
+    justamente porque ninguém digitou a esfera: não há campo para conferir.
+    """
+    from sqlalchemy import select as _select
+
+    from app.banco.tabelas_catalogo import Esfera
+
+    federal = sessao.scalar(_select(Esfera.id).where(Esfera.codigo == "federal"))
+    estadual = sessao.scalar(_select(Esfera.id).where(Esfera.codigo == "estadual"))
+    semente["instituicao"].esfera_id = federal
+    sessao.flush()
+
+    outra = Instituicao(
+        nome="Secretaria Estadual",
+        nome_normalizado="secretaria estadual",
+        tipo="orgao",
+        esfera_id=estadual,
+    )
+    sessao.add(outra)
+    sessao.flush()
+
+    criada = cliente.post("/api/interacoes", json=corpo(semente))
+    assert criada.status_code == 201, criada.text
+    assert criada.json()["esfera_id"] == federal
+
+    editada = cliente.patch(
+        f"/api/interacoes/{criada.json()['id']}",
+        json={"instituicao_id": str(outra.id)},
+    )
+    assert editada.status_code == 200, editada.text
+
+    assert editada.json()["esfera_id"] == estadual
+
+
+def test_trocar_a_instituicao_respeita_a_esfera_mandada_de_proposito(cliente, sessao, semente):
+    """O contrapeso: derivar não pode atropelar quem disse o que quer.
+
+    Mesmo contrato da criação — o payload explícito vence, a derivação só entra
+    onde o campo veio ausente.
+    """
+    from sqlalchemy import select as _select
+
+    from app.banco.tabelas_catalogo import Esfera
+
+    federal = sessao.scalar(_select(Esfera.id).where(Esfera.codigo == "federal"))
+    municipal = sessao.scalar(_select(Esfera.id).where(Esfera.codigo == "municipal"))
+    estadual = sessao.scalar(_select(Esfera.id).where(Esfera.codigo == "estadual"))
+    semente["instituicao"].esfera_id = federal
+    sessao.flush()
+
+    outra = Instituicao(
+        nome="Secretaria Estadual 2",
+        nome_normalizado="secretaria estadual 2",
+        tipo="orgao",
+        esfera_id=estadual,
+    )
+    sessao.add(outra)
+    sessao.flush()
+
+    criada = cliente.post("/api/interacoes", json=corpo(semente))
+    editada = cliente.patch(
+        f"/api/interacoes/{criada.json()['id']}",
+        json={"instituicao_id": str(outra.id), "esfera_id": municipal},
+    )
+    assert editada.status_code == 200, editada.text
+
+    assert editada.json()["esfera_id"] == municipal

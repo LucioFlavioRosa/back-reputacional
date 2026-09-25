@@ -88,13 +88,21 @@ class Recorte:
     categorias_publico: tuple[int, ...] = ()
     busca: str | None = None
 
-    #: Os filtros que chegam como TEXTO da URL e podem chegar vazios.
+    #: Os campos que chegam como TEXTO da URL e podem chegar vazios.
     #:
-    #: Não inclui `uf` (que já é normalizada para maiúscula na rota) nem os
-    #: campos que não são texto.
+    #: `uf` fica de fora porque a rota já a normaliza para maiúscula antes de
+    #: construir o Recorte — é a única exceção, e `test_recorte` a trava.
+    #:
+    #: `busca` FICOU DE FORA NA PRIMEIRA VERSÃO desta lista, e é o campo mais
+    #: fácil de mandar vazio: é uma caixa de busca, e apagar o que se digitou
+    #: nela manda `q=`. Escrevi a lista olhando os FILTROS, e a busca não parece
+    #: um filtro — mas o contador a conta e o SQL a ignora, que é exatamente o
+    #: defeito. Por isso há um teste comparando esta tupla com os campos de
+    #: texto do dataclass: um campo novo entra aqui, ou alguém decide
+    #: explicitamente que ele não deve entrar.
     _DE_TEXTO = (
         "frente", "unidade", "esfera", "clima", "clima_esperado", "resultado",
-        "status", "grupo_status", "entidade", "subtipo",
+        "status", "grupo_status", "entidade", "subtipo", "busca",
     )
 
     def __post_init__(self) -> None:

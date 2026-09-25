@@ -264,6 +264,19 @@ def editar(
     atual = consultar_interacoes.obter(repositorio, id=id, escopo=usuario.escopo)
     alteracoes = edicao.alteracoes(frente_atual=atual.frente)
 
+    # A ESFERA SEGUE A INSTITUIÇÃO TAMBÉM NA TROCA, e não só no dia em que a
+    # agenda nasce. Derivar apenas na criação deixava o registro com a esfera do
+    # órgão ANTERIOR depois de uma correção — federal numa agenda que passou a
+    # ser com uma secretaria estadual —, e o erro seria invisível justamente
+    # porque ninguém digita a esfera: não há campo na tela para conferir.
+    #
+    # SÓ QUANDO O CAMPO NÃO VEIO, o mesmo contrato da criação: quem manda a
+    # esfera de propósito é respeitado.
+    if "instituicao_id" in alteracoes and "esfera_id" not in alteracoes:
+        alteracoes["esfera_id"] = derivar_esfera(
+            sessao, instituicao_id=alteracoes["instituicao_id"]
+        )
+
     atualizada = editar_interacao.editar(
         repositorio, sessao, id=id, alteracoes=alteracoes, usuario=usuario
     )
