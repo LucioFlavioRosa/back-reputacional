@@ -216,11 +216,24 @@ _MATERIAIS = Aba(
 FORMATO: tuple[Aba, ...] = (_AGENDAS, _PARTICIPANTES, _PESSOAS_DA_AEGEA, _MATERIAIS)
 
 
-#: Toda chave de `InteracaoEntrada.model_fields` classificada em um de três
-#: destinos: `"da planilha"` (uma coluna de `FORMATO` alimenta o campo),
-#: `"derivado"` (o importador calcula o valor a partir de outros dados já
-#: importados ou já cadastrados) ou `"fora da v1"` (o importador não escreve
-#: o campo — ele fica no padrão do próprio esquema).
+#: Toda chave de `InteracaoEntrada.model_fields` classificada em um de quatro
+#: destinos:
+#:
+#: - `"da planilha"` — uma COLUNA de `FORMATO` alimenta o campo diretamente:
+#:   o valor da célula vira o valor do campo, sem cálculo no meio.
+#: - `"das abas filhas"` — a pessoa também digita o valor na planilha, mas numa
+#:   aba FILHA (Participantes, Pessoas da Aegea, Materiais), um item de lista
+#:   por linha, e não por uma coluna só: o campo é a lista inteira remontada a
+#:   partir de várias colunas daquela linha. Apagar uma linha da aba filha
+#:   encolhe a lista — é dado digitado, não calculado. Por não vir de UMA
+#:   coluna, `Coluna.campo` não descreve este caso (as colunas dessas abas têm
+#:   `campo=""` de propósito — ver o docstring de `Coluna`), e é por isso que
+#:   o teste de "da planilha" não alcança nem precisa alcançar estas chaves.
+#: - `"derivado"` — o importador CALCULA o valor a partir de outro dado, sem
+#:   que a pessoa o tenha digitado num campo próprio (a instituição já
+#:   cadastrada, ou a linha marcada `Principal`).
+#: - `"fora da v1"` — o importador não escreve o campo — ele fica no padrão do
+#:   próprio esquema.
 #:
 #: O MESMO PADRÃO DE `_DE_TEXTO` (`app/dominio/recorte.py`) E DE `DESTINO`
 #: (`corpo.test.ts`, no front): uma lista de "todo campo passa por aqui" que um
@@ -230,11 +243,13 @@ FORMATO: tuple[Aba, ...] = (_AGENDAS, _PARTICIPANTES, _PESSOAS_DA_AEGEA, _MATERI
 #: existiu) — e o silêncio dura até alguém notar, na produção, que a agenda
 #: importada não carrega aquele dado.
 #:
-#: As chaves classificadas como `"da planilha"` são as únicas que
-#: precisam bater com um `Coluna.campo` de `FORMATO` — é o que
-#: `test_todo_campo_declarado_como_da_planilha_tem_coluna` prende. As outras
-#: duas categorias não têm coluna nenhuma para casar: `"derivado"` porque o
-#: valor não é cópia de célula, e `"fora da v1"` porque não há célula.
+#: As chaves classificadas como `"da planilha"` são as ÚNICAS que precisam
+#: bater com um `Coluna.campo` de `FORMATO` — é o que
+#: `test_todo_campo_declarado_como_da_planilha_tem_coluna` prende, e só prende
+#: essa categoria de propósito: as outras três não têm coluna nenhuma para
+#: casar — `"das abas filhas"` porque o dado é linha, não coluna; `"derivado"`
+#: porque o valor não é cópia de célula nenhuma; e `"fora da v1"` porque não
+#: há célula.
 DESTINO_DO_CAMPO: dict[str, str] = {
     # -- da planilha: uma coluna de `FORMATO` copia direto para o campo -------
     "data_interacao": "da planilha",
@@ -271,20 +286,33 @@ DESTINO_DO_CAMPO: dict[str, str] = {
     "tier": "derivado",
     # O interlocutor principal não é coluna própria: é quem estiver marcado
     # `Principal` na aba Participantes. Uma coluna separada em Agendas
-    # permitiria que as duas informações discordassem.
+    # permitiria que as duas informações discordassem. Note a diferença para
+    # `outra_parte` logo abaixo: `Principal` é uma MARCA numa linha que já
+    # existe por outro motivo, e não um dado que a pessoa digitou pensando em
+    # preencher "o interlocutor principal" — por isso este é cálculo
+    # (`"derivado"`), e a lista de participantes de onde ele sai não é.
     "interlocutor_id": "derivado",
+    # -- das abas filhas: a pessoa digita, mas linha a linha numa aba filha ---
+    #
     # `outra_parte`, `participacoes` e `materiais` vêm de uma aba filha
-    # inteira (Participantes / Pessoas da Aegea / Materiais), não de UMA
-    # coluna: cada linha da aba filha vira um item da lista, remontado a
-    # partir de várias colunas daquela linha. `Coluna.campo` descreve o caso
-    # "uma coluna copia para um campo escalar" — que é o de `FORMATO._AGENDAS`
-    # — e por isso as colunas dessas três abas têm `campo=""` (ver o docstring
-    # de `Coluna`). Chamar estes três de "da planilha" prometeria uma coluna
-    # que não existe com este nome, e é justamente essa promessa vazia que
-    # `test_todo_campo_declarado_como_da_planilha_tem_coluna` recusa.
-    "outra_parte": "derivado",
-    "participacoes": "derivado",
-    "materiais": "derivado",
+    # inteira (Participantes / Pessoas da Aegea / Materiais): cada linha da
+    # aba filha é um item da lista, digitado pela pessoa e remontado a partir
+    # de várias colunas daquela linha. Apagar uma linha em Participantes
+    # encolhe `outra_parte` — não é cálculo, é transcrição; chamar isto de
+    # "derivado" diria ao próximo leitor que o importador CALCULA o valor, o
+    # que é falso.
+    #
+    # Também não é "da planilha": essa categoria é o caso de UMA coluna
+    # copiando para UM campo escalar — o de `FORMATO._AGENDAS` —, e as
+    # colunas destas três abas têm `campo=""` de propósito (ver o docstring
+    # de `Coluna`). Não há `Coluna.campo` chamado "outra_parte" para casar, e
+    # por isso `test_todo_campo_declarado_como_da_planilha_tem_coluna`
+    # continua sem enxergar estas três chaves — de propósito, não por
+    # omissão: elas simplesmente não pertencem à pergunta que aquele teste
+    # faz.
+    "outra_parte": "das abas filhas",
+    "participacoes": "das abas filhas",
+    "materiais": "das abas filhas",
     # -- fora da v1: o importador não escreve o campo -------------------------
     #
     # Os campos por frente (link da matéria, casa, tramitação, tipo de
