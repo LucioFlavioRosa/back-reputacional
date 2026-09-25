@@ -149,7 +149,7 @@ de acesso vale na hora exata, e a revogação feita pela tela vale no ato. Ver
 ## Banco
 
 PostgreSQL **15 ou superior** — a razão do piso está em [Versão e
-privilégio](#versão-e-privilégio). 57 tabelas, organizadas em sete assuntos:
+privilégio](#versão-e-privilégio). 71 tabelas, organizadas em nove assuntos:
 
 | Assunto | Tabelas principais |
 |---|---|
@@ -159,9 +159,11 @@ privilégio](#versão-e-privilégio). 57 tabelas, organizadas em sete assuntos:
 | agendas | `interacao` (tabela-mãe) + cinco extensões 1-para-1 por frente, `interacao_consulta` (1-para-1 pelo TIPO), `interacao_interlocutor`, `interacao_origem`, `interacao_area`, `participacao_aegea`, `material` |
 | biblioteca | `referencia`, `referencia_versao`, `referencia_tema`, `arquivo` |
 | sinais | `alegacao`, `alegacao_tema`, `interacao_alegacao`, `apuracao`, `canal_consulta` |
+| score | `lente`, `score_fonte`, `mencao`, `score_mes_fonte`, `score_estimativa`, `score_config`, `score_fato` |
+| lentes | `evento_mercado`, `estudo_percepcao`, `estudo_atributo`, `jornalista_matriz`, `cm_resposta_mes`, `curadoria_lente`, `encaminhamento` |
 | trilhas | `auditoria`, `exportacao`, `importacao` (schema sem aplicação) |
 
-As 45 migrations (`0001` a `0046`; a `0019` não existe) ficam em
+As 48 migrations (`0001` a `0049`; a `0019` não existe) ficam em
 `app/banco/migrations/` e rodam **em ordem alfabética**, uma vez, na primeira
 subida do banco. Cada arquivo abre com um
 cabeçalho dizendo o que muda e por quê — é lá que está o histórico, e não aqui.
@@ -179,8 +181,10 @@ outra.
 - **Oito frentes.** `bancos_credores` (Bancos/Credores) entrou pela `0031` e
   usa a extensão `interacao_institucional`, a mesma de Governo, Parceiros e
   Eventos — o mapa é `EXTENSAO_POR_FRENTE`, em `app/dominio/frentes.py`.
-- **Clima é Proativo / Reativo** (`0030`). Os códigos `propositivo` e `tenso`
-  continuam no banco; só o nome exibido mudou.
+- **Clima é Positivo / Neutro / Negativo** (`0047`; era Proativo / Reativo
+  desde a `0030`). Os códigos `propositivo`, `neutro` e `tenso` continuam no
+  banco desde a `0001` — só o nome exibido mudou, das duas vezes. É por isso
+  que todo mapeamento no código lê `codigo`, e não `nome`.
 - **Área interna da agenda.** `area_pessoa` é a área da Aegea (Comunicação,
   Relações Institucionais, Operações Financeiras, Relações com Investidores;
   "Performance e Dados" está com `ativo = false` desde a `0033`), e

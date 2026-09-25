@@ -1,0 +1,1103 @@
+"""O Score Executivo — o Índice de Saúde Reputacional, servido pronto.
+
+O CÁLCULO É DO SERVIDOR, e a tela só exibe (regra 4 do handoff). Não é
+preferência de arquitetura: o ISR é um número que a diretoria vai citar em
+reunião, e ele precisa ser o mesmo para todo mundo, calculado uma vez, com a
+régua que a coordenação gravou — e não recomputado em cada navegador com a
+versão de código que aquele navegador carregou.
+
+O SCORE NÃO USA O RECORTE DO PAINEL. Ele é mensal e é da organização inteira:
+filtrar por frente ou por unidade produziria um "ISR da imprensa" cujo peso de
+lente não significa nada. O que se escolhe aqui é o MÊS.
+
+Permissões: ler exige o portal Score (`acessa_score`); mexer na calibração
+exige administrar cadastros — é configuração da organização, e muda o número
+que todos leem.
+"""
+
+from __future__ import annotations
+
+from datetime import date
+from typing import Annotated
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, File, Query, UploadFile, status
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import delete, select
+
+from app.api.dependencias import (
+    UsuarioLogado,
+    UsuarioQueAdministraCadastros,
+    exigir_portal_score,
+)
+from app.banco import repositorio_score
+from app.banco.sessao import SessaoDoPedido
+from app.banco.tabelas_score import Lente, ScoreConfig, ScoreFato, ScoreFonte, ScoreMesFonte
+from app.casos_de_uso import ingerir_mencoes
+from app.casos_de_uso.ler_sinais_da_lente import regua_dos_sinais
+from app.dominio.erros import NaoEncontrado, RegraViolada
+from app.dominio.score import (
+    REGUAS_DE_ENGAJAMENTO,
+    REGUAS_DE_TIER,
+    Calibracao,
+    Contagem,
+    Indice,
+    ns,
+    para_score,
+    pesos_efetivos,
+    pesos_exatos,
+)
+from app.dominio.sinais_da_lente import Limites
+from app.dominio.tema_do_mes import TemaDoMes, temas_que_pesaram
+
+rotas = APIRouter(
+    prefix="/api/score",
+    tags=["score"],
+    dependencies=[Depends(exigir_portal_score)],
+)
+
+Sessao = SessaoDoPedido
+
+
+class LenteSaida(BaseModel):
+    codigo: str
+    nome: str
+    #: De quem é a lente — "Formadores de opinião", "Investidores e rating".
+    #: A lista da Visão geral abre por ele: quem lê o índice pergunta "de quem
+    #: é este 37?" antes de perguntar de que fonte ele saiu.
+    stakeholder: str
+    #: O peso que a calibração gravou — o que a aba Calibração ajusta.
+    peso: int
+    #: O QUE ESSE PESO VALEU DE FATO, em porcento, depois de a lente sem dado
+    #: sair do denominador. Com as cinco lentes medidas os dois batem; com uma
+    #: fora, Imprensa vale 30 de 70 — 43%, e não 30%. Mostrar só o nominal
+    #: faria a tela afirmar uma participação que não aconteceu.
+    peso_efetivo: int
+    #: Nulo quando a lente ficou de fora — sem fonte ligada ou sem menção.
+    score: int | None
+    ns: float | None
+    #: Contra o mês anterior. Nulo quando não há os dois meses.
+    delta: int | None = None
+    fontes: list[str] = Field(default_factory=list)
+    estimado: bool = False
+    #: Por que ficou de fora, quando ficou. A tela mostra como aviso.
+    ausencia: str | None = None
+
+
+class FatoSaida(BaseModel):
+    id: UUID
+    mes: str
+    texto: str
+    efeito: str
+
+
+class LimiteSaida(BaseModel):
+    """Um corte de detector, com o que a tela precisa para desenhar o campo."""
+
+    chave: str
+    rotulo: str
+    #: O que muda quando este número muda, em uma frase.
+    explicacao: str
+    valor: float
+    padrao: float
+    #: `decimal` aceita vírgula; `inteiro` não — "3,5 meses seguidos" não
+    #: significa nada, e um campo que aceita o valor convida a digitá-lo.
+    formato: str
+    unidade: str | None = None
+
+
+class CalibracaoSaida(BaseModel):
+    pesos: dict[str, int]
+    regua_tier: str
+    regua_engajamento: str
+    fontes_desligadas: list[str]
+    #: OS OITO, sempre — os ajustados e os de fábrica. Mandar só o que foi
+    #: mexido faria a tela ter de conhecer os padrões, e eles passariam a viver
+    #: em dois lugares.
+    limites: list[LimiteSaida] = Field(default_factory=list)
+    #: A fatia de cada lente no radial tem a largura do peso efetivo.
+    radial_por_peso: bool = True
+    #: Verdadeiro quando a régua é a de fábrica — a tela mostra o chip
+    #: "calibração ajustada" quando falso.
+    padrao: bool
+
+
+class IndiceSaida(BaseModel):
+    mes: str
+    isr: int | None
+    faixa: str
+    leitura_da_faixa: str
+    #: Contra o mês anterior e contra o primeiro mês da série (§6.1).
+    delta_mes: int | None
+    delta_inicio: int | None
+    lentes: list[LenteSaida]
+    calibracao: CalibracaoSaida
+    fatos: list[FatoSaida]
+    #: A leitura em palavras: qual lente sustenta, qual corrói.
+    leitura: str
+
+
+class FatoDoPonto(BaseModel):
+    """O que explica o degrau do mês, na própria coluna dele.
+
+    ESCRITO POR GENTE. Um mês pode ter vários: a curva de março não se explica
+    só pelo atraso das demonstrações, e obrigar quem cadastra a escolher UM
+    faria o segundo motivo sumir do painel.
+    """
+
+    id: UUID
+    texto: str
+    efeito: str
+
+
+class TemaSaida(BaseModel):
+    """O tema que mais pesou no índice do mês — derivado, não cadastrado.
+
+    A OUTRA METADE DA PERGUNTA. O fato diz o que aconteceu no mundo; este diz
+    por onde aquilo entrou no número, e quanto custou ou rendeu em pontos do
+    índice. A conta é decomposição exata — ver `dominio/tema_do_mes`.
+    """
+
+    tema: str
+    lente: str
+    #: Pontos do índice, com sinal.
+    pontos: float
+    efeito: str
+    positivas: int
+    negativas: int
+
+
+class MovimentoDaLente(BaseModel):
+    """Quem mais se mexeu no mês — a lente, e quanto.
+
+    É A PERGUNTA QUE VEM DEPOIS DE "por que caiu": o fato diz o que aconteceu
+    no mundo, e este número diz por onde aquilo entrou no índice."""
+
+    lente: str
+    delta: int
+
+
+class PontoDaSerie(BaseModel):
+    mes: str
+    isr: int | None
+    #: QUANTAS LENTES formaram o ponto, de 5. Um mês em que só a institucional
+    #: tem dado produz um ISR legítimo pela fórmula e ENGANOSO na curva — é o
+    #: score de uma lente, desenhado como se fosse o da companhia. A tela usa
+    #: este número para marcar o ponto como parcial.
+    lentes: int
+    #: Verdadeiro quando alguma lente do mês veio de estimativa, e não de
+    #: medição.
+    tem_estimativa: bool
+    #: Contra o mês anterior da série. Nulo no primeiro ponto — que é ponto de
+    #: partida, e não variação zero.
+    delta: int | None = None
+    #: TODOS os fatos do mês, do mais antigo para o mais novo.
+    fatos: list[FatoDoPonto] = Field(default_factory=list)
+    #: O que a BASE diz sobre o mês: o tema que mais segurou e o que mais
+    #: puxou. Qualquer um pode faltar — um mês em que nada pesou não ganha um
+    #: "tema do mês" inventado.
+    sustentou: TemaSaida | None = None
+    pressionou: TemaSaida | None = None
+    #: Pontos do índice que nenhum tema explica — menções sem tema. Dizer
+    #: isto é o que impede a coluna de afirmar mais do que sabe.
+    pontos_sem_tema: float = 0.0
+    maior_movimento: MovimentoDaLente | None = None
+    #: A nota de cada lente medida no mês, por código. É o que permite desenhar
+    #: a curva de comparação sem uma segunda chamada por lente.
+    notas_das_lentes: dict[str, int] = Field(default_factory=dict)
+
+
+def _mes_de(texto: str) -> date:
+    """`2026-06` vira o primeiro dia do mês."""
+    try:
+        ano, mes = texto.split("-")
+        return date(int(ano), int(mes), 1)
+    except (ValueError, TypeError) as erro:
+        raise RegraViolada(f"Mês inválido: {texto!r}. Use o formato AAAA-MM.") from erro
+
+
+#: Como cada limite se apresenta na Calibração, na ordem em que se lê: dos
+#: cortes da série mensal para os da composição, e por fim o tamanho da lista.
+LIMITES_DOS_SINAIS: tuple[tuple[str, str, str, str, str | None], ...] = (
+    (
+        "pico_desvios",
+        "Pico · desvios",
+        "Quantos desvios-padrão acima da média um mês precisa ter para virar pico.",
+        "decimal",
+        "desvios",
+    ),
+    (
+        "pico_razao_minima",
+        "Pico · razão mínima",
+        "E quantas vezes a média ele precisa ser — as duas condições valem juntas.",
+        "decimal",
+        "× a média",
+    ),
+    (
+        "virada_pontos",
+        "Virada · pontos de nota",
+        "Quantos pontos a nota precisa andar de um mês para o outro.",
+        "inteiro",
+        "pontos",
+    ),
+    (
+        "deslocamento_pp",
+        "Deslocamento · pontos percentuais",
+        "Quanto a fatia negativa precisa recuar, ou subir, para virar sinal.",
+        "decimal",
+        "p.p.",
+    ),
+    (
+        "tendencia_meses",
+        "Tendência · meses seguidos",
+        "Quantos meses na mesma direção formam uma tendência.",
+        "inteiro",
+        "meses",
+    ),
+    (
+        "concentracao_razao",
+        "Concentração · razão",
+        "Quantas vezes o primeiro colocado precisa valer o segundo.",
+        "decimal",
+        "×",
+    ),
+    (
+        "concentracao_top3",
+        "Concentração · topo",
+        "Quanto do volume os três primeiros precisam somar, quando a razão não dispara.",
+        "decimal",
+        "%",
+    ),
+    (
+        "max_sinais",
+        "Sinais na lista",
+        "Quantos sinais o bloco do fim da lente mostra. As lacunas não ocupam vaga.",
+        "inteiro",
+        None,
+    ),
+)
+
+
+def _limites_saida(calibracao: Calibracao) -> list[LimiteSaida]:
+    """Os oito, com o valor em vigor e o de fábrica ao lado.
+
+    O PADRÃO VIAJA JUNTO porque é a única forma de a tela oferecer "voltar ao
+    de fábrica" sem guardar uma segunda cópia dos números — que envelheceria na
+    primeira vez que alguém mudasse um padrão no código.
+    """
+    padrao = Limites()
+    # TOLERANTE NA LEITURA, estrita na gravação: um valor impossível gravado
+    # por fora não pode fechar a porta da tela onde ele se conserta.
+    vigente = regua_dos_sinais(calibracao)
+    return [
+        LimiteSaida(
+            chave=chave,
+            rotulo=rotulo,
+            explicacao=explicacao,
+            valor=getattr(vigente, chave),
+            padrao=getattr(padrao, chave),
+            formato=formato,
+            unidade=unidade,
+        )
+        for chave, rotulo, explicacao, formato, unidade in LIMITES_DOS_SINAIS
+    ]
+
+
+def _calibracao_saida(sessao, calibracao: Calibracao) -> CalibracaoSaida:
+    padrao = repositorio_score.pesos_padrao(sessao)
+    return CalibracaoSaida(
+        pesos=calibracao.pesos,
+        regua_tier=calibracao.regua_tier,
+        regua_engajamento=calibracao.regua_engajamento,
+        fontes_desligadas=sorted(calibracao.fontes_desligadas),
+        limites=_limites_saida(calibracao),
+        radial_por_peso=calibracao.radial_por_peso,
+        padrao=(
+            calibracao.pesos == padrao
+            and calibracao.regua_tier == "aegea"
+            and calibracao.regua_engajamento == "n"
+            and not calibracao.fontes_desligadas
+            and not calibracao.limites
+            and calibracao.radial_por_peso
+        ),
+    )
+
+
+def _leitura(indice: Indice) -> str:
+    """A frase que explica o número (§6.1).
+
+    GERADA, E NÃO ESCRITA: ela muda com o mês e com a régua, e uma frase fixa
+    envelheceria no primeiro recálculo. Diz o que sustenta e o que corrói —
+    que é a pergunta que alguém faz ao ver o índice.
+    """
+    com_dado = indice.lentes_no_calculo
+    if not com_dado:
+        return "Nenhuma lente foi medida neste mês."
+
+    melhor = max(com_dado, key=lambda lente: lente.score or 0)
+    pior = min(com_dado, key=lambda lente: lente.score or 0)
+    fora = indice.lentes_de_fora
+
+    frase = (
+        f"{melhor.nome} sustenta o índice, com {melhor.score}; "
+        f"{pior.nome} é o que mais o pressiona, com {pior.score}."
+    )
+    if fora:
+        nomes = ", ".join(lente.nome for lente in fora)
+        frase += f" Fora do cálculo: {nomes}."
+    return frase
+
+
+@rotas.get("")
+def obter(
+    sessao: Sessao,
+    usuario: UsuarioLogado,
+    mes: Annotated[str, Query(description="AAAA-MM")],
+) -> IndiceSaida:
+    """O índice do mês, com as lentes que o formaram e o que explica a curva."""
+    alvo = _mes_de(mes)
+    calibracao = repositorio_score.calibracao_vigente(sessao)
+
+    indice = repositorio_score.indice_do_mes(sessao, alvo, calibracao)
+    anterior = repositorio_score.indice_do_mes(sessao, _mes_anterior(alvo), calibracao)
+
+    meses = repositorio_score.meses_com_dado(sessao)
+    primeiro = repositorio_score.indice_do_mes(sessao, meses[0], calibracao) if meses else indice
+
+    scores_anteriores = {lente.codigo: lente.score for lente in anterior.lentes}
+    efetivos = pesos_efetivos(indice)
+    # O STAKEHOLDER NÃO PASSA PELO CÁLCULO, e por isso não está em
+    # `LenteMedida`: é rótulo de cadastro, e não número. Buscá-lo aqui mantém o
+    # domínio do índice falando só de conta.
+    stakeholders = {
+        lente.codigo: lente.stakeholder for lente in repositorio_score.lentes_cadastradas(sessao)
+    }
+    lentes = [
+        LenteSaida(
+            codigo=lente.codigo,
+            nome=lente.nome,
+            stakeholder=stakeholders[lente.codigo],
+            peso=lente.peso,
+            peso_efetivo=efetivos.get(lente.codigo, 0),
+            score=lente.score,
+            ns=round(lente.ns, 4) if lente.ns is not None else None,
+            delta=_delta(lente.score, scores_anteriores.get(lente.codigo)),
+            fontes=list(lente.fontes),
+            estimado=lente.estimado,
+            ausencia=lente.ausencia,
+        )
+        for lente in indice.lentes
+    ]
+
+    return IndiceSaida(
+        mes=indice.mes,
+        isr=indice.isr,
+        faixa=indice.faixa,
+        leitura_da_faixa=indice.leitura_da_faixa,
+        delta_mes=_delta(indice.isr, anterior.isr),
+        delta_inicio=_delta(indice.isr, primeiro.isr),
+        lentes=lentes,
+        calibracao=_calibracao_saida(sessao, calibracao),
+        fatos=_fatos_do_mes(sessao, alvo),
+        leitura=_leitura(indice),
+    )
+
+
+def _delta(atual: int | None, anterior: int | None) -> int | None:
+    """Sem os dois meses não há variação — e zero não é a resposta."""
+    if atual is None or anterior is None:
+        return None
+    return atual - anterior
+
+
+def _mes_anterior(mes: date) -> date:
+    return (
+        mes.replace(year=mes.year - 1, month=12)
+        if mes.month == 1
+        else mes.replace(month=mes.month - 1)
+    )
+
+
+def _fatos_do_mes(sessao, mes: date) -> list[FatoSaida]:
+    registros = sessao.scalars(
+        select(ScoreFato).where(ScoreFato.mes == mes).order_by(ScoreFato.criado_em)
+    )
+    return [
+        FatoSaida(id=f.id, mes=f"{f.mes:%Y-%m}", texto=f.texto, efeito=f.efeito) for f in registros
+    ]
+
+
+@rotas.get("/serie")
+def serie(sessao: Sessao, usuario: UsuarioLogado) -> list[PontoDaSerie]:
+    """A evolução mensal do índice, com a régua vigente.
+
+    TODOS OS MESES COM A MESMA RÉGUA: recalcular o passado com a calibração de
+    hoje é o que torna a curva comparável. Guardar o score de cada mês com a
+    régua da época faria a linha subir e descer por mudança de critério.
+    """
+    calibracao = repositorio_score.calibracao_vigente(sessao)
+    meses = repositorio_score.meses_com_dado(sessao)
+    # O CADASTRO ATRAVESSA A SÉRIE INTEIRA. Relê-lo a cada mês somava consultas
+    # por ponto, todas com a mesma resposta — e a conta piorava a cada mês
+    # ingerido, que é o que vai acontecer todo mês.
+    catalogo = repositorio_score.catalogo_das_lentes(sessao)
+    nomes = {lente.codigo: lente.nome for lente in catalogo}
+    # UMA CONSULTA PARA O PERÍODO INTEIRO, e não uma por mês: a série já faz
+    # uma medição por mês, e somar a isso uma ida ao banco por coluna faria a
+    # tela mais cara a cada mês ingerido.
+    # TODOS OS FATOS DE CADA MÊS, na ordem em que foram cadastrados. A coluna
+    # mostra a lista inteira: escolher um faria o segundo motivo do mês sumir
+    # do painel, e é justamente o segundo que costuma explicar o resto.
+    fatos: dict[str, list[ScoreFato]] = {}
+    for fato in repositorio_score.fatos_do_periodo(sessao, meses):
+        fatos.setdefault(f"{fato.mes:%Y-%m}", []).append(fato)
+
+    # E o que a BASE diz, ao lado do que as pessoas escreveram.
+    temas = repositorio_score.pesos_por_tema(sessao, meses, calibracao)
+
+    pontos: list[PontoDaSerie] = []
+    anterior: dict[str, int] = {}
+    isr_anterior: int | None = None
+    for mes in meses:
+        indice = repositorio_score.indice_do_mes(sessao, mes, calibracao, catalogo)
+        notas = {lente.codigo: lente.score for lente in indice.lentes if lente.score is not None}
+        # O PESO EXATO, E NÃO O ARREDONDADO DA TELA. `pesos_efetivos` reparte
+        # inteiros que somam 100 pelo método de Hamilton, para a composição
+        # exibida não dar 101. O índice, porém, pondera pela fração real — e
+        # usar o inteiro aqui quebraria a exatidão que esta conta promete.
+        exatos = pesos_exatos(indice)
+        do_mes = temas_que_pesaram(
+            temas.get(mes, []),
+            exatos,
+            {
+                lente.codigo: (lente.ns or 0) * 50 * exatos.get(lente.codigo, 0) / 100
+                for lente in indice.lentes_no_calculo
+            },
+        )
+        pontos.append(
+            PontoDaSerie(
+                mes=indice.mes,
+                isr=indice.isr,
+                lentes=len(indice.lentes_no_calculo),
+                tem_estimativa=any(lente.estimado for lente in indice.lentes_no_calculo),
+                delta=_delta(indice.isr, isr_anterior) if pontos else None,
+                fatos=[
+                    FatoDoPonto(id=f.id, texto=f.texto, efeito=f.efeito)
+                    for f in fatos.get(indice.mes, ())
+                ],
+                sustentou=_saida_do_tema(do_mes.sustentou),
+                pressionou=_saida_do_tema(do_mes.pressionou),
+                pontos_sem_tema=do_mes.pontos_sem_tema,
+                maior_movimento=_maior_movimento(notas, anterior, nomes),
+                notas_das_lentes=notas,
+            )
+        )
+        anterior, isr_anterior = notas, indice.isr
+    return pontos
+
+
+def _saida_do_tema(escolhido: TemaDoMes | None) -> TemaSaida | None:
+    if escolhido is None:
+        return None
+    return TemaSaida(
+        tema=escolhido.tema,
+        lente=escolhido.lente,
+        pontos=escolhido.pontos,
+        efeito=escolhido.efeito,
+        positivas=escolhido.positivas,
+        negativas=escolhido.negativas,
+    )
+
+
+def _maior_movimento(
+    notas: dict[str, int], anteriores: dict[str, int], nomes: dict[str, str]
+) -> MovimentoDaLente | None:
+    """A lente que mais andou de um mês para o outro.
+
+    SÓ CONTA QUEM TEM OS DOIS MESES. Uma lente que estreia no mês não "subiu 42
+    pontos" — ela apareceu, e chamar isso de movimento faria toda primeira
+    ingestão de uma fonte parecer um salto de reputação.
+
+    O EMPATE FICA COM O CÓDIGO, em ordem alfabética: duas lentes com a mesma
+    variação precisam devolver sempre a mesma resposta, senão a coluna do mês
+    muda de texto entre duas leituras sem nada ter mudado.
+    """
+    movimentos = [
+        (nota - anteriores[codigo], codigo)
+        for codigo, nota in notas.items()
+        if codigo in anteriores
+    ]
+    if not movimentos:
+        return None
+    delta, codigo = sorted(movimentos, key=lambda par: (-abs(par[0]), par[1]))[0]
+    if not delta:
+        return None
+    return MovimentoDaLente(lente=nomes.get(codigo, codigo), delta=delta)
+
+
+class FonteSaida(BaseModel):
+    codigo: str
+    nome: str
+    fornecedor: str
+    lente: str
+    interna: bool
+    ativo: bool
+    #: Se a calibração vigente a desligou.
+    ligada: bool
+    observacao: str | None
+    #: Quantos meses têm dado desta fonte, e quantas menções no mês pedido.
+    meses_com_dado: int
+    mencoes_no_mes: int
+
+
+@rotas.get("/fontes")
+def listar_fontes(
+    sessao: Sessao,
+    usuario: UsuarioLogado,
+    mes: Annotated[str, Query(description="AAAA-MM")],
+) -> list[FonteSaida]:
+    """O registro de fontes, com cobertura e volume — a aba Calibração."""
+    alvo = _mes_de(mes)
+    calibracao = repositorio_score.calibracao_vigente(sessao)
+    lentes = {lente.id: lente.nome for lente in repositorio_score.lentes_cadastradas(sessao)}
+
+    cobertura: dict[int, int] = {}
+    volume: dict[int, int] = {}
+    for fonte_id, mes_da_linha, mencoes in sessao.execute(
+        select(ScoreMesFonte.fonte_id, ScoreMesFonte.mes, ScoreMesFonte.mencoes)
+    ):
+        cobertura[fonte_id] = cobertura.get(fonte_id, 0) + (1 if mes_da_linha else 0)
+        if mes_da_linha == alvo:
+            volume[fonte_id] = volume.get(fonte_id, 0) + mencoes
+
+    return [
+        FonteSaida(
+            codigo=fonte.codigo,
+            nome=fonte.nome,
+            fornecedor=fonte.fornecedor,
+            lente=lentes.get(fonte.lente_id, "—"),
+            interna=fonte.interna,
+            ativo=fonte.ativo,
+            ligada=calibracao.ligada(fonte.codigo),
+            observacao=fonte.observacao,
+            # Meses distintos, e não linhas: cada mês tem várias linhas (uma
+            # por sentimento e tier).
+            meses_com_dado=_meses_distintos(sessao, fonte.id),
+            mencoes_no_mes=volume.get(fonte.id, 0),
+        )
+        for fonte in repositorio_score.fontes_cadastradas(sessao)
+    ]
+
+
+def _meses_distintos(sessao, fonte_id: int) -> int:
+    return len(
+        set(sessao.scalars(select(ScoreMesFonte.mes).where(ScoreMesFonte.fonte_id == fonte_id)))
+    )
+
+
+class ComposicaoSaida(BaseModel):
+    """Os três números da fórmula, JÁ PONDERADOS pela régua vigente.
+
+    São o que a barra da aba Lentes desenha — e não a contagem crua: com a
+    régua 10/5/1, as 65 matérias de veículo Muito Relevante valem 650, e é
+    isso que entra na conta.
+    """
+
+    positivo: float
+    neutro: float
+    negativo: float
+
+
+class FonteDaLenteSaida(BaseModel):
+    codigo: str
+    nome: str
+    ns: float | None
+    mencoes: int
+    ligada: bool
+
+
+class TemaDaLenteSaida(BaseModel):
+    nome: str
+    positivo: int
+    negativo: int
+    #: `estruturante` | `operacional` | nulo quando ninguém classificou.
+    tipo: str | None
+
+
+class LenteDetalheSaida(BaseModel):
+    codigo: str
+    nome: str
+    stakeholder: str
+    score: int | None
+    ns: float | None
+    peso: int
+    estimado: bool
+    ausencia: str | None
+    composicao: ComposicaoSaida
+    #: A fórmula aplicada, escrita — muda com a régua, então é gerada.
+    formula: str
+    fontes: list[FonteDaLenteSaida]
+    temas: list[TemaDaLenteSaida]
+
+
+@rotas.get("/lentes/{codigo}")
+def obter_lente(
+    sessao: Sessao,
+    usuario: UsuarioLogado,
+    codigo: str,
+    mes: Annotated[str, Query(description="AAAA-MM")],
+) -> LenteDetalheSaida:
+    """Uma lente por dentro: a composição, a fórmula e os temas."""
+    alvo = _mes_de(mes)
+    calibracao = repositorio_score.calibracao_vigente(sessao)
+
+    lente = sessao.scalar(select(Lente).where(Lente.codigo == codigo))
+    if lente is None:
+        raise NaoEncontrado(f"Lente {codigo!r} não existe.")
+
+    medida = next(
+        (m for m in repositorio_score.medir_lentes(sessao, alvo, calibracao) if m.codigo == codigo),
+        None,
+    )
+    if medida is None:  # pragma: no cover - `medir_lentes` cobre as ativas
+        raise NaoEncontrado(f"Lente {codigo!r} não está ativa.")
+
+    composicao = repositorio_score.composicao_da_lente(sessao, lente.id, alvo, calibracao)
+    return LenteDetalheSaida(
+        codigo=lente.codigo,
+        nome=lente.nome,
+        stakeholder=lente.stakeholder,
+        score=medida.score,
+        ns=round(medida.ns, 4) if medida.ns is not None else None,
+        peso=medida.peso,
+        estimado=medida.estimado,
+        ausencia=medida.ausencia,
+        composicao=ComposicaoSaida(
+            positivo=round(composicao.positivo, 2),
+            neutro=round(composicao.neutro, 2),
+            negativo=round(composicao.negativo, 2),
+        ),
+        formula=_formula(lente.codigo, calibracao),
+        fontes=[
+            FonteDaLenteSaida(
+                codigo=fonte.codigo,
+                nome=fonte.nome,
+                ns=ns_da_fonte,
+                mencoes=mencoes,
+                ligada=calibracao.ligada(fonte.codigo),
+            )
+            for fonte, ns_da_fonte, mencoes in repositorio_score.fontes_da_lente(
+                sessao, lente.id, alvo, calibracao
+            )
+        ],
+        temas=[
+            TemaDaLenteSaida(nome=nome, positivo=pos, negativo=neg, tipo=tipo)
+            for nome, pos, neg, tipo in repositorio_score.temas_da_lente(
+                sessao, lente.id, alvo, calibracao
+            )
+        ],
+    )
+
+
+#: Quantas matérias cada tier vale, em palavras, para a frase da fórmula.
+def _formula(lente: str, calibracao: Calibracao) -> str:
+    """A fórmula aplicada, escrita — é a explicação que a tela mostra.
+
+    GERADA, e não fixa: ela muda com a régua, e um texto escrito à mão
+    passaria a mentir no primeiro ajuste da calibração.
+    """
+    base = "NS = (positivas − negativas) ÷ total; score = (NS + 1) ÷ 2 × 100."
+    if lente in ("imprensa", "mercado"):
+        pesos = REGUAS_DE_TIER[calibracao.regua_tier]
+        return (
+            f"{base} Cada matéria vale {pesos['muito_relevante']:g} (Muito "
+            f"Relevante), {pesos['relevante']:g} (Relevante) ou "
+            f"{pesos['menos_relevante']:g} (Menos Relevante)."
+        )
+    if lente in ("sociedade", "clientes"):
+        comoR = {
+            "n": "cada menção vale 1",
+            "log": "cada menção vale 1 + log₁₀(1 + engajamento)",
+            "bruto": "cada menção vale o seu engajamento",
+            "cargo": "cada menção vale o peso do cargo de quem postou",
+        }[calibracao.regua_engajamento]
+        return (
+            f"{base} {comoR[0].upper() + comoR[1:]}. Com mais de uma fonte, "
+            "a lente é a média simples dos NS."
+        )
+    return f"{base} Vem do clima das interações registradas neste painel."
+
+
+class CalibracaoEntrada(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    pesos: dict[str, int] = Field(default_factory=dict)
+    regua_tier: str = "aegea"
+    regua_engajamento: str = "n"
+    fontes_desligadas: list[str] = Field(default_factory=list)
+    #: SÓ O QUE FOI MEXIDO. Gravar os oito sempre faria toda régua parecer
+    #: ajustada, e "voltar ao padrão" deixaria de ser distinguível de "gravei
+    #: os mesmos números".
+    limites: dict[str, float] = Field(default_factory=dict)
+    radial_por_peso: bool = True
+
+
+@rotas.get("/calibracao")
+def obter_calibracao(sessao: Sessao, usuario: UsuarioLogado) -> CalibracaoSaida:
+    return _calibracao_saida(sessao, repositorio_score.calibracao_vigente(sessao))
+
+
+@rotas.put("/calibracao", status_code=status.HTTP_201_CREATED)
+def gravar_calibracao(
+    sessao: Sessao, usuario: UsuarioQueAdministraCadastros, entrada: CalibracaoEntrada
+) -> CalibracaoSaida:
+    """Grava uma VERSÃO NOVA da régua, e não altera a anterior.
+
+    Saber com que critério um número foi lido no mês passado é o que permite
+    explicar por que ele mudou — e é por isso que a tabela só cresce.
+    """
+    # `Calibracao` valida as réguas e a faixa dos pesos antes de qualquer
+    # escrita: a recusa vem do domínio, e não de um `check` no banco.
+    calibracao = Calibracao(
+        pesos=entrada.pesos,
+        regua_tier=entrada.regua_tier,
+        regua_engajamento=entrada.regua_engajamento,
+        fontes_desligadas=frozenset(entrada.fontes_desligadas),
+        limites=entrada.limites,
+        radial_por_peso=entrada.radial_por_peso,
+    )
+    # RECUSA ANTES DE GRAVAR: um limite zerado não daria erro aqui, daria horas
+    # depois, na tela de outra pessoa abrindo uma lente.
+    Limites.a_partir_de(entrada.limites)
+    conhecidas = {fonte.codigo for fonte in repositorio_score.fontes_cadastradas(sessao)}
+    desconhecidas = sorted(calibracao.fontes_desligadas - conhecidas)
+    if desconhecidas:
+        raise RegraViolada(f"Fonte não cadastrada: {', '.join(desconhecidas)}.")
+    conhecidas_lentes = set(repositorio_score.pesos_padrao(sessao))
+    fora = sorted(set(entrada.pesos) - conhecidas_lentes)
+    if fora:
+        raise RegraViolada(f"Lente não cadastrada: {', '.join(fora)}.")
+
+    sessao.add(
+        ScoreConfig(
+            pesos=entrada.pesos,
+            regua_tier=entrada.regua_tier,
+            regua_engajamento=entrada.regua_engajamento,
+            fontes_desligadas=sorted(entrada.fontes_desligadas),
+            limites=entrada.limites,
+            radial_por_peso=entrada.radial_por_peso,
+            criado_por=usuario.id,
+        )
+    )
+    sessao.flush()
+    return _calibracao_saida(sessao, repositorio_score.calibracao_vigente(sessao))
+
+
+@rotas.delete("/calibracao", status_code=status.HTTP_201_CREATED)
+def restaurar_padrao(sessao: Sessao, usuario: UsuarioQueAdministraCadastros) -> CalibracaoSaida:
+    """ "Restaurar padrão" (§3): grava uma versão com a régua de fábrica.
+
+    Não apaga o histórico — volta ao padrão gravando, que é como se desfaz
+    numa tabela que só cresce.
+    """
+    sessao.add(
+        ScoreConfig(
+            pesos=repositorio_score.pesos_padrao(sessao),
+            regua_tier="aegea",
+            regua_engajamento="n",
+            fontes_desligadas=[],
+            criado_por=usuario.id,
+        )
+    )
+    sessao.flush()
+    return _calibracao_saida(sessao, repositorio_score.calibracao_vigente(sessao))
+
+
+class FatoEntrada(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mes: str
+    texto: str = Field(min_length=3)
+    efeito: str
+
+
+EFEITOS = ("sustenta", "pressiona", "misto")
+
+
+@rotas.post("/fatos", status_code=status.HTTP_201_CREATED)
+def criar_fato(
+    sessao: Sessao, usuario: UsuarioQueAdministraCadastros, entrada: FatoEntrada
+) -> FatoSaida:
+    """O que explica a curva — "caiu em março porque saíram as DFs"."""
+    if entrada.efeito not in EFEITOS:
+        raise RegraViolada(f"Efeito inválido: {entrada.efeito!r}. Use {', '.join(EFEITOS)}.")
+    registro = ScoreFato(
+        mes=_mes_de(entrada.mes),
+        texto=entrada.texto.strip(),
+        efeito=entrada.efeito,
+        criado_por=usuario.id,
+    )
+    sessao.add(registro)
+    sessao.flush()
+    return FatoSaida(
+        id=registro.id,
+        mes=f"{registro.mes:%Y-%m}",
+        texto=registro.texto,
+        efeito=registro.efeito,
+    )
+
+
+@rotas.delete("/fatos/{id}", status_code=status.HTTP_204_NO_CONTENT)
+def remover_fato(sessao: Sessao, usuario: UsuarioQueAdministraCadastros, id: UUID) -> None:
+    registro = sessao.get(ScoreFato, id)
+    if registro is None:
+        raise NaoEncontrado("Fato não encontrado.")
+    sessao.execute(delete(ScoreFato).where(ScoreFato.id == id))
+
+
+class AtributoSaida(BaseModel):
+    """Um atributo reputacional, com o saldo que ele carrega."""
+
+    nome: str
+    positivo: int
+    neutro: int
+    negativo: int
+    #: O saldo na escala do índice, para a tela desenhar a barra divergente.
+    score: int
+    ns: float
+
+
+class UnidadeSaida(BaseModel):
+    nome: str
+    negativas: int
+    mencoes: int
+    #: Quanto do negativo do mês inteiro está nesta unidade.
+    participacao: int
+
+
+class PerpetuacaoSaida(BaseModel):
+    """Um tema negativo que atravessa meses."""
+
+    tema: str
+    meses: int
+    primeiro_mes: str
+    ultimo_mes: str
+    negativas: int
+    #: Em que lentes ele aparece — "imprensa e redes" é pior que só redes.
+    lentes: list[str]
+
+
+class RegraDaPerpetuacao(BaseModel):
+    """Os números que definem "em perpetuação", ditos pelo servidor.
+
+    A TELA PRECISA EXPLICAR A REGRA para quem lê a lista — "temas presentes em
+    3 dos últimos 6 meses" —, e uma constante repetida no front envelheceria
+    calada: mudaria a explicação sem mudar a lista, que é a pior forma de
+    errar, porque ninguém desconfia do texto.
+    """
+
+    meses_da_janela: int
+    meses_para_perpetuar: int
+
+
+class DriversSaida(BaseModel):
+    """A aba de Drivers e riscos: o porquê do número, e não o número.
+
+    As três listas vêm de `mencao`, uma a uma, e não do agregado mensal — que
+    já perdeu o atributo, o tema e a unidade ao somar. Sem planilha importada
+    no mês, as três voltam vazias, e a tela diz por quê em vez de desenhar
+    zeros.
+    """
+
+    mes: str
+    atributos: list[AtributoSaida]
+    unidades: list[UnidadeSaida]
+    perpetuacao: list[PerpetuacaoSaida]
+    regra_da_perpetuacao: RegraDaPerpetuacao
+    #: Quantas menções individuais o mês tem, DE FONTES LIGADAS. Zero explica
+    #: as três listas vazias — mas não diz qual dos dois motivos: pode não ter
+    #: planilha importada, ou pode ter e estar toda desligada na calibração. É
+    #: o que `fontes_ligadas` distingue.
+    mencoes_no_mes: int
+    #: Quantas fontes de planilha estão no cálculo. Zero com menção no banco
+    #: significa "você desligou tudo", e não "falta importar".
+    fontes_ligadas: int
+
+
+@rotas.get("/drivers")
+def drivers(
+    sessao: Sessao,
+    usuario: UsuarioLogado,
+    mes: Annotated[str, Query(description="AAAA-MM")],
+) -> DriversSaida:
+    """O que explica o índice do mês: atributo, unidade e o que não passa."""
+    alvo = _mes_de(mes)
+    calibracao = repositorio_score.calibracao_vigente(sessao)
+
+    atributos = [
+        AtributoSaida(
+            nome=nome,
+            positivo=pos,
+            neutro=neu,
+            negativo=neg,
+            ns=round(saldo, 4),
+            score=para_score(saldo),
+        )
+        for nome, pos, neu, neg in repositorio_score.atributos_do_mes(sessao, alvo, calibracao)
+        # `ns` devolve None quando o total é zero — o que não acontece aqui,
+        # porque o agrupamento só produz linha com menção. O guarda é para o
+        # dia em que a consulta mudar e o zero passar a existir: dividir por
+        # zero na tela apareceria como um atributo em 50, que é mentira.
+        if (saldo := ns(Contagem(positivo=pos, neutro=neu, negativo=neg))) is not None
+    ]
+
+    unidades_cruas = repositorio_score.unidades_do_mes(sessao, alvo, calibracao)
+    # O TOTAL DO MÊS, e não a soma do ranking: com as oito primeiras como base,
+    # a nona unidade negativa sumiria da conta e as oito somariam 100% de um
+    # todo que não existe.
+    total_negativo = repositorio_score.negativas_do_mes(sessao, alvo, calibracao) or 1
+    unidades = [
+        UnidadeSaida(
+            nome=nome,
+            negativas=neg,
+            mencoes=total,
+            participacao=round(neg / total_negativo * 100),
+        )
+        for nome, neg, total in unidades_cruas
+    ]
+
+    perpetuacao = [
+        PerpetuacaoSaida(
+            tema=tema,
+            meses=meses,
+            primeiro_mes=f"{primeiro:%Y-%m}",
+            ultimo_mes=f"{ultimo:%Y-%m}",
+            negativas=neg,
+            lentes=lentes,
+        )
+        for tema, meses, primeiro, ultimo, neg, lentes in (
+            repositorio_score.temas_em_perpetuacao(sessao, alvo, calibracao)
+        )
+    ]
+
+    return DriversSaida(
+        mes=f"{alvo:%Y-%m}",
+        atributos=atributos,
+        unidades=unidades,
+        perpetuacao=perpetuacao,
+        regra_da_perpetuacao=RegraDaPerpetuacao(
+            meses_da_janela=repositorio_score.MESES_DA_PERPETUACAO,
+            meses_para_perpetuar=repositorio_score.MESES_PARA_PERPETUAR,
+        ),
+        mencoes_no_mes=repositorio_score.mencoes_do_mes(sessao, alvo, calibracao),
+        fontes_ligadas=sum(
+            1
+            for fonte in repositorio_score.fontes_cadastradas(sessao)
+            if not fonte.interna and calibracao.ligada(fonte.codigo)
+        ),
+    )
+
+
+class ImportacaoSaida(BaseModel):
+    """O que a planilha rendeu numa fonte — a tela mostra isto após o upload.
+
+    OS DESCARTES SAEM NA RESPOSTA de propósito. Uma importação que diz só
+    "ingeridas 4.973" esconde que 1.426 posts vieram sem classificação de
+    sentimento: quem conferir o número do mês precisa saber que o fornecedor
+    mandou 7.868 linhas e que a diferença não é perda, é recusa declarada.
+
+    `antes` é a outra metade da honestidade: quantas menções a fonte tinha
+    nestes meses antes da troca. É o que deixa um export parcial, baixado antes
+    do fechamento, aparecer como o que é — um mês que encolheu.
+    """
+
+    fonte: str
+    nome: str
+    linhas: int
+    ingeridas: int
+    antes: int
+    descartes: dict[str, int]
+    avisos: dict[str, int]
+    meses: list[str]
+
+
+@rotas.post("/fontes/{codigo}/planilha", status_code=status.HTTP_201_CREATED)
+def importar_planilha(
+    sessao: Sessao,
+    usuario: UsuarioQueAdministraCadastros,
+    codigo: str,
+    arquivo: Annotated[UploadFile, File()],
+) -> list[ImportacaoSaida]:
+    """Lê o export do fornecedor e substitui os meses que ele traz.
+
+    DEVOLVE UMA LINHA POR FONTE porque um arquivo alimenta mais de uma: o
+    export da Clipei atende Imprensa e, recortado, Mercado; o da Approach traz
+    Social Listening e Community Management em abas diferentes. Ver o cabeçalho
+    de `casos_de_uso/ingerir_mencoes.py`.
+
+    MESMA PERMISSÃO DA CALIBRAÇÃO, e pelo mesmo motivo: isto muda o número que
+    todo mundo lê na reunião. Ler o Score basta ter o portal; mexer no que o
+    alimenta é da coordenação.
+    """
+    fonte = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == codigo))
+    if fonte is None:
+        raise NaoEncontrado("Fonte não encontrada.")
+
+    return [
+        ImportacaoSaida(
+            fonte=resumo.fonte,
+            nome=resumo.nome,
+            linhas=resumo.linhas,
+            ingeridas=resumo.ingeridas,
+            antes=resumo.antes,
+            descartes=dict(resumo.descartes),
+            avisos=dict(resumo.avisos),
+            meses=[f"{mes:%Y-%m}" for mes in resumo.meses],
+        )
+        for resumo in ingerir_mencoes.ingerir(sessao, fonte, arquivo.file.read())
+    ]
+
+
+class OpcoesSaida(BaseModel):
+    """O que a tela de Calibração oferece — vem do servidor, não de lista fixa."""
+
+    reguas_de_tier: list[dict]
+    reguas_de_engajamento: list[str]
+    lentes: list[dict]
+    meses: list[str]
+    #: Em que mês abrir. NÃO é o último: o CRM põe um mês na lista a cada
+    #: interação registrada, e o mais recente costuma ser um mês com uma lente
+    #: só — um ISR que é o score da institucional, e quatro lentes vazias.
+    mes_sugerido: str | None
+
+
+@rotas.get("/opcoes")
+def opcoes(sessao: Sessao, usuario: UsuarioLogado) -> OpcoesSaida:
+    return OpcoesSaida(
+        reguas_de_tier=[
+            {"codigo": codigo, "pesos": {tier: peso for tier, peso in pesos.items()}}
+            for codigo, pesos in REGUAS_DE_TIER.items()
+        ],
+        reguas_de_engajamento=list(REGUAS_DE_ENGAJAMENTO),
+        lentes=[
+            {
+                "codigo": lente.codigo,
+                "nome": lente.nome,
+                "stakeholder": lente.stakeholder,
+                "peso_padrao": lente.peso_padrao,
+            }
+            for lente in sessao.scalars(
+                select(Lente).where(Lente.ativo.is_(True)).order_by(Lente.ordem)
+            )
+        ],
+        meses=[f"{mes:%Y-%m}" for mes in repositorio_score.meses_com_dado(sessao)],
+        mes_sugerido=(
+            f"{sugerido:%Y-%m}"
+            if (
+                sugerido := repositorio_score.mes_mais_completo(
+                    sessao, repositorio_score.calibracao_vigente(sessao)
+                )
+            )
+            else None
+        ),
+    )

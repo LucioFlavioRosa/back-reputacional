@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,700&display=swap" rel="stylesheet" />
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #F4F6FC; font-family: "DM Sans", Arial, sans-serif; color: #191B23; -webkit-font-smoothing: antialiased; }
+  a { color: #0027BD; text-decoration: none; }
+  a:hover { color: #17A99A; }
+  button { font-family: inherit; }
+  .destaque { font-family: Georgia, "Times New Roman", serif; font-style: italic; font-weight: 400; }
+</style>
+</helmet>
+
+<div style="min-height:100vh;background:#F4F6FC">
+
+  <header style="background:#0027BD;color:#fff;padding:0 32px">
+    <div style="max-width:1400px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;min-height:72px;gap:24px;flex-wrap:wrap;padding:10px 0">
+      <a href="Painel Reputacional Aegea.dc.html" style="display:flex;align-items:center;gap:14px;flex-shrink:0;color:#fff" style-hover="opacity:0.85">
+        <div style="width:34px;height:34px;border-radius:50%;background:#17E3CB;flex-shrink:0"></div>
+        <div style="display:flex;flex-direction:column;line-height:1.2;white-space:nowrap">
+          <span style="font-size:17px;font-weight:700;letter-spacing:-0.01em">Score Executivo</span>
+          <span style="font-size:12px;color:#9DEEE7;letter-spacing:0.04em">Aegea · Índice de Saúde Reputacional</span>
+        </div>
+      </a>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <nav style="display:flex;gap:4px;background:rgba(255,255,255,0.10);padding:4px;border-radius:10px">
+          <sc-for list="{{ navItems }}" as="n" hint-placeholder-count="5">
+            <button onClick="{{ n.go }}" style="{{ n.style }}">{{ n.label }}</button>
+          </sc-for>
+        </nav>
+        <div style="display:flex;gap:4px;background:rgba(255,255,255,0.10);padding:4px;border-radius:10px">
+          <sc-for list="{{ periodos }}" as="p" hint-placeholder-count="3">
+            <button onClick="{{ p.go }}" style="{{ p.style }}">{{ p.label }}</button>
+          </sc-for>
+        </div>
+        <a href="Painel Reputacional Aegea.dc.html" style="height:36px;padding:0 15px;border-radius:9px;font-size:13px;font-weight:500;white-space:nowrap;border:1px solid rgba(255,255,255,0.35);color:#fff;display:flex;align-items:center" style-hover="background:rgba(255,255,255,0.12)">← Início</a>
+      </div>
+    </div>
+  </header>
+
+  <main style="max-width:1400px;margin:0 auto;padding:28px 32px 72px">
+
+  <sc-if value="{{ isGeral }}" hint-placeholder-val="{{ true }}">
+    <section style="display:grid;grid-template-columns:minmax(360px,1.1fr) minmax(320px,1fr);gap:16px;margin-bottom:16px;align-items:stretch">
+      <div style="background:#0027BD;color:#fff;border-radius:18px;padding:30px 32px;display:flex;flex-direction:column;justify-content:space-between;gap:22px;position:relative;overflow:hidden">
+        <div style="position:absolute;right:-60px;top:-60px;width:260px;height:260px;border-radius:50%;background:rgba(23,227,203,0.14)"></div>
+        <div style="position:relative">
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#9DEEE7">Índice de Saúde Reputacional · {{ periodoLabel }}</div>
+          <div style="display:flex;align-items:flex-end;gap:18px;margin-top:10px;flex-wrap:wrap">
+            <div style="font-size:96px;font-weight:700;letter-spacing:-0.05em;line-height:0.9">{{ isr }}</div>
+            <div style="display:flex;flex-direction:column;gap:8px;padding-bottom:10px">
+              <span style="{{ faixaChip }}">{{ faixaLabel }}</span>
+              <span style="font-size:13px;color:#C3CDF7">de 0 a 100 · {{ faixaHint }}</span>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;margin-top:18px;flex-wrap:wrap">
+            <span style="{{ deltaMesChip }}">{{ deltaMes }} vs. mês anterior</span>
+            <span style="{{ deltaIniChip }}">{{ deltaIni }} vs. janeiro</span>
+          </div>
+        </div>
+        <div style="position:relative">
+          <div style="position:relative;height:12px;border-radius:6px;overflow:hidden;display:flex">
+            <div style="width:40%;background:#FF5C60"></div>
+            <div style="width:15%;background:#FE952B"></div>
+            <div style="width:15%;background:#9DA6C9"></div>
+            <div style="width:15%;background:#17E3CB"></div>
+            <div style="width:15%;background:#0A6B60"></div>
+          </div>
+          <div style="position:relative;height:26px">
+            <div style="position:absolute;top:-19px;left:{{ isrPct }};transform:translateX(-50%);width:4px;height:26px;background:#fff;border-radius:2px;box-shadow:0 0 0 2px #0027BD"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:#9DEEE7;letter-spacing:0.04em">
+            <span>Crítico</span><span>Atenção</span><span>Estável</span><span>Sólido</span><span>Referência</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="background:#fff;border:1px solid #E2E5F0;border-radius:18px;padding:26px 28px;display:flex;flex-direction:column;gap:16px">
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#8C91A4">Leitura do período</div>
+        <p style="margin:0;font-size:16px;line-height:1.6;text-wrap:pretty">{{ leitura }}</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:auto">
+          <div style="border:1px solid #E2E5F0;border-radius:12px;padding:14px">
+            <div style="font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#8C91A4">O que sustenta</div>
+            <div style="font-size:15px;font-weight:700;margin-top:6px;color:#0A6B60">{{ sustenta }}</div>
+            <div style="font-size:12px;color:#44495C;margin-top:4px">{{ sustentaHint }}</div>
+          </div>
+          <div style="border:1px solid #E2E5F0;border-radius:12px;padding:14px">
+            <div style="font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#8C91A4">O que corrói</div>
+            <div style="font-size:15px;font-weight:700;margin-top:6px;color:#B32328">{{ corroi }}</div>
+            <div style="font-size:12px;color:#44495C;margin-top:4px">{{ corroiHint }}</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section style="margin-bottom:16px">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:12px">
+        <div>
+          <h2 style="margin:0;font-size:18px;font-weight:700;letter-spacing:-0.01em">Cinco lentes, um índice</h2>
+          <p style="margin:4px 0 0;font-size:13px;color:#44495C">Cada stakeholder tem a sua leitura e o seu peso. Clique numa lente para abrir a composição.</p>
+        </div>
+        <span style="{{ calibChip }}">{{ calibLabel }}</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:12px">
+        <sc-for list="{{ lentes }}" as="l" hint-placeholder-count="5">
+          <button onClick="{{ l.go }}" style="{{ l.cardStyle }}" style-hover="border-color:#0027BD;box-shadow:0 6px 18px rgba(0,39,189,0.10)">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+              <div style="display:flex;flex-direction:column;gap:3px;text-align:left">
+                <span style="font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#8C91A4">{{ l.stakeholder }}</span>
+                <span style="font-size:15px;font-weight:700;color:#191B23">{{ l.nome }}</span>
+              </div>
+              <span style="font-size:11px;font-weight:700;padding:3px 8px;border-radius:5px;background:#EEF1F8;color:#44495C;white-space:nowrap">peso {{ l.peso }}</span>
+            </div>
+            <div style="display:flex;align-items:baseline;gap:10px;margin-top:14px">
+              <span style="font-size:36px;font-weight:700;letter-spacing:-0.03em;line-height:1;color:{{ l.cor }}">{{ l.score }}</span>
+              <span style="{{ l.deltaStyle }}">{{ l.delta }}</span>
+            </div>
+            <div style="height:7px;background:#EEF1F8;border-radius:4px;overflow:hidden;margin-top:12px">
+              <div style="height:100%;width:{{ l.w }};background:{{ l.cor }};border-radius:4px"></div>
+            </div>
+            <div style="font-size:11px;color:#8C91A4;margin-top:10px;text-align:left;line-height:1.5">{{ l.fonte }}</div>
+          </button>
+        </sc-for>
+      </div>
+    </section>
+
+    <section style="margin-bottom:16px">
+      <div style="background:#fff;border:1px solid #E2E5F0;border-radius:14px;padding:22px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap">
+          <h2 style="margin:0;font-size:16px;font-weight:700">Evolução do índice · 1º semestre 2026</h2>
+          <span style="font-size:12px;color:#8C91A4">com os fatos que explicam cada mês</span>
+        </div>
+        <div style="display:flex;align-items:flex-end;gap:12px;height:190px;margin-top:22px">
+          <sc-for list="{{ serie }}" as="m" hint-placeholder-count="6">
+            <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%">
+              <div style="height:16px;font-size:13px;font-weight:700;line-height:16px;color:{{ m.cor }}">{{ m.isr }}</div>
+              <div style="flex:1;width:100%;display:flex;flex-direction:column;justify-content:flex-end">
+                <div style="width:100%;height:{{ m.h }};background:{{ m.cor }};border-radius:6px 6px 3px 3px;opacity:{{ m.op }}"></div>
+              </div>
+              <div style="height:14px;font-size:11px;color:#8C91A4;letter-spacing:0.04em;line-height:14px">{{ m.label }}</div>
+            </div>
+          </sc-for>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:1px;background:#EEF1F8;border-radius:10px;overflow:hidden;margin-top:18px">
+          <sc-for list="{{ fatos }}" as="f" hint-placeholder-count="5">
+            <div style="display:grid;grid-template-columns:44px 1fr auto;gap:12px;align-items:center;background:#fff;padding:9px 12px">
+              <span style="font-size:11px;font-weight:700;letter-spacing:0.04em;color:#8C91A4">{{ f.mes }}</span>
+              <span style="font-size:12px;color:#44495C">{{ f.texto }}</span>
+              <span style="{{ f.chip }}">{{ f.efeito }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+    </section>
+  </sc-if>
+
+  <sc-if value="{{ isLentes }}" hint-placeholder-val="{{ false }}">
+    <div style="margin-bottom:18px">
+      <h1 style="margin:0;font-size:24px;font-weight:700;letter-spacing:-0.02em">Lentes</h1>
+      <p style="margin:5px 0 0;font-size:14px;color:#44495C;max-width:78ch;text-wrap:pretty">Como cada stakeholder enxerga a companhia no período: composição do sentimento, fórmula aplicada e os temas que movem o número.</p>
+    </div>
+
+    <section style="background:#fff;border:1px solid #E2E5F0;border-radius:14px;padding:22px;margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:20px;flex-wrap:wrap;margin-bottom:20px;padding-bottom:18px;border-bottom:1px solid #EEF1F8">
+        <div>
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#8C91A4;margin-bottom:9px">Lente</div>
+          <div style="display:flex;gap:7px;flex-wrap:wrap">
+            <sc-for list="{{ lenteTabs }}" as="t" hint-placeholder-count="5">
+              <button onClick="{{ t.go }}" style="{{ t.style }}">{{ t.label }}</button>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:minmax(280px,1fr) minmax(300px,1.4fr);gap:24px;align-items:start">
+        <div>
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#8C91A4">Lente selecionada</div>
+          <h3 style="margin:6px 0 4px;font-size:20px;font-weight:700;letter-spacing:-0.01em">{{ selNome }}</h3>
+          <p style="margin:0 0 16px;font-size:13px;color:#44495C;line-height:1.6;text-wrap:pretty">{{ selDesc }}</p>
+          <div style="display:flex;height:14px;border-radius:7px;overflow:hidden;background:#EEF1F8">
+            <div title="Positivo" style="width:{{ selPosW }};background:#17E3CB"></div>
+            <div title="Neutro" style="width:{{ selNeuW }};background:#D5DAEA"></div>
+            <div title="Negativo" style="width:{{ selNegW }};background:#FF5C60"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;gap:10px;font-size:12px;color:#44495C;margin-top:8px">
+            <span><strong style="color:#0A6B60">{{ selPos }}</strong> positivo</span>
+            <span><strong>{{ selNeu }}</strong> neutro</span>
+            <span><strong style="color:#B32328">{{ selNeg }}</strong> negativo</span>
+          </div>
+          <div style="margin-top:14px;padding:12px 14px;background:#F4F6FC;border-radius:10px;font-size:12px;color:#44495C;line-height:1.6">
+            <strong>Cálculo:</strong> {{ selFormula }}
+          </div>
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#8C91A4;margin-bottom:10px">O que movimenta esta lente</div>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <sc-for list="{{ selTemas }}" as="t" hint-placeholder-count="5">
+              <div style="display:grid;grid-template-columns:1fr 90px;gap:12px;align-items:center">
+                <div style="display:flex;flex-direction:column;gap:5px">
+                  <div style="display:flex;justify-content:space-between;gap:10px;font-size:13px">
+                    <span>{{ t.label }}</span>
+                    <span style="color:#44495C">{{ t.valor }}</span>
+                  </div>
+                  <div style="display:flex;height:7px;border-radius:4px;overflow:hidden;background:#EEF1F8">
+                    <div style="width:{{ t.posW }};background:#17E3CB"></div>
+                    <div style="width:{{ t.negW }};background:#FF5C60"></div>
+                  </div>
+                </div>
+                <span style="{{ t.tipoStyle }}">{{ t.tipo }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+    </section>
+  </sc-if>
+
+  <sc-if value="{{ isRiscos }}" hint-placeholder-val="{{ false }}">
+    <div style="margin-bottom:18px">
+      <h1 style="margin:0;font-size:24px;font-weight:700;letter-spacing:-0.02em">Drivers e riscos</h1>
+      <p style="margin:5px 0 0;font-size:14px;color:#44495C;max-width:78ch;text-wrap:pretty">O porquê do número: quais atributos sustentam ou corroem, quais temas se perpetuam e onde a exposição nasce.</p>
+    </div>
+
+    <section style="margin-bottom:16px">
+      <div style="background:#191B23;color:#fff;border-radius:14px;padding:22px">
+        <h2 style="margin:0 0 4px;font-size:16px;font-weight:700">Temas em perpetuação</h2>
+        <p style="margin:0 0 16px;font-size:12px;color:#8C91A4;line-height:1.55">Quanto tempo um tema negativo fica vivo e se ele é operacional ou estruturante. É o alerta que a Gartner chama de "caça de ameaça narrativa".</p>
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <sc-for list="{{ perpetuacao }}" as="t" hint-placeholder-count="6">
+            <div style="border-left:2px solid {{ t.cor }};padding-left:12px">
+              <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline">
+                <span style="font-size:13px;font-weight:700">{{ t.tema }}</span>
+                <span style="font-size:11px;color:#8C91A4;white-space:nowrap">{{ t.meses }}</span>
+              </div>
+              <div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap">
+                <span style="{{ t.tipoStyle }}">{{ t.tipo }}</span>
+                <span style="font-size:11px;color:#D5DAEA">{{ t.onde }}</span>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </section>
+    <section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;margin-bottom:16px;align-items:start">
+      <div style="background:#fff;border:1px solid #E2E5F0;border-radius:14px;padding:22px">
+        <h2 style="margin:0 0 4px;font-size:16px;font-weight:700">Atributos reputacionais</h2>
+        <p style="margin:0 0 18px;font-size:12px;color:#8C91A4">Os drivers da Aegea, na taxonomia da própria clipagem. Barra à direita sustenta; à esquerda corrói.</p>
+        <div style="display:flex;flex-direction:column;gap:13px">
+          <sc-for list="{{ atributos }}" as="a" hint-placeholder-count="5">
+            <div>
+              <div style="display:flex;justify-content:space-between;gap:10px;font-size:13px;margin-bottom:6px">
+                <span style="font-weight:500">{{ a.nome }}</span>
+                <span style="color:#44495C"><strong style="color:{{ a.cor }}">{{ a.score }}</strong> · {{ a.volume }}</span>
+              </div>
+              <div style="position:relative;height:10px;background:#EEF1F8;border-radius:5px;overflow:hidden">
+                <div style="position:absolute;left:50%;top:0;bottom:0;width:1px;background:#C3CDF7"></div>
+                <div style="position:absolute;top:0;bottom:0;left:{{ a.left }};width:{{ a.width }};background:{{ a.cor }};border-radius:5px"></div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+        <div style="font-size:11px;color:#A6ABBD;margin-top:14px;line-height:1.5">Fonte: Clipei junho/2026 (atributo × classificação), complementado por temas do social listening para Responsabilidade Socioambiental.</div>
+      </div>
+
+      <div style="background:#fff;border:1px solid #E2E5F0;border-radius:14px;padding:22px">
+        <h2 style="margin:0 0 4px;font-size:16px;font-weight:700">Exposição por unidade</h2>
+        <p style="margin:0 0 18px;font-size:12px;color:#8C91A4">Onde a negatividade das redes nasce. Aplica o racional do Score2 da Aegea assim que a base de economias for integrada.</p>
+        <div style="display:flex;flex-direction:column;gap:11px">
+          <sc-for list="{{ unidades }}" as="u" hint-placeholder-count="6">
+            <div style="display:grid;grid-template-columns:1fr 72px;gap:12px;align-items:center">
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <div style="display:flex;justify-content:space-between;gap:10px;font-size:13px">
+                  <span>{{ u.nome }}</span>
+                  <span style="color:#44495C">{{ u.neg }} neg. · {{ u.share }}</span>
+                </div>
+                <div style="height:7px;background:#EEF1F8;border-radius:4px;overflow:hidden">
+                  <div style="height:100%;width:{{ u.w }};background:#FF5C60;border-radius:4px"></div>
+                </div>
+              </div>
+              <span style="{{ u.cmStyle }}">{{ u.cm }}</span>
+            </div>
+          </sc-for>
+        </div>
+        <div style="display:flex;gap:14px;font-size:11px;color:#A6ABBD;margin-top:14px;flex-wrap:wrap">
+          <span>Barras: menções negativas em mar aberto (Bites, junho)</span>
+          <span>Chip: % negativo nos canais próprios (Approach CM)</span>
+        </div>
+      </div>
+    </section>
+  </sc-if>
+
+  <sc-if value="{{ isCalibracao }}" hint-placeholder-val="{{ false }}">
+    <div style="margin-bottom:18px">
+      <h1 style="margin:0;font-size:24px;font-weight:700;letter-spacing:-0.02em">Calibração</h1>
+      <p style="margin:5px 0 0;font-size:14px;color:#44495C;max-width:78ch;text-wrap:pretty">Para o time de comunicação, não para a diretoria: pesos, ponderações e fontes. Tudo recalcula o índice na hora, e a visão geral indica quando a calibração não é a padrão.</p>
+    </div>
+
+    <section style="background:#fff;border:1px solid #E2E5F0;border-radius:14px;padding:22px;margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:16px;flex-wrap:wrap;margin-bottom:14px">
+        <div>
+          <h2 style="margin:0;font-size:16px;font-weight:700">Pesos das lentes</h2>
+          <p style="margin:4px 0 0;font-size:12px;color:#8C91A4">Somam {{ somaPesos }}%. Se a soma não for 100, o índice normaliza pela soma.</p>
+        </div>
+        <button onClick="{{ resetCalib }}" style="height:34px;padding:0 14px;border:1px solid #D5DAEA;background:#fff;border-radius:8px;font-size:13px;color:#44495C;cursor:pointer" style-hover="border-color:#0027BD;color:#0027BD">Restaurar padrão</button>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px">
+        <sc-for list="{{ pesosCtl }}" as="p" hint-placeholder-count="5">
+          <div style="border:1px solid #E2E5F0;border-radius:12px;padding:14px">
+            <div style="font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#8C91A4">{{ p.nome }}</div>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px">
+              <button onClick="{{ p.menos }}" style="width:32px;height:32px;border-radius:8px;border:1px solid #D5DAEA;background:#fff;font-size:16px;cursor:pointer;color:#44495C">−</button>
+              <span style="font-size:26px;font-weight:700;letter-spacing:-0.02em">{{ p.valor }}%</span>
+              <button onClick="{{ p.mais }}" style="width:32px;height:32px;border-radius:8px;border:1px solid #D5DAEA;background:#fff;font-size:16px;cursor:pointer;color:#44495C">+</button>
+            </div>
+            <div style="height:6px;background:#EEF1F8;border-radius:3px;overflow:hidden;margin-top:10px">
+              <div style="height:100%;width:{{ p.w }};background:#0027BD;border-radius:3px"></div>
+            </div>
+            <div style="font-size:11px;color:#8C91A4;margin-top:8px">padrão {{ p.padrao }}%</div>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+
+    <section style="background:#fff;border:1px solid #E2E5F0;border-radius:14px;padding:22px;margin-bottom:16px">
+      <h2 style="margin:0 0 16px;font-size:16px;font-weight:700">Ponderações</h2>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:24px">
+        <div>
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#8C91A4;margin-bottom:9px">Peso por relevância do veículo · Tier 1 · 2 · 3</div>
+          <div style="display:flex;gap:7px;flex-wrap:wrap">
+            <sc-for list="{{ tierPresets }}" as="t" hint-placeholder-count="5">
+              <button onClick="{{ t.go }}" style="{{ t.style }}">
+                <span style="{{ t.labelStyle }}">{{ t.label }}</span>
+                <span style="font-size:11px;color:#8C91A4">{{ t.desc }}</span>
+              </button>
+            </sc-for>
+          </div>
+          <div style="font-size:11px;color:#A6ABBD;margin-top:8px;max-width:60ch;line-height:1.5">{{ tierNota }}</div>
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#8C91A4;margin-bottom:9px">Peso por engajamento · redes</div>
+          <div style="display:flex;gap:7px;flex-wrap:wrap">
+            <sc-for list="{{ socialPresets }}" as="t" hint-placeholder-count="4">
+              <button onClick="{{ t.go }}" style="{{ t.style }}">
+                <span style="{{ t.labelStyle }}">{{ t.label }}</span>
+                <span style="font-size:11px;color:#8C91A4">{{ t.desc }}</span>
+              </button>
+            </sc-for>
+          </div>
+          <div style="font-size:11px;color:#A6ABBD;margin-top:8px;max-width:60ch;line-height:1.5">{{ socialNota }}</div>
+        </div>
+      </div>
+    </section>
+    <section style="background:#fff;border:1px solid #E2E5F0;border-radius:14px;padding:22px;margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:16px;flex-wrap:wrap;margin-bottom:14px">
+        <div>
+          <h2 style="margin:0;font-size:16px;font-weight:700">Fontes</h2>
+          <p style="margin:4px 0 0;font-size:12px;color:#8C91A4">Cada fornecedor alimenta uma lente. Desligue para simular o índice sem ele.</p>
+        </div>
+        <span style="font-size:12px;color:#8C91A4">{{ fontesAtivas }} de {{ fontesTotal }} ativas</span>
+      </div>
+      <sc-if value="{{ temAviso }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;align-items:flex-start;gap:10px;background:#FFF1DC;border:1px solid #FFE0B3;border-radius:10px;padding:11px 14px;margin-bottom:12px">
+          <span style="width:9px;height:9px;background:#FE952B;transform:rotate(45deg);margin-top:5px;flex-shrink:0"></span>
+          <span style="font-size:13px;color:#5C3A00;line-height:1.55">{{ avisoFontes }}</span>
+        </div>
+      </sc-if>
+      <div style="display:flex;flex-direction:column;gap:1px;background:#EEF1F8;border-radius:10px;overflow:hidden">
+        <div style="display:grid;grid-template-columns:52px 1.3fr 1fr 0.8fr 1fr 0.9fr 1fr;gap:14px;align-items:center;background:#F4F6FC;padding:9px 14px">
+          <span></span>
+          <span style="font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#44495C">Fornecedor</span>
+          <span style="font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#44495C">Tipo</span>
+          <span style="font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#44495C">Lente</span>
+          <span style="font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#44495C">Cobertura</span>
+          <span style="font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#44495C">Volume</span>
+          <span style="font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#44495C">Observação</span>
+        </div>
+        <sc-for list="{{ fontes }}" as="f" hint-placeholder-count="6">
+          <div style="{{ f.rowStyle }}">
+            <button onClick="{{ f.toggle }}" style="{{ f.toggleStyle }}" title="Ligar / desligar fonte"><span style="{{ f.knobStyle }}"></span></button>
+            <span style="font-size:13px;font-weight:700">{{ f.nome }}</span>
+            <span style="font-size:12px;color:#44495C">{{ f.tipo }}</span>
+            <span style="font-size:12px;font-weight:500;color:#0027BD">{{ f.lente }}</span>
+            <span style="font-size:12px;color:#44495C">{{ f.cobertura }}</span>
+            <span style="font-size:12px;color:#44495C">{{ f.volume }}</span>
+            <span style="{{ f.notaStyle }}">{{ f.nota }}</span>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+  </sc-if>
+
+  <sc-if value="{{ isMetodologia }}" hint-placeholder-val="{{ false }}">
+    <div style="margin-bottom:18px">
+      <h1 style="margin:0;font-size:24px;font-weight:700;letter-spacing:-0.02em">Metodologia</h1>
+      <p style="margin:5px 0 0;font-size:14px;color:#44495C;max-width:78ch;text-wrap:pretty">Como o índice é construído, o que ele reaproveita da parametrização da Aegea e onde ainda falta dado.</p>
+    </div>
+
+    <section style="display:grid;grid-template-columns:minmax(360px,1.3fr) minmax(300px,1fr);gap:16px;align-items:start">
+      <div style="background:#fff;border:1px solid #E2E5F0;border-radius:14px;padding:22px">
+        <h2 style="margin:0 0 4px;font-size:16px;font-weight:700">Metodologia em uma página</h2>
+        <p style="margin:0 0 16px;font-size:13px;color:#44495C;line-height:1.6;text-wrap:pretty">O índice reaproveita o que a Aegea já parametrizou — tiers, sentimentação e atributos da clipagem, pesos 10/5/1 do rascunho de score — e amplia para os stakeholders que a Gartner considera obrigatórios numa leitura de saúde reputacional.</p>
+        <div style="display:flex;flex-direction:column;gap:1px;background:#EEF1F8;border-radius:10px;overflow:hidden">
+          <sc-for list="{{ metodologia }}" as="m" hint-placeholder-count="6">
+            <div style="display:grid;grid-template-columns:150px 1fr;gap:14px;background:#fff;padding:12px 14px">
+              <span style="font-size:12px;font-weight:700;color:#0027BD">{{ m.passo }}</span>
+              <span style="font-size:12px;color:#44495C;line-height:1.6">{{ m.texto }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:16px">
+        <div style="background:#fff;border:1px solid #E2E5F0;border-radius:14px;padding:22px">
+          <h2 style="margin:0 0 4px;font-size:16px;font-weight:700">Aderência ao Market Guide Gartner 2026</h2>
+          <p style="margin:0 0 14px;font-size:12px;color:#8C91A4">Critérios obrigatórios e opcionais de um rastreador de saúde reputacional.</p>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <sc-for list="{{ gartner }}" as="g" hint-placeholder-count="7">
+              <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;font-size:13px">
+                <span style="color:#44495C">{{ g.criterio }}</span>
+                <span style="{{ g.chip }}">{{ g.status }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="background:#FFF1DC;border:1px solid #FFE0B3;border-radius:14px;padding:18px 20px">
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#8A4E00;margin-bottom:8px">Dados a integrar para fechar o índice</div>
+          <ul style="margin:0;padding-left:18px;font-size:12px;color:#5C3A00;line-height:1.7">
+            <li>Clipping mensal jan–mai (hoje só junho em base; os demais meses vêm do resumo semestral Edelman)</li>
+            <li>Economias por concessionária, para a intensidade por porte (Score2)</li>
+            <li>Share of voice dos players Tier 1 (Sabesp, Iguá, BRK, Copasa)</li>
+            <li>Reclame Aqui, Consumidor.gov e notas Google por unidade</li>
+            <li>Spread de bonds e debêntures, para cruzar reputação com valor</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </sc-if>
+
+
+
+
+
+
+
+  </main>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;pesoImprensa&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:30,&quot;min&quot;:0,&quot;max&quot;:50,&quot;step&quot;:5,&quot;unit&quot;:&quot;%&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Pesos das lentes&quot;},&quot;pesoMercado&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:20,&quot;min&quot;:0,&quot;max&quot;:50,&quot;step&quot;:5,&quot;unit&quot;:&quot;%&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Pesos das lentes&quot;},&quot;pesoSociedade&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:20,&quot;min&quot;:0,&quot;max&quot;:50,&quot;step&quot;:5,&quot;unit&quot;:&quot;%&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Pesos das lentes&quot;},&quot;pesoClientes&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:15,&quot;min&quot;:0,&quot;max&quot;:50,&quot;step&quot;:5,&quot;unit&quot;:&quot;%&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Pesos das lentes&quot;},&quot;pesoInstitucional&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:15,&quot;min&quot;:0,&quot;max&quot;:50,&quot;step&quot;:5,&quot;unit&quot;:&quot;%&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Pesos das lentes&quot;}}">
+// Séries mensais 1S/2026. "real" = extraído das planilhas entregues; "est" = estimado a partir dos resumos semestrais.
+const MESES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun'];
+
+// Approach — social listening, real, em três leituras: contagem (n), 1+log10(engajamento+1) (log) e engajamento bruto (eng)
+const SL_W = [
+  { n: { pos: 1843, neu: 39, neg: 470 }, log: { pos: 2622, neu: 74, neg: 548 }, eng: { pos: 70783, neu: 1490, neg: 9894 } },
+  { n: { pos: 495, neu: 136, neg: 716 }, log: { pos: 863, neu: 212, neg: 808 }, eng: { pos: 18267, neu: 3566, neg: 3759 } },
+  { n: { pos: 518, neu: 152, neg: 1296 }, log: { pos: 959, neu: 255, neg: 1364 }, eng: { pos: 12557, neu: 3571, neg: 4256 } },
+  { n: { pos: 494, neu: 129, neg: 518 }, log: { pos: 727, neu: 217, neg: 826 }, eng: { pos: 5133, neu: 3573, neg: 8790 } },
+  { n: { pos: 513, neu: 98, neg: 506 }, log: { pos: 985, neu: 159, neg: 655 }, eng: { pos: 13039, neu: 1581, neg: 4785 } },
+  { n: { pos: 707, neu: 142, neg: 1110 }, log: { pos: 1238, neu: 288, neg: 1274 }, eng: { pos: 20544, neu: 25994, neg: 12716 } }
+];
+const SL = SL_W.map(m => m.n);
+// Bites junho: contagem, log, engajamento bruto e ponderação por cargo do autor (ministro/governador 5 · senador/dep. federal 4 · dep. estadual 3 · prefeito/vereador 2 · demais 1)
+const BITES_W = {
+  n: { pos: 888, neu: 1501, neg: 2584 }, log: { pos: 1417, neu: 2245, neg: 3714 },
+  eng: { pos: 25237, neu: 43689, neg: 107886 }, cargo: { pos: 888, neu: 1501, neg: 2591 }
+};
+const SOCIAL_PRESETS = [
+  { id: 'n', label: 'contagem', desc: 'cada menção vale 1' },
+  { id: 'log', label: 'log do engajamento', desc: '1 + log₁₀(interações + 1)' },
+  { id: 'eng', label: 'engajamento bruto', desc: 'viral domina' },
+  { id: 'cargo', label: 'cargo do autor', desc: 'influência institucional · só Bites' }
+];
+const CM = [ // Approach — community management canais próprios, real
+  { pos: 125, neu: 119, neg: 253 }, { pos: 126, neu: 81, neg: 306 }, { pos: 175, neu: 212, neg: 408 },
+  { pos: 131, neu: 293, neg: 378 }, { pos: 149, neu: 340, neg: 527 }, { pos: 146, neu: 452, neg: 288 }
+];
+// Clipei junho (real) por tier: Muito Relevante 65/64/16 · Relevante 85/43/55 · Menos Relevante 946/80/149
+const CLIPEI_TIER = {
+  mr: { pos: 65, neu: 64, neg: 16 },
+  r: { pos: 85, neu: 43, neg: 55 },
+  menos: { pos: 946, neu: 80, neg: 149 }
+};
+const TIER_PRESETS = [
+  { id: 'aegea', label: '10 · 5 · 1', desc: 'rascunho de score da Aegea', w: { mr: 10, r: 5, menos: 1 } },
+  { id: 'suave', label: '5 · 3 · 1', desc: 'relevância atenuada', w: { mr: 5, r: 3, menos: 1 } },
+  { id: 'forte', label: '20 · 5 · 1', desc: 'Tier 1 domina', w: { mr: 20, r: 5, menos: 1 } },
+  { id: 'igual', label: '1 · 1 · 1', desc: 'sem ponderação', w: { mr: 1, r: 1, menos: 1 } },
+  { id: 'so-tier1', label: 'só Tier 1', desc: 'ignora regionais e locais', w: { mr: 1, r: 0, menos: 0 } }
+];
+const imprensaPonderada = w => ({
+  pos: CLIPEI_TIER.mr.pos * w.mr + CLIPEI_TIER.r.pos * w.r + CLIPEI_TIER.menos.pos * w.menos,
+  neu: CLIPEI_TIER.mr.neu * w.mr + CLIPEI_TIER.r.neu * w.r + CLIPEI_TIER.menos.neu * w.menos,
+  neg: CLIPEI_TIER.mr.neg * w.mr + CLIPEI_TIER.r.neg * w.r + CLIPEI_TIER.menos.neg * w.menos
+});
+const IMPRENSA_NS = [0.45, 0.22, 0.18, 0.30, 0.38, null]; // jan–mai estimados (Edelman 1S: 83% pos/neutro; UOL em fev, DFs em mar)
+// Mercado: proxy = veículos Muito Relevante + público investidores (Clipei) e eventos de rating
+const MERCADO_JUN = { pos: 65, neu: 64, neg: 16 };
+const MERCADO_NS = [0.35, 0.05, -0.15, 0.10, 0.30, null];
+// Institucional: clima das interações do CRM dos Stakeholders (propositivo / neutro / tenso)
+const INST = [
+  { pos: 5, neu: 4, neg: 1 }, { pos: 6, neu: 5, neg: 2 }, { pos: 6, neu: 4, neg: 2 },
+  { pos: 6, neu: 5, neg: 3 }, { pos: 5, neu: 4, neg: 2 }, { pos: 6, neu: 4, neg: 2 }
+];
+const BITES_JUN = BITES_W.n;
+
+const ns = c => (c.pos + c.neu + c.neg) ? (c.pos - c.neg) / (c.pos + c.neu + c.neg) : 0;
+const toScore = v => Math.round(((v + 1) / 2) * 100);
+const pct = (n, t) => t ? Math.round((n / t) * 100) + '%' : '0%';
+
+const FAIXAS = [
+  { min: 85, label: 'Referência', cor: '#0A6B60', hint: 'reputação é ativo de valor' },
+  { min: 70, label: 'Sólido', cor: '#17E3CB', hint: 'margem para absorver ruído' },
+  { min: 55, label: 'Estável', cor: '#9DA6C9', hint: 'equilíbrio frágil entre lentes' },
+  { min: 40, label: 'Atenção', cor: '#FE952B', hint: 'exige plano de recuperação' },
+  { min: 0, label: 'Crítico', cor: '#FF5C60', hint: 'risco ao valor da companhia' }
+];
+const faixaDe = s => FAIXAS.find(f => s >= f.min);
+
+const corScore = s => faixaDe(s).cor === '#9DA6C9' ? '#0027BD' : faixaDe(s).cor;
+
+const FONTES = [
+  { id: 'clipei', nome: 'Clipei', tipo: 'Clipping de imprensa', lente: 'imprensa', cobertura: 'jun (base) · jan–mai via Edelman', volume: '1.506 matérias', nota: 'única fonte da lente' },
+  { id: 'edelman', nome: 'Edelman', tipo: 'Resumo semestral de imprensa', lente: 'mercado', cobertura: '1S26 consolidado', volume: '4.324 matérias (1S)', nota: 'contexto e proxy jan–mai' },
+  { id: 'approachSL', nome: 'Approach · Social Listening', tipo: 'Redes em mar aberto', lente: 'sociedade', cobertura: 'jan–jun', volume: '1.959 menções', nota: '' },
+  { id: 'bites', nome: 'Bites', tipo: 'Redes em mar aberto', lente: 'sociedade', cobertura: 'jun (base) · 1S resumo', volume: '4.973 classificadas', nota: 'metodologia ampliada em junho' },
+  { id: 'approachCM', nome: 'Approach · Community Management', tipo: 'Canais próprios', lente: 'clientes', cobertura: 'jan–jun', volume: '886 mensagens', nota: 'única fonte da lente' },
+  { id: 'crm', nome: 'CRM dos Stakeholders', tipo: 'Relacionamento institucional', lente: 'institucional', cobertura: 'jan–ago', volume: '60 interações', nota: 'única fonte da lente' }
+];
+
+class Component extends DCLogic {
+  state = { mes: 5, view: 'geral', lente: 'imprensa', fontesOff: {}, tier: 'aegea', social: 'n', pesosOv: {} };
+
+  pesosPadrao() {
+    const p = this.props;
+    return {
+      imprensa: p.pesoImprensa ?? 30, mercado: p.pesoMercado ?? 20, sociedade: p.pesoSociedade ?? 20,
+      clientes: p.pesoClientes ?? 15, institucional: p.pesoInstitucional ?? 15
+    };
+  }
+
+  calibPadrao() {
+    const pd = this.pesosPadrao(), p = this.pesos();
+    return Object.keys(pd).every(k => pd[k] === p[k]) && this.state.tier === 'aegea' && this.state.social === 'n' && !Object.values(this.state.fontesOff).some(Boolean);
+  }
+
+  tierW() { return (TIER_PRESETS.find(t => t.id === this.state.tier) || TIER_PRESETS[0]).w; }
+
+  slComp(mi) { const k = this.state.social === 'cargo' ? 'n' : this.state.social; return SL_W[mi][k] || SL_W[mi].n; }
+  bitesComp() { return BITES_W[this.state.social] || BITES_W.n; }
+
+  fonteAtiva(id) {
+    return !this.state.fontesOff[id];
+  }
+
+  lenteAtiva(lente) {
+    return FONTES.some(f => f.lente === lente && this.fonteAtiva(f.id));
+  }
+
+  pesos() {
+    const pd = this.pesosPadrao(), ov = this.state.pesosOv || {};
+    const out = {};
+    Object.keys(pd).forEach(k => { out[k] = ov[k] != null ? ov[k] : pd[k]; });
+    return out;
+  }
+
+  lenteScores(mi) {
+    const usarBites = this.fonteAtiva('bites');
+    const usarSL = this.fonteAtiva('approachSL');
+    const IMPRENSA_JUN = imprensaPonderada(this.tierW());
+    // jan–mai: estimativa deslocada pelo mesmo efeito que a ponderação causa em junho
+    const shift = ns(IMPRENSA_JUN) - ns(imprensaPonderada(TIER_PRESETS[0].w));
+    const imprensaNS = mi === 5 ? ns(IMPRENSA_JUN) : Math.max(-1, Math.min(1, IMPRENSA_NS[mi] + shift));
+    const mercadoNS = mi === 5 ? ns(MERCADO_JUN) : MERCADO_NS[mi];
+    let socNS = ns(this.slComp(mi));
+    if (mi === 5) {
+      if (usarBites && usarSL) socNS = (ns(this.slComp(5)) + ns(this.bitesComp())) / 2;
+      else if (usarBites) socNS = ns(this.bitesComp());
+    }
+    return {
+      imprensa: toScore(imprensaNS), mercado: toScore(mercadoNS), sociedade: toScore(socNS),
+      clientes: toScore(ns(CM[mi])), institucional: toScore(ns(INST[mi]))
+    };
+  }
+
+  pesosEfetivos() {
+    const p = this.pesos();
+    const out = {};
+    Object.keys(p).forEach(k => { out[k] = this.lenteAtiva(k) ? p[k] : 0; });
+    return out;
+  }
+
+  isrDe(mi) {
+    const p = this.pesosEfetivos(), s = this.lenteScores(mi);
+    const soma = Object.values(p).reduce((a, b) => a + b, 0) || 1;
+    return Math.round(Object.keys(p).reduce((acc, k) => acc + s[k] * p[k], 0) / soma);
+  }
+
+  renderVals() {
+    const mi = this.state.mes;
+    const p = this.pesos();
+    const somaPesos = Object.values(p).reduce((a, b) => a + b, 0);
+    const scores = this.lenteScores(mi);
+    const prev = mi > 0 ? this.lenteScores(mi - 1) : null;
+    const isr = this.isrDe(mi);
+    const isrPrev = mi > 0 ? this.isrDe(mi - 1) : isr;
+    const isrIni = this.isrDe(0);
+    const faixa = faixaDe(isr);
+    const dm = isr - isrPrev, di = isr - isrIni;
+    const deltaChip = d => 'font-size:12px;font-weight:700;padding:5px 10px;border-radius:7px;' +
+      (d > 0 ? 'background:rgba(23,227,203,0.18);color:#9DEEE7' : d < 0 ? 'background:rgba(255,92,96,0.22);color:#FFB3B5' : 'background:rgba(255,255,255,0.12);color:#DDE3FA');
+    const sinal = d => (d > 0 ? '+' : '') + d;
+
+    const LENTES = [
+      { id: 'imprensa', nome: 'Imprensa', stakeholder: 'Formadores de opinião', fonte: 'Clipei · ponderado por tier 10/5/1',
+        desc: 'Sentimento das matérias ponderado pela relevância do veículo. Uma negativa no Valor pesa dez vezes uma de blog local — o mesmo peso do rascunho de score da Aegea.',
+        comp: mi === 5 ? imprensaPonderada(this.tierW()) : null, formula: 'NS = (positivas − negativas) ÷ total, cada matéria valendo ' + this.tierW().mr + ' (Muito Relevante), ' + this.tierW().r + ' (Relevante) ou ' + this.tierW().menos + ' (Menos Relevante). Score = (NS + 1) ÷ 2 × 100.',
+        temas: [
+          { label: 'Universalização do saneamento', pos: 740, neg: 5, tipo: 'Estruturante' },
+          { label: 'Projetos socioambientais', pos: 215, neg: 0, tipo: 'Estruturante' },
+          { label: 'Acusações de irregularidades', pos: 0, neg: 181, tipo: 'Estruturante' },
+          { label: 'Novos negócios / Copasa', pos: 90, neg: 6, tipo: 'Estruturante' },
+          { label: 'Demonstrações financeiras', pos: 3, neg: 24, tipo: 'Estruturante' }
+        ] },
+      { id: 'mercado', nome: 'Mercado', stakeholder: 'Investidores e rating', fonte: 'Clipei Tier 1 econômico · eventos de rating',
+        desc: 'Como a imprensa econômica e as agências leem a companhia. É a lente que conversa com o valor dos papéis.',
+        comp: mi === 5 ? MERCADO_JUN : null, formula: 'Proxy atual: sentimento nos veículos Muito Relevante com público-alvo Investidores. Evolução: cruzar com spread de debêntures e ações de rating.',
+        temas: [
+          { label: 'Aporte US$ 1 bi Itaúsa e GIC', pos: 40, neg: 0, tipo: 'Estruturante' },
+          { label: 'IPO 2027', pos: 32, neg: 0, tipo: 'Estruturante' },
+          { label: 'Leilão da Copasa', pos: 18, neg: 12, tipo: 'Estruturante' },
+          { label: 'Rebaixamentos S&P · Moody\'s · Fitch', pos: 0, neg: 22, tipo: 'Estruturante' },
+          { label: 'Atraso e revisão das DFs', pos: 0, neg: 16, tipo: 'Estruturante' }
+        ] },
+      { id: 'sociedade', nome: 'Sociedade digital', stakeholder: 'Redes em mar aberto', fonte: 'Approach SL · Bites',
+        desc: 'Menções espontâneas à Aegea e às concessões nas redes. É onde a Corsan e a agenda eleitoral pesam mais.',
+        comp: this.slComp(mi), formula: this.state.social === 'n'
+          ? 'NS simples das menções classificadas. Em junho, média entre Approach (1.959 menções) e Bites (4.973 classificadas). Menções sem sentimento ficam fora.'
+          : this.state.social === 'log'
+            ? 'Cada menção vale 1 + log₁₀(engajamento + 1): um post com 3.000 interações vale ~4,5; um com 1 interação vale 1,3. Em junho, média entre Approach e Bites.'
+            : this.state.social === 'eng'
+              ? 'Cada menção vale o seu engajamento bruto (reações + compartilhamentos + comentários). Um viral pode dominar o mês.'
+              : 'Bites ponderada pelo cargo do autor (ministro/governador 5 · senador/dep. federal 4 · dep. estadual 3 · prefeito/vereador 2 · demais 1). Approach segue por contagem — não traz cargo.',
+        temas: [
+          { label: 'Boleto e cobrança', pos: 3, neg: 1121, tipo: 'Operacional' },
+          { label: 'Saneamento básico / obras', pos: 279, neg: 1048, tipo: 'Operacional' },
+          { label: 'Privatização', pos: 137, neg: 569, tipo: 'Estruturante' },
+          { label: 'Falta de água', pos: 47, neg: 394, tipo: 'Operacional' },
+          { label: 'Patrocínio e marca empregadora', pos: 2400, neg: 90, tipo: 'Estruturante' }
+        ] },
+      { id: 'clientes', nome: 'Clientes', stakeholder: 'Canais próprios', fonte: 'Approach CM · mensagens recebidas',
+        desc: 'Quem procura a Aegea nos canais oficiais e com que teor. Reclamação de falta de água domina, mas é operacional e tratável.',
+        comp: CM[mi], formula: 'NS das mensagens recebidas nos canais próprios (feed, direct, stories). Evolução: incorporar Reclame Aqui, Consumidor.gov e notas Google por unidade.',
+        temas: [
+          { label: 'Falta de água', pos: 0, neg: 849, tipo: 'Operacional' },
+          { label: 'Institucional', pos: 520, neg: 410, tipo: 'Estruturante' },
+          { label: 'Atendimento', pos: 60, neg: 355, tipo: 'Operacional' },
+          { label: 'Vagas e Primeiros Talentos', pos: 293, neg: 0, tipo: 'Estruturante' },
+          { label: 'Colaborador × ambiente de trabalho', pos: 76, neg: 19, tipo: 'Estruturante' }
+        ] },
+      { id: 'institucional', nome: 'Institucional', stakeholder: 'Governo e entidades', fonte: 'CRM dos Stakeholders · clima',
+        desc: 'Clima das interações registradas no CRM: propositivo, neutro ou tenso. Fecha o ciclo entre relacionamento e reputação.',
+        comp: INST[mi], formula: 'NS do clima das agendas de governo, parceiros e legislativo do mês. Fonte: o próprio CRM desta solução.',
+        temas: [
+          { label: 'Regulação e marco legal', pos: 8, neg: 1, tipo: 'Estruturante' },
+          { label: 'Tarifa e reequilíbrio', pos: 2, neg: 4, tipo: 'Estruturante' },
+          { label: 'Copasa / ALMG', pos: 1, neg: 3, tipo: 'Estruturante' },
+          { label: 'Inclusão sanitária', pos: 6, neg: 0, tipo: 'Estruturante' },
+          { label: 'Resíduos e biometano', pos: 4, neg: 0, tipo: 'Estruturante' }
+        ] }
+    ];
+
+    const pEf = this.pesosEfetivos();
+    const somaEf = Object.values(pEf).reduce((a, b) => a + b, 0) || 1;
+    const lentesOff = LENTES.filter(l => !this.lenteAtiva(l.id));
+    const lentes = LENTES.map(l => {
+      const s = scores[l.id], d = prev ? s - prev[l.id] : 0;
+      const ativa = this.lenteAtiva(l.id);
+      const pesoEf = ativa ? Math.round((pEf[l.id] / somaEf) * 100) : 0;
+      return {
+        nome: l.nome, stakeholder: l.stakeholder, fonte: l.fonte,
+        peso: ativa ? (pesoEf === p[l.id] ? pesoEf + '%' : pesoEf + '% (de ' + p[l.id] + '%)') : 'fora do cálculo',
+        score: ativa ? s : '—', cor: ativa ? corScore(s) : '#C3CDF7',
+        w: ativa ? s + '%' : '0%', delta: ativa && prev ? sinal(d) : '—',
+        deltaStyle: 'font-size:12px;font-weight:700;padding:3px 8px;border-radius:5px;' +
+          (d > 0 ? 'background:#DFFAF6;color:#0A6B60' : d < 0 ? 'background:#FFE7E8;color:#B32328' : 'background:#F4F6FC;color:#8C91A4'),
+        go: () => this.setState({ lente: l.id, view: 'lentes' }),
+        cardStyle: 'text-align:left;background:#fff;border-radius:14px;padding:18px;cursor:pointer;transition:border-color .12s,box-shadow .12s;' +
+          (ativa ? '' : 'opacity:0.55;') + 'border:1px solid ' +
+          (this.state.lente === l.id ? '#0027BD;box-shadow:0 0 0 2px rgba(0,39,189,0.15);' : '#E2E5F0;')
+      };
+    });
+
+    const fontes = FONTES.map(f => {
+      const on = this.fonteAtiva(f.id);
+      const lenteNome = (LENTES.find(l => l.id === f.lente) || {}).nome || f.lente;
+      const unica = FONTES.filter(x => x.lente === f.lente).length === 1;
+      return {
+        nome: f.nome, tipo: f.tipo, lente: lenteNome, cobertura: f.cobertura, volume: f.volume,
+        nota: !on && unica ? 'lente ' + lenteNome + ' fora do cálculo' : f.nota,
+        notaStyle: 'font-size:11px;' + (!on && unica ? 'color:#B32328;font-weight:700' : 'color:#8C91A4'),
+        rowStyle: 'display:grid;grid-template-columns:52px 1.3fr 1fr 0.8fr 1fr 0.9fr 1fr;gap:14px;align-items:center;background:#fff;padding:12px 14px;' + (on ? '' : 'opacity:0.6;'),
+        toggle: () => this.setState(st => ({ fontesOff: { ...st.fontesOff, [f.id]: !st.fontesOff[f.id] } })),
+        toggleStyle: 'width:40px;height:22px;border-radius:11px;border:none;cursor:pointer;position:relative;padding:0;transition:background .12s;background:' + (on ? '#0027BD' : '#D5DAEA'),
+        knobStyle: 'position:absolute;top:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:left .12s;left:' + (on ? '21px' : '3px')
+      };
+    });
+    const avisoFontes = lentesOff.length
+      ? (lentesOff.length === 1 ? 'A lente ' + lentesOff[0].nome + ' está sem fonte ativa e saiu do cálculo. ' : 'As lentes ' + lentesOff.map(l => l.nome).join(', ') + ' estão sem fonte ativa e saíram do cálculo. ')
+        + 'Os pesos foram redistribuídos proporcionalmente entre as ' + (LENTES.length - lentesOff.length) + ' lentes restantes.'
+      : '';
+
+    const sel = LENTES.find(l => l.id === this.state.lente) || LENTES[0];
+    const comp = sel.comp || { pos: 0, neu: 0, neg: 0 };
+    const tot = comp.pos + comp.neu + comp.neg;
+    const temasMax = Math.max(1, ...sel.temas.map(t => t.pos + t.neg));
+    const tipoStyle = t => 'font-size:11px;font-weight:700;padding:3px 8px;border-radius:5px;text-align:center;' +
+      (t === 'Estruturante' ? 'background:#EEF1F8;color:#0027BD' : 'background:#FFF1DC;color:#8A4E00');
+
+    const serie = MESES.map((label, i) => {
+      const v = this.isrDe(i);
+      return { label, isr: v, h: Math.max(4, v) + '%', cor: corScore(v), op: i === mi ? '1' : '0.45' };
+    });
+
+    const ordered = LENTES.map(l => ({ l, s: scores[l.id] })).sort((a, b) => b.s - a.s);
+    const melhor = ordered[0], pior = ordered[ordered.length - 1];
+    const leituraBase = 'Índice em ' + isr + ' (' + faixa.label.toLowerCase() + '). A imprensa sustenta a nota — ' + scores.imprensa + ' com o negativo concentrado em governança — enquanto as redes puxam para baixo: ' + scores.sociedade + ' em mar aberto, com Corsan, boleto e privatização dominando a conversa. ';
+    const leituraDelta = dm > 0 ? 'Subiu ' + dm + ' ponto' + (dm > 1 ? 's' : '') + ' no mês, puxado por aporte dos acionistas e IPO 2027.' : dm < 0 ? 'Caiu ' + Math.abs(dm) + ' ponto' + (Math.abs(dm) > 1 ? 's' : '') + ' no mês.' : 'Estável em relação ao mês anterior.';
+
+    const atribBase = [
+      { nome: 'Prosperidade Compartilhada', pos: 976, neu: 2, neg: 0 },
+      { nome: 'Responsabilidade Socioambiental', pos: 226, neu: 20, neg: 32 },
+      { nome: 'Crescimento e Solidez Financeira', pos: 27, neu: 171, neg: 39 },
+      { nome: 'Eficiência Operacional e Qualidade', pos: 61, neu: 15, neg: 124 },
+      { nome: 'Governança', pos: 95, neu: 14, neg: 181 }
+    ];
+    const atributos = atribBase.map(a => {
+      const v = ns(a), s = toScore(v);
+      const half = Math.abs(v) * 50;
+      return {
+        nome: a.nome, score: s, volume: (a.pos + a.neu + a.neg) + ' menções', cor: v >= 0 ? '#17E3CB' : '#FF5C60',
+        left: (v >= 0 ? 50 : 50 - half) + '%', width: Math.max(1.5, half) + '%'
+      };
+    });
+
+    const unidBase = [
+      { nome: 'Corsan (RS)', neg: 1463, cm: 60 }, { nome: 'Águas do Rio (RJ)', neg: 369, cm: 94 },
+      { nome: 'Aegea Holding', neg: 300, cm: null }, { nome: 'Águas de Manaus (AM)', neg: 181, cm: 100 },
+      { nome: 'Águas do Piauí e Teresina (PI)', neg: 122, cm: 85 }, { nome: 'Prolagos (RJ)', neg: 125, cm: 100 },
+      { nome: 'Águas do Pará (PA)', neg: 51, cm: 33 }
+    ];
+    const negTot = unidBase.reduce((a, u) => a + u.neg, 0), negMax = unidBase[0].neg;
+    const unidades = unidBase.map(u => ({
+      nome: u.nome, neg: u.neg, share: pct(u.neg, negTot), w: Math.round((u.neg / negMax) * 100) + '%',
+      cm: u.cm === null ? '—' : u.cm + '% neg.',
+      cmStyle: 'font-size:11px;font-weight:700;padding:3px 8px;border-radius:5px;text-align:center;white-space:nowrap;' +
+        (u.cm === null ? 'background:#F4F6FC;color:#8C91A4' : u.cm >= 80 ? 'background:#FFE7E8;color:#B32328' : u.cm >= 50 ? 'background:#FFF1DC;color:#8A4E00' : 'background:#DFFAF6;color:#0A6B60')
+    }));
+
+    const chipEfeito = e => 'font-size:11px;font-weight:700;padding:3px 8px;border-radius:5px;white-space:nowrap;' +
+      (e === 'pressiona' ? 'background:#FFE7E8;color:#B32328' : e === 'sustenta' ? 'background:#DFFAF6;color:#0A6B60' : 'background:#F4F6FC;color:#44495C');
+    const chipStatus = s => 'font-size:11px;font-weight:700;padding:3px 9px;border-radius:5px;white-space:nowrap;' +
+      (s === 'Coberto' ? 'background:#DFFAF6;color:#0A6B60' : s === 'Parcial' ? 'background:#FFF1DC;color:#8A4E00' : 'background:#F4F6FC;color:#44495C');
+
+    return {
+      navItems: [['geral', 'Visão geral'], ['lentes', 'Lentes'], ['riscos', 'Drivers e riscos'], ['calibracao', 'Calibração'], ['metodologia', 'Metodologia']].map(([id, label]) => ({
+        label, go: () => this.setState({ view: id }),
+        style: 'padding:7px 14px;border:none;border-radius:7px;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap;' +
+          (this.state.view === id ? 'background:#fff;color:#0027BD;' : 'background:transparent;color:#DDE3FA;')
+      })),
+      isGeral: this.state.view === 'geral', isLentes: this.state.view === 'lentes', isRiscos: this.state.view === 'riscos',
+      isCalibracao: this.state.view === 'calibracao', isMetodologia: this.state.view === 'metodologia',
+      calibLabel: this.calibPadrao() ? 'calibração padrão' : 'calibração ajustada · ver aba Calibração',
+      calibChip: 'font-size:12px;font-weight:700;padding:5px 10px;border-radius:7px;' + (this.calibPadrao() ? 'background:#F4F6FC;color:#8C91A4' : 'background:#FFF1DC;color:#8A4E00'),
+      pesosCtl: LENTES.map(l => {
+        const pd = this.pesosPadrao()[l.id], v = p[l.id];
+        const setP = nv => this.setState(st => ({ pesosOv: { ...(st.pesosOv || {}), [l.id]: Math.max(0, Math.min(60, nv)) } }));
+        return { nome: l.nome, valor: v, padrao: pd, w: Math.min(100, (v / 60) * 100) + '%', menos: () => setP(v - 5), mais: () => setP(v + 5) };
+      }),
+      resetCalib: () => this.setState({ pesosOv: {}, tier: 'aegea', social: 'n', fontesOff: {} }),
+      periodoLabel: ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho'][mi] + ' 2026',
+      periodos: [[3, 'Abr'], [4, 'Mai'], [5, 'Jun']].map(([i, label]) => ({
+        label, go: () => this.setState({ mes: i }),
+        style: 'padding:7px 14px;border:none;border-radius:7px;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap;' +
+          (mi === i ? 'background:#fff;color:#0027BD;' : 'background:transparent;color:#DDE3FA;')
+      })),
+      isr, isrPct: isr + '%',
+      faixaLabel: faixa.label, faixaHint: faixa.hint,
+      faixaChip: 'font-size:13px;font-weight:700;padding:6px 12px;border-radius:8px;background:' + faixa.cor + ';color:' + (faixa.cor === '#0A6B60' || faixa.cor === '#FF5C60' ? '#fff' : '#00312C'),
+      deltaMes: sinal(dm), deltaMesChip: deltaChip(dm),
+      deltaIni: sinal(di), deltaIniChip: deltaChip(di),
+      leitura: leituraBase + leituraDelta,
+      sustenta: melhor.l.nome + ' · ' + melhor.s, sustentaHint: melhor.l.id === 'imprensa' ? 'universalização e projetos socioambientais' : melhor.l.fonte,
+      corroi: pior.l.nome + ' · ' + pior.s, corroiHint: pior.l.id === 'sociedade' ? 'Corsan, boleto e privatização' : pior.l.id === 'clientes' ? 'falta de água e atendimento' : pior.l.fonte,
+      somaPesos,
+      lentes,
+      fontes, avisoFontes, temAviso: !!avisoFontes,
+      fontesAtivas: FONTES.filter(f => this.fonteAtiva(f.id)).length, fontesTotal: FONTES.length,
+      lenteTabs: LENTES.map(l => ({
+        label: l.nome, go: () => this.setState({ lente: l.id }),
+        style: 'padding:7px 13px;border-radius:7px;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap;border:1px solid ' +
+          (this.state.lente === l.id ? '#0027BD;background:#0027BD;color:#fff;' : '#D5DAEA;background:#fff;color:#44495C;')
+      })),
+      tierPresets: TIER_PRESETS.map(t => ({
+        label: t.label, desc: t.desc, go: () => this.setState({ tier: t.id }),
+        style: 'display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:7px 11px;border-radius:8px;cursor:pointer;text-align:left;border:1px solid ' +
+          (this.state.tier === t.id ? '#0027BD;background:#EEF1F8;' : '#D5DAEA;background:#fff;'),
+        labelStyle: 'font-size:13px;font-weight:700;color:' + (this.state.tier === t.id ? '#0027BD' : '#191B23')
+      })),
+      socialPresets: SOCIAL_PRESETS.map(t => ({
+        label: t.label, desc: t.desc, go: () => this.setState({ social: t.id }),
+        style: 'display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:7px 11px;border-radius:8px;cursor:pointer;text-align:left;border:1px solid ' +
+          (this.state.social === t.id ? '#0027BD;background:#EEF1F8;' : '#D5DAEA;background:#fff;'),
+        labelStyle: 'font-size:13px;font-weight:700;color:' + (this.state.social === t.id ? '#0027BD' : '#191B23')
+      })),
+      socialNota: 'Aplica à lente Sociedade digital. Approach e Bites trazem engajamento por menção; a Bites traz também o cargo de autores políticos. Nenhuma das duas traz alcance ou seguidores.',
+      tierAplica: sel.id === 'imprensa' || sel.id === 'mercado',
+      tierNota: sel.id === 'imprensa' || sel.id === 'mercado'
+        ? 'Muito Relevante = grande imprensa nacional, econômica e trade · Relevante = regionais com influência · Menos Relevante = locais e blogs de nicho. Classificação da própria clipagem.'
+        : 'Esta lente não tem tier de veículo. Para redes, use a ponderação por engajamento ao lado.',
+      selNome: sel.nome, selDesc: sel.desc, selFormula: sel.formula,
+      selPos: tot ? pct(comp.pos, tot) : '—', selNeu: tot ? pct(comp.neu, tot) : '—', selNeg: tot ? pct(comp.neg, tot) : '—',
+      selPosW: pct(comp.pos, tot), selNeuW: pct(comp.neu, tot), selNegW: pct(comp.neg, tot),
+      selTemas: sel.temas.map(t => ({
+        label: t.label, valor: (t.pos + t.neg) + ' · ' + (t.neg > t.pos ? 'negativo' : 'positivo'),
+        posW: Math.round((t.pos / temasMax) * 100) + '%', negW: Math.round((t.neg / temasMax) * 100) + '%',
+        tipo: t.tipo, tipoStyle: tipoStyle(t.tipo)
+      })),
+      serie,
+      fatos: [
+        { mes: 'FEV', texto: 'UOL TAB publica reportagem sobre o Termo de Acordo homologado no STJ', efeito: 'pressiona' },
+        { mes: 'MAR', texto: 'Atraso e revisão das demonstrações financeiras; rebaixamentos de rating', efeito: 'pressiona' },
+        { mes: 'ABR', texto: 'Lucro de R$ 856 mi em 2025; encontros com Valor e Bloomberg reequilibram cobertura', efeito: 'sustenta' },
+        { mes: 'MAI', texto: 'Aporte de US$ 1 bi de Itaúsa e GIC anunciado na Brazil Week', efeito: 'sustenta' },
+        { mes: 'JUN', texto: 'CEO fala em IPO 2027 na CNN; disputa da Copasa e novas menções ao acordo no MT', efeito: 'misto' }
+      ].map(f => ({ ...f, chip: chipEfeito(f.efeito) })),
+      perpetuacao: [
+        { tema: 'Termo de Acordo / leniência', meses: 'fev → jun · 5 meses', tipo: 'Estruturante', onde: 'imprensa Tier 1, redes, MT em junho', cor: '#FF5C60' },
+        { tema: 'DFs e rebaixamentos de rating', meses: 'mar → jun · 4 meses', tipo: 'Estruturante', onde: 'imprensa econômica, investidores', cor: '#FF5C60' },
+        { tema: 'Privatização / Copasa', meses: 'jan → jun · 6 meses', tipo: 'Estruturante', onde: 'redes (569 neg.), ALMG, eleições', cor: '#FE952B' },
+        { tema: 'Corsan — falta de água e serviço', meses: 'persistente', tipo: 'Operacional', onde: 'Bites 1.463 neg. em junho', cor: '#FE952B' },
+        { tema: 'Boleto e cobrança', meses: '1S · 1.121 neg.', tipo: 'Operacional', onde: 'redes, canais próprios', cor: '#FE952B' },
+        { tema: 'CPI', meses: 'jun · novo', tipo: 'Estruturante', onde: '43 menções, monitorar', cor: '#9DA6C9' }
+      ].map(t => ({ ...t, tipoStyle: 'font-size:11px;font-weight:700;padding:3px 8px;border-radius:5px;' + (t.tipo === 'Estruturante' ? 'background:#333949;color:#fff' : 'background:#FE952B;color:#00312C') })),
+      atributos,
+      unidades,
+      metodologia: [
+        { passo: '1. Lentes', texto: 'Cinco stakeholders — imprensa, mercado, sociedade digital, clientes e institucional — cada um com a sua fonte e o seu peso. Gartner: saúde reputacional exige olhar além de clientes e além da mídia.' },
+        { passo: '2. Sentimento líquido', texto: 'Para cada lente, NS = (positivo − negativo) ÷ total. Na imprensa, cada matéria é ponderada pelo tier do veículo — default 10 · 5 · 1, os pesos do rascunho de score da Aegea, com presets alternativos na tela para calibrar.' },
+        { passo: '2b. Engajamento', texto: 'Nas redes, cada menção pode valer 1 (contagem), 1 + log₁₀ do engajamento (default recomendado: dá diferença real sem deixar um viral dominar), o engajamento bruto, ou o cargo do autor na Bites.' },
+        { passo: '3. Escala 0–100', texto: 'Score da lente = (NS + 1) ÷ 2 × 100. Zero é tudo negativo; 50 é equilíbrio; 100 é tudo positivo. Faixas: Crítico < 40 · Atenção 40–54 · Estável 55–69 · Sólido 70–84 · Referência ≥ 85.' },
+        { passo: '4. Índice', texto: 'ISR = média ponderada das cinco lentes. Pesos default 30 / 20 / 20 / 15 / 15, ajustáveis nos Tweaks para calibrar com a diretoria.' },
+        { passo: '5. Drivers', texto: 'Atributos reputacionais (taxonomia da clipagem) e temas em perpetuação explicam o número — o "porquê", não só o "quanto".' },
+        { passo: '6. Unidades', texto: 'Exposição por concessionária. Com a base de economias, aplica-se o Score2 da Aegea (negativo ponderado ÷ economias × 1.000) para comparar portes diferentes.' }
+      ],
+      gartner: [
+        { criterio: 'Múltiplos stakeholders (mídia, investidores, público)', status: 'Coberto' },
+        { criterio: 'Agregação multifonte', status: 'Coberto' },
+        { criterio: 'Benchmark histórico', status: 'Coberto' },
+        { criterio: 'Benchmark contra pares do setor', status: 'A integrar' },
+        { criterio: 'Análise de sentimento com drivers', status: 'Coberto' },
+        { criterio: 'Alertas de mudança / perpetuação', status: 'Parcial' },
+        { criterio: 'Ligação com resultado de negócio (valor)', status: 'A integrar' }
+      ].map(g => ({ ...g, chip: chipStatus(g.status) }))
+    };
+  }
+}
+
+</script>
+</body>
+</html>

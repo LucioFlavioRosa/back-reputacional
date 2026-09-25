@@ -143,14 +143,13 @@ def colunas_do_ddl() -> dict[str, set[str]]:
 def _colunas_do_sql(sql: str) -> dict[str, set[str]]:
     """Extrai tabela -> colunas, APLICANDO as operações em ordem.
 
-    O baseline atual define cada objeto uma vez, com `create table`, e não usa
-    `alter table` nem `drop table`. O parser trata os três mesmo assim, e isso
-    NÃO é código morto: a próxima migration que alguém escrever provavelmente
-    acrescenta coluna a uma tabela existente, e um parser que só lê
-    `create table` acusaria divergência num schema correto.
+    O baseline define cada objeto uma vez, com `create table`; a partir da 0050
+    há `alter table add column`, e o parser tem de aplicá-lo — sem isso ele
+    acusaria divergência num schema correto, porque o ORM conhece a coluna e o
+    retrato não.
 
-    Quem exercita esse caminho é `test_o_parser_aplica_alter_e_drop`, com SQL
-    próprio — as migrations reais não o alcançam.
+    `drop table` e `drop column` continuam sem uso nas migrations reais. Quem
+    os exercita é `test_o_parser_aplica_alter_e_drop`, com SQL próprio.
     """
     # Tira os comentários de linha para não confundir o parser.
     sql = re.sub(r"--[^\n]*", "", sql)
@@ -351,3 +350,72 @@ def test_toda_coluna_da_migration_existe_no_orm(ddl):
             divergencias[nome] = sorted(faltando)
 
     assert not divergencias, f"Colunas no DDL e ausentes no ORM: {divergencias}"
+
+
+# -- os índices, e o no-op que passa por migration aplicada --------------------
+
+
+#: `create index [if not exists] nome on tabela (colunas) [where ...];`
+BLOCO_CREATE_INDEX = re.compile(
+    r"create\s+(?:unique\s+)?index\s+(?:concurrently\s+)?(?:if\s+not\s+exists\s+)?"
+    r"([a-z_0-9]+)\s+on\s+([a-z_0-9.]+)\s*(\([^;]*?\)(?:\s*where[^;]*?)?);",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _indices_declarados() -> dict[str, list[tuple[str, str]]]:
+    """Nome do índice -> [(migration, definição normalizada)], na ordem de aplicação."""
+    por_nome: dict[str, list[tuple[str, str]]] = {}
+    for arquivo in sorted(MIGRATIONS.glob("*.sql")):
+        texto = arquivo.read_text(encoding="utf-8")
+        for nome, tabela, colunas in BLOCO_CREATE_INDEX.findall(texto):
+            definicao = " ".join(f"{tabela} {colunas}".split()).lower()
+            por_nome.setdefault(nome.lower(), []).append((arquivo.name, definicao))
+    return por_nome
+
+
+def test_dois_indices_nao_disputam_o_mesmo_nome():
+    """`if not exists` com nome já usado é um NO-OP SILENCIOSO.
+
+    ACONTECEU: a migration 0052 pediu `mencao_por_tema` em
+    `(fonte_id, mes, tema_id)`, e a 0048 já tinha criado `mencao_por_tema` em
+    `(tema_id) where tema_id is not null`. A 0052 passou sem erro, o índice
+    pretendido nunca nasceu, e o `comment on index` logo abaixo colou a
+    explicação NOVA no índice VELHO — a documentação do banco passou a descrever
+    um índice que não existe. Nada falhou, nada avisou, e só um `pg_indexes` lado
+    a lado com o arquivo mostrava.
+
+    O MESMO NOME COM A MESMA DEFINIÇÃO É OUTRA COISA: aí o `if not exists` está
+    fazendo o trabalho dele, que é deixar a migration reaplicável.
+    """
+    conflitos = {
+        nome: usos
+        for nome, usos in _indices_declarados().items()
+        if len({definicao for _, definicao in usos}) > 1
+    }
+    assert not conflitos, "\n".join(
+        f"{nome}: " + " / ".join(f"{arq} -> {definicao}" for arq, definicao in usos)
+        for nome, usos in conflitos.items()
+    )
+
+
+def test_todo_comentario_de_indice_fala_de_um_indice_que_a_migration_cria():
+    """`comment on index X` sem `create index X` comenta o índice de OUTRA migration.
+
+    É o segundo tempo do mesmo defeito: o comentário é aplicado com sucesso em
+    qualquer índice que já exista com aquele nome, e passa a descrever coisa
+    diferente da que descreve. Aceita o nome criado em QUALQUER migration — o
+    que se recusa é comentar um nome que nenhuma delas cria.
+    """
+    declarados = set(_indices_declarados())
+    comentados: list[tuple[str, str]] = []
+    for arquivo in sorted(MIGRATIONS.glob("*.sql")):
+        for nome in re.findall(
+            r"comment\s+on\s+index\s+([a-z_0-9]+)",
+            arquivo.read_text(encoding="utf-8"),
+            re.IGNORECASE,
+        ):
+            comentados.append((arquivo.name, nome.lower()))
+
+    orfaos = [(arq, nome) for arq, nome in comentados if nome not in declarados]
+    assert not orfaos, f"comentário sobre índice que migration nenhuma cria: {orfaos}"

@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,700&display=swap" rel="stylesheet" />
+<style>
+  * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body { margin: 0; font-family: "DM Sans", Arial, sans-serif; color: #191B23; }
+  doc-page:not(:defined) { visibility: hidden; }
+  a { color: #0027BD; text-decoration: none; }
+  a:hover { color: #17A99A; }
+  table { border-collapse: collapse; width: 100%; }
+  th { text-align: left; font-size: 8.5pt; letter-spacing: 0.06em; text-transform: uppercase; color: #44495C; padding: 6px 8px; border-bottom: 1px solid #0027BD; }
+  td { font-size: 9pt; padding: 6px 8px; border-bottom: 1px solid #EEF1F8; vertical-align: top; }
+  h2 { font-size: 15pt; margin: 26px 0 4px; letter-spacing: -0.01em; }
+  h3 { font-size: 11pt; margin: 18px 0 8px; }
+  p { font-size: 10pt; line-height: 1.6; margin: 0 0 10px; }
+  .kicker { font-size: 8pt; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #8C91A4; }
+  .card, tbody tr, .barra { break-inside: avoid; }
+</style>
+<script src="./doc-page.js"></script>
+</helmet>
+
+<doc-page margin="0.7in">
+
+  <div slot="header" style="display:flex;align-items:center;justify-content:space-between;gap:16px;padding-bottom:8px;border-bottom:2px solid #0027BD">
+    <div style="display:flex;align-items:center;gap:9px">
+      <span style="width:16px;height:16px;border-radius:50%;background:#17E3CB;display:block"></span>
+      <span style="font-size:9pt;font-weight:700;color:#0027BD">Aegea · Painel Reputacional</span>
+    </div>
+    <span style="font-size:8pt;color:#8C91A4">CRM dos Stakeholders · Relações Institucionais e Comunicação</span>
+  </div>
+
+  <div slot="footer" style="display:flex;justify-content:space-between;gap:16px;padding-top:8px;border-top:1px solid #E2E5F0">
+    <span style="font-size:7.5pt;color:#8C91A4">Gerado do CRM dos Stakeholders — dados do recorte descrito na capa</span>
+    <span style="font-size:7.5pt;color:#8C91A4">Documento interno</span>
+  </div>
+
+  <div class="kicker">Relatório executivo</div>
+  <h1 style="font-size:26pt;font-weight:700;letter-spacing:-0.02em;margin:6px 0 10px;line-height:1.1">Reputação institucional<br />{{ periodoTitulo }}</h1>
+  <div style="font-size:8.5pt;color:#8C91A4;margin-bottom:12px">{{ filtrosResumo }}</div>
+  <sc-if value="{{ secResumo }}" hint-placeholder-val="{{ true }}">
+  <p style="font-size:11pt;color:#44495C;max-width:70ch">{{ resumo }}</p>
+
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:22px 0 8px">
+    <sc-for list="{{ kpis }}" as="k" hint-placeholder-count="6">
+      <div class="card" style="border:1px solid #E2E5F0;border-radius:9px;padding:12px 13px">
+        <div class="kicker">{{ k.label }}</div>
+        <div style="font-size:22pt;font-weight:700;letter-spacing:-0.03em;line-height:1;margin-top:4px">{{ k.value }}</div>
+        <div style="font-size:8.5pt;color:#44495C;margin-top:4px">{{ k.hint }}</div>
+      </div>
+    </sc-for>
+  </div>
+
+  </sc-if>
+
+  <sc-if value="{{ secVolumetria }}" hint-placeholder-val="{{ true }}">
+  <h2>Volumetria mensal por frente</h2>
+  <p style="color:#8C91A4;font-size:9pt">Cada barra empilha as interações registradas no mês, por frente.</p>
+  <div style="display:flex;align-items:flex-end;gap:8px;height:150px;margin:14px 0 10px">
+    <sc-for list="{{ meses }}" as="m" hint-placeholder-count="8">
+      <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;height:100%">
+        <div style="height:13px;font-size:8.5pt;font-weight:700;color:#44495C;line-height:13px">{{ m.total }}</div>
+        <div style="flex:1;width:100%;display:flex;flex-direction:column;justify-content:flex-end">
+          <div style="width:100%;display:flex;flex-direction:column;justify-content:flex-end;gap:1px;height:{{ m.h }}">
+            <sc-for list="{{ m.segs }}" as="sg" hint-placeholder-count="3">
+              <div style="height:{{ sg.h }};background:{{ sg.color }};border-radius:2px;min-height:2px"></div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="height:12px;font-size:8pt;color:#8C91A4;line-height:12px">{{ m.label }}</div>
+      </div>
+    </sc-for>
+  </div>
+  <div style="display:flex;flex-wrap:wrap;gap:12px">
+    <sc-for list="{{ legenda }}" as="l" hint-placeholder-count="7">
+      <div style="display:flex;align-items:center;gap:6px;font-size:8.5pt;color:#44495C">
+        <span style="width:8px;height:8px;border-radius:2px;background:{{ l.color }}"></span>{{ l.label }} <strong>{{ l.value }}</strong>
+      </div>
+    </sc-for>
+  </div>
+
+  </sc-if>
+
+  <sc-if value="{{ secStatus }}" hint-placeholder-val="{{ true }}">
+  <h2>Status e resolutividade</h2>
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px 0 14px">
+    <sc-for list="{{ grupos }}" as="g" hint-placeholder-count="3">
+      <div class="card" style="border:1px solid #E2E5F0;border-radius:9px;padding:12px 13px">
+        <div class="kicker">{{ g.label }}</div>
+        <div style="display:flex;align-items:baseline;gap:8px;margin-top:4px">
+          <span style="font-size:20pt;font-weight:700;letter-spacing:-0.03em;line-height:1">{{ g.valor }}</span>
+          <span style="font-size:8.5pt;color:#8C91A4">{{ g.share }}</span>
+        </div>
+        <div style="height:6px;background:#EEF1F8;border-radius:3px;overflow:hidden;margin-top:9px">
+          <div style="height:100%;width:{{ g.w }};background:{{ g.color }};border-radius:3px"></div>
+        </div>
+        <div style="font-size:8pt;color:#8C91A4;margin-top:7px">{{ g.detalhe }}</div>
+      </div>
+    </sc-for>
+  </div>
+
+  <h3>Resolutividade por frente</h3>
+  <div style="display:flex;flex-direction:column;gap:9px">
+    <sc-for list="{{ porFrente }}" as="fr" hint-placeholder-count="7">
+      <div class="barra">
+        <div style="display:flex;justify-content:space-between;gap:10px;font-size:9pt;margin-bottom:4px">
+          <span>{{ fr.label }}</span>
+          <span style="color:#44495C"><strong>{{ fr.taxa }}</strong> resolvido · {{ fr.total }} registros</span>
+        </div>
+        <div style="display:flex;height:9px;border-radius:5px;overflow:hidden;background:#EEF1F8">
+          <sc-for list="{{ fr.segs }}" as="sg" hint-placeholder-count="2">
+            <div style="width:{{ sg.w }};background:{{ sg.color }}"></div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+
+  </sc-if>
+
+  <sc-if value="{{ secResultado }}" hint-placeholder-val="{{ true }}">
+  <h2>Resultado das interações</h2>
+  <p style="color:#8C91A4;font-size:9pt">O desfecho de cada registro — se a pauta avançou, manteve ou retrocedeu. {{ resLeitura }}</p>
+  <div style="display:flex;height:11px;border-radius:6px;overflow:hidden;background:#EEF1F8;margin:12px 0 14px">
+    <sc-for list="{{ resItens }}" as="i" hint-placeholder-count="4">
+      <div style="width:{{ i.w }};background:{{ i.color }}"></div>
+    </sc-for>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
+    <sc-for list="{{ resItens }}" as="i" hint-placeholder-count="4">
+      <div class="card" style="border:1px solid #E2E5F0;border-radius:9px;padding:11px 12px">
+        <div style="display:flex;align-items:center;gap:7px;margin-bottom:6px">
+          <span style="width:8px;height:8px;border-radius:2px;background:{{ i.color }}"></span>
+          <span style="font-size:8.5pt;color:#44495C">{{ i.label }}</span>
+        </div>
+        <div style="display:flex;align-items:baseline;gap:7px">
+          <span style="font-size:18pt;font-weight:700;letter-spacing:-0.03em;line-height:1">{{ i.value }}</span>
+          <span style="font-size:8pt;color:#8C91A4">{{ i.share }}</span>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+
+  </sc-if>
+
+  <sc-if value="{{ secRankings }}" hint-placeholder-val="{{ true }}">
+  <h2>Rankings do período</h2>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:12px">
+    <sc-for list="{{ rankings }}" as="r" hint-placeholder-count="4">
+      <div>
+        <h3 style="margin-top:0">{{ r.title }}</h3>
+        <table>
+          <thead><tr><th>{{ r.col }}</th><th style="text-align:right;width:64px">Registros</th></tr></thead>
+          <tbody>
+            <sc-for list="{{ r.items }}" as="i" hint-placeholder-count="6">
+              <tr><td>{{ i.label }}</td><td style="text-align:right;font-weight:700">{{ i.value }}</td></tr>
+            </sc-for>
+          </tbody>
+        </table>
+      </div>
+    </sc-for>
+  </div>
+
+  </sc-if>
+
+  <sc-if value="{{ secInterlocutores }}" hint-placeholder-val="{{ true }}">
+  <h2>Interlocutores</h2>
+  <p style="color:#8C91A4;font-size:9pt">Pessoas com mais interações no recorte — jornalistas, gestores, parlamentares e analistas.</p>
+  <table style="margin-top:10px">
+    <thead>
+      <tr>
+        <th>Interlocutor</th>
+        <th style="width:150px">Veículo / órgão</th>
+        <th style="width:78px">Frente</th>
+        <th style="width:62px">Último</th>
+        <th style="width:64px;text-align:right">Registros</th>
+      </tr>
+    </thead>
+    <tbody>
+      <sc-for list="{{ interlocutores }}" as="i" hint-placeholder-count="8">
+        <tr>
+          <td>{{ i.nome }}</td>
+          <td>{{ i.entidades }}</td>
+          <td>{{ i.area }}</td>
+          <td>{{ i.ultimaFmt }}</td>
+          <td style="text-align:right;font-weight:700">{{ i.total }}</td>
+        </tr>
+      </sc-for>
+    </tbody>
+  </table>
+  </sc-if>
+
+  <sc-if value="{{ secPendencias }}" hint-placeholder-val="{{ true }}">
+  <h2 style="break-before:page">Pendências em aberto</h2>
+  <p style="color:#8C91A4;font-size:9pt">{{ filaTotal }} registros sem desfecho, do mais parado ao mais recente.</p>
+  <table style="margin-top:10px">
+    <thead>
+      <tr>
+        <th style="width:52px">Dias</th>
+        <th style="width:78px">Frente</th>
+        <th style="width:130px">Veículo / órgão</th>
+        <th>Pauta</th>
+        <th style="width:78px">Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      <sc-for list="{{ fila }}" as="r" hint-placeholder-count="6">
+        <tr>
+          <td style="font-weight:700;color:{{ r.cor }}">{{ r.dias }}</td>
+          <td>{{ r.area }}</td>
+          <td>{{ r.entidade }}</td>
+          <td>{{ r.pauta }}</td>
+          <td>{{ r.status }}</td>
+        </tr>
+      </sc-for>
+    </tbody>
+  </table>
+
+  </sc-if>
+
+  <sc-if value="{{ secBase }}" hint-placeholder-val="{{ true }}">
+  <h2>Registros do período</h2>
+  <p style="color:#8C91A4;font-size:9pt">Base completa do recorte, do mais recente ao mais antigo.</p>
+  <table style="margin-top:10px">
+    <thead>
+      <tr>
+        <th style="width:56px">Data</th>
+        <th style="width:74px">Frente</th>
+        <th style="width:104px">Veículo / órgão</th>
+        <th style="width:96px">Unidade</th>
+        <th>Pauta</th>
+        <th style="width:52px">Tier</th>
+        <th style="width:64px">Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      <sc-for list="{{ base }}" as="r" hint-placeholder-count="10">
+        <tr>
+          <td>{{ r.dataFmt }}</td>
+          <td>{{ r.area }}</td>
+          <td>{{ r.entidade }}</td>
+          <td>{{ r.unidade }}</td>
+          <td>{{ r.pauta }}</td>
+          <td>{{ r.tier }}</td>
+          <td>{{ r.status }}</td>
+        </tr>
+      </sc-for>
+    </tbody>
+  </table>
+  </sc-if>
+</doc-page>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{}">
+class Component extends DCLogic {
+  state = { regs: null };
+
+  params() {
+    try { return new URLSearchParams(window.location.search); } catch (e) { return new URLSearchParams(''); }
+  }
+
+  aplicaFiltros(rows) {
+    const p = this.params();
+    const per = p.get('periodo') || 'Ano 2026';
+    const ref = new Date('2026-08-24');
+    return rows.filter(r => {
+      if (p.get('area') && r.area !== p.get('area')) return false;
+      if (p.get('unidade') && (r.unidade || 'Holding / corporativo') !== p.get('unidade')) return false;
+      if (p.get('uf') && r.uf !== p.get('uf')) return false;
+      if (p.get('entidade') && r.entidade !== p.get('entidade')) return false;
+      if (p.get('subtipo') && (r.subtipo || '') !== p.get('subtipo')) return false;
+      if (p.get('esfera') && r.esfera !== p.get('esfera')) return false;
+      if (p.get('tier') && r.tier !== p.get('tier')) return false;
+      if (p.get('clima') && r.clima !== p.get('clima')) return false;
+      if (p.get('resultado')) {
+        const res = ['Avançou', 'Mantido', 'Retrocedeu'].indexOf(r.resultado) > -1 ? r.resultado : 'Sem definição';
+        if (res !== p.get('resultado')) return false;
+      }
+      if (p.get('tag')) {
+        const alvo = p.get('tag').split(',').filter(Boolean);
+        if (alvo.length && !alvo.some(t => r.tags.indexOf(t) > -1)) return false;
+      }
+      const q = (p.get('busca') || '').trim().toLowerCase();
+      if (q) {
+        const blob = [r.entidade, r.pessoa, r.pauta, r.uf, r.status, r.portaVoz, r.tags.join(' ')].join(' ').toLowerCase();
+        if (blob.indexOf(q) === -1) return false;
+      }
+      if (per !== 'Ano 2026') {
+        const lim = per === 'Últimos 30 dias' ? 30 : per === 'Últimos 90 dias' ? 90 : 180;
+        if ((ref - new Date(r.data)) / 86400000 > lim) return false;
+      }
+      return true;
+    });
+  }
+
+  componentDidMount() {
+    import('./dados-crm.js').then(m => this.setState({ regs: m.registros(), AREAS: m.dados.AREAS, MESES: m.dados.MESES }));
+  }
+
+  fmt(d) {
+    const p = String(d || '').split('-');
+    return p.length === 3 ? p[2] + '/' + p[1] + '/' + p[0].slice(2) : '—';
+  }
+
+  rank(rows, key, limit) {
+    const map = {};
+    rows.forEach(r => {
+      const vals = key === 'tags' ? r.tags : [r[key]];
+      vals.forEach(v => { if (v) map[v] = (map[v] || 0) + 1; });
+    });
+    return Object.keys(map).map(k => ({ label: k, value: map[k] }))
+      .sort((a, b) => b.value - a.value).slice(0, limit || 8);
+  }
+
+  renderVals() {
+    const todas = this.state.regs || [];
+    const rows = this.aplicaFiltros(todas);
+    const p = this.params();
+    const selRaw = p.get('s');
+    const sel = selRaw === null ? null : selRaw.split(',').filter(Boolean);
+    const tem = id => !sel || sel.indexOf(id) > -1;
+    const AREAS = this.state.AREAS || {};
+    const MESES = this.state.MESES || [];
+    if (!todas.length) return { periodoTitulo: '2026', resumo: 'Carregando os dados do CRM…', filtrosResumo: '' };
+    if (!rows.length) return { periodoTitulo: '2026', resumo: 'Nenhum registro no recorte selecionado.', filtrosResumo: '' };
+
+    const RESOLVIDO = ['Atendido', 'Realizado', 'Elaborado'];
+    const ABERTO = ['Agendado', 'Em análise'];
+    const grupoDe = st => RESOLVIDO.indexOf(st) > -1 ? 'resolvido' : ABERTO.indexOf(st) > -1 ? 'aberto' : 'declinado';
+    const cor = { resolvido: '#17E3CB', aberto: '#FE952B', declinado: '#FF5C60' };
+
+    const resolvidos = rows.filter(r => grupoDe(r.status) === 'resolvido');
+    const abertos = rows.filter(r => grupoDe(r.status) === 'aberto');
+    const declinados = rows.filter(r => grupoDe(r.status) === 'declinado');
+    const taxa = Math.round((resolvidos.length / rows.length) * 100);
+    const imprensa = rows.filter(r => r.area === 'Imprensa');
+    const atendidas = imprensa.filter(r => r.status === 'Atendido').length;
+    const tier1 = rows.filter(r => r.tier === 'Tier 1').length;
+
+    const monthly = MESES.slice(0, 8).map((label, mi) => ({
+      label, rows: rows.filter(r => Number(r.data.split('-')[1]) === mi + 1)
+    }));
+    const maxM = Math.max(1, ...monthly.map(m => m.rows.length));
+
+    const ORDEM = ['Avançou', 'Mantido', 'Retrocedeu', 'Sem definição'];
+    const CORES_RES = { 'Avançou': '#17E3CB', 'Mantido': '#0027BD', 'Retrocedeu': '#FF5C60', 'Sem definição': '#D5DAEA' };
+    const resDe = r => ORDEM.indexOf(r.resultado) > -1 ? r.resultado : 'Sem definição';
+    const definidos = rows.filter(r => resDe(r) !== 'Sem definição');
+    const avancou = rows.filter(r => resDe(r) === 'Avançou').length;
+    const efet = definidos.length ? Math.round((avancou / definidos.length) * 100) : 0;
+
+    const ref = new Date('2026-08-24');
+    const dias = r => Math.round((ref - new Date(r.data)) / 86400000);
+    const fila = abertos.map(r => ({
+      dias: dias(r), area: r.area, entidade: r.entidade, pauta: r.pauta, status: r.status,
+      cor: dias(r) > 60 ? '#B32328' : dias(r) > 30 ? '#8A4E00' : '#0A6B60'
+    })).sort((a, b) => b.dias - a.dias);
+
+    const topEnt = this.rank(rows, 'entidade', 1)[0];
+    const topTag = this.rank(rows, 'tags', 1)[0];
+
+    const filtros = [
+      'Período: ' + (p.get('periodo') || 'Ano 2026'),
+      p.get('area') ? 'Frente: ' + p.get('area') : null,
+      p.get('unidade') ? 'Unidade: ' + p.get('unidade') : null,
+      p.get('uf') ? 'UF: ' + p.get('uf') : null,
+      p.get('entidade') ? 'Veículo/órgão: ' + p.get('entidade') : null,
+      p.get('subtipo') ? 'Tipo de investidor: ' + p.get('subtipo') : null,
+      p.get('esfera') ? 'Esfera: ' + p.get('esfera') : null,
+      p.get('tier') ? 'Relevância: ' + p.get('tier') : null,
+      p.get('clima') ? 'Clima: ' + p.get('clima') : null,
+      p.get('resultado') ? 'Resultado: ' + p.get('resultado') : null,
+      p.get('tag') ? 'Tags: ' + p.get('tag').split(',').join(', ') : null,
+      p.get('busca') ? 'Busca: ' + p.get('busca') : null
+    ].filter(Boolean).join(' · ') + ' · ' + rows.length + ' registros';
+
+    return {
+      secResumo: tem('resumo'), secVolumetria: tem('volumetria'), secStatus: tem('status'),
+      secResultado: tem('resultado'), secRankings: tem('rankings'), secInterlocutores: tem('interlocutores'),
+      secPendencias: tem('pendencias'), secBase: tem('base'),
+      filtrosResumo: filtros,
+      interlocutores: (() => {
+        const map = {};
+        rows.forEach(r => {
+          const nome = (r.pessoa || '').trim();
+          if (!nome || nome === '—') return;
+          if (/^(câmara|senado|congresso|assembleia|comissão|comitê|conselho|mesa|bancada|time|equipe|analistas|investidores|gestores|representantes)/i.test(nome)) return;
+          if (r.evento && nome === r.evento) return;
+          (map[nome] = map[nome] || []).push(r);
+        });
+        return Object.keys(map).map(n => {
+          const rs = map[n];
+          const ent = {};
+          rs.forEach(r => { const k = r.area === 'Legislativo' ? (r.casa || r.entidade) : r.entidade; ent[k] = 1; });
+          const ult = rs.slice().sort((a, b) => (a.data < b.data ? 1 : -1))[0];
+          return { nome: n, entidades: Object.keys(ent).join(', '), area: rs[0].area, total: rs.length, ultimaFmt: this.fmt(ult.data) };
+        }).sort((a, b) => b.total - a.total || a.nome.localeCompare(b.nome)).slice(0, 20);
+      })(),
+      periodoTitulo: 'janeiro a agosto de 2026',
+      resumo: 'A base consolida ' + rows.length + ' interações institucionais no período, distribuídas em sete frentes. ' +
+        taxa + '% já tiveram desfecho registrado e ' + abertos.length + ' seguem em aberto. ' +
+        (topTag ? 'O tema dominante é ' + topTag.label.toLowerCase() + ' (' + topTag.value + ' registros)' : '') +
+        (topEnt ? ' e o veículo/órgão mais frequente é ' + topEnt.label + ' (' + topEnt.value + ')' : '') + '.',
+      kpis: [
+        { label: 'Interações no período', value: rows.length, hint: 'sete frentes consolidadas' },
+        { label: 'Agendas institucionais', value: rows.filter(r => r.area === 'Governo' || r.area === 'Parceiros').length, hint: 'governo e parceiros' },
+        { label: 'Demandas de imprensa', value: imprensa.length, hint: atendidas + ' atendidas · ' + (imprensa.length ? Math.round((atendidas / imprensa.length) * 100) : 0) + '% de aproveitamento' },
+        { label: 'Agendas de investidores', value: rows.filter(r => r.area === 'Investidores').length, hint: 'fundos, sell-side, rating e research' },
+        { label: 'Proposições legislativas', value: rows.filter(r => r.area === 'Legislativo').length, hint: 'em acompanhamento' },
+        { label: 'Interações Tier 1', value: tier1, hint: Math.round((tier1 / rows.length) * 100) + '% do total' }
+      ],
+      meses: monthly.map(m => ({
+        label: m.label, total: m.rows.length,
+        h: Math.max(4, Math.round((m.rows.length / maxM) * 100)) + '%',
+        segs: Object.keys(AREAS).map(a => {
+          const n = m.rows.filter(r => r.area === a).length;
+          return n ? { h: (n / Math.max(1, m.rows.length)) * 100 + '%', color: AREAS[a] } : null;
+        }).filter(Boolean)
+      })),
+      legenda: Object.keys(AREAS).map(a => ({
+        label: a, color: AREAS[a], value: rows.filter(r => r.area === a).length
+      })).filter(l => l.value > 0),
+      grupos: [
+        { label: 'Resolvidos', rows: resolvidos, color: cor.resolvido, detalhe: 'atendido, realizado ou elaborado' },
+        { label: 'Em aberto', rows: abertos, color: cor.aberto, detalhe: 'agendado ou em análise' },
+        { label: 'Declinados', rows: declinados, color: cor.declinado, detalhe: 'recusados ou cancelados' }
+      ].map(g => ({
+        label: g.label, valor: g.rows.length, color: g.color, detalhe: g.detalhe,
+        share: Math.round((g.rows.length / rows.length) * 100) + '% do total',
+        w: (g.rows.length / rows.length) * 100 + '%'
+      })),
+      porFrente: Object.keys(AREAS).map(a => {
+        const rs = rows.filter(r => r.area === a);
+        if (!rs.length) return null;
+        const nR = rs.filter(r => grupoDe(r.status) === 'resolvido').length;
+        const nA = rs.filter(r => grupoDe(r.status) === 'aberto').length;
+        const nD = rs.filter(r => grupoDe(r.status) === 'declinado').length;
+        return {
+          label: a, total: rs.length, taxa: Math.round((nR / rs.length) * 100) + '%',
+          segs: [
+            nR ? { w: (nR / rs.length) * 100 + '%', color: cor.resolvido } : null,
+            nA ? { w: (nA / rs.length) * 100 + '%', color: cor.aberto } : null,
+            nD ? { w: (nD / rs.length) * 100 + '%', color: cor.declinado } : null
+          ].filter(Boolean)
+        };
+      }).filter(Boolean),
+      resItens: ORDEM.map(k => {
+        const n = rows.filter(r => resDe(r) === k).length;
+        return { label: k, value: n, color: CORES_RES[k], w: (n / rows.length) * 100 + '%', share: Math.round((n / rows.length) * 100) + '%' };
+      }).filter(i => i.value > 0),
+      resLeitura: definidos.length
+        ? 'De ' + definidos.length + ' interações com resultado informado, ' + efet + '% avançaram.'
+        : 'Nenhum registro com resultado informado.',
+      rankings: [
+        { title: 'Veículos, órgãos e instituições', col: 'Veículo / órgão', items: this.rank(rows, 'entidade', 8) },
+        { title: 'Temas estratégicos', col: 'Tema', items: this.rank(rows, 'tags', 8) },
+        { title: 'Unidades de negócio', col: 'Empresa da holding', items: this.rank(rows, 'unidade', 8) },
+        { title: 'Porta-vozes e executivos', col: 'Porta-voz', items: this.rank(rows, 'portaVoz', 8) },
+        { title: 'Distribuição geográfica', col: 'UF', items: this.rank(rows.filter(r => r.uf && r.uf.length === 2), 'uf', 8) },
+        { title: 'Esfera e abrangência', col: 'Esfera', items: this.rank(rows, 'esfera', 6) }
+      ],
+      fila: fila,
+      filaTotal: fila.length,
+      base: rows.map(r => ({
+        dataFmt: this.fmt(r.data), area: r.area, entidade: r.entidade, unidade: r.unidade,
+        pauta: r.pauta, tier: r.tier, status: r.status
+      }))
+    };
+  }
+}
+
+</script>
+</body>
+</html>

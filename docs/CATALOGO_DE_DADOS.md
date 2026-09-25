@@ -6,7 +6,7 @@
 >
 > O catálogo descreve o **estado atual** do schema: coluna criada e depois removida não aparece (fica registrada em nota de rodapé), e `check` alterado aparece só na versão que vale hoje.
 >
-> 57 tabelas ao todo, em 45 arquivos de migration (`0001` a `0046`, sem o número `0019`, que nunca existiu). As migrations que só alteram schema existente, só populam dicionário ou só criam função/grant/trigger (sem `create table` novo) não aparecem como seções próprias — aparecem como nota na tabela que alteraram. São elas: **0006** (`conceder_acesso`), **0009** (papel `painel_app`), **0010** (cadeado do último administrador), **0013**, **0014**, **0015**, **0016**, **0018**, **0020**, **0021**, **0022**, **0023**, **0024**, **0025**, **0030**, **0031**, **0033**, **0034**, **0035**, **0037**, **0039**, **0040**, **0041**, **0042**, **0043**, **0044** e **0045**.
+> 64 tabelas ao todo, em 47 arquivos de migration (`0001` a `0048`, sem o número `0019`, que nunca existiu). As migrations que só alteram schema existente, só populam dicionário ou só criam função/grant/trigger (sem `create table` novo) não aparecem como seções próprias — aparecem como nota na tabela que alteraram. São elas: **0006** (`conceder_acesso`), **0009** (papel `painel_app`), **0010** (cadeado do último administrador), **0013**, **0014**, **0015**, **0016**, **0018**, **0020**, **0021**, **0022**, **0023**, **0024**, **0025**, **0030**, **0031**, **0033**, **0034**, **0035**, **0037**, **0039**, **0040**, **0041**, **0042**, **0043**, **0044**, **0045** e **0047**.
 
 ## Sumário
 
@@ -30,6 +30,7 @@
 | [0036](#0036--categoria-de-público) | Taxonomia de públicos | 2 |
 | [0038](#0038--formato-da-interação) | Que tipo de encontro foi | 1 |
 | [0046](#0046--consulta-recebida-e-alegação) | Consultas recebidas e o que elas dão como fato | 6 |
+| [0048](#0048--score-executivo) | O Índice de Saúde Reputacional | 7 |
 
 ---
 
@@ -99,7 +100,7 @@ O clima da conversa.
 |---|---|---|---|
 | `id` | `smallserial` | Sim | chave primária |
 | `codigo` | `text` | Sim | único |
-| `nome` | `text` | Sim | (alterado em 0030: `propositivo` passa a "Proativo" e `tenso` a "Reativo" — só o rótulo; o código é o que as cores, agregações e regras de exceção usam) |
+| `nome` | `text` | Sim | (alterado em 0030: `propositivo` passa a "Proativo" e `tenso` a "Reativo"; alterado de novo em 0047, para "Positivo" e "Negativo" — nas duas vezes só o rótulo, porque o código é o que as cores, agregações e regras de exceção usam) |
 | `cor_hex` | `char(7)` | Sim | |
 | `ordem` | `smallint` | Sim | |
 | `ativo` | `boolean` | Sim | `default true` |
@@ -241,6 +242,7 @@ Os assuntos, com nível de classificação.
 | `nivel` | `text` | Sim | `check (nivel in ('sensivel','estrategico','gerais'))`, `default 'gerais'` (alterado em 0022: eram dois valores — `estrategico` e `livre` —, e `livre` virou `gerais` no código, não só no rótulo; `sensivel` é o assunto que exige alinhamento prévio sobre quem fala) |
 | `ativo` | `boolean` | Sim | `default true` |
 | `criado_em` | `timestamptz` | Sim | `default now()` |
+| `tipo` | `text` | Não | (acrescentada em 0048) `estruturante` (afeta a tese da companhia) ou `operacional` (afeta o dia a dia). Cadastro, e não derivação: o mesmo assunto pode ser um ou outro conforme a companhia — quem decide é quem administra o dicionário |
 
 ---
 
@@ -965,3 +967,130 @@ Quais alegações uma consulta trouxe.
 | `alegacao_id` | `uuid` | Sim | `references alegacao(id)`; parte da chave primária. Indexado à parte, porque a busca da aba é pela alegação e a chave primária só serve à direção contrária |
 
 > Auditada por gatilho: dizer que uma consulta trouxe (ou deixou de trazer) uma alegação muda a contagem que a tela usa para afirmar que algo está circulando, e mudar isso em silêncio não é opção. `delete` concedido a `painel_app` em `interacao_consulta`, `interacao_alegacao` e `alegacao_tema`, porque trocar as alegações de uma consulta e os temas de uma alegação apagam linhas de verdade.
+
+---
+
+## 0048 — Score Executivo
+
+O Índice de Saúde Reputacional (ISR): uma nota de 0 a 100 por mês, média
+ponderada de cinco lentes. O que se guarda são as SOMAS de que toda régua
+precisa — o score em si é calculado na leitura, porque a ponderação é
+configurável e guardar o resultado pronto obrigaria a reprocessar tudo a cada
+ajuste de régua.
+
+### `lente`
+
+Uma das cinco famílias de stakeholder que o ISR pondera. Dicionário FECHADO: uma sexta lente muda a fórmula, e isso é código — o que a tela de Calibração ajusta é o peso.
+
+| Coluna | Tipo | Obrigatória | Observações |
+|---|---|---|---|
+| `id` | `smallserial` | Sim | chave primária |
+| `codigo` | `text` | Sim | único; `imprensa`, `mercado`, `sociedade`, `clientes`, `institucional` |
+| `nome` | `text` | Sim | |
+| `stakeholder` | `text` | Sim | de quem é a voz que a lente escuta |
+| `peso_padrao` | `smallint` | Sim | o peso de fábrica, em pontos: 30 / 20 / 20 / 15 / 15 |
+| `ordem` | `smallint` | Sim | |
+| `ativo` | `boolean` | Sim | `default true` |
+
+### `score_fonte`
+
+De onde vem o sentimento de cada lente. Extensível sem deploy: fornecedor novo é linha, com o mapeamento de colunas junto.
+
+| Coluna | Tipo | Obrigatória | Observações |
+|---|---|---|---|
+| `id` | `smallserial` | Sim | chave primária |
+| `codigo` | `text` | Sim | único |
+| `nome` | `text` | Sim | |
+| `fornecedor` | `text` | Sim | |
+| `lente_id` | `smallint` | Sim | `references lente(id)` |
+| `tipo_arquivo` | `text` | Não | `xlsx`… ou nulo quando a fonte é interna |
+| `mapeamento_colunas` | `jsonb` | Sim | `default '{}'`. Qual coluna da planilha alimenta qual campo de `mencao`, de qual aba, com que filtro, que prefixo de taxonomia remover e que apelidos aplicar. Duas fontes com o mesmo `arquivo` leem o mesmo anexo do fornecedor e são importadas juntas |
+| `interna` | `boolean` | Sim | `default false`. Fonte interna não se ingere: o dado já está neste banco. Hoje só o CRM |
+| `ativo` | `boolean` | Sim | `default true`. Se a fonte ainda RECEBE IMPORTAÇÃO — não é o toggle da calibração, e o histórico de um fornecedor descontinuado continua no índice |
+| `ordem` | `smallint` | Sim | `default 0` |
+| `observacao` | `text` | Não | |
+
+### `mencao`
+
+O grão fino: uma linha por matéria, post ou mensagem que a planilha trouxe, já traduzida para o vocabulário do índice. É o que permite refazer qualquer agregado quando a régua muda, e o que alimenta a aba de Drivers.
+
+| Coluna | Tipo | Obrigatória | Observações |
+|---|---|---|---|
+| `id` | `uuid` | Sim | chave primária, `default gen_random_uuid()` |
+| `fonte_id` | `smallint` | Sim | `references score_fonte(id)` |
+| `mes` | `date` | Sim | o PRIMEIRO DIA do mês, sempre — o índice é mensal |
+| `data` | `date` | Não | a data da própria menção |
+| `sentimento` | `text` | Sim | `pos`, `neu` ou `neg` |
+| `tier` | `text` | Não | `muito_relevante`, `relevante` ou `menos_relevante`; nulo nas fontes sem tier (redes não têm) |
+| `engajamento` | `integer` | Não | reações + compartilhamentos + comentários; nulo em imprensa |
+| `cargo` | `text` | Não | o cargo de quem postou (só Bites); alimenta a régua `cargo` |
+| `unidade_negocio_id` | `smallint` | Não | `references unidade_negocio(id)`; para quando o vocabulário do fornecedor for casado com o do CRM |
+| `tema_id` | `integer` | Não | `references tema(id)`; idem |
+| `tema_texto` | `text` | Não | o assunto COMO O FORNECEDOR ESCREVEU, que não é o vocabulário do CRM. É o que a aba de Drivers usa enquanto as listas não forem casadas |
+| `unidade_texto` | `text` | Não | a concessionária como o fornecedor a nomeia — idem |
+| `atributo` | `text` | Não | o atributo reputacional da clipagem; alimenta a barra divergente de Drivers |
+| `veiculo` | `text` | Não | |
+| `publico_alvo` | `text` | Não | é por ele que a lente Mercado recorta o clipping |
+| `criado_em` | `timestamptz` | Sim | `default now()` |
+
+> Índices: `(fonte_id, mes)`, `(mes)`, parcial por `tema_id`, e três parciais para os agrupamentos da aba de Drivers — `(mes, atributo)`, `(mes, unidade_texto)` e `(mes, tema_texto)` só sobre o negativo.
+
+### `score_mes_fonte`
+
+As somas de um mês, no grão (fonte, sentimento, tier). É daqui que toda régua de ponderação tira o número.
+
+| Coluna | Tipo | Obrigatória | Observações |
+|---|---|---|---|
+| `fonte_id` | `smallint` | Sim | `references score_fonte(id)`; parte da chave primária |
+| `mes` | `date` | Sim | parte da chave primária |
+| `sentimento` | `text` | Sim | parte da chave primária |
+| `tier` | `text` | Sim | parte da chave primária; VAZIO, e não nulo, quando a fonte não tem tier |
+| `mencoes` | `integer` | Sim | `default 0`; a régua `n` |
+| `soma_log` | `numeric(14,4)` | Sim | `default 0`; a soma de `1 + log₁₀(1 + engajamento)` |
+| `soma_engajamento` | `bigint` | Sim | `default 0`; o engajamento bruto |
+| `soma_cargo` | `numeric(14,4)` | Sim | `default 0`; a soma do peso por cargo do autor |
+| `atualizado_em` | `timestamptz` | Sim | `default now()` |
+
+### `score_estimativa`
+
+O NS suposto de uma lente num mês sem export, com a origem escrita. Sem uma tabela própria a estimativa entraria como contagem inventada, e ninguém saberia mais o que foi medido e o que foi suposto.
+
+| Coluna | Tipo | Obrigatória | Observações |
+|---|---|---|---|
+| `lente_id` | `smallint` | Sim | `references lente(id)`; parte da chave primária |
+| `mes` | `date` | Sim | parte da chave primária |
+| `ns` | `numeric(4,3)` | Sim | de −1 a 1 |
+| `origem` | `text` | Sim | de onde veio o número — uma estimativa sem procedência é um palpite |
+| `nota` | `text` | Não | |
+| `criado_por` | `uuid` | Não | `references usuario(id)` |
+| `criado_em` | `timestamptz` | Sim | `default now()` |
+
+### `score_config`
+
+A calibração em vigor. Versionada: a linha mais recente é a que vale, e a tabela SÓ CRESCE — é ela que responde com que critério o número foi lido no mês passado.
+
+| Coluna | Tipo | Obrigatória | Observações |
+|---|---|---|---|
+| `id` | `uuid` | Sim | chave primária, `default gen_random_uuid()` |
+| `versao` | `bigint` | Sim | `generated always as identity`. É por ele que se ordena, e não por `criado_em`: duas versões gravadas na mesma transação teriam o mesmo carimbo |
+| `pesos` | `jsonb` | Sim | `default '{}'`; peso por lente, de 0 a 60 |
+| `regua_tier` | `text` | Sim | `default 'aegea'`; quanto vale uma matéria pelo tier do veículo |
+| `regua_engajamento` | `text` | Sim | `default 'n'`; o que cada menção de rede vale |
+| `fontes_desligadas` | `jsonb` | Sim | `default '[]'`; tira a fonte do cálculo sem apagar o histórico |
+| `criado_por` | `uuid` | Não | `references usuario(id)` |
+| `criado_em` | `timestamptz` | Sim | `default now()` |
+
+### `score_fato`
+
+O que explica a curva do mês — texto de gente, e não derivação.
+
+| Coluna | Tipo | Obrigatória | Observações |
+|---|---|---|---|
+| `id` | `uuid` | Sim | chave primária, `default gen_random_uuid()` |
+| `mes` | `date` | Sim | |
+| `texto` | `text` | Sim | |
+| `efeito` | `text` | Sim | `sustenta`, `pressiona` ou `misto` |
+| `criado_por` | `uuid` | Não | `references usuario(id)` |
+| `criado_em` | `timestamptz` | Sim | `default now()` |
+
+> `delete` concedido a `painel_app` nas sete tabelas. A aplicação só apaga em quatro delas hoje (a ingestão troca `mencao` e `score_mes_fonte` por mês, a API apaga `score_fato`, o semeador refaz `score_estimativa`); as outras três recebem o `grant` para que um caminho de exclusão futuro falhe na revisão, e não em produção com erro de permissão.

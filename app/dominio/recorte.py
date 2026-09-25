@@ -88,7 +88,50 @@ class Recorte:
     categorias_publico: tuple[int, ...] = ()
     busca: str | None = None
 
+    #: Os campos que chegam como TEXTO da URL e podem chegar vazios.
+    #:
+    #: `uf` fica de fora porque a rota já a normaliza para maiúscula antes de
+    #: construir o Recorte — é a única exceção, e `test_recorte` a trava.
+    #:
+    #: `busca` FICOU DE FORA NA PRIMEIRA VERSÃO desta lista, e é o campo mais
+    #: fácil de mandar vazio: é uma caixa de busca, e apagar o que se digitou
+    #: nela manda `q=`. Escrevi a lista olhando os FILTROS, e a busca não parece
+    #: um filtro — mas o contador a conta e o SQL a ignora, que é exatamente o
+    #: defeito. Por isso há um teste comparando esta tupla com os campos de
+    #: texto do dataclass: um campo novo entra aqui, ou alguém decide
+    #: explicitamente que ele não deve entrar.
+    _DE_TEXTO = (
+        "frente", "unidade", "esfera", "clima", "clima_esperado", "resultado",
+        "status", "grupo_status", "entidade", "subtipo", "busca",
+    )
+
     def __post_init__(self) -> None:
+        # VAZIO É AUSÊNCIA, E AQUI — antes de qualquer outra coisa.
+        #
+        # "1 FILTRO ATIVO" SOBRE A LISTA INTEIRA: `quantidade_de_filtros` conta
+        # `is not None`, e a string vazia não é `None`; `filtros_sql.condicoes`
+        # testa truthiness, e a string vazia não passa por lá. As duas metades
+        # discordavam, e o caminho para chegar lá é banal — um `<select>` cuja
+        # opção de placeholder tem `value=""` submete `?esfera=`. A pessoa lia a
+        # base inteira achando que via o subconjunto federal, sem erro e sem log.
+        #
+        # NORMALIZAR NO VALUE OBJECT, e não no contador, é o que impede as duas
+        # metades de divergirem de novo: quem constrói um `Recorte` — a rota, um
+        # teste, um caso de uso — recebe o mesmo objeto para a mesma intenção.
+        for campo in self._DE_TEXTO:
+            valor = getattr(self, campo)
+            if isinstance(valor, str) and not valor.strip():
+                object.__setattr__(self, campo, None)
+
+        # E A ENTRADA VAZIA DENTRO DA LISTA. `tags` é coleção e escapa da regra
+        # acima, mas `tags=a&tags=` deixa uma entrada vazia na tupla — e ela vai
+        # para o SQL como busca por um tema de nome vazio, que não casa com nada
+        # e estreita o resultado sem que ninguém tenha pedido.
+        if self.tags:
+            object.__setattr__(
+                self, "tags", tuple(t for t in self.tags if t and t.strip())
+            )
+
         if self.uf and self.uf not in ABRANGENCIAS_VALIDAS:
             raise RegraViolada(
                 f"UF inválida: {self.uf!r}. Use uma das 27 siglas, "

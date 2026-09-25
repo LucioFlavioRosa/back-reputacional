@@ -145,6 +145,10 @@ class Tema(Tabela):
     nome: Mapped[str] = mapped_column(Text, unique=True)
     #: estrategico (vocabulário fechado) | livre (criada por quem registra)
     nivel: Mapped[str] = mapped_column(Text)
+    #: `estruturante` (afeta a tese da companhia) | `operacional` (afeta o dia
+    #: a dia). CADASTRO, e não derivação — nada no dado diz qual é qual. Nulo
+    #: até alguém classificar. Ver `migrations/0048`.
+    tipo: Mapped[str | None] = mapped_column(Text, nullable=True)
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
     #: Tag livre nasce datada — é o rastro de quando o vocabulário cresceu.
     criado_em: Mapped[datetime] = mapped_column(

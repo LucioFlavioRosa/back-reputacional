@@ -291,11 +291,15 @@ class InteracaoEntrada(BaseModel):
     #: Ids de `alegacao` — o que as perguntas desta consulta deram como fato.
     alegacoes: list[UUID] = Field(default_factory=list)
 
-    def para_dominio(self, *, frente: Frente) -> Interacao:
-        """`frente` é OBRIGATÓRIA aqui, mesmo `self.frente` sendo opcional no
-        corpo do POST: quem chama (a rota) já resolveu o valor final —
+    def para_dominio(self, *, frente: Frente, esfera_id: int | None) -> Interacao:
+        """`frente` e `esfera_id` são OBRIGATÓRIAS aqui, mesmo sendo opcionais
+        no corpo do POST: quem chama (a rota) já resolveu o valor final —
         explícito ou derivado — antes de chegar aqui. `para_dominio` nunca
-        adivinha sozinho."""
+        adivinha sozinho.
+
+        As duas seguem a mesma regra e por isso chegam do mesmo jeito: a tela
+        não pergunta nem a Frente nem a Esfera, e as duas se derivam da
+        instituição. Ver `casos_de_uso/derivar_frente.py` e `derivar_esfera.py`."""
         return Interacao(
             frente=frente,
             data_interacao=self.data_interacao,
@@ -305,7 +309,7 @@ class InteracaoEntrada(BaseModel):
             pauta=self.pauta.strip() if self.pauta else None,
             interlocutor_id=self.interlocutor_id,
             unidade_negocio_id=self.unidade_negocio_id,
-            esfera_id=self.esfera_id,
+            esfera_id=esfera_id,
             formato_interacao_id=self.formato_interacao_id,
             tier=self.tier,
             stakeholder_id=self.stakeholder_id,

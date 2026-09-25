@@ -348,6 +348,21 @@ def exigir_portal_crm(usuario: UsuarioLogado) -> UsuarioAtual:
     return usuario
 
 
+def exigir_portal_score(usuario: UsuarioLogado) -> UsuarioAtual:
+    """As rotas do Score exigem o portal Score, pela mesma razão do CRM.
+
+    O índice lê o clima das interações institucionais e o sentimento que os
+    fornecedores classificaram: é leitura executiva da reputação da companhia,
+    e o cartão escondido na capa não protege a rota que serve o número.
+    """
+    if usuario.papel is None or not usuario.papel.acessa_score:
+        raise NaoAutorizado(
+            "Seu perfil não tem acesso ao Score Executivo. "
+            "Peça à coordenação do painel."
+        )
+    return usuario
+
+
 # NÃO existe `exigir_exportacao` aqui, e a ausência é deliberada.
 #
 # `papel.pode_exportar` está no banco, mas não há rota para protegê-lo: o CSV é
@@ -367,6 +382,7 @@ def _nome_do_papel(usuario: UsuarioAtual) -> str:
 
 UsuarioQueEscreve = Annotated[UsuarioAtual, Depends(exigir_escrita)]
 UsuarioDoCrm = Annotated[UsuarioAtual, Depends(exigir_portal_crm)]
+UsuarioDoScore = Annotated[UsuarioAtual, Depends(exigir_portal_score)]
 UsuarioQueVeDiretorio = Annotated[UsuarioAtual, Depends(exigir_diretorio)]
 UsuarioQueAdministraCadastros = Annotated[
     UsuarioAtual, Depends(exigir_administracao_de_cadastros)

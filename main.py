@@ -16,9 +16,11 @@ from app.api import (
     dicionarios,
     exportacoes,
     interacoes,
+    lentes,
     materiais,
     metricas,
     referencias,
+    score,
     stakeholders,
 )
 
@@ -36,6 +38,7 @@ from app.banco import (  # noqa: F401
     tabelas_catalogo,
     tabelas_exportacoes,
     tabelas_interacoes,
+    tabelas_lentes,
     tabelas_referencias,
     tabelas_stakeholders,
 )
@@ -138,6 +141,8 @@ def criar_app() -> FastAPI:
     app.include_router(exportacoes.rotas)
     app.include_router(referencias.rotas)
     app.include_router(alegacoes.rotas)
+    app.include_router(score.rotas)
+    app.include_router(lentes.rotas)
     app.include_router(stakeholders.rotas)
     app.include_router(catalogo.rotas)
     app.include_router(dicionarios.rotas)
