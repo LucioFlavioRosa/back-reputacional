@@ -826,3 +826,74 @@ def test_as_concessionarias_nao_sao_diretorio(sessao):
     tipos = [p.tipo for p in _dossie_de(sessao, "sociedade", ve_diretorio=False).paineis]
 
     assert "barras_horizontais" in tipos
+
+def test_sem_ve_diretorio_a_manchete_nao_nomeia_o_jornalista(sessao):
+    """A TERCEIRA PORTA do mesmo dado, e a que eu não vi.
+
+    O painel saiu, os sinais saíram — e a manchete continuou entrando, porque
+    ela não é um campo à parte: `escolher()` a tira da MESMA lista de sinais, e
+    o sinal mais forte da Imprensa costuma ser justamente o da matriz, que
+    nomeia a pessoa e o veículo dela. Esconder o quadro e a lista e publicar o
+    nome na primeira frase da tela é pior que não ter escondido nada: parece
+    resolvido.
+
+    O corte tem de acontecer ANTES de `escolher()`, e não depois — depois, a
+    manchete já foi escolhida entre sinais que não podiam ser lidos.
+    """
+    from app.banco.tabelas_lentes import JornalistaMatriz
+
+    sessao.add(
+        JornalistaMatriz(
+            nome="Zulmira Vazamento",
+            veiculo="Diário do Teste",
+            relevancia=5,
+            exposicao=5,
+            proximidade=1,
+            exemplo=True,
+        )
+    )
+    sessao.flush()
+
+    # O contrapeso primeiro: com a flag, o nome É a manchete. Sem esta linha, o
+    # teste abaixo passaria numa lente que simplesmente não gera manchete.
+    com_flag = _dossie_de(sessao, "imprensa", ve_diretorio=True)
+    assert "Zulmira Vazamento" in (com_flag.manchete or "")
+
+    sem_flag = _dossie_de(sessao, "imprensa", ve_diretorio=False)
+
+    assert "Zulmira Vazamento" not in (sem_flag.manchete or "")
+    assert "Diário do Teste" not in (sem_flag.manchete or "")
+
+
+def test_sem_ve_diretorio_nenhum_texto_do_dossie_nomeia_o_jornalista(sessao):
+    """A varredura, porque enumerar campo a campo é como se esquece o terceiro.
+
+    Junta manchete, sinais da evolução, conclusões de todo bloco e as fichas de
+    procedência num texto só e procura o nome nele. Um campo novo que carregue
+    frase de detector entra nesta rede sem ninguém se lembrar de acrescentá-lo.
+    """
+    from app.banco.tabelas_lentes import JornalistaMatriz
+
+    sessao.add(
+        JornalistaMatriz(
+            nome="Zulmira Vazamento",
+            veiculo="Diário do Teste",
+            relevancia=5,
+            exposicao=5,
+            proximidade=1,
+            exemplo=True,
+        )
+    )
+    sessao.flush()
+
+    dossie = _dossie_de(sessao, "imprensa", ve_diretorio=False)
+    pedacos = [
+        dossie.manchete or "",
+        *dossie.sinais_da_evolucao,
+        *(sinal.frase for sinal in dossie.sinais),
+        *(sinal.evidencia or "" for sinal in dossie.sinais),
+        *(bloco.conclusao or "" for bloco in [dossie.evolucao, *dossie.paineis]),
+        *(str(bloco.dados) for bloco in [dossie.evolucao, *dossie.paineis]),
+    ]
+
+    assert "Zulmira Vazamento" not in " ".join(pedacos)

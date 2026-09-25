@@ -985,6 +985,7 @@ def obter_dossie(
         limites=regua_dos_sinais(calibracao),
         nome_do_painel_a=paineis[0].titulo,
         nome_do_painel_b=paineis[1].titulo,
+        secoes_a_omitir=escondidos,
     )
     onde = {
         Secao.EVOLUCAO: "Evolução",
@@ -1032,6 +1033,10 @@ def obter_dossie(
                 tom=sinal.tom.value,
             )
             for sinal in leitura.lista
+            # REDUNDANTE DE PROPÓSITO. `ler_sinais` já descartou estes sinais na
+            # origem, e é lá que a correção mora. Esta linha custa nada e recusa
+            # o payload caso alguém chame a leitura sem `secoes_a_omitir` — o
+            # jeito exato como a manchete vazou na primeira tentativa.
             if sinal.secao not in escondidos
         ],
     )

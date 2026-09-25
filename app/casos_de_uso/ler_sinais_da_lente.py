@@ -86,8 +86,18 @@ def ler_sinais(
     limites: Limites,
     nome_do_painel_a: str,
     nome_do_painel_b: str,
+    secoes_a_omitir: frozenset[Secao] = frozenset(),
 ) -> Leitura:
-    """O que está acontecendo nesta lente, já escolhido para cada lugar da tela."""
+    """O que está acontecendo nesta lente, já escolhido para cada lugar da tela.
+
+    `secoes_a_omitir` DESCARTA O SINAL ANTES DE ELE SER ESCOLHIDO, e a ordem é
+    a correção inteira. Quem chama pode esconder um painel do payload e filtrar
+    a lista de sinais depois — e ainda assim publicar o conteúdo dele, porque a
+    MANCHETE não é um campo à parte: `escolher` a tira desta mesma lista, e o
+    sinal mais forte da Imprensa costuma ser o da matriz, que nomeia a pessoa e
+    o veículo. Filtrar depois é escolher primeiro entre o que não podia ser
+    lido, e então esconder tudo menos a primeira frase da tela.
+    """
     detectores = {
         "imprensa": _da_imprensa,
         "mercado": _do_mercado,
@@ -95,8 +105,13 @@ def ler_sinais(
         "institucional": _do_institucional,
     }
     de = detectores.get(lente.codigo, _da_sociedade)
+    achados = [
+        sinal
+        for sinal in de(sessao, lente, mes, meses, calibracao, limites)
+        if sinal.secao not in secoes_a_omitir
+    ]
     return escolher(
-        de(sessao, lente, mes, meses, calibracao, limites),
+        achados,
         limites=limites,
         nome_do_painel_a=nome_do_painel_a,
         nome_do_painel_b=nome_do_painel_b,
