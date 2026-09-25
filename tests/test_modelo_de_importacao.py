@@ -57,6 +57,45 @@ def test_a_aba_fechada_e_protegida_e_a_editavel_nao():
     assert planilha["Instituições"].protection.sheet is False
 
 
+def test_o_vocabulario_fechado_trava_e_o_editavel_nao():
+    """A ASSIMETRIA É DE PROPÓSITO, e as duas metades quebram coisas
+    diferentes se alguém as igualar por engano.
+
+    Sem `showErrorMessage=True`, o Excel desenha a seta mas
+    `DataValidation.showErrorMessage` nasce `False` no openpyxl — a "lista
+    suspensa" aceita QUALQUER valor digitado por cima, e vira decoração, não
+    restrição. `test_a_coluna_de_vocabulario_ganha_lista_suspensa`, que só
+    confere que o objeto existe, não pegaria essa falha: reabrir o arquivo
+    prova que a validação foi criada, não que ela trava alguma coisa.
+
+    Vocabulário fechado (aqui, `status`, a coluna Situação) precisa travar —
+    é a restrição que o cliente pediu, e um valor novo é mudança de regra.
+    Vocabulário editável (aqui, `instituicoes`, a coluna Instituição) precisa
+    CONTINUAR sem travar — digitar um nome novo e cadastrá-lo na aba editável
+    é o caminho desenhado para a importação em massa; "consertar" esta
+    metade pelo mesmo padrão da outra mataria essa funcionalidade."""
+    planilha = _abrir(gerar(VOCABULARIOS))
+    agendas = planilha["Agendas"]
+
+    por_formula = {dv.formula1: dv for dv in agendas.data_validations.dataValidation}
+
+    assert por_formula["=status"].showErrorMessage is True
+    assert por_formula["=instituicoes"].showErrorMessage is False
+
+
+def test_a_aba_de_agendas_nao_convida_mais_que_o_teto_de_500():
+    """O QUE ISTO TRAVA: a lista suspensa cobrindo mais linhas que o servidor
+    aceita convida a pessoa a preencher além do teto e só descobrir na
+    recusa do upload inteiro. O intervalo da validação vai até a linha 501
+    (cabeçalho + 500 agendas), nunca mais."""
+    planilha = _abrir(gerar(VOCABULARIOS))
+    agendas = planilha["Agendas"]
+
+    for dv in agendas.data_validations.dataValidation:
+        for intervalo in dv.sqref.ranges:
+            assert intervalo.max_row == 501, str(dv.sqref)
+
+
 def test_o_definedname_de_cada_vocabulario_resolve_para_a_aba_certa():
     """O QUE ISTO TRAVA: um `DefinedName` mal apontado não dá erro nenhum — o
     arquivo abre normalmente, a lista suspensa existe, e só se mostra errada

@@ -41,14 +41,20 @@ from app.dominio.importacao_de_agendas import (
     VOCABULARIOS_FECHADOS,
 )
 
-#: Linhas de dados que cada lista suspensa cobre, além do cabeçalho. O teto de
-#: 500 agendas por arquivo (ver Restrições globais) é o limite da aba
-#: Agendas; as abas filhas (Participantes, Pessoas da Aegea, Materiais) têm
-#: várias linhas por agenda — várias pessoas ou materiais numa mesma reunião
-#: —, então o mesmo teto aplicado a elas sufocaria uma agenda com muitos
-#: participantes. Um único valor generoso, usado nas quatro abas, evita
-#: calcular um teto por aba sem deixar nenhuma delas curta.
-_LINHAS_DE_DADOS = 2000
+#: Linhas de dados que a lista suspensa da aba AGENDAS cobre, além do
+#: cabeçalho. Bate exatamente com o teto de 500 agendas por arquivo (ver
+#: Restrições globais) — DE PROPÓSITO, não por acaso: convidar a pessoa a
+#: preencher a linha 600 quando o servidor vai recusar o arquivo inteiro por
+#: passar de 500 é pior do que não ter lista suspensa nenhuma ali, porque ela
+#: falsamente sugere que a linha é válida.
+_LINHAS_DE_AGENDAS = 500
+
+#: Linhas de dados que a lista suspensa das abas FILHAS cobre (Participantes,
+#: Pessoas da Aegea, Materiais). Estas NÃO têm o teto de Agendas: uma agenda
+#: pode ter vários participantes ou vários materiais, então o mesmo limite de
+#: 500 aplicado a elas sufocaria uma única agenda com muita gente — por isso
+#: usam um valor único generoso, em vez do teto que rege a aba-mãe.
+_LINHAS_DE_ABAS_FILHAS = 2000
 
 
 def gerar(vocabularios: Mapping[str, list[str]]) -> bytes:
@@ -74,7 +80,19 @@ def gerar(vocabularios: Mapping[str, list[str]]) -> bytes:
     # -- abas de preenchimento: só o cabeçalho, quem preenche escreve o resto -
     for aba in FORMATO:
         planilha = pasta.create_sheet(aba.nome)
-        planilha.append([coluna.nome for coluna in aba.colunas])
+        cabecalho = [coluna.nome for coluna in aba.colunas]
+        planilha.append(cabecalho)
+        if aba.nome == "Agendas":
+            # O teto de 500 agendas por arquivo não aparece em NENHUMA tela
+            # até o upload recusar o arquivo inteiro na linha 501, sem dizer
+            # por quê. Uma nota ao lado do próprio cabeçalho avisa ANTES de a
+            # pessoa passar do limite — é o lugar óbvio, porque é o primeiro
+            # que ela vê ao abrir a aba.
+            planilha.cell(
+                row=1,
+                column=len(cabecalho) + 1,
+                value="Máximo de 500 agendas por arquivo.",
+            )
 
     # -- abas de vocabulário: uma lista em coluna A, com DefinedName ----------
     #
@@ -114,17 +132,47 @@ def gerar(vocabularios: Mapping[str, list[str]]) -> bytes:
     # -- listas suspensas: uma DataValidation por coluna com vocabulário ------
     for aba in FORMATO:
         planilha = pasta[aba.nome]
+        teto = _LINHAS_DE_AGENDAS if aba.nome == "Agendas" else _LINHAS_DE_ABAS_FILHAS
         for indice, coluna in enumerate(aba.colunas, start=1):
             if coluna.vocabulario is None:
                 continue
             letra = get_column_letter(indice)
+            fechado = coluna.vocabulario in VOCABULARIOS_FECHADOS
+            # A ASSIMETRIA ABAIXO É DE PROPÓSITO — as duas metades existem
+            # por motivos opostos, e trocar uma pela outra quebra algo:
+            #
+            # FECHADO trava de verdade (`showErrorMessage=True`). Sem isto, o
+            # openpyxl desenha a seta mas `DataValidation.showErrorMessage`
+            # nasce `False` — o Excel aceita QUALQUER valor digitado por
+            # cima, e a lista suspensa vira decoração, não restrição. É "a
+            # restrição que temos no front" que o cliente pediu, e a spec é
+            # explícita: um valor novo num vocabulário fechado é mudança de
+            # regra de negócio, não dado de cadastro — não pode entrar
+            # digitando na célula.
+            #
+            # EDITÁVEL fica como está, sem `showErrorMessage` — e isto
+            # também é de propósito, não a metade que "esqueceram" de trocar.
+            # Digitar um nome novo na coluna e casar com uma linha nova na
+            # aba editável É o caminho desenhado para cadastrar: é o que a
+            # Tarefa 5 classifica como confirmação de criação, por ter sido
+            # DECLARADO na aba certa. Travar aqui mataria a própria função
+            # que a importação em massa existe para servir.
             validacao = DataValidation(
                 type="list",
                 formula1=f"={coluna.vocabulario}",
                 allow_blank=True,
+                showErrorMessage=fechado,
+                errorTitle="Valor fora da lista" if fechado else None,
+                error=(
+                    f'"{ROTULO_DO_VOCABULARIO[coluna.vocabulario]}" é um vocabulário '
+                    "fechado: escolha um valor da lista. Um valor novo aqui é mudança "
+                    "de regra de negócio, feita em código — não pela planilha."
+                    if fechado
+                    else None
+                ),
             )
             planilha.add_data_validation(validacao)
-            validacao.add(f"{letra}2:{letra}{_LINHAS_DE_DADOS + 1}")
+            validacao.add(f"{letra}2:{letra}{teto + 1}")
 
     saida = io.BytesIO()
     pasta.save(saida)
