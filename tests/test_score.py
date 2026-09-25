@@ -401,3 +401,140 @@ def test_o_cadastro_das_lentes_nao_se_relê_a_cada_mês():
 
     assert "catalogo" in inspect.signature(repositorio_score.medir_lentes).parameters
     assert "catalogo" in inspect.signature(repositorio_score.indice_do_mes).parameters
+
+
+# -- a régua de engajamento não apaga lente nenhuma ----------------------------
+#
+# O DEFEITO, MEDIDO: com a régua bruta em junho/2026, QUATRO das cinco lentes
+# saíam do índice. Recorte de jornal não tem curtida e interação de CRM menos
+# ainda; a soma de engajamento delas é zero, a fonte saía com total zero, total
+# zero é fonte sem dado, e lente sem fonte com dado sai do numerador E do
+# denominador. O ISR 42 que sobrava era a Sociedade digital sozinha se passando
+# pelo índice da companhia. Nenhum erro, nenhum aviso, e um clique de distância
+# na tela de Calibração.
+#
+# E VARIAVA DE MÊS PARA MÊS, que é o pior: a lente Clientes tem engajamento em
+# janeiro, fevereiro, março e maio, e zero em abril e junho — na régua bruta ela
+# entrava no índice em quatro meses e saía em dois, e a curva deixava de ser
+# comparável consigo mesma.
+
+
+@pytest.mark.parametrize("regua", ["n", "log", "bruto", "cargo"])
+def test_nenhuma_regua_de_engajamento_apaga_uma_lente_que_tem_mencao(regua):
+    """A INVARIANTE. Tendo menção, a lente tem número — em qualquer régua.
+
+    Parametrizado de propósito: uma régua nova entra nesta lista antes de entrar
+    na tela, e nasce tendo de provar que não apaga ninguém.
+    """
+    lentes = _lentes(Calibracao(pesos=PADRAO.pesos, regua_engajamento=regua))
+    assert [lente.codigo for lente in lentes if lente.score is None] == []
+
+
+@pytest.mark.parametrize("regua", ["log", "bruto", "cargo"])
+def test_a_fonte_sem_o_dado_pedido_e_contada_por_mencoes(regua):
+    """A Clipei só tem menções: qualquer régua de engajamento a conta igual.
+
+    É o que "esta régua vale para Sociedade digital e Clientes" tem de significar
+    na conta, e não só no texto do guia.
+    """
+    pedida = Calibracao(pesos=PADRAO.pesos, regua_engajamento=regua)
+    assert ponderar(CLIPEI_JUNHO, pedida) == ponderar(CLIPEI_JUNHO, PADRAO)
+
+
+def test_a_fonte_que_tem_o_dado_continua_usando_a_regua_pedida():
+    """O contrapeso do teste acima: o fallback não pode comer a régua.
+
+    A Bites tem engajamento, então na régua bruta ela NÃO cai para menções — e o
+    número muda, que é o ponto de existir uma régua de engajamento.
+    """
+    bruta = Calibracao(pesos=PADRAO.pesos, regua_engajamento="bruto")
+    assert ponderar(BITES_JUNHO, bruta) != ponderar(BITES_JUNHO, PADRAO)
+    assert ponderar(BITES_JUNHO, bruta) == Contagem(
+        positivo=25237, neutro=43689, negativo=107886
+    )
+
+
+def test_a_escolha_da_regua_e_por_fonte_e_nunca_por_linha():
+    """Meia fonte em menções e meia em engajamento somaria grandezas diferentes.
+
+    A linha SEM o dado venceria justamente por não tê-lo: 900 menções contra
+    5.000 interações, dentro da mesma razão. Aqui a negativa não tem engajamento
+    registrado, e na régua bruta ela vale ZERO — não as suas 900 menções.
+    """
+    fonte = [
+        SomasDaFonte("mista", "pos", "", mencoes=100, soma_engajamento=5000),
+        SomasDaFonte("mista", "neg", "", mencoes=900, soma_engajamento=0),
+    ]
+    bruta = Calibracao(pesos=PADRAO.pesos, regua_engajamento="bruto")
+    assert ponderar(fonte, bruta) == Contagem(positivo=5000, neutro=0, negativo=0)
+
+
+def test_so_tier_1_continua_podendo_descartar_uma_fonte():
+    """O descarte DELIBERADO não foi levado junto com o acidental.
+
+    Perder uma fonte por não ter tier 1 é exatamente o que "só tier 1" pede.
+    Perdê-la por não ter curtida não é o que régua nenhuma pediu — e é só o
+    segundo que o fallback conserta.
+    """
+    so_pequenos = [
+        SomasDaFonte("blog", "pos", "menos_relevante", mencoes=300),
+        SomasDaFonte("blog", "neg", "menos_relevante", mencoes=100),
+    ]
+    apenas_tier_1 = Calibracao(pesos=PADRAO.pesos, regua_tier="so_tier1")
+    assert ponderar(so_pequenos, apenas_tier_1) == Contagem()
+    assert ns(ponderar(so_pequenos, apenas_tier_1)) is None
+
+
+def test_o_tier_peneira_antes_da_regua_de_engajamento():
+    """A ordem das duas réguas, e por que ela não é indiferente.
+
+    A fonte tem engajamento SÓ nas linhas de tier 2. Em "só tier 1" essas linhas
+    valem zero e já não são desta conta — perguntar nelas se a fonte tem
+    engajamento manteria a régua bruta, e a fonte sairia com total zero: de novo
+    uma lente apagada, pela porta dos fundos.
+    """
+    fonte = [
+        SomasDaFonte("mista", "pos", "muito_relevante", mencoes=40, soma_engajamento=0),
+        SomasDaFonte("mista", "neg", "muito_relevante", mencoes=10, soma_engajamento=0),
+        SomasDaFonte("mista", "pos", "relevante", mencoes=500, soma_engajamento=9000),
+    ]
+    apenas_tier_1 = Calibracao(
+        pesos=PADRAO.pesos, regua_engajamento="bruto", regua_tier="so_tier1"
+    )
+    assert ponderar(fonte, apenas_tier_1) == Contagem(positivo=40, neutro=0, negativo=10)
+
+
+def test_a_institucional_sobrevive_a_toda_regua():
+    """A lente contada do próprio CRM é a que mais sofria.
+
+    As linhas dela nascem em `_somas_do_crm` com `mencoes` e nada mais — as
+    outras três somas ficam em zero, porque interação de CRM não tem curtida nem
+    logaritmo. Antes disto, escolher logaritmo, bruto ou cargo tirava a
+    Institucional do índice, e ela é 15% dele.
+    """
+    for regua in ("n", "log", "bruto", "cargo"):
+        calibracao = Calibracao(pesos=PADRAO.pesos, regua_engajamento=regua)
+        institucional = medir_lente(
+            codigo="institucional",
+            nome="Institucional",
+            peso=15,
+            somas_por_fonte={"crm": CRM_JUNHO},
+            calibracao=calibracao,
+        )
+        assert institucional.score is not None, regua
+        assert institucional.score == 67, regua
+
+
+def test_regua_da_fonte_nao_mexe_na_contagem_simples():
+    """A régua que já é a contagem não tem para onde cair.
+
+    Perguntar `any(...)` nela seria pior que inútil: uma fonte com zero menções
+    devolveria "n" de qualquer jeito, mas o atalho diz a regra em voz alta — a
+    contagem é o piso, e piso não desce.
+    """
+    from app.dominio.score import regua_da_fonte
+
+    assert regua_da_fonte([], "n") == "n"
+    assert regua_da_fonte([], "bruto") == "n"
+    assert regua_da_fonte(CLIPEI_JUNHO, "log") == "n"
+    assert regua_da_fonte(BITES_JUNHO, "log") == "log"

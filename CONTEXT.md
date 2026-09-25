@@ -200,7 +200,10 @@ da lente), importância
 Como cada menção é convertida em número: a régua de TIER (quanto vale a
 matéria pelo veículo) e a de ENGAJAMENTO (o que se soma de cada menção de
 rede). Mudar uma régua recalcula todos os meses — é o que mantém a curva
-comparável.
+comparável. Onde a fonte não tem o dado que a régua pede — clipping não tem
+curtida, interação de CRM menos ainda — cada menção vale 1, e a fonte continua
+na conta: régua nenhuma tira uma lente do índice por falta de dado. A exceção é
+"só tier 1", que descarta o que não é tier 1 porque é isso que ela pede.
 _Avoid_: fórmula (a fórmula é o NS), critério, modelo
 
 **Peso**, **Peso efetivo**:

@@ -36,6 +36,7 @@ from app.banco.tabelas_score import (
     ScoreMesFonte,
 )
 from app.dominio.score import (
+    REGUA_DE_CONTAGEM,
     REGUAS_DE_TIER,
     Calibracao,
     Contagem,
@@ -573,17 +574,34 @@ def pesos_por_tema(
 
     pesos_de_tier = REGUAS_DE_TIER[calibracao.regua_tier]
 
-    def medida(cargo: str | None, engajamento: int | None, quantas: int) -> float:
-        """O que cada uma destas menções soma, pela régua em vigor."""
-        if calibracao.regua_engajamento == "log":
+    def medida(regua: str, cargo: str | None, engajamento: int | None, quantas: int) -> float:
+        """O que cada uma destas menções soma, pela régua dada."""
+        if regua == "log":
             return peso_do_engajamento(engajamento) * quantas
-        if calibracao.regua_engajamento == "bruto":
+        if regua == "bruto":
             return (engajamento or 0) * quantas
-        if calibracao.regua_engajamento == "cargo":
+        if regua == "cargo":
             return peso_do_cargo(cargo) * quantas
         return float(quantas)
 
     linhas = list(sessao.execute(consulta))
+
+    # A MESMA RÉGUA POR FONTE QUE A LENTE USA. `regua_da_fonte` decide, lá no
+    # domínio, que uma fonte sem o dado pedido é contada por menções — e esta
+    # conta TEM de decidir igual, ou ela para de fechar com o número que
+    # explica. Não é a mesma chamada porque não é o mesmo dado de entrada: a
+    # lente soma `score_mes_fonte`, já agregado, e aqui se lê a menção crua,
+    # que é o que permite abrir por tema. A regra é uma; a matéria-prima, duas.
+    medido_por_fonte: dict[tuple[date, str], float] = {}
+    for mes, _lente, fonte, _assunto, _sent, tier, cargo, engajamento, quantas in linhas:
+        peso = pesos_de_tier.get(tier, 1.0) if tier else 1.0
+        medido_por_fonte[(mes, fonte)] = medido_por_fonte.get((mes, fonte), 0.0) + (
+            peso * medida(calibracao.regua_engajamento, cargo, engajamento, quantas)
+        )
+    regua_de: dict[tuple[date, str], str] = {
+        chave: calibracao.regua_engajamento if total else REGUA_DE_CONTAGEM
+        for chave, total in medido_por_fonte.items()
+    }
 
     # O DENOMINADOR É A FONTE INTEIRA, inclusive as menções sem tema: elas
     # entraram no NS, e tirá-las faria as contribuições somarem mais do que a
@@ -593,7 +611,7 @@ def pesos_por_tema(
     for mes, lente, fonte, _assunto, _sent, tier, cargo, engajamento, quantas in linhas:
         peso = pesos_de_tier.get(tier, 1.0) if tier else 1.0
         total_da_fonte[(mes, fonte)] = total_da_fonte.get((mes, fonte), 0.0) + (
-            peso * medida(cargo, engajamento, quantas)
+            peso * medida(regua_de[(mes, fonte)], cargo, engajamento, quantas)
         )
         fontes_da_lente.setdefault((mes, lente), set()).add(fonte)
 
@@ -603,7 +621,7 @@ def pesos_por_tema(
         if tema is None or sentimento not in ("pos", "neg"):
             continue
         peso = pesos_de_tier.get(tier, 1.0) if tier else 1.0
-        valor = peso * medida(cargo, engajamento, quantas)
+        valor = peso * medida(regua_de[(mes, fonte)], cargo, engajamento, quantas)
         atual = por_assunto.setdefault((mes, lente, fonte, tema), [0.0, 0.0, 0.0, 0.0])
         if sentimento == "pos":
             atual[0] += valor

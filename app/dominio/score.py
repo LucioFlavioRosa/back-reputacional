@@ -65,6 +65,10 @@ REGUAS_DE_ENGAJAMENTO: dict[str, str] = {
     "cargo": "soma_cargo",
 }
 
+#: A régua que só conta menções. É o piso de toda medição — e o destino de quem
+#: não tem o dado que a régua escolhida pede. Ver `regua_da_fonte`.
+REGUA_DE_CONTAGEM = "n"
+
 #: As faixas do §2, da melhor para a pior — `faixa_de` devolve a primeira que
 #: o score alcança.
 FAIXAS: tuple[tuple[int, str, str], ...] = (
@@ -208,6 +212,38 @@ class SomasDaFonte:
         return float(getattr(self, REGUAS_DE_ENGAJAMENTO[regua_engajamento]))
 
 
+def regua_da_fonte(somas: list[SomasDaFonte], regua_engajamento: str) -> str:
+    """A régua de engajamento que ESTA fonte consegue cumprir.
+
+    ONDE NÃO HÁ O DADO, CADA MENÇÃO VALE 1 — e a fonte continua na conta.
+
+    Sem isto, escolher uma régua de engajamento APAGAVA lentes inteiras, em
+    silêncio. Recorte de jornal não tem curtida, interação de CRM menos ainda: a
+    soma de engajamento delas é zero, a fonte saía com total zero, total zero é
+    fonte sem dado, e lente sem fonte com dado sai do numerador E do
+    denominador. Medido em junho de 2026: na régua bruta, QUATRO das cinco
+    lentes saíam, e o ISR 42 que sobrava era a Sociedade digital sozinha se
+    passando pelo índice da companhia. Nenhum erro, nenhum aviso.
+
+    E VARIAVA DE MÊS PARA MÊS, que é o pior: a lente Clientes tem engajamento em
+    janeiro, fevereiro, março e maio, e zero em abril e junho. Na régua bruta ela
+    entrava no índice em quatro meses e saía em dois — a curva deixava de ser
+    comparável consigo mesma.
+
+    A DECISÃO É POR FONTE, E NUNCA POR LINHA. Numa fonte com engajamento em
+    parte das linhas, cair para menções só nas outras somaria grandezas
+    diferentes dentro da mesma razão — 500 menções contra 122 interações — e a
+    linha SEM o dado venceria justamente por não tê-lo. Por fonte, numerador e
+    denominador são da mesma grandeza. Entre fontes não há problema: o que se
+    compara depois já é NS, que é adimensional.
+    """
+    if regua_engajamento == REGUA_DE_CONTAGEM:
+        return REGUA_DE_CONTAGEM
+    if any(linha.medida(regua_engajamento) for linha in somas):
+        return regua_engajamento
+    return REGUA_DE_CONTAGEM
+
+
 def ponderar(somas: list[SomasDaFonte], calibracao: Calibracao) -> Contagem:
     """As somas de uma fonte viram os três números da fórmula.
 
@@ -217,12 +253,21 @@ def ponderar(somas: list[SomasDaFonte], calibracao: Calibracao) -> Contagem:
     sua medida e nada mais.
     """
     pesos_de_tier = REGUAS_DE_TIER[calibracao.regua_tier]
+
+    def peso_do_veiculo(linha: SomasDaFonte) -> float:
+        return pesos_de_tier.get(linha.tier, 1.0) if linha.tier else 1.0
+
+    # O TIER PENEIRA ANTES DA RÉGUA DE ENGAJAMENTO, e a ordem é a regra: em "só
+    # tier 1" as linhas de tier 2 e 3 valem zero e já não são desta conta, então
+    # não é nelas que se pergunta se a fonte tem engajamento. Perder uma fonte
+    # por não ter tier 1 é o que "só tier 1" pede, e continua valendo; perdê-la
+    # por não ter curtida não é o que régua nenhuma pediu.
+    contam = [linha for linha in somas if peso_do_veiculo(linha) != 0]
+    regua = regua_da_fonte(contam, calibracao.regua_engajamento)
+
     total = Contagem()
-    for linha in somas:
-        peso = pesos_de_tier.get(linha.tier, 1.0) if linha.tier else 1.0
-        if peso == 0:
-            continue
-        valor = linha.medida(calibracao.regua_engajamento) * peso
+    for linha in contam:
+        valor = linha.medida(regua) * peso_do_veiculo(linha)
         if linha.sentimento == Sentimento.POSITIVO:
             total = total + Contagem(positivo=valor)
         elif linha.sentimento == Sentimento.NEUTRO:
