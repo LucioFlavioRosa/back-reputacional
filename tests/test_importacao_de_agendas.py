@@ -72,6 +72,22 @@ def test_todo_vocabulario_tem_rotulo_de_aba():
     assert set(ROTULO_DO_VOCABULARIO) == conhecidos
 
 
+def test_nenhum_rotulo_de_vocabulario_repete_nome_de_aba_de_preenchimento():
+    """O QUE ISTO TRAVA: o Excel não aceita duas abas com o mesmo nome, e o
+    openpyxl resolve a colisão RENOMEANDO A SEGUNDA CALADAMENTE — sem erro,
+    sem aviso. Se um rótulo de vocabulário repetir o nome de uma aba de
+    `FORMATO`, a lista suspensa daquele vocabulário aponta, na prática, para
+    a aba de preenchimento (cuja primeira linha é cabeçalho, não um valor
+    válido) em vez da aba de vocabulário — e o arquivo abre normalmente, sem
+    denunciar nada. Foi exatamente o que aconteceu com `"pessoas_aegea"`
+    antes deste teste existir. Ele prende o dicionário INTEIRO contra as
+    QUATRO abas de preenchimento, não só o par que já colidiu, porque o
+    próximo rótulo a colidir pode ser outro."""
+    nomes_de_preenchimento = {aba.nome for aba in FORMATO}
+    colisoes = sorted(set(ROTULO_DO_VOCABULARIO.values()) & nomes_de_preenchimento)
+    assert colisoes == []
+
+
 def test_todo_campo_da_interacao_tem_destino_declarado():
     """O GUARDA DO CAMPO NOVO.
 

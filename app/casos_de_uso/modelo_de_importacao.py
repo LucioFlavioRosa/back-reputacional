@@ -86,21 +86,12 @@ def gerar(vocabularios: Mapping[str, list[str]]) -> bytes:
     for chave in sorted(VOCABULARIOS_EDITAVEIS) + sorted(VOCABULARIOS_FECHADOS):
         valores = vocabularios.get(chave, [])
         rotulo = ROTULO_DO_VOCABULARIO[chave]
-        # `pessoas_aegea` tem o MESMO rótulo da aba de preenchimento "Pessoas
-        # da Aegea" (compare `FORMATO` com `ROTULO_DO_VOCABULARIO` no
-        # domínio) — uma colisão que já existe hoje, não algo que este
-        # arquivo introduz. Sem este desvio, `pasta.create_sheet` criaria a
-        # aba de vocabulário como "Pessoas da Aegea1" (o Excel não aceita
-        # duas abas com o mesmo nome, e o openpyxl renomeia caladamente), e o
-        # `DefinedName` abaixo, construído a partir de `rotulo`, apontaria
-        # para "Pessoas da Aegea" — a aba de PREENCHIMENTO, não a de
-        # vocabulário — fazendo a lista suspensa de "Pessoa" ler cabeçalho de
-        # coluna em vez de nome de pessoa. Guardar aqui, explicitamente,
-        # evita depender de um esquema de renomeio que o openpyxl não promete
-        # manter, e mantém o rótulo visível o mais próximo possível do que
-        # `ROTULO_DO_VOCABULARIO` pede.
-        nome_da_aba = rotulo if rotulo not in pasta.sheetnames else f"{rotulo} (lista)"
-        planilha = pasta.create_sheet(nome_da_aba)
+        # Nenhum rótulo repete o nome de uma aba de `FORMATO` — o domínio
+        # garante isso (`test_nenhum_rotulo_de_vocabulario_repete_nome_de_
+        # aba_de_preenchimento`), então `create_sheet` aqui nunca colide com
+        # uma aba de preenchimento já criada, e o nome que a pessoa vê é
+        # exatamente `rotulo`, sem desvio.
+        planilha = pasta.create_sheet(rotulo)
         for valor in valores:
             planilha.append([valor])
 
@@ -117,11 +108,7 @@ def gerar(vocabularios: Mapping[str, list[str]]) -> bytes:
         # cadastradas). `max(..., 1)` garante que o intervalo sempre cubra ao
         # menos a linha 1 — vazia, mas um `DefinedName` sem nenhuma célula
         # dentro do intervalo é o que de fato quebraria o arquivo.
-        # `planilha.title`, não `rotulo`: são iguais em quatorze dos quinze
-        # vocabulários, mas para `pessoas_aegea` (ver comentário acima) o
-        # título real da aba já foi desviado, e apontar o intervalo para o
-        # rótulo pretendido faria a lista suspensa ler a aba errada de novo.
-        intervalo = f"'{planilha.title}'!$A$1:$A${max(ultima_linha, 1)}"
+        intervalo = f"'{rotulo}'!$A$1:$A${max(ultima_linha, 1)}"
         pasta.defined_names[chave] = DefinedName(chave, attr_text=intervalo)
 
     # -- listas suspensas: uma DataValidation por coluna com vocabulário ------

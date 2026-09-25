@@ -98,16 +98,32 @@ VOCABULARIOS_FECHADOS: frozenset[str] = frozenset(
 )
 
 #: O nome da aba que uma pessoa vê para cada vocabulário. Fecha uma lacuna que
-#: a chave sozinha deixa: a chave (`"instituicoes"`, `"pessoas_aegea"`) é o
+#: a chave sozinha deixa: a chave (`"instituicoes"`, `"unidades_negocio"`) é o
 #: identificador estável que o código usa; o rótulo (`"Instituições"`,
-#: "Pessoas da Aegea") é o texto em português que vai na aba do `.xlsx`. Sem
+#: "Unidades de negócio") é o texto em português que vai na aba do `.xlsx`. Sem
 #: este dicionário, a Tarefa 3 (gerador) e a Tarefa 4 (leitor) teriam cada uma
 #: que inventar o nome da aba a partir da chave — e nada garantiria que
 #: inventassem o MESMO nome.
+#:
+#: NENHUM RÓTULO PODE REPETIR O NOME DE UMA ABA DE `FORMATO` —
+#: `test_nenhum_rotulo_de_vocabulario_repete_nome_de_aba_de_preenchimento`
+#: prende essa regra para o dicionário inteiro. `"pessoas_aegea"` já caiu
+#: nela uma vez: o rótulo óbvio seria "Pessoas da Aegea", mas esse é também o
+#: nome da aba de preenchimento (a terceira de `FORMATO`, onde se lista quem
+#: da Aegea esteve em cada reunião). Duas abas com o mesmo nome não cabem no
+#: mesmo `.xlsx` — o Excel não aceita —, e o openpyxl resolve a colisão
+#: RENOMEANDO A SEGUNDA CALADAMENTE para "Pessoas da Aegea1", sem erro nem
+#: aviso. Se o gerador construísse o `DefinedName` da lista suspensa a partir
+#: do rótulo pretendido em vez do nome real da aba, o intervalo apontaria
+#: para "Pessoas da Aegea" — a aba de PREENCHIMENTO, cuja primeira linha é o
+#: cabeçalho Código/Pessoa/Papel/Presença, não uma lista de nomes — e a
+#: lista suspensa da coluna Pessoa ficaria silenciosamente errada no arquivo
+#: que a pessoa baixa: sem exceção, sem aviso, só uma lista suspensa que não
+#: lista pessoa nenhuma. Por isso o rótulo abaixo já vem distinto.
 ROTULO_DO_VOCABULARIO: dict[str, str] = {
     "instituicoes": "Instituições",
     "interlocutores": "Interlocutores",
-    "pessoas_aegea": "Pessoas da Aegea",
+    "pessoas_aegea": "Pessoas da Aegea (lista)",
     "temas": "Temas",
     "unidades_negocio": "Unidades de negócio",
     "formatos_interacao": "Tipos de interação",

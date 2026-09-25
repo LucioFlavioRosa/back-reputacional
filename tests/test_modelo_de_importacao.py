@@ -5,6 +5,7 @@ import io
 from app.casos_de_uso.modelo_de_importacao import gerar
 from app.dominio.importacao_de_agendas import (
     FORMATO,
+    ROTULO_DO_VOCABULARIO,
     VOCABULARIOS_EDITAVEIS,
     VOCABULARIOS_FECHADOS,
 )
@@ -54,6 +55,31 @@ def test_a_aba_fechada_e_protegida_e_a_editavel_nao():
 
     assert planilha["Clima"].protection.sheet is True
     assert planilha["Instituições"].protection.sheet is False
+
+
+def test_o_definedname_de_cada_vocabulario_resolve_para_a_aba_certa():
+    """O QUE ISTO TRAVA: um `DefinedName` mal apontado não dá erro nenhum — o
+    arquivo abre normalmente, a lista suspensa existe, e só se mostra errada
+    quando alguém abre a aba de destino e vê que os valores não batem. Foi
+    assim que a colisão entre o rótulo de `pessoas_aegea` e a aba de
+    preenchimento "Pessoas da Aegea" quase passou despercebida: nenhum outro
+    teste deste arquivo teria acusado o intervalo apontando para a aba
+    errada. Este confere, por vocabulário, que o nome de aba do `DefinedName`
+    é o rótulo esperado e que os valores lidos daquele intervalo são
+    exatamente os que `gerar` recebeu — não o cabeçalho de uma aba de
+    preenchimento que por acaso tem o mesmo nome."""
+    planilha = _abrir(gerar(VOCABULARIOS))
+
+    for chave, valores in VOCABULARIOS.items():
+        (nome_da_aba, intervalo), = planilha.defined_names[chave].destinations
+        assert nome_da_aba == ROTULO_DO_VOCABULARIO[chave], chave
+
+        lidos = [
+            celula.value
+            for (celula,) in planilha[nome_da_aba][intervalo]
+            if celula.value is not None
+        ]
+        assert lidos == valores, chave
 
 
 def test_o_vocabulario_vazio_nao_quebra_o_arquivo():
