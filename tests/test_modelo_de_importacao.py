@@ -33,12 +33,21 @@ def test_o_arquivo_tem_as_abas_de_preenchimento_e_as_de_vocabulario():
 
 
 def test_o_cabecalho_de_cada_aba_e_o_da_descricao():
-    """SE ISTO DIVERGIR, a pessoa preenche uma coluna que o leitor ignora."""
+    """SE ISTO DIVERGIR, a pessoa preenche uma coluna que o leitor ignora.
+
+    A comparação é EXATA, não por prefixo. Uma versão por prefixo (`lidas[:
+    len(aba.colunas)] == [...]`) já passou por cima de uma 26ª célula na
+    linha 1 de Agendas — uma nota escrita direto na linha do cabeçalho, que
+    `FORMATO` descreve com 25 nomes. A Tarefa 4 lê essa MESMA linha contra
+    `FORMATO` para casar cabeçalho com coluna, e uma célula sobrando ali é
+    exatamente a divergência que o docstring do domínio existe para evitar —
+    por prefixo, este teste nunca a veria. A igualdade fecha essa classe
+    inteira: nenhuma célula a mais pode se esconder depois do fim descrito."""
     planilha = _abrir(gerar(VOCABULARIOS))
 
     for aba in FORMATO:
         lidas = [celula.value for celula in next(planilha[aba.nome].iter_rows())]
-        assert lidas[: len(aba.colunas)] == [c.nome for c in aba.colunas], aba.nome
+        assert lidas == [c.nome for c in aba.colunas], aba.nome
 
 
 def test_a_coluna_de_vocabulario_ganha_lista_suspensa():
@@ -94,6 +103,21 @@ def test_a_aba_de_agendas_nao_convida_mais_que_o_teto_de_500():
     for dv in agendas.data_validations.dataValidation:
         for intervalo in dv.sqref.ranges:
             assert intervalo.max_row == 501, str(dv.sqref)
+
+
+def test_o_teto_de_agendas_esta_num_comentario_na_celula_codigo():
+    """O QUE ISTO TRAVA: a nota do teto de 500 já foi uma célula extra na
+    linha do cabeçalho — removida por quebrar `test_o_cabecalho_de_cada_
+    aba_e_o_da_descricao` quando esse teste passou a comparar por igualdade.
+    Virou comentário na célula "Código" (A1 de Agendas) precisamente para
+    ficar visível a quem preenche sem tocar o valor de nenhuma célula — e sem
+    este teste, alguém poderia mover ou apagar o comentário sem que nada
+    percebesse, porque nenhum outro teste deste arquivo olha para ele."""
+    planilha = _abrir(gerar(VOCABULARIOS))
+    comentario = planilha["Agendas"]["A1"].comment
+
+    assert comentario is not None
+    assert "500" in comentario.text
 
 
 def test_o_definedname_de_cada_vocabulario_resolve_para_a_aba_certa():

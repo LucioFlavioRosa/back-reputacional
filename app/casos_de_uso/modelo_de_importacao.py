@@ -68,6 +68,7 @@ def gerar(vocabularios: Mapping[str, list[str]]) -> bytes:
     """
     try:
         from openpyxl import Workbook
+        from openpyxl.comments import Comment
         from openpyxl.utils import get_column_letter
         from openpyxl.workbook.defined_name import DefinedName
         from openpyxl.worksheet.datavalidation import DataValidation
@@ -80,18 +81,20 @@ def gerar(vocabularios: Mapping[str, list[str]]) -> bytes:
     # -- abas de preenchimento: só o cabeçalho, quem preenche escreve o resto -
     for aba in FORMATO:
         planilha = pasta.create_sheet(aba.nome)
-        cabecalho = [coluna.nome for coluna in aba.colunas]
-        planilha.append(cabecalho)
+        planilha.append([coluna.nome for coluna in aba.colunas])
         if aba.nome == "Agendas":
             # O teto de 500 agendas por arquivo não aparece em NENHUMA tela
             # até o upload recusar o arquivo inteiro na linha 501, sem dizer
-            # por quê. Uma nota ao lado do próprio cabeçalho avisa ANTES de a
-            # pessoa passar do limite — é o lugar óbvio, porque é o primeiro
-            # que ela vê ao abrir a aba.
-            planilha.cell(
-                row=1,
-                column=len(cabecalho) + 1,
-                value="Máximo de 500 agendas por arquivo.",
+            # por quê. A nota avisa ANTES de a pessoa passar do limite — mas
+            # vai de COMENTÁRIO na célula do cabeçalho "Código", não de uma
+            # célula extra na linha 1: a Tarefa 4 lê essa MESMA linha contra
+            # `FORMATO` para casar cabeçalho com coluna, e uma 26ª célula
+            # numa linha de 25 nomes é exatamente a divergência que o
+            # docstring do domínio existe para evitar — o comentário fica
+            # visível a quem abre a aba (marcador vermelho, texto ao passar o
+            # mouse) e invisível a quem lê valor de célula.
+            planilha["A1"].comment = Comment(
+                "Máximo de 500 agendas por arquivo.", "Painel Reputacional"
             )
 
     # -- abas de vocabulário: uma lista em coluna A, com DefinedName ----------
