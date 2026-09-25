@@ -74,12 +74,22 @@ VOCABULARIOS_EDITAVEIS: frozenset[str] = frozenset(
 #: migration — nunca uma linha na planilha. O servidor recusa valor novo
 #: nestes MESMO QUE a aba correspondente chegue desprotegida: proteger a aba é
 #: conveniência do Excel, não o controle (ver `classificar`, Tarefa 5).
+#:
+#: AS CHAVES SÃO AS DE `api/dicionarios.py › FECHADOS`, e por isso as quatro
+#: primeiras não são o singular óbvio: `status`, `climas`, `resultados` e
+#: `iniciativas` resolvem contra TABELA no banco (a Tarefa 6 as lê de lá por
+#: esta chave — duas grafias para o mesmo conceito quebraria essa busca). As
+#: quatro últimas — `modalidade`, `presenca`, `papel`, `momento` — não têm
+#: entrada em `api/dicionarios.py`: são vocabulário fixo definido em código,
+#: sem tabela própria, e por isso ficam no singular que o resto deste módulo
+#: usa. `ROTULO_DO_VOCABULARIO` é quem apresenta as oito com o mesmo nome de
+#: aba visível, singular, independente de qual das duas famílias cada uma é.
 VOCABULARIOS_FECHADOS: frozenset[str] = frozenset(
     {
-        "situacao",
-        "clima",
-        "resultado",
-        "iniciativa",
+        "status",
+        "climas",
+        "resultados",
+        "iniciativas",
         "modalidade",
         "presenca",
         "papel",
@@ -102,10 +112,10 @@ ROTULO_DO_VOCABULARIO: dict[str, str] = {
     "unidades_negocio": "Unidades de negócio",
     "formatos_interacao": "Tipos de interação",
     "areas": "Áreas",
-    "situacao": "Situação",
-    "clima": "Clima",
-    "resultado": "Resultado",
-    "iniciativa": "Iniciativa",
+    "status": "Situação",
+    "climas": "Clima",
+    "resultados": "Resultado",
+    "iniciativas": "Iniciativa",
     "modalidade": "Modalidade",
     "presenca": "Presença",
     "papel": "Papel",
@@ -138,16 +148,16 @@ _AGENDAS = Aba(
         ),
         Coluna(nome="Modalidade", campo="modalidade", vocabulario="modalidade"),
         Coluna(nome="Local", campo="local"),
-        Coluna(nome="Situação", campo="status", vocabulario="situacao"),
-        Coluna(nome="Iniciativa", campo="iniciativa", vocabulario="iniciativa"),
+        Coluna(nome="Situação", campo="status", vocabulario="status"),
+        Coluna(nome="Iniciativa", campo="iniciativa", vocabulario="iniciativas"),
         Coluna(nome="Nota da situação", campo="nota_situacao"),
         Coluna(nome="Declinado por", campo="declinado_por"),
         Coluna(nome="Motivo do declínio", campo="motivo_declinio"),
-        Coluna(nome="Clima esperado", campo="clima_esperado", vocabulario="clima"),
+        Coluna(nome="Clima esperado", campo="clima_esperado", vocabulario="climas"),
         Coluna(nome="Expectativa", campo="expectativa"),
         Coluna(nome="Prevê desdobramento", campo="preve_desdobramento"),
-        Coluna(nome="Clima", campo="clima", vocabulario="clima"),
-        Coluna(nome="Resultado", campo="resultado", vocabulario="resultado"),
+        Coluna(nome="Clima", campo="clima", vocabulario="climas"),
+        Coluna(nome="Resultado", campo="resultado", vocabulario="resultados"),
         Coluna(nome="Relato", campo="relato"),
         Coluna(nome="Repercussão e encaminhamentos", campo="encaminhamentos"),
         Coluna(nome="Pendências", campo="pendencias"),

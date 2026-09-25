@@ -55,8 +55,11 @@ def test_toda_coluna_com_vocabulario_aponta_para_um_grupo_conhecido():
 
 def test_o_clima_e_fechado_e_a_instituicao_e_editavel():
     """Os dois exemplos que o cliente deu, e eles caem em grupos diferentes:
-    clima é FECHADO (os KPIs dependem dele), instituição é cadastro."""
-    assert "clima" in VOCABULARIOS_FECHADOS
+    clima é FECHADO (os KPIs dependem dele), instituição é cadastro.
+
+    A chave é `"climas"`, não `"clima"`: é a mesma de `api/dicionarios.py ›
+    FECHADOS`, e a Tarefa 6 resolve este vocabulário contra o banco por ela."""
+    assert "climas" in VOCABULARIOS_FECHADOS
     assert "instituicoes" in VOCABULARIOS_EDITAVEIS
 
 
