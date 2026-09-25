@@ -20,6 +20,7 @@ from app.dominio.erros import RegraViolada
 from app.dominio.score import (
     Calibracao,
     Contagem,
+    Indice,
     LenteMedida,
     SomasDaFonte,
     calcular_indice,
@@ -29,6 +30,8 @@ from app.dominio.score import (
     para_score,
     peso_do_cargo,
     peso_do_engajamento,
+    pesos_efetivos,
+    pesos_exatos,
     ponderar,
 )
 
@@ -538,3 +541,98 @@ def test_regua_da_fonte_nao_mexe_na_contagem_simples():
     assert regua_da_fonte([], "bruto") == "n"
     assert regua_da_fonte(CLIPEI_JUNHO, "log") == "n"
     assert regua_da_fonte(BITES_JUNHO, "log") == "log"
+
+
+# -- a repartição do peso efetivo ----------------------------------------------
+#
+# A PROMESSA É "SOMA EXATAMENTE 100", e ela aparece na tela: a composição do
+# índice é lida em porcentagem, e uma que soma 101 destrói a confiança num
+# número que a diretoria vai citar.
+#
+# ESTES CASOS NÃO EXISTIAM. A regra morava como função privada de `api/score.py`
+# e só se alcançava montando banco e subindo HTTP — dois cenários davam para
+# escrever (cinco lentes e quatro), e os de borda ficavam sem prova. Ela é do
+# domínio; a rota só a serializa.
+
+
+def _indice_com(**pesos: int) -> Indice:
+    """Um índice com as lentes pedidas, todas medidas. Peso 0 = fora do cálculo."""
+    return calcular_indice(
+        "2026-06",
+        [
+            LenteMedida(codigo=codigo, nome=codigo, peso=peso, ns=0.0, score=50)
+            for codigo, peso in pesos.items()
+        ],
+    )
+
+
+def test_o_peso_efetivo_soma_cem_com_as_cinco_lentes():
+    efetivos = pesos_efetivos(_indice_com(**PADRAO.pesos))
+    assert sum(efetivos.values()) == 100
+    # Sem lente de fora, o peso efetivo É o peso — nada a repartir.
+    assert efetivos == PADRAO.pesos
+
+
+def test_o_peso_efetivo_soma_cem_com_uma_lente_de_fora():
+    """O caso que motivou Hamilton: arredondar cada uma por si dá 101.
+
+    30/85, 20/85, 20/85 e 15/85 são 35,29 · 23,53 · 23,53 · 17,65. Truncados dão
+    35 + 23 + 23 + 17 = 98, e os dois pontos que sobram vão para quem mais perdeu
+    no corte: clientes (0,647) leva o primeiro, e o segundo fica com o empate de
+    0,529 entre mercado e sociedade — desempatado pelo código, mercado. A imprensa
+    não recebe nada apesar de ser a maior lente: ela perdeu só 0,294 no corte, e o
+    critério é o que se perdeu, não o tamanho.
+    """
+    sem_institucional = {c: p for c, p in PADRAO.pesos.items() if c != "institucional"}
+    efetivos = pesos_efetivos(_indice_com(**sem_institucional))
+    assert sum(efetivos.values()) == 100
+    assert efetivos == {"imprensa": 35, "mercado": 24, "sociedade": 23, "clientes": 18}
+
+
+def test_o_empate_na_fracao_desempata_pelo_codigo():
+    """Três lentes iguais dão 33,33 cada: 99, e um ponto para repartir.
+
+    Duas — aqui três — igualmente prejudicadas precisam de uma ordem, e ela tem
+    de ser ESTÁVEL: a composição não pode mudar entre duas leituras sem nada ter
+    mudado. A ordem é o código, em ordem alfabética.
+    """
+    efetivos = pesos_efetivos(_indice_com(zulu=10, alfa=10, meio=10))
+    assert sum(efetivos.values()) == 100
+    assert efetivos == {"alfa": 34, "meio": 33, "zulu": 33}
+
+
+def test_uma_lente_sozinha_leva_os_cem():
+    assert pesos_efetivos(_indice_com(imprensa=30)) == {"imprensa": 100}
+
+
+def test_sem_lente_medida_nao_ha_o_que_repartir():
+    """Zero lentes não é "cada uma com 0%" — é composição nenhuma.
+
+    Devolver `{}` é o que faz a tela não desenhar uma barra vazia somando 0.
+    """
+    vazio = calcular_indice("2026-06", [])
+    assert pesos_efetivos(vazio) == {}
+    assert pesos_exatos(vazio) == {}
+
+
+def test_lente_de_peso_zero_nao_quebra_a_repartição():
+    """Peso 0 é escolha de quem calibra: a lente é medida e não conta.
+
+    Ela entra no cálculo (tem score) com peso 0, e a repartição tem de tratá-la
+    como 0% sem estourar a divisão nem roubar o ponto de sobra de quem tem peso.
+    """
+    efetivos = pesos_efetivos(_indice_com(imprensa=30, silenciada=0))
+    assert sum(efetivos.values()) == 100
+    assert efetivos == {"imprensa": 100, "silenciada": 0}
+
+
+def test_o_peso_exato_nao_arredonda():
+    """É com o exato que a decomposição por tema pondera.
+
+    Usar o inteiro da tela ali introduziria um erro que a conta promete não ter —
+    e é por isso que as duas funções existem em vez de uma.
+    """
+    sem_institucional = {c: p for c, p in PADRAO.pesos.items() if c != "institucional"}
+    exatos = pesos_exatos(_indice_com(**sem_institucional))
+    assert exatos["imprensa"] == pytest.approx(30 / 85 * 100)
+    assert sum(exatos.values()) == pytest.approx(100)

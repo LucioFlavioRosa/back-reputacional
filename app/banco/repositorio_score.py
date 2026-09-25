@@ -593,7 +593,7 @@ def pesos_por_tema(
     # lente soma `score_mes_fonte`, já agregado, e aqui se lê a menção crua,
     # que é o que permite abrir por tema. A regra é uma; a matéria-prima, duas.
     medido_por_fonte: dict[tuple[date, str], float] = {}
-    for mes, _lente, fonte, _assunto, _sent, tier, cargo, engajamento, quantas in linhas:
+    for mes, _lente, fonte, _tema, _sent, tier, cargo, engajamento, quantas in linhas:
         peso = pesos_de_tier.get(tier, 1.0) if tier else 1.0
         medido_por_fonte[(mes, fonte)] = medido_por_fonte.get((mes, fonte), 0.0) + (
             peso * medida(calibracao.regua_engajamento, cargo, engajamento, quantas)
@@ -608,7 +608,7 @@ def pesos_por_tema(
     # fonte de fato pôs.
     total_da_fonte: dict[tuple[date, str], float] = {}
     fontes_da_lente: dict[tuple[date, str], set[str]] = {}
-    for mes, lente, fonte, _assunto, _sent, tier, cargo, engajamento, quantas in linhas:
+    for mes, lente, fonte, _tema, _sent, tier, cargo, engajamento, quantas in linhas:
         peso = pesos_de_tier.get(tier, 1.0) if tier else 1.0
         total_da_fonte[(mes, fonte)] = total_da_fonte.get((mes, fonte), 0.0) + (
             peso * medida(regua_de[(mes, fonte)], cargo, engajamento, quantas)
@@ -616,13 +616,13 @@ def pesos_por_tema(
         fontes_da_lente.setdefault((mes, lente), set()).add(fonte)
 
     # (mês, lente, fonte, tema) -> [pos ponderado, neg ponderado, pos, neg]
-    por_assunto: dict[tuple[date, str, str, str], list[float]] = {}
+    por_tema: dict[tuple[date, str, str, str], list[float]] = {}
     for mes, lente, fonte, tema, sentimento, tier, cargo, engajamento, quantas in linhas:
         if tema is None or sentimento not in ("pos", "neg"):
             continue
         peso = pesos_de_tier.get(tier, 1.0) if tier else 1.0
         valor = peso * medida(regua_de[(mes, fonte)], cargo, engajamento, quantas)
-        atual = por_assunto.setdefault((mes, lente, fonte, tema), [0.0, 0.0, 0.0, 0.0])
+        atual = por_tema.setdefault((mes, lente, fonte, tema), [0.0, 0.0, 0.0, 0.0])
         if sentimento == "pos":
             atual[0] += valor
             atual[2] += quantas
@@ -631,7 +631,7 @@ def pesos_por_tema(
             atual[3] += quantas
 
     por_mes: dict[date, list[PesosDoTema]] = {}
-    for (mes, lente, fonte, tema), (pos, neg, cruas_pos, cruas_neg) in por_assunto.items():
+    for (mes, lente, fonte, tema), (pos, neg, cruas_pos, cruas_neg) in por_tema.items():
         por_mes.setdefault(mes, []).append(
             PesosDoTema(
                 lente=lente,

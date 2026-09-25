@@ -421,3 +421,50 @@ def calcular_indice(mes: str, lentes: list[LenteMedida]) -> Indice:
     )
     rotulo, leitura = faixa_de(isr)
     return Indice(mes=mes, isr=isr, faixa=rotulo, leitura_da_faixa=leitura, lentes=tuple(lentes))
+
+
+def pesos_exatos(indice: Indice) -> dict[str, float]:
+    """A fração real de cada lente no índice, sem arredondar.
+
+    É COM ESTA QUE O ÍNDICE PONDERA. A versão inteira existe para a TELA não
+    exibir uma composição que soma 101; usá-la na decomposição por tema
+    introduziria um erro que a conta promete não ter.
+    """
+    total = sum(lente.peso for lente in indice.lentes_no_calculo)
+    if not total:
+        return {}
+    return {lente.codigo: lente.peso / total * 100 for lente in indice.lentes_no_calculo}
+
+
+def pesos_efetivos(indice: Indice) -> dict[str, int]:
+    """Quanto cada lente pesou DE FATO, em porcento inteiro, somando 100.
+
+    ARREDONDAR CADA UMA POR SI NÃO FECHA. Com uma lente de 15 fora do cálculo,
+    30/85, 20/85, 20/85 e 15/85 viram 35 + 24 + 24 + 18 = 101 — e a tela passa
+    a exibir uma composição impossível, que é o tipo de detalhe que destrói a
+    confiança num número que a diretoria vai citar.
+
+    O resto é distribuído pelas MAIORES FRAÇÕES: quem mais perdeu no
+    arredondamento recebe o ponto que sobra. É o método de Hamilton, o mesmo de
+    repartição de cadeiras — e o que mais se aproxima da proporção real.
+
+    MORAVA EM `api/score.py`, e não era lugar. A promessa "soma exatamente 100"
+    é uma regra do índice, com casos de borda que são dela e de mais ninguém:
+    empate na fração, uma lente só, lente de peso zero, nenhuma lente. Como
+    função privada de um módulo de rota, ela só se alcançava montando banco e
+    subindo HTTP — dois cenários davam para escrever, e os outros ficavam sem
+    prova. A regra é do domínio; a rota só a serializa.
+    """
+    exatos = pesos_exatos(indice)
+    if not exatos:
+        return {}
+
+    inteiros = {codigo: int(valor) for codigo, valor in exatos.items()}
+    sobra = 100 - sum(inteiros.values())
+
+    # Empate na fração desempata pelo código: duas lentes igualmente
+    # prejudicadas precisam de uma ordem, e qualquer uma estável serve.
+    por_fracao = sorted(exatos, key=lambda codigo: (-(exatos[codigo] - inteiros[codigo]), codigo))
+    for codigo in por_fracao[:sobra]:
+        inteiros[codigo] += 1
+    return inteiros

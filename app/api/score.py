@@ -44,6 +44,8 @@ from app.dominio.score import (
     Indice,
     ns,
     para_score,
+    pesos_efetivos,
+    pesos_exatos,
 )
 from app.dominio.sinais_da_lente import Limites
 from app.dominio.tema_do_mes import TemaDoMes, temas_que_pesaram
@@ -363,7 +365,7 @@ def obter(
     primeiro = repositorio_score.indice_do_mes(sessao, meses[0], calibracao) if meses else indice
 
     scores_anteriores = {lente.codigo: lente.score for lente in anterior.lentes}
-    efetivos = _pesos_efetivos(indice)
+    efetivos = pesos_efetivos(indice)
     # O STAKEHOLDER NÃO PASSA PELO CÁLCULO, e por isso não está em
     # `LenteMedida`: é rótulo de cadastro, e não número. Buscá-lo aqui mantém o
     # domínio do índice falando só de conta.
@@ -399,48 +401,6 @@ def obter(
         fatos=_fatos_do_mes(sessao, alvo),
         leitura=_leitura(indice),
     )
-
-
-def _pesos_exatos(indice: Indice) -> dict[str, float]:
-    """A fração real de cada lente, sem arredondar.
-
-    É COM ESTA QUE O ÍNDICE PONDERA. A versão inteira existe para a TELA não
-    exibir uma composição que soma 101; usá-la na decomposição por tema
-    introduziria um erro que a conta promete não ter.
-    """
-    total = sum(lente.peso for lente in indice.lentes_no_calculo)
-    if not total:
-        return {}
-    return {lente.codigo: lente.peso / total * 100 for lente in indice.lentes_no_calculo}
-
-
-def _pesos_efetivos(indice: Indice) -> dict[str, int]:
-    """Quanto cada lente pesou DE FATO, em porcento inteiro, somando 100.
-
-    ARREDONDAR CADA UMA POR SI NÃO FECHA. Com uma lente de 15 fora do cálculo,
-    30/85, 20/85, 20/85 e 15/85 viram 35 + 24 + 24 + 18 = 101 — e a tela passa
-    a exibir uma composição impossível, que é o tipo de detalhe que destrói a
-    confiança num número que a diretoria vai citar.
-
-    O resto é distribuído pelas MAIORES FRAÇÕES: quem mais perdeu no
-    arredondamento recebe o ponto que sobra. É o método de Hamilton, o mesmo de
-    repartição de cadeiras — e o que mais se aproxima da proporção real.
-    """
-    no_calculo = indice.lentes_no_calculo
-    total = sum(lente.peso for lente in no_calculo)
-    if not total:
-        return {}
-
-    exatos = {lente.codigo: lente.peso / total * 100 for lente in no_calculo}
-    inteiros = {codigo: int(valor) for codigo, valor in exatos.items()}
-    sobra = 100 - sum(inteiros.values())
-
-    # Empate na fração desempata pelo código: duas lentes igualmente
-    # prejudicadas precisam de uma ordem, e qualquer uma estável serve.
-    por_fracao = sorted(exatos, key=lambda codigo: (-(exatos[codigo] - inteiros[codigo]), codigo))
-    for codigo in por_fracao[:sobra]:
-        inteiros[codigo] += 1
-    return inteiros
 
 
 def _delta(atual: int | None, anterior: int | None) -> int | None:
@@ -501,11 +461,11 @@ def serie(sessao: Sessao, usuario: UsuarioLogado) -> list[PontoDaSerie]:
     for mes in meses:
         indice = repositorio_score.indice_do_mes(sessao, mes, calibracao, catalogo)
         notas = {lente.codigo: lente.score for lente in indice.lentes if lente.score is not None}
-        # O PESO EXATO, E NÃO O ARREDONDADO DA TELA. `_pesos_efetivos` reparte
+        # O PESO EXATO, E NÃO O ARREDONDADO DA TELA. `pesos_efetivos` reparte
         # inteiros que somam 100 pelo método de Hamilton, para a composição
         # exibida não dar 101. O índice, porém, pondera pela fração real — e
         # usar o inteiro aqui quebraria a exatidão que esta conta promete.
-        exatos = _pesos_exatos(indice)
+        exatos = pesos_exatos(indice)
         do_mes = temas_que_pesaram(
             temas.get(mes, []),
             exatos,

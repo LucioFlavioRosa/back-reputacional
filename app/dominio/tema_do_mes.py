@@ -130,7 +130,7 @@ def pontos_no_indice(peso: PesosDoTema, peso_efetivo: int) -> float:
     return contribuicao_no_ns(peso) * PONTOS_POR_NS * peso_efetivo / 100
 
 
-def _para_assunto(pontos: float, peso: PesosDoTema) -> TemaDoMes:
+def _para_tema(pontos: float, peso: PesosDoTema) -> TemaDoMes:
     return TemaDoMes(
         tema=peso.tema,
         lente=peso.lente,
@@ -201,12 +201,12 @@ def temas_que_pesaram(
     return TemasDoMes(
         pontos_sem_tema=round(total - explicado, 1),
         sustentou=(
-            _para_assunto(*min(positivos, key=lambda par: (-par[0], par[1].tema)))
+            _para_tema(*min(positivos, key=lambda par: (-par[0], par[1].tema)))
             if positivos
             else None
         ),
         pressionou=(
-            _para_assunto(*min(negativos, key=lambda par: (par[0], par[1].tema)))
+            _para_tema(*min(negativos, key=lambda par: (par[0], par[1].tema)))
             if negativos
             else None
         ),
