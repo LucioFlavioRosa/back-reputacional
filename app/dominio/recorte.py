@@ -123,6 +123,15 @@ class Recorte:
             if isinstance(valor, str) and not valor.strip():
                 object.__setattr__(self, campo, None)
 
+        # E A ENTRADA VAZIA DENTRO DA LISTA. `tags` é coleção e escapa da regra
+        # acima, mas `tags=a&tags=` deixa uma entrada vazia na tupla — e ela vai
+        # para o SQL como busca por um tema de nome vazio, que não casa com nada
+        # e estreita o resultado sem que ninguém tenha pedido.
+        if self.tags:
+            object.__setattr__(
+                self, "tags", tuple(t for t in self.tags if t and t.strip())
+            )
+
         if self.uf and self.uf not in ABRANGENCIAS_VALIDAS:
             raise RegraViolada(
                 f"UF inválida: {self.uf!r}. Use uma das 27 siglas, "

@@ -235,15 +235,46 @@ def test_todo_campo_de_texto_do_recorte_esta_na_normalizacao():
     `uf` é a exceção declarada: a rota já a normaliza para maiúscula antes de
     construir o Recorte.
     """
+    import types
+    import typing
     from dataclasses import fields
 
+    # PELO TIPO RESOLVIDO, e não pela grafia da anotação. Comparar
+    # `campo.type` com a string "str | None" passava a depender de como alguém
+    # escreveu: `Optional[str]`, `None | str` ou um alias diriam a mesma coisa
+    # e não casariam, e o teste ficaria verde sobre um campo desprotegido.
+    # `get_type_hints` devolve o objeto de tipo, que é o que importa aqui.
+    anotacoes = typing.get_type_hints(Recorte)
+
+    def e_de_texto(tipo: object) -> bool:
+        if tipo is str:
+            return True
+        # SÓ UNIÃO, e não qualquer genérico que contenha `str`. `tags` é
+        # `tuple[str, ...]` e o `get_args` dela também traz `str` — mas ela é
+        # uma COLEÇÃO, e as duas metades já a tratam por truthiness, então não
+        # cabe na normalização campo a campo. As duas grafias de união entram:
+        # `str | None` vira `types.UnionType`, `Optional[str]` vira
+        # `typing.Union`, e as duas dizem a mesma coisa.
+        return typing.get_origin(tipo) in (types.UnionType, typing.Union) and str in (
+            typing.get_args(tipo)
+        )
+
     de_texto = {
-        campo.name
-        for campo in fields(Recorte)
-        if campo.type in ("str | None", "str")
+        campo.name for campo in fields(Recorte) if e_de_texto(anotacoes[campo.name])
     }
 
     assert de_texto - set(Recorte._DE_TEXTO) == {"uf"}
+
+
+def test_uma_tag_vazia_na_lista_e_descartada():
+    """`tags=a&tags=` deixa uma entrada vazia na tupla.
+
+    Achado ao endurecer o teste acima: `tags` é coleção e escapa da
+    normalização campo a campo, mas a entrada vazia dentro dela vai para o SQL
+    e vira busca por um tema de nome vazio — que não casa com nada e estreita o
+    resultado sem que ninguém tenha pedido.
+    """
+    assert Recorte(tags=("tarifa", "", "  ")).tags == ("tarifa",)
 
 
 def test_valor_so_com_espaco_tambem_nao_conta():
