@@ -35,6 +35,7 @@ from app.banco.repositorio_interacoes import (
 from app.banco.sessao import SessaoDoPedido
 from app.casos_de_uso import consultar_interacoes, editar_interacao, registrar_interacao
 from app.casos_de_uso.consulta_recebida import validar_consulta
+from app.casos_de_uso.derivar_esfera import derivar_esfera
 from app.casos_de_uso.derivar_frente import derivar_frente
 from app.dominio.erros import RegraViolada
 from app.dominio.interacao import MOMENTOS_DE_MATERIAL
@@ -224,7 +225,14 @@ def criar(
         instituicao_id=entrada.instituicao_id,
         formato_interacao_id=entrada.formato_interacao_id,
     )
-    interacao = entrada.para_dominio(frente=frente)
+    # A ESFERA SEGUE A MESMA REGRA, e pelo mesmo motivo: a tela deixou de
+    # perguntá-la, e quatro leituras continuaram dependendo dela. Derivar é o
+    # único caminho em que a esfera da agenda não pode contradizer o cadastro do
+    # órgão — ver `casos_de_uso/derivar_esfera.py`.
+    esfera_id = entrada.esfera_id or derivar_esfera(
+        sessao, instituicao_id=entrada.instituicao_id
+    )
+    interacao = entrada.para_dominio(frente=frente, esfera_id=esfera_id)
     # O BLOCO DA CONSULTA SÓ VALE NO TIPO CERTO, e quem garante é o servidor:
     # a tela já manda coerente, mas a API aceita um cliente direto.
     validar_consulta(sessao, interacao)

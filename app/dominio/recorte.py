@@ -88,7 +88,33 @@ class Recorte:
     categorias_publico: tuple[int, ...] = ()
     busca: str | None = None
 
+    #: Os filtros que chegam como TEXTO da URL e podem chegar vazios.
+    #:
+    #: Não inclui `uf` (que já é normalizada para maiúscula na rota) nem os
+    #: campos que não são texto.
+    _DE_TEXTO = (
+        "frente", "unidade", "esfera", "clima", "clima_esperado", "resultado",
+        "status", "grupo_status", "entidade", "subtipo",
+    )
+
     def __post_init__(self) -> None:
+        # VAZIO É AUSÊNCIA, E AQUI — antes de qualquer outra coisa.
+        #
+        # "1 FILTRO ATIVO" SOBRE A LISTA INTEIRA: `quantidade_de_filtros` conta
+        # `is not None`, e a string vazia não é `None`; `filtros_sql.condicoes`
+        # testa truthiness, e a string vazia não passa por lá. As duas metades
+        # discordavam, e o caminho para chegar lá é banal — um `<select>` cuja
+        # opção de placeholder tem `value=""` submete `?esfera=`. A pessoa lia a
+        # base inteira achando que via o subconjunto federal, sem erro e sem log.
+        #
+        # NORMALIZAR NO VALUE OBJECT, e não no contador, é o que impede as duas
+        # metades de divergirem de novo: quem constrói um `Recorte` — a rota, um
+        # teste, um caso de uso — recebe o mesmo objeto para a mesma intenção.
+        for campo in self._DE_TEXTO:
+            valor = getattr(self, campo)
+            if isinstance(valor, str) and not valor.strip():
+                object.__setattr__(self, campo, None)
+
         if self.uf and self.uf not in ABRANGENCIAS_VALIDAS:
             raise RegraViolada(
                 f"UF inválida: {self.uf!r}. Use uma das 27 siglas, "

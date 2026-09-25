@@ -123,12 +123,29 @@ class Limites:
         if desconhecidos:
             raise RegraViolada(f"Limite desconhecido: {', '.join(desconhecidos)}.")
         inteiros = {"virada_pontos", "tendencia_meses", "max_sinais"}
-        return cls(
-            **{
-                nome: int(valor) if nome in inteiros else float(valor)
-                for nome, valor in ajustados.items()
-            }
-        )
+
+        def numero(nome: str, valor: object) -> float:
+            """O valor gravado vira número, ou vira RECUSA DE DOMÍNIO.
+
+            `int(valor)`/`float(valor)` cru levantava `ValueError` ou
+            `TypeError`, e nenhum dos dois é `RegraViolada` — então passavam
+            direto por quem captura, e `GET /score` devolvia 500. Um
+            `update score_config set limites = '{"virada_pontos":"10"}'` — um
+            script de ambiente gravando o JSON como texto é o caso óbvio —
+            tirava do ar o índice, os cinco dossiês E a própria tela de
+            Calibração, que é onde a régua se conserta.
+
+            O NOME DO CAMPO VAI NA MENSAGEM porque a régua tem oito cortes: sem
+            ele, quem lê o log sabe que algo está torto e não sabe o quê.
+            """
+            try:
+                return int(valor) if nome in inteiros else float(valor)  # type: ignore[arg-type]
+            except (TypeError, ValueError) as erro:
+                raise RegraViolada(
+                    f"Limite {nome} precisa ser um número: {valor!r}."
+                ) from erro
+
+        return cls(**{nome: numero(nome, valor) for nome, valor in ajustados.items()})
 
 
 @dataclass(frozen=True, slots=True)

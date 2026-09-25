@@ -1137,6 +1137,31 @@ class TestLimites:
     def test_sem_ajuste_nenhum_e_a_regua_de_fabrica(self):
         assert Limites.a_partir_de({}) == Limites()
 
+    @pytest.mark.parametrize(
+        "valor",
+        ["dez", None, [1], {"a": 1}, "1,5", ""],
+    )
+    def test_recusa_valor_que_nao_e_numero_como_erro_de_dominio(self, valor):
+        """VALOR DE TIPO ERRADO DERRUBAVA O SCORE INTEIRO COM 500.
+
+        `a_partir_de` fazia `int(valor)`/`float(valor)` cru, e um `ValueError`
+        ou `TypeError` não é `RegraViolada` — passava direto por quem captura.
+        `GET /score` chama isto para montar a Calibração, então um
+        `update score_config set limites = '{"virada_pontos":"10"}'` (um script
+        de ambiente gravando o JSON como texto é o caso óbvio) tirava do ar o
+        índice, os cinco dossiês E a tela onde a régua se conserta.
+
+        O teste que existia cobria zero, chave desconhecida, faixa e float→int.
+        Nenhum cobria tipo errado — e é o único que fecha a tela.
+        """
+        with pytest.raises(RegraViolada, match="virada_pontos"):
+            Limites.a_partir_de({"virada_pontos": valor})
+
+    def test_recusa_valor_nao_numerico_tambem_nos_cortes_decimais(self):
+        """Os decimais passam por `float()`, e quebram igual."""
+        with pytest.raises(RegraViolada, match="pico_desvios"):
+            Limites.a_partir_de({"pico_desvios": "muito"})
+
     def test_recusa_uma_chave_que_nao_existe(self):
         """UM `picoDesvios` EM CAMELCASE SERIA ACEITO EM SILÊNCIO: a pessoa
         veria "salvo", o limite continuaria o de fábrica, e ela passaria a

@@ -1952,3 +1952,75 @@ def test_a_mesma_pessoa_em_instituicoes_diferentes_e_permitida(cliente_admin, se
             json={"nome": "Carlos Nunes", "instituicao_id": instituicao["id"]},
         )
         assert resposta.status_code == 201, resposta.text
+
+# -- a esfera vem da instituição ---------------------------------------------
+
+
+def test_a_esfera_e_derivada_da_instituicao_ao_criar(cliente, sessao, semente):
+    """O campo saiu do formulário e QUATRO telas continuaram lendo `esfera_id`.
+
+    Sem derivação, toda agenda criada dali em diante nascia com o campo nulo e
+    caía em "—" no ranking "Esfera e abrangência", na coluna da Base, na linha
+    da Ficha e no filtro do recorte — sem tela nenhuma capaz de corrigir.
+    """
+    from sqlalchemy import select as _select
+
+    from app.banco.tabelas_catalogo import Esfera
+
+    federal = sessao.scalar(_select(Esfera.id).where(Esfera.codigo == "federal"))
+    semente["instituicao"].esfera_id = federal
+    sessao.flush()
+
+    criada = cliente.post("/api/interacoes", json=corpo(semente))
+    assert criada.status_code == 201, criada.text
+
+    assert criada.json()["esfera_id"] == federal
+
+
+def test_a_esfera_explicita_do_payload_ainda_e_respeitada(cliente, sessao, semente):
+    """Mesmo contrato da Frente: quem manda o campo é respeitado.
+
+    Retrocompatível com um cliente que ainda escolha a esfera, e com quem sabe
+    exatamente o que quer. A derivação só entra quando o campo vem ausente.
+    """
+    from sqlalchemy import select as _select
+
+    from app.banco.tabelas_catalogo import Esfera
+
+    federal = sessao.scalar(_select(Esfera.id).where(Esfera.codigo == "federal"))
+    estadual = sessao.scalar(_select(Esfera.id).where(Esfera.codigo == "estadual"))
+    semente["instituicao"].esfera_id = federal
+    sessao.flush()
+
+    criada = cliente.post(
+        "/api/interacoes", json=corpo(semente, esfera_id=estadual)
+    )
+    assert criada.status_code == 201, criada.text
+
+    assert criada.json()["esfera_id"] == estadual
+
+
+def test_editar_sem_mandar_a_esfera_nao_a_apaga(cliente, sessao, semente):
+    """A OUTRA METADE DO BURACO, e a que derrubaria a correção sozinha.
+
+    `montarCorpo` manda `null` em campo vazio na EDIÇÃO — é assim que se apaga
+    um campo de propósito. Com a esfera derivada e ausente do formulário, toda
+    edição de agenda mandaria `esfera_id: null` e limparia o valor que a criação
+    acabara de derivar: o campo voltaria a ficar nulo, agora por outro caminho.
+    """
+    from sqlalchemy import select as _select
+
+    from app.banco.tabelas_catalogo import Esfera
+
+    federal = sessao.scalar(_select(Esfera.id).where(Esfera.codigo == "federal"))
+    semente["instituicao"].esfera_id = federal
+    sessao.flush()
+
+    criada = cliente.post("/api/interacoes", json=corpo(semente))
+    assert criada.status_code == 201, criada.text
+    id_ = criada.json()["id"]
+
+    editada = cliente.patch(f"/api/interacoes/{id_}", json={"pauta": "Outra pauta"})
+    assert editada.status_code == 200, editada.text
+
+    assert editada.json()["esfera_id"] == federal

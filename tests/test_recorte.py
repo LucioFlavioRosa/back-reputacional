@@ -191,3 +191,32 @@ def test_clima_esperado_e_clima_registrado_sao_filtros_distintos():
     assert recorte.clima_esperado == "tenso"
     assert recorte.clima == "propositivo"
     assert recorte.quantidade_de_filtros == 2
+
+# -- o filtro vazio -----------------------------------------------------------
+
+
+def test_valor_vazio_nao_conta_como_filtro_ativo():
+    """"1 FILTRO ATIVO" SOBRE A LISTA INTEIRA.
+
+    `quantidade_de_filtros` contava `valor is not None`, e a string vazia não é
+    `None`. A tradução para SQL (`filtros_sql.condicoes`) testa truthiness, e a
+    string vazia não passa por lá. As duas metades discordavam.
+
+    O caminho é banal: um `<select>` cuja opção de placeholder tem `value=""`
+    submete `?esfera=`. A pessoa lê 301 registros achando que está vendo o
+    subconjunto federal, e nada erra, nada registra log.
+    """
+    recorte = Recorte(esfera="", clima="", status="")
+
+    assert recorte.quantidade_de_filtros == 0
+    assert recorte.vazio
+
+
+def test_valor_so_com_espaco_tambem_nao_conta():
+    """Um espaço colado da planilha tem o mesmo efeito, e é mais difícil de ver."""
+    assert Recorte(esfera="   ").quantidade_de_filtros == 0
+
+
+def test_o_valor_de_verdade_continua_contando():
+    """O contrapeso: normalizar o vazio não pode engolir o preenchido."""
+    assert Recorte(esfera="federal").quantidade_de_filtros == 1
