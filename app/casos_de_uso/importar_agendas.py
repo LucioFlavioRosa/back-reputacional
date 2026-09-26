@@ -131,6 +131,19 @@ LISTAS_DAS_ABAS_FILHAS: dict[str, tuple[str, type]] = {
     "Materiais": ("materiais", MaterialEntrada),
 }
 
+#: As colunas sem as quais a linha da aba filha não tem sentido — as recusas 1,
+#: 2, 3 e 5 de `IMPEDIMENTOS_DA_PLANILHA`.
+#:
+#: MATERIAIS EXIGE O LINK, e aqui a planilha é mais estrita que o formulário de
+#: propósito: o front aceita arquivo OU link porque tem upload, e uma planilha
+#: não tem. Um material sem link nem arquivo não leva a lugar nenhum, e deixá-lo
+#: passar gravaria um título que aponta para nada.
+COLUNAS_EXIGIDAS_DAS_FILHAS: dict[str, tuple[str, ...]] = {
+    "Participantes": ("Pessoa",),
+    "Pessoas da Aegea": ("Pessoa",),
+    "Materiais": ("Título", "Link"),
+}
+
 #: Os campos que `InteracaoEntrada` exige. Sem um deles não há proposta nenhuma
 #: a montar, então a divergência TRAVA.
 OBRIGATORIOS = ("data_interacao", "instituicao_id", "uf")
@@ -295,6 +308,20 @@ def _filhas_por_codigo(
                 if resolvido is not None:
                     valores[campo] = resolvido
 
+            for exigida in COLUNAS_EXIGIDAS_DAS_FILHAS[nome_da_aba]:
+                if linha.celulas.get(exigida) is None:
+                    divergencias.append(
+                        Divergencia(
+                            campo=campo_da_lista,
+                            valor=codigo,
+                            mensagem=(
+                                f"Linha {linha.numero} da aba {nome_da_aba!r}: "
+                                f"falta {exigida}."
+                            ),
+                            trava=True,
+                        )
+                    )
+
             destino = agrupado.setdefault(codigo, {})
             pendencias.setdefault(codigo, []).extend(divergencias)
             if divergencias:
@@ -319,12 +346,77 @@ def _filhas_por_codigo(
     return agrupado
 
 
+def _quem_representa(sessao: Session) -> dict[object, frozenset]:
+    """Instituição → os interlocutores que podem falar por ela.
+
+    UMA CONSULTA, e não uma por agenda: com 54 agendas, perguntar "quem
+    representa esta instituição?" por linha seria 54 idas ao banco, e o teste de
+    invariância de custo pegaria na hora.
+    """
+    por_instituicao: dict[object, set] = {}
+    linhas = sessao.execute(
+        select(Interlocutor.instituicao_id, Interlocutor.id).where(
+            Interlocutor.instituicao_id.is_not(None)
+        )
+    ).all()
+    for instituicao_id, interlocutor_id in linhas:
+        por_instituicao.setdefault(instituicao_id, set()).add(interlocutor_id)
+    return {chave: frozenset(valores) for chave, valores in por_instituicao.items()}
+
+
+def impedimentos(entrada: InteracaoEntrada, podem_representar: frozenset) -> list[Divergencia]:
+    """As recusas 4 e 6 — as que só se veem com a proposta inteira montada.
+
+    As outras quatro (1, 2, 3, 5) são "falta esta coluna" e vivem em
+    `COLUNAS_EXIGIDAS_DAS_FILHAS`, onde a mensagem pode citar a linha e a aba.
+    Aqui ficam as duas que dependem de comparar um item com OUTRO dado: o
+    participante com a instituição da agenda, e um participante com os demais.
+    """
+    achados: list[Divergencia] = []
+
+    for posicao, participante in enumerate(entrada.outra_parte, start=1):
+        if participante.interlocutor_id not in podem_representar:
+            achados.append(
+                Divergencia(
+                    campo="outra_parte",
+                    valor=str(participante.interlocutor_id),
+                    mensagem=(
+                        f"Pela outra parte, a pessoa da linha {posicao} não pertence "
+                        "à instituição desta agenda."
+                    ),
+                    trava=True,
+                )
+            )
+
+    # `(pessoa, papel)` é a chave no banco. A mesma pessoa em papéis DIFERENTES
+    # continua válida, e barrá-la aqui seria a importação inventando uma regra
+    # que o resto do sistema não tem.
+    vistos: set[tuple] = set()
+    for participacao in entrada.participacoes:
+        chave = (participacao.pessoa_aegea_id, participacao.papel)
+        if chave in vistos:
+            achados.append(
+                Divergencia(
+                    campo="participacoes",
+                    valor=str(participacao.pessoa_aegea_id),
+                    mensagem=(
+                        "Pela Aegea, esta pessoa já está na lista neste mesmo papel."
+                    ),
+                    trava=True,
+                )
+            )
+        vistos.add(chave)
+
+    return achados
+
+
 def propor(sessao: Session, conteudo: bytes) -> list[Proposta]:
     """Uma proposta por linha da aba Agendas, com o que não resolveu anotado."""
     por_aba = ler(conteudo)
     declarados = ler_declarados(conteudo)
     indice = _indice(sessao)
     filhas = _filhas_por_codigo(por_aba, indice, declarados)
+    representantes = _quem_representa(sessao)
 
     colunas_de_agenda = aba_de(ABA_PRINCIPAL).colunas
     propostas: list[Proposta] = []
@@ -436,6 +528,17 @@ def propor(sessao: Session, conteudo: bytes) -> list[Proposta]:
                         trava=True,
                     )
                 )
+
+        if entrada is not None:
+            # As recusas 4 e 6 só se veem agora, com a proposta montada: elas
+            # comparam um participante com a instituição da agenda e com os
+            # outros participantes.
+            do_formulario = impedimentos(
+                entrada, representantes.get(entrada.instituicao_id, frozenset())
+            )
+            if do_formulario:
+                divergencias.extend(do_formulario)
+                entrada = None
 
         propostas.append(Proposta(linha=linha, entrada=entrada, divergencias=divergencias))
 

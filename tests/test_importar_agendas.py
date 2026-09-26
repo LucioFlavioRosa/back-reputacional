@@ -60,9 +60,20 @@ def semente(sessao):
         tipo="veiculo",
         uf="SP",
     )
-    interlocutor = Interlocutor(nome="Ana Prado", nome_normalizado=normalizar("Ana Prado"))
+    sessao.add(instituicao)
+    sessao.flush()
+
+    # O interlocutor PERTENCE à instituição da semente, e não é detalhe de
+    # fixture: a recusa 4 recusa quem não pertence, então um interlocutor solto
+    # aqui faria toda agenda com participante ser recusada — e o teste diria que
+    # a importação está errada quando o errado seria o cenário.
+    interlocutor = Interlocutor(
+        nome="Ana Prado",
+        nome_normalizado=normalizar("Ana Prado"),
+        instituicao_id=instituicao.id,
+    )
     pessoa = PessoaAegea(nome="Radamés Casseb", nome_normalizado=normalizar("Radamés Casseb"))
-    sessao.add_all([instituicao, interlocutor, pessoa])
+    sessao.add_all([interlocutor, pessoa])
     sessao.flush()
 
     def primeiro(tabela):
@@ -478,3 +489,178 @@ def test_toda_coluna_de_aba_filha_tem_campo():
 
 def test_nenhum_vocabulario_tem_duas_fontes():
     assert set(importar_agendas.NO_BANCO) & set(importar_agendas.NO_CODIGO) == set()
+
+
+# =============================================================================
+# as recusas do formulário, do lado do servidor
+# =============================================================================
+
+
+def test_as_seis_recusas_do_front_estao_todas_classificadas():
+    """O GUARDA DA DECISÃO, e o motivo desta seção existir.
+
+    As seis recusas vivem em TypeScript, em `impedimento.ts`, e a importação é
+    Python. Duplicá-las criaria duas versões da mesma verdade. O que sobrevive à
+    duplicação é este teste: ele lê a lista canônica do front e exige que cada
+    recusa esteja classificada aqui. Sem ele, a sétima recusa nasce no
+    TypeScript e ninguém nunca pergunta se a planilha a produz.
+
+    É o mesmo mecanismo de `_DE_TEXTO` no `Recorte` e do `DESTINO` de
+    `corpo.test.ts`: uma lista que obriga a classificar o que for novo.
+    """
+    import pathlib
+    import re
+
+    from app.dominio.importacao_de_agendas import FORA_DA_PLANILHA, IMPEDIMENTOS_DA_PLANILHA
+
+    ts = pathlib.Path("../front-reputacional/src/paginas/cadastro/impedimento.test.ts")
+    if not ts.exists():
+        pytest.skip("o repositório do front não está ao lado deste")
+
+    no_front = set(re.findall(r"describe\((?:'|\")(\d)\. ", ts.read_text(encoding="utf-8")))
+
+    assert no_front == {"1", "2", "3", "4", "5", "6"}, (
+        f"o front agora tem as recusas {sorted(no_front)}: uma mudou de número ou "
+        "nasceu uma nova. Decida se a planilha a produz e classifique-a em "
+        "IMPEDIMENTOS_DA_PLANILHA ou em FORA_DA_PLANILHA."
+    )
+    assert set(IMPEDIMENTOS_DA_PLANILHA) | FORA_DA_PLANILHA == no_front
+
+
+def test_material_com_titulo_e_sem_link_e_recusado(sessao, semente):
+    """Regra 1. Na planilha ela é MAIS estrita que no formulário: o front aceita
+    arquivo OU link, e uma planilha não tem como subir arquivo — então sem link
+    o material não leva a lugar nenhum."""
+    conteudo = _preenchida(
+        sessao,
+        agendas=[_agenda(semente)],
+        materiais=[{"Código": "A1", "Momento": "apoio", "Título": "Nota técnica"}],
+    )
+
+    (proposta,) = importar_agendas.propor(sessao, conteudo)
+
+    assert proposta.entrada is None
+    assert any("Link" in d.mensagem for d in proposta.divergencias)
+
+
+def test_material_com_link_e_sem_titulo_e_recusado(sessao, semente):
+    """Regra 2. `montarCorpo` descartaria a linha, e descartar em silêncio é
+    pior que recusar: a tela diria "salvo" com um material a menos."""
+    conteudo = _preenchida(
+        sessao,
+        agendas=[_agenda(semente)],
+        materiais=[{"Código": "A1", "Momento": "apoio", "Link": "https://acervo/x"}],
+    )
+
+    (proposta,) = importar_agendas.propor(sessao, conteudo)
+
+    assert proposta.entrada is None
+    assert any("Título" in d.mensagem for d in proposta.divergencias)
+
+
+def test_participante_da_outra_parte_sem_pessoa_e_recusado(sessao, semente):
+    """Regra 3. A planilha PRODUZ isto: quem preenche 54 agendas digita a coluna
+    de código inteira primeiro e as pessoas depois — e para no meio."""
+    conteudo = _preenchida(
+        sessao, agendas=[_agenda(semente)], participantes=[{"Código": "A1", "Presença": "presente"}]
+    )
+
+    (proposta,) = importar_agendas.propor(sessao, conteudo)
+
+    assert proposta.entrada is None
+    assert any("Pessoa" in d.mensagem for d in proposta.divergencias)
+
+
+def test_participante_que_nao_pertence_a_instituicao_e_recusado(sessao, semente):
+    """Regra 4. A planilha produz isto com facilidade: a pessoa copia a linha de
+    uma agenda e troca só a instituição, deixando os participantes da anterior."""
+    outra = Instituicao(
+        nome="Prefeitura de Campos",
+        nome_normalizado=normalizar("Prefeitura de Campos"),
+        tipo="orgao",
+        uf="RJ",
+    )
+    sessao.add(outra)
+    sessao.flush()
+    de_outra = Interlocutor(
+        nome="Bruno Lima", nome_normalizado=normalizar("Bruno Lima"), instituicao_id=outra.id
+    )
+    sessao.add(de_outra)
+    sessao.flush()
+
+    conteudo = _preenchida(
+        sessao,
+        agendas=[_agenda(semente)],
+        participantes=[{"Código": "A1", "Pessoa": de_outra.nome}],
+    )
+
+    (proposta,) = importar_agendas.propor(sessao, conteudo)
+
+    assert proposta.entrada is None
+    assert any("não pertence" in d.mensagem for d in proposta.divergencias)
+
+
+def test_participante_da_propria_instituicao_passa(sessao, semente):
+    """O contrapeso da regra 4, e ele importa: sem ele, "recusa todo mundo"
+    passaria por implementação correta."""
+    semente["interlocutor"].instituicao_id = semente["instituicao"].id
+    sessao.flush()
+
+    conteudo = _preenchida(
+        sessao,
+        agendas=[_agenda(semente)],
+        participantes=[{"Código": "A1", "Pessoa": semente["interlocutor"].nome}],
+    )
+
+    (proposta,) = importar_agendas.propor(sessao, conteudo)
+
+    assert proposta.divergencias == []
+
+
+def test_pessoa_da_aegea_sem_pessoa_e_recusada(sessao, semente):
+    """Regra 5, o mesmo argumento da 3 do outro lado da mesa."""
+    conteudo = _preenchida(
+        sessao, agendas=[_agenda(semente)], pessoas_aegea=[{"Código": "A1", "Papel": "porta_voz"}]
+    )
+
+    (proposta,) = importar_agendas.propor(sessao, conteudo)
+
+    assert proposta.entrada is None
+    assert any("Pessoa" in d.mensagem for d in proposta.divergencias)
+
+
+def test_a_mesma_pessoa_no_mesmo_papel_e_recusada(sessao, semente):
+    """Regra 6. `(pessoa, papel)` é a chave no banco, e a planilha produz a
+    repetição por cópia — que é como um dia de 54 reuniões se preenche."""
+    conteudo = _preenchida(
+        sessao,
+        agendas=[_agenda(semente)],
+        pessoas_aegea=[
+            {"Código": "A1", "Pessoa": semente["pessoa"].nome, "Papel": "porta_voz"},
+            {"Código": "A1", "Pessoa": semente["pessoa"].nome, "Papel": "porta_voz"},
+        ],
+    )
+
+    (proposta,) = importar_agendas.propor(sessao, conteudo)
+
+    assert proposta.entrada is None
+    assert any("já está" in d.mensagem for d in proposta.divergencias)
+
+
+def test_a_mesma_pessoa_em_papeis_DIFERENTES_passa(sessao, semente):
+    """O contrapeso da regra 6: `(pessoa, papel)` é a chave, então a mesma
+    pessoa em dois papéis é válida. Barrar aqui o que o banco aceita seria a
+    importação inventando uma regra própria."""
+    conteudo = _preenchida(
+        sessao,
+        agendas=[_agenda(semente)],
+        pessoas_aegea=[
+            {"Código": "A1", "Pessoa": semente["pessoa"].nome, "Papel": "porta_voz"},
+            {"Código": "A1", "Pessoa": semente["pessoa"].nome, "Papel": "equipe"},
+        ],
+    )
+
+    (proposta,) = importar_agendas.propor(sessao, conteudo)
+
+    assert proposta.divergencias == []
+    assert len(proposta.entrada.participacoes) == 2

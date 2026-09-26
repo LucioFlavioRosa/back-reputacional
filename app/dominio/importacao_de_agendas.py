@@ -364,6 +364,54 @@ DESTINO_DO_CAMPO: dict[str, str] = {
 }
 
 
+#: AS SEIS RECUSAS DO FORMULÁRIO, e por que a planilha produz cada uma.
+#:
+#: Elas vivem em TypeScript, em `front/src/paginas/cadastro/impedimento.ts`, e a
+#: importação é Python. Duplicá-las criaria duas versões da mesma verdade, das
+#: quais uma envelheceria — então o que existe aqui não é a regra, é a
+#: CLASSIFICAÇÃO dela, mais um teste que lê a lista canônica do front e exige
+#: que nenhuma recusa fique sem classificar.
+#:
+#: A SPEC SUPÔS QUE SÓ DUAS DAS SEIS VALIAM AQUI, com o argumento de que as
+#: outras quatro são artefato de formulário meio preenchido — a linha vazia que
+#: alguém criou ao clicar "acrescentar" e abandonar. O argumento vale para um
+#: formulário e não vale para uma planilha: quem preenche 54 agendas digita a
+#: coluna de código inteira primeiro e os nomes depois, e copia blocos de
+#: participantes de uma reunião para a seguinte. As seis são produzíveis, e por
+#: cópia — que é justamente como um dia de 54 reuniões se preenche.
+IMPEDIMENTOS_DA_PLANILHA: dict[str, str] = {
+    "1": (
+        "Material com título e sem link. Na planilha esta regra é MAIS estrita "
+        "que no formulário: o front aceita arquivo OU link, e uma planilha não "
+        "tem como subir arquivo — então sem link o material não leva a lugar "
+        "nenhum."
+    ),
+    "2": (
+        "Material com link e sem título. Descartar a linha em silêncio seria "
+        "pior que recusar: a tela diria 'importado' com um material a menos."
+    ),
+    "3": (
+        "Linha da outra parte sem pessoa. Quem digita a coluna de código antes "
+        "dos nomes e para no meio produz exatamente isto."
+    ),
+    "4": (
+        "Participante que não pertence à instituição da agenda. É o efeito de "
+        "copiar a linha de uma agenda e trocar só a instituição, deixando os "
+        "participantes da anterior."
+    ),
+    "5": "Linha da Aegea sem pessoa. O mesmo argumento da 3, do outro lado da mesa.",
+    "6": (
+        "A mesma pessoa no mesmo papel duas vezes. `(pessoa, papel)` é a chave "
+        "no banco, e a repetição vem de copiar um bloco de participantes."
+    ),
+}
+
+#: Vazio, e isso é uma conclusão e não um esquecimento: nenhuma das seis recusas
+#: do formulário é impossível de produzir numa planilha. Se uma sétima nascer e
+#: de fato não for produzível, ela entra aqui com a frase que explica por quê.
+FORA_DA_PLANILHA: frozenset[str] = frozenset()
+
+
 def aba_de(nome: str) -> Aba:
     """A aba de `FORMATO` com este nome, ou `RegraViolada` se não existir."""
     for aba in FORMATO:
