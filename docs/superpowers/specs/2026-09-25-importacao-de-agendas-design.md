@@ -83,21 +83,58 @@ na aba de cadastro é ato deliberado; digitar na célula da agenda não é.
 
 ## O modelo `.xlsx`
 
-### Abas de preenchimento
+### A aba de preenchimento
 
-| Aba | Uma linha por | Colunas |
-|---|---|---|
-| **Agendas** | reunião | `Código` · Data · Instituição · Tipo de interação · UF · Unidade de negócio · Modalidade · Local · Situação · Iniciativa · Nota da situação · Declinado por · Motivo do declínio · Clima esperado · Expectativa · Prevê desdobramento · Clima · Resultado · Relato · Repercussão e encaminhamentos · Pendências · Observações · Tema 1–3 · Área 1–2 |
-| **Participantes** | pessoa da outra parte | `Código` · Pessoa · Presença · Principal |
-| **Pessoas da Aegea** | pessoa da casa | `Código` · Pessoa · Papel · Presença |
-| **Materiais** | documento | `Código` · Momento · Título · Link · Observação |
+**UMA ABA SÓ — `Agendas` —, uma linha por agenda, 59 colunas.** Decisão do dono
+do produto, tomada ao ver o primeiro modelo: *"quero preencher tudo em uma única
+aba"*. O desenho anterior tinha quatro abas ligadas por um `Código` que quem
+preenche inventava (A1, A2…) e repetia nas abas filhas.
 
-`Código` é inventado por quem preenche (A1, A2…) e repetido nas abas filhas. É
-o único conceito novo que a planilha introduz.
+A ordem das colunas segue a **sequência dos campos do formulário de nova
+interação**, porque é o caminho que a coordenação já conhece:
 
-**Temas e áreas são colunas, não abas** (Tema 1–3, Área 1–2): são poucos por
-agenda, e assim mantêm a lista suspensa sem custar mais duas abas para entender.
-O teto é arbitrário e ampliável.
+| Grupo | Colunas |
+|---|---|
+| A agenda | `Código` · Tipo de interação · Área 1–2 · **Data** · Instituição · UF · Unidade de negócio · Tema 1–3 · Modalidade · Local · Iniciativa · Situação · Nota da situação · Declinado por · Motivo do declínio · Clima esperado · Expectativa · Prevê desdobramento · Clima · Resultado · Relato · Repercussão e encaminhamentos · Pendências · Observações |
+| A outra parte | `Interlocutor 1–4` · `Presença 1–4` |
+| A casa | `Pessoa da Aegea 1–4` · `Papel 1–4` · `Presença da Aegea 1–4` |
+| Materiais | `Momento 1–3` · `Título 1–3` · `Link 1–3` · `Observação do material 1–3` |
+
+**O preço do teto fixo**, dito na hora da decisão: uma agenda com cinco
+interlocutores não cabe. Os tetos (4/4/3) vieram da medição do banco povoado —
+máximo observado de 2 interlocutores, 3 pessoas da Aegea e 2 materiais por
+agenda — com folga, e ampliá-los é acrescentar colunas, não mudar o desenho.
+
+**O que o teto comprou:** o `Código` deixou de ligar coisa alguma, e com ele
+desapareceu uma classe inteira de erro que só a conferência pegava — código
+órfão, código repetido, participante colado na agenda errada. O `Código` continua
+na planilha como referência da linha, porque é por ele que as mensagens de erro
+chamam a agenda de que estão falando, e **pode ficar em branco**: o servidor
+gera `linha N`.
+
+**Temas e áreas também são colunas numeradas** (Tema 1–3, Área 1–2), pelo mesmo
+motivo, e eram assim desde o primeiro desenho.
+
+### A coluna Data é travada como data
+
+Pedido do dono do produto, e o defeito mais silencioso da planilha: numa coluna
+sem formato, `25/09/26`, `set/25`, `25.09.2026` e o texto `amanhã` são todos
+aceitos sem reclamação, chegam ao servidor como texto, e a conferência acusa
+"data ilegível" numa linha que a pessoa jurava ter preenchido — depois de ela já
+ter feito as 54.
+
+Duas metades, e cada uma resolve um problema diferente:
+
+- **validação de data** (`greaterThanOrEqual DATE(2000,1,1)`, com
+  `showErrorMessage`) recusa na célula o que não é data. O piso não julga a
+  agenda: existe porque a validação de data do Excel exige um operador. **Sem
+  teto** — agenda prevista é caso normal, e um teto recusaria dado legítimo;
+- **formato `DD/MM/YYYY` na dimensão da coluna**, que é o que faz o Excel
+  *interpretar* a digitação como data brasileira. Numa célula "Geral" a mesma
+  digitação pode virar texto, e então a validação recusaria o que estava certo.
+
+`allow_blank` continua verdadeiro: a linha em branco é normal no meio do arquivo,
+e o `idem` herda a data da linha de cima.
 
 ### Abas de vocabulário
 
@@ -119,8 +156,10 @@ aba.**
 planilha abriria a chance de a agenda contradizer o cadastro do órgão — que é
 exatamente o que a derivação resolveu.
 
-**O interlocutor principal não é coluna**: é quem estiver marcado `Principal` na
-aba Participantes. Uma coluna separada permitiria que os dois discordassem.
+**O interlocutor principal não é coluna**: é o `Interlocutor 1`. Com abas filhas
+havia uma coluna `Principal` para marcá-lo; em colunas numeradas, listar a pessoa
+mais importante primeiro é mais fácil de preencher — e mais difícil de
+contradizer — do que responder "qual número é o principal".
 
 ### Fora da primeira versão
 
@@ -155,8 +194,9 @@ instituições é ato consequente demais para acontecer calado.
 
 **3. Divergência** — precisa de decisão, resolvida **uma vez por valor**.
 
-**4. Recusa do arquivo inteiro** — aba faltando, coluna faltando, `Código`
-repetido em Agendas, ou `Código` de aba filha que não existe em Agendas. Nada é
+**4. Recusa do arquivo inteiro** — aba faltando, coluna faltando ou `Código`
+repetido. (O `Código` órfão saiu com as abas filhas: não há mais vínculo a
+quebrar.) Nada é
 proposto: não faz sentido oferecer 54 propostas quando o cabeçalho está errado.
 
 ### A distinção que sustenta a decisão de produto
