@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 
 from app.banco.tabelas_catalogo import (
     AreaPessoa,
+    CategoriaPublico,
     Clima,
     FormatoInteracao,
     Iniciativa,
@@ -46,11 +47,11 @@ from app.casos_de_uso.ler_planilha_de_agendas import (
     COLUNA_DO_CODIGO,
     LinhaBruta,
     ler,
+    ler_categorias_declaradas,
     ler_declarados,
-    ler_tipos_declarados,
 )
 from app.dominio.erros import Conflito, RegraViolada
-from app.dominio.frentes import TIPOS_DE_INSTITUICAO
+from app.dominio.frentes import TIPO_DA_CATEGORIA_DE_PUBLICO
 from app.dominio.importacao_de_agendas import (
     DECISOES_DE_DIVERGENCIA,
     FORMATO,
@@ -100,6 +101,9 @@ NO_BANCO: dict[str, _Fonte] = {
     "climas": _Fonte(Clima, "codigo"),
     "resultados": _Fonte(Resultado, "codigo"),
     "iniciativas": _Fonte(Iniciativa, "codigo"),
+    # Resolve para o `id` porque é ele que vai em `instituicao.categoria_publico_id`;
+    # o `codigo`, que deriva o tipo, sai de uma leitura pelo id na criação.
+    "categorias_publico": _Fonte(CategoriaPublico, "id"),
 }
 
 #: Vocabulário sem tabela: a lista mora em `dominio/interacao.py`, porque mudá-la
@@ -326,7 +330,7 @@ def _resolver(
     declarados: Mapping[str, frozenset[str]],
     divergencias: list[Divergencia],
     apontados: Mapping[tuple[str, str], object] = MAPPING_VAZIO,
-    tipos_declarados: Mapping[str, str] = MAPPING_VAZIO,
+    categorias_declaradas: Mapping[str, str] = MAPPING_VAZIO,
 ) -> _Resolucao:
     """O valor resolvido, o cadastro a criar, ou a divergência anotada."""
     if valor is None:
@@ -365,22 +369,23 @@ def _resolver(
         # chute erra a frente de TODA agenda daquela instituição. Recusar agora põe
         # a pendência na tela junto das outras, em vez de fazer a confirmação
         # falhar depois de a pessoa já ter conferido tudo.
-        tipo = (
-            tipos_declarados.get(normalizar(texto))
+        categoria = (
+            categorias_declaradas.get(normalizar(texto))
             if vocabulario == "instituicoes"
             else None
         )
-        if vocabulario == "instituicoes" and tipo not in TIPOS_DE_INSTITUICAO:
+        if vocabulario == "instituicoes" and (
+            categoria is None or categoria not in indice.get("categorias_publico", {})
+        ):
             divergencias.append(
                 Divergencia(
                     campo=campo,
                     valor=texto,
                     mensagem=(
-                        f"{coluna_nome}: {texto!r} foi declarada sem um tipo válido. "
-                        "Escreva o tipo na coluna ao lado, na aba de instituições — é "
-                        "ele que define a frente da agenda. Válidos: "
-                        + ", ".join(sorted(TIPOS_DE_INSTITUICAO))
-                        + "."
+                        f"{coluna_nome}: {texto!r} foi declarada sem uma categoria de "
+                        "público válida. Escreva a categoria na coluna ao lado, na aba "
+                        "de instituições — é dela que sai o tipo, e o tipo define a "
+                        "frente da agenda."
                     ),
                     trava=True,
                 )
@@ -395,7 +400,7 @@ def _resolver(
                 valor=texto,
                 mensagem=f"{coluna_nome}: vou cadastrar {texto!r}, que você declarou na aba.",
                 trava=False,
-                tipo_declarado=tipo,
+                categoria_declarada=categoria,
                 # MARCA A AÇÃO já aqui, e não só quando a pessoa decide na tela:
                 # é assim que a confirmação encontra o que criar sem depender do
                 # arquivo original, que não fica guardado. Declarar na aba e
@@ -433,7 +438,7 @@ def _filhas_por_codigo(
     indice: dict[str, dict[str, object]],
     declarados: Mapping[str, frozenset[str]],
     apontados: Mapping[tuple[str, str], object] = MAPPING_VAZIO,
-    tipos_declarados: Mapping[str, str] = MAPPING_VAZIO,
+    categorias_declaradas: Mapping[str, str] = MAPPING_VAZIO,
 ) -> dict[str, dict[str, list]]:
     """Código da agenda → o que as abas filhas dela produziram.
 
@@ -474,7 +479,7 @@ def _filhas_por_codigo(
                         declarados,
                         divergencias,
                         apontados,
-                        tipos_declarados,
+                        categorias_declaradas,
                     )
                     resolvido = resolucao.valor
                     if resolucao.a_criar is not None:
@@ -646,7 +651,7 @@ def propor(sessao: Session, conteudo: bytes) -> list[Proposta]:
         sessao,
         ler(conteudo),
         ler_declarados(conteudo),
-        tipos_declarados=ler_tipos_declarados(conteudo),
+        categorias_declaradas=ler_categorias_declaradas(conteudo),
     )
 
 
@@ -655,7 +660,7 @@ def propor_de_linhas(
     por_aba: Mapping[str, list[LinhaBruta]],
     declarados: Mapping[str, frozenset[str]],
     apontados: Mapping[tuple[str, str], object] = MAPPING_VAZIO,
-    tipos_declarados: Mapping[str, str] = MAPPING_VAZIO,
+    categorias_declaradas: Mapping[str, str] = MAPPING_VAZIO,
 ) -> list[Proposta]:
     """O mesmo, a partir de linhas JÁ LIDAS.
 
@@ -666,7 +671,7 @@ def propor_de_linhas(
     é o que impede a confirmação de reimplementar a resolução e divergir dela.
     """
     indice = _indice(sessao)
-    filhas = _filhas_por_codigo(por_aba, indice, declarados, apontados, tipos_declarados)
+    filhas = _filhas_por_codigo(por_aba, indice, declarados, apontados, categorias_declaradas)
     representantes = _quem_representa(sessao)
 
     colunas_de_agenda = aba_de(ABA_PRINCIPAL).colunas
@@ -701,7 +706,7 @@ def propor_de_linhas(
                     declarados,
                     divergencias,
                     apontados,
-                    tipos_declarados,
+                    categorias_declaradas,
                 )
                 valor = resolucao.valor
                 if resolucao.a_criar is not None:
@@ -1039,19 +1044,19 @@ def _decisoes(linhas) -> tuple[dict[tuple[str, str], str], dict[tuple[str, str],
     return a_criar, apontados
 
 
-def _tipos_declarados(linhas) -> dict[str, str]:
+def _categorias_declaradas(linhas) -> dict[str, str]:
     """O tipo de cada instituição a criar, guardado no upload.
 
     VEM DA DIVERGÊNCIA e não do arquivo, porque o arquivo não é guardado. O
-    upload anota o tipo declarado em `tipo_declarado` ao marcar `acao="criar"`.
+    upload anota o tipo declarado em `categoria_declarada` ao marcar `acao="criar"`.
     """
     tipos: dict[str, str] = {}
     for linha in linhas:
         if linha.decisao == "descartada":
             continue
         for bruta in linha.divergencias or []:
-            if bruta.get("acao") == "criar" and bruta.get("tipo_declarado"):
-                tipos[normalizar(bruta["valor"])] = bruta["tipo_declarado"]
+            if bruta.get("acao") == "criar" and bruta.get("categoria_declarada"):
+                tipos[normalizar(bruta["valor"])] = bruta["categoria_declarada"]
     return tipos
 
 
@@ -1084,7 +1089,9 @@ def _reconferir(sessao: Session, a_criar, apontados) -> None:
             )
 
 
-def _criar_cadastros(sessao: Session, a_criar, tipos: Mapping[str, str]) -> int:
+def _criar_cadastros(
+    sessao: Session, a_criar, categorias: Mapping[str, str], indice: Mapping
+) -> int:
     """Cria os cadastros declarados, no MESMO commit das agendas.
 
     É por isso que nada nasce no upload: se nascesse, cancelar a conferência
@@ -1096,20 +1103,35 @@ def _criar_cadastros(sessao: Session, a_criar, tipos: Mapping[str, str]) -> int:
     criados = 0
     for (vocabulario, valor), _campo in a_criar.items():
         if vocabulario == "instituicoes":
-            # O TIPO VEM DA PLANILHA, da coluna B da aba de instituições. Chutar
-            # `orgao` dava frente errada em toda agenda daquela instituição, porque
-            # `derivar_frente` deriva do tipo — e frente errada contamina toda
-            # leitura agrupada por frente. Quem declara o cadastro declara o tipo.
-            tipo = tipos.get(normalizar(valor))
-            if tipo not in TIPOS_DE_INSTITUICAO:
+            # O CAMINHO CANÔNICO: a categoria vem da planilha e o TIPO NASCE DELA,
+            # exatamente como `api/stakeholders.py` faz — "a tela de cadastro nao
+            # pergunta mais o tipo; ausente, ele vem da categoria de publico".
+            # Gravar `categoria_publico_id` é o que mantém a instituição importada
+            # visível para a taxonomia de públicos do Score; sem ela, ficaria fora
+            # de uma área inteira do produto.
+            categoria_nome = categorias.get(normalizar(valor))
+            categoria = (
+                sessao.scalars(
+                    select(CategoriaPublico).where(
+                        CategoriaPublico.id == indice["categorias_publico"][categoria_nome]
+                    )
+                ).first()
+                if categoria_nome in indice.get("categorias_publico", {})
+                else None
+            )
+            if categoria is None:
                 raise RegraViolada(
-                    f"A instituição {valor!r} foi declarada sem um tipo válido. "
-                    f"Escreva o tipo na coluna ao lado, na aba de instituições: "
-                    f"{', '.join(sorted(TIPOS_DE_INSTITUICAO))}."
+                    f"A instituição {valor!r} foi declarada sem uma categoria de "
+                    "público válida. Escreva a categoria na coluna ao lado, na aba de "
+                    "instituições — é dela que sai o tipo."
                 )
             sessao.add(
                 Instituicao(
-                    nome=valor, nome_normalizado=normalizar(valor), tipo=tipo, uf="NA"
+                    nome=valor,
+                    nome_normalizado=normalizar(valor),
+                    tipo=TIPO_DA_CATEGORIA_DE_PUBLICO[categoria.codigo],
+                    categoria_publico_id=categoria.id,
+                    uf="NA",
                 )
             )
         elif vocabulario == "interlocutores":
@@ -1207,7 +1229,9 @@ def confirmar(sessao: Session, importacao_id, usuario) -> Resumo:
 
     a_criar, apontados = _decisoes(linhas)
     _reconferir(sessao, a_criar, apontados)
-    cadastros = _criar_cadastros(sessao, a_criar, _tipos_declarados(linhas))
+    cadastros = _criar_cadastros(
+        sessao, a_criar, _categorias_declaradas(linhas), _indice(sessao)
+    )
 
     # Os apontamentos convertidos para o tipo da coluna, uma vez: a resolução os
     # consulta por linha, e converter lá dentro repetiria o trabalho.

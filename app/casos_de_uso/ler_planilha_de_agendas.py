@@ -31,7 +31,7 @@ from datetime import date, datetime
 
 from app.dominio.erros import RegraViolada
 from app.dominio.importacao_de_agendas import (
-    COLUNA_DO_TIPO_DE_INSTITUICAO,
+    COLUNA_DA_CATEGORIA_DE_INSTITUICAO,
     FORMATO,
     ROTULO_DO_VOCABULARIO,
     VOCABULARIOS_EDITAVEIS,
@@ -291,23 +291,22 @@ def ler_declarados(conteudo: bytes) -> dict[str, frozenset[str]]:
     # declarada. Sem isto, a palavra do cabeçalho entraria como cadastro a criar.
     declarados["instituicoes"] = declarados["instituicoes"] - {
         normalizar("Instituição"),
-        normalizar(COLUNA_DO_TIPO_DE_INSTITUICAO),
+        normalizar(COLUNA_DA_CATEGORIA_DE_INSTITUICAO),
     }
     return declarados
 
 
-def ler_tipos_declarados(conteudo: bytes) -> dict[str, str]:
-    """Nome normalizado → tipo, da coluna B da aba de instituições.
+def ler_categorias_declaradas(conteudo: bytes) -> dict[str, str]:
+    """Nome normalizado → categoria de público, da coluna B da aba de instituições.
 
-    O TIPO DERIVA A FRENTE da agenda, então criar uma instituição sem ele
-    obrigaria o servidor a chutar — e o chute erra a frente de toda agenda
-    daquela instituição. Quem declara o cadastro declara o tipo.
+    É DELA QUE O TIPO NASCE, e o tipo deriva a frente da agenda. Quem declara o
+    cadastro declara a categoria, como a tela de cadastro também exige.
     """
     pasta = _abrir(conteudo)
     rotulo = ROTULO_DO_VOCABULARIO["instituicoes"]
     if rotulo not in pasta.sheetnames:
         return {}
-    tipos: dict[str, str] = {}
+    categorias: dict[str, str] = {}
     for nome, tipo in pasta[rotulo].iter_rows(min_col=1, max_col=2, values_only=True):
         aparado = _texto(nome)
         if not isinstance(aparado, str):
@@ -315,7 +314,7 @@ def ler_tipos_declarados(conteudo: bytes) -> dict[str, str]:
         chave = normalizar(aparado)
         if chave in (normalizar("Instituição"),):
             continue
-        aparado_tipo = _texto(tipo)
-        if isinstance(aparado_tipo, str):
-            tipos[chave] = normalizar(aparado_tipo)
-    return tipos
+        aparado_categoria = _texto(tipo)
+        if isinstance(aparado_categoria, str):
+            categorias[chave] = normalizar(aparado_categoria)
+    return categorias

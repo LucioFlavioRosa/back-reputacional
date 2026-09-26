@@ -86,12 +86,18 @@ VOCABULARIOS_QUE_A_IMPORTACAO_CRIA: frozenset[str] = frozenset(
 
 #: A coluna extra que a aba de vocabulário de instituições tem.
 #:
-#: O TIPO DERIVA A FRENTE DA AGENDA — `derivar_frente` diz que "o tipo já basta,
-#: sozinho, para todos os tipos menos dois". Criar uma instituição com um tipo
-#: adivinhado dá frente errada em TODA agenda daquela instituição, e frente errada
-#: contamina toda leitura agrupada por frente. Então a planilha pergunta, em vez
-#: de o servidor chutar.
-COLUNA_DO_TIPO_DE_INSTITUICAO = "Tipo"
+#: A CATEGORIA, E NÃO O TIPO, e a diferença não é de gosto. É dela que o tipo
+#: nasce (`TIPO_DA_CATEGORIA_DE_PUBLICO`), e é assim que a tela de cadastro cria
+#: instituição — `api/stakeholders.py` diz que "a tela de cadastro nao pergunta
+#: mais o tipo; ausente, ele vem da categoria de publico". Pedir o tipo direto
+#: deixaria `categoria_publico_id` NULO, e é essa coluna que a taxonomia de
+#: públicos do Score usa para agrupar: a instituição importada ficaria invisível
+#: para uma área inteira do produto.
+#:
+#: E o tipo importa porque DERIVA A FRENTE da agenda — `derivar_frente` diz que
+#: "o tipo já basta, sozinho, para todos os tipos menos dois". Chutá-lo daria
+#: frente errada em toda agenda daquela instituição.
+COLUNA_DA_CATEGORIA_DE_INSTITUICAO = "Categoria de público"
 
 #: Vocabulários fechados: mudar um valor aqui é mudança de regra de negócio
 #: (os KPIs e a taxa de resolutividade dependem deles), então é código e
@@ -118,6 +124,10 @@ VOCABULARIOS_FECHADOS: frozenset[str] = frozenset(
         "presenca",
         "papel",
         "momento",
+        # A taxonomia de públicos é FECHADA (mudá-la é migration, diz o
+        # `api/dicionarios.py`) e ganha aba própria para a pessoa ver a lista
+        # de onde a coluna da aba de instituições escolhe.
+        "categorias_publico",
     }
 )
 
@@ -158,6 +168,7 @@ ROTULO_DO_VOCABULARIO: dict[str, str] = {
     "iniciativas": "Iniciativa",
     "modalidade": "Modalidade",
     "presenca": "Presença",
+    "categorias_publico": "Categorias de público",
     "papel": "Papel",
     "momento": "Momento",
 }
@@ -578,10 +589,12 @@ class Divergencia:
     acao: str | None = None
     #: O id do cadastro escolhido, quando `acao == "apontar"`.
     alvo: str | None = None
-    #: O tipo declarado na aba, quando o cadastro a criar é uma instituição.
-    #: Viaja com a divergência porque o ARQUIVO NÃO É GUARDADO: na confirmação é
-    #: daqui que sai o tipo, e sem ele a criação voltaria a chutar.
-    tipo_declarado: str | None = None
+    #: A categoria de público declarada na aba, quando o cadastro a criar é uma
+    #: instituição. É dela que o tipo nasce.
+    #:
+    #: VIAJA COM A DIVERGÊNCIA porque o ARQUIVO NÃO É GUARDADO: na confirmação é
+    #: daqui que sai a categoria, e sem ela a criação voltaria a chutar o tipo.
+    categoria_declarada: str | None = None
 
 
 def classificar(

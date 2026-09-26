@@ -314,7 +314,7 @@ def subir(sessao: Sessao, usuario: UsuarioLogado, arquivo: Arquivo) -> Importaca
                     # para o bloco "o que vou criar".
                     "acao": divergencia.acao,
                     "alvo": divergencia.alvo,
-                    "tipo_declarado": divergencia.tipo_declarado,
+                    "categoria_declarada": divergencia.categoria_declarada,
                 }
                 for divergencia in proposta.divergencias
             ],

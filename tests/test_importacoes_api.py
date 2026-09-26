@@ -951,7 +951,9 @@ def com_cadastro_novo(cliente_admin, sessao, semente):
     folha.append([valores.get(coluna) for coluna in cabecalho])
     # COM O TIPO: ele deriva a frente da agenda, e a importação recusa criar
     # instituição sem ele — chutar erraria a frente de toda agenda dela.
-    pasta[ROTULO_DO_VOCABULARIO["instituicoes"]].append(["Prefeitura de Campinas", "orgao"])
+    pasta[ROTULO_DO_VOCABULARIO["instituicoes"]].append(
+        ["Prefeitura de Campinas", "Poder Executivo"]
+    )
     saida = io.BytesIO()
     pasta.save(saida)
 
@@ -1259,7 +1261,9 @@ def test_o_declarado_na_aba_ja_aparece_como_a_criar(cliente_admin, sessao, semen
     folha.append([valores.get(coluna) for coluna in cabecalho])
     # COM O TIPO: ele deriva a frente da agenda, e a importação recusa criar
     # instituição sem ele — chutar erraria a frente de toda agenda dela.
-    pasta[ROTULO_DO_VOCABULARIO["instituicoes"]].append(["Prefeitura de Campinas", "orgao"])
+    pasta[ROTULO_DO_VOCABULARIO["instituicoes"]].append(
+        ["Prefeitura de Campinas", "Poder Executivo"]
+    )
     saida = io.BytesIO()
     pasta.save(saida)
 
@@ -1454,7 +1458,7 @@ def _com_declaracao(sessao, semente, nome: str, tipo: str | None = None):
     return saida.getvalue()
 
 
-def test_a_aba_de_instituicoes_pede_o_TIPO(sessao):
+def test_a_aba_de_instituicoes_pede_a_CATEGORIA(sessao):
     """DEFEITO 1. O tipo da instituição DERIVA A FRENTE da agenda — o próprio
     `derivar_frente` diz que "o tipo já basta, sozinho, para todos os tipos menos
     dois". Criar com um `orgao` adivinhado dava frente errada em toda agenda
@@ -1470,14 +1474,23 @@ def test_a_aba_de_instituicoes_pede_o_TIPO(sessao):
     folha = pasta[ROTULO_DO_VOCABULARIO["instituicoes"]]
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
 
-    assert cabecalho[:2] == ["Instituição", "Tipo"]
+    assert cabecalho[:2] == ["Instituição", "Categoria de público"]
 
 
-def test_a_instituicao_criada_usa_o_TIPO_declarado(cliente_admin, sessao, semente):
-    """E o tipo que chega ao banco é o que a pessoa escreveu, não um palpite."""
+def test_a_instituicao_criada_DERIVA_o_tipo_da_categoria(cliente_admin, sessao, semente):
+    """O TIPO NASCE DA CATEGORIA, como na tela de cadastro.
+
+    `api/stakeholders.py` diz que "a tela de cadastro nao pergunta mais o tipo;
+    ausente, ele vem da categoria de publico". Pedir o tipo direto na planilha
+    divergiria disso e, pior, deixaria `categoria_publico_id` NULO — e é essa
+    coluna que a taxonomia de públicos do Score usa para agrupar. A instituição
+    importada ficaria invisível para uma área inteira do produto.
+    """
     from sqlalchemy import select as sel
 
-    conteudo = _com_declaracao(sessao, semente, "Valor Novo", tipo="veiculo")
+    conteudo = _com_declaracao(
+        sessao, semente, "Valor Novo", tipo="Imprensa e Formadores de Opinião"
+    )
     criada = cliente_admin.post(
         "/api/importacoes", files={"arquivo": ("a.xlsx", conteudo, TIPO_XLSX)}
     ).json()
@@ -1490,9 +1503,10 @@ def test_a_instituicao_criada_usa_o_TIPO_declarado(cliente_admin, sessao, sement
     ).first()
     assert nova is not None
     assert nova.tipo == "veiculo"
+    assert nova.categoria_publico_id is not None
 
 
-def test_instituicao_declarada_SEM_tipo_trava(cliente_admin, sessao, semente):
+def test_instituicao_declarada_SEM_categoria_trava(cliente_admin, sessao, semente):
     """Sem o tipo não há como criar sem adivinhar, e adivinhar erra a frente.
     Travar devolve a decisão a quem sabe."""
     conteudo = _com_declaracao(sessao, semente, "Orgao Sem Tipo")
@@ -1505,10 +1519,10 @@ def test_instituicao_declarada_SEM_tipo_trava(cliente_admin, sessao, semente):
     mensagens = " ".join(
         d["mensagem"] for linha in criada["linhas"] for d in linha["divergencias"]
     ).lower()
-    assert "tipo" in mensagens, mensagens
+    assert "categoria" in mensagens, mensagens
 
 
-def test_instituicao_declarada_com_tipo_INVALIDO_trava(cliente_admin, sessao, semente):
+def test_instituicao_declarada_com_categoria_INVALIDA_trava(cliente_admin, sessao, semente):
     conteudo = _com_declaracao(sessao, semente, "Coisa", tipo="inventado")
 
     criada = cliente_admin.post(

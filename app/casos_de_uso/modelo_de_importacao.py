@@ -34,9 +34,8 @@ import io
 from collections.abc import Mapping
 
 from app.dominio.erros import RegraViolada
-from app.dominio.frentes import TIPOS_DE_INSTITUICAO
 from app.dominio.importacao_de_agendas import (
-    COLUNA_DO_TIPO_DE_INSTITUICAO,
+    COLUNA_DA_CATEGORIA_DE_INSTITUICAO,
     FORMATO,
     ROTULO_DO_VOCABULARIO,
     VOCABULARIOS_EDITAVEIS,
@@ -132,7 +131,7 @@ def gerar(vocabularios: Mapping[str, list[str]]) -> bytes:
         # mais é preciso para criar um interlocutor ou um tema.
         e_de_instituicao = chave == "instituicoes"
         if e_de_instituicao:
-            planilha.append([rotulo_singular(chave), COLUNA_DO_TIPO_DE_INSTITUICAO])
+            planilha.append([rotulo_singular(chave), COLUNA_DA_CATEGORIA_DE_INSTITUICAO])
         for valor in valores:
             planilha.append([valor])
 
@@ -160,16 +159,19 @@ def gerar(vocabularios: Mapping[str, list[str]]) -> bytes:
     from openpyxl.worksheet.datavalidation import DataValidation as _DV
 
     aba_das_instituicoes = pasta[ROTULO_DO_VOCABULARIO["instituicoes"]]
-    tipos = _DV(
+    categorias = _DV(
+        # APONTA PARA A ABA da taxonomia, e não para uma lista escrita aqui: são
+        # dez nomes longos, e uma lista literal na fórmula estoura o limite de 255
+        # caracteres que o Excel impõe a `formula1`.
         type="list",
-        formula1='"' + ",".join(sorted(TIPOS_DE_INSTITUICAO)) + '"',
+        formula1="=categorias_publico",
         allow_blank=True,
         showErrorMessage=True,
-        errorTitle="Tipo inválido",
-        error="Escolha um dos tipos da lista.",
+        errorTitle="Categoria inválida",
+        error="Escolha uma das categorias da lista.",
     )
-    aba_das_instituicoes.add_data_validation(tipos)
-    tipos.add(f"B2:B{_LINHAS_DE_ABAS_FILHAS}")
+    aba_das_instituicoes.add_data_validation(categorias)
+    categorias.add(f"B2:B{_LINHAS_DE_ABAS_FILHAS}")
 
     # -- listas suspensas: uma DataValidation por coluna com vocabulário ------
     for aba in FORMATO:

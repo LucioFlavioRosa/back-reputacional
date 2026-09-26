@@ -129,12 +129,13 @@ def _preenchida(
     for chave, nomes in (declarar or {}).items():
         folha = pasta[ROTULO_DO_VOCABULARIO[chave]]
         for nome in nomes:
-            # A ABA DE INSTITUIÇÕES TEM DUAS COLUNAS: nome e tipo. O tipo deriva a
-            # frente da agenda, e a importação recusa criar instituição sem ele —
-            # chutar erraria a frente de toda agenda daquela instituição. Os testes
-            # que declaram por nome só ganham o tipo padrão do caso deles.
+            # A ABA DE INSTITUIÇÕES TEM DUAS COLUNAS: nome e CATEGORIA de público.
+            # É dela que o tipo nasce, e o tipo deriva a frente da agenda — a
+            # importação recusa criar instituição sem categoria válida.
             if chave == "instituicoes":
-                folha.append(list(nome) if isinstance(nome, tuple) else [nome, "orgao"])
+                folha.append(
+                    list(nome) if isinstance(nome, tuple) else [nome, "Poder Executivo"]
+                )
             else:
                 folha.append([nome])
 
