@@ -31,6 +31,7 @@ from datetime import date, datetime
 
 from app.dominio.erros import RegraViolada
 from app.dominio.importacao_de_agendas import (
+    ABA_PRINCIPAL,
     COLUNA_DA_CATEGORIA_DE_INSTITUICAO,
     FORMATO,
     MARCADOR_DE_REPETICAO,
@@ -50,7 +51,9 @@ ASSINATURA_ZIP = b"PK\x03\x04"
 TETO_DE_AGENDAS = 500
 
 #: A aba que manda: é dela que saem os códigos que as outras três referenciam.
-ABA_PRINCIPAL = "Agendas"
+# `ABA_PRINCIPAL` vem do domínio (ver o import acima): é fato do formato, não
+# decisão do leitor. Reexportado aqui porque este módulo era a origem dele e há
+# quem o importe por este caminho.
 
 #: A coluna que liga as abas. Vive em todas as quatro.
 COLUNA_DO_CODIGO = "Código"
@@ -305,29 +308,6 @@ def _codigos_das_agendas(linhas: list[LinhaBruta]) -> set[str]:
     return vistos
 
 
-def _conferir_vinculo(aba: Aba, linhas: list[LinhaBruta], codigos: set[str]) -> None:
-    """Toda linha filha aponta para uma agenda que existe.
-
-    Uma linha órfã é a agenda que a pessoa apagou e cujos participantes ela
-    esqueceu. Importá-los é impossível; ignorá-los em silêncio perderia gente
-    da reunião, e ninguém saberia que faltou alguém.
-    """
-    for linha in linhas:
-        codigo = linha.celulas.get(COLUNA_DO_CODIGO)
-        if codigo is None:
-            raise RegraViolada(
-                f"A linha {linha.numero} da aba {aba.nome!r} está sem Código, "
-                "então não há como saber de que agenda ela é."
-            )
-        if str(codigo) not in codigos:
-            raise RegraViolada(
-                f"A linha {linha.numero} da aba {aba.nome!r} aponta para o "
-                f"Código {str(codigo)!r}, que não existe na aba Agendas. "
-                "Se a agenda está lá mas sem Código na coluna, escreva um: é ele "
-                "que liga as duas linhas, e o servidor não tem como adivinhá-lo."
-            )
-
-
 def ler(conteudo: bytes) -> dict[str, list[LinhaBruta]]:
     """As linhas de cada aba, ou `RegraViolada` se a estrutura não se sustenta."""
     pasta = _abrir(conteudo)
@@ -342,10 +322,12 @@ def ler(conteudo: bytes) -> dict[str, list[LinhaBruta]]:
 
     por_aba = {aba.nome: _linhas_da_aba(aba, pasta[aba.nome]) for aba in FORMATO}
 
-    codigos = _codigos_das_agendas(por_aba[ABA_PRINCIPAL])
-    for aba in FORMATO:
-        if aba.nome != ABA_PRINCIPAL:
-            _conferir_vinculo(aba, por_aba[aba.nome], codigos)
+    # UMA ABA SÓ: não há mais vínculo a conferir. As pessoas e os materiais vivem
+    # em colunas numeradas da própria linha, e com isso desapareceu a classe
+    # inteira de erro que o vínculo produzia — código órfão, código repetido,
+    # participante na agenda errada. O código segue sendo checado por ser único,
+    # porque ele ainda identifica a linha nas mensagens.
+    _codigos_das_agendas(por_aba[ABA_PRINCIPAL])
 
     return por_aba
 

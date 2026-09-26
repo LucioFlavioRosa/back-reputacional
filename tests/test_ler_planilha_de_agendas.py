@@ -55,24 +55,16 @@ def _livro(abas: Mapping[str, list[list]]) -> bytes:
     return saida.getvalue()
 
 
-def _completa(
-    agendas: list[Mapping[str, object]] = (),
-    participantes: list[Mapping[str, object]] = (),
-    pessoas_aegea: list[Mapping[str, object]] = (),
-    materiais: list[Mapping[str, object]] = (),
-) -> bytes:
-    """Um arquivo estruturalmente válido, com as quatro abas e o cabeçalho certo."""
-    por_aba = {
-        "Agendas": agendas,
-        "Participantes": participantes,
-        "Pessoas da Aegea": pessoas_aegea,
-        "Materiais": materiais,
-    }
+def _completa(agendas: list[Mapping[str, object]] = ()) -> bytes:
+    """Um arquivo estruturalmente válido: UMA aba, com o cabeçalho certo.
+
+    As três abas filhas deixaram de existir — pessoas e materiais viraram colunas
+    numeradas da própria linha da agenda.
+    """
     return _livro(
         {
-            aba.nome: [_cabecalho(aba.nome)]
-            + [_linha(aba.nome, valores) for valores in por_aba[aba.nome]]
-            for aba in FORMATO
+            "Agendas": [_cabecalho("Agendas")]
+            + [_linha("Agendas", valores) for valores in agendas]
         }
     )
 
@@ -103,16 +95,6 @@ def test_guarda_de_que_linha_do_arquivo_a_agenda_veio():
     assert [linha.numero for linha in lido["Agendas"]] == [2, 3]
 
 
-def test_le_as_abas_filhas_ligadas_pelo_codigo():
-    lido = ler(
-        _completa(
-            agendas=[_agenda("A1")],
-            participantes=[{"Código": "A1", "Pessoa": "Ana Prado", "Principal": "sim"}],
-        )
-    )
-
-    assert lido["Participantes"][0].celulas["Pessoa"] == "Ana Prado"
-
 
 def test_a_ordem_das_colunas_nao_importa():
     """O leitor casa por NOME. Uma pessoa que arrasta uma coluna no Excel não
@@ -129,9 +111,6 @@ def test_a_ordem_das_colunas_nao_importa():
     conteudo = _livro(
         {
             "Agendas": [trocado, linha],
-            "Participantes": [_cabecalho("Participantes")],
-            "Pessoas da Aegea": [_cabecalho("Pessoas da Aegea")],
-            "Materiais": [_cabecalho("Materiais")],
         }
     )
 
@@ -150,9 +129,6 @@ def test_coluna_extra_desconhecida_e_ignorada():
                 [*_cabecalho("Agendas"), "minhas anotações"],
                 [*_linha("Agendas", _agenda()), "confirmar com o Radamés"],
             ],
-            "Participantes": [_cabecalho("Participantes")],
-            "Pessoas da Aegea": [_cabecalho("Pessoas da Aegea")],
-            "Materiais": [_cabecalho("Materiais")],
         }
     )
 
@@ -172,9 +148,6 @@ def test_a_linha_inteiramente_vazia_e_ignorada():
                 [None for _ in _cabecalho("Agendas")],
                 _linha("Agendas", _agenda()),
             ],
-            "Participantes": [_cabecalho("Participantes")],
-            "Pessoas da Aegea": [_cabecalho("Pessoas da Aegea")],
-            "Materiais": [_cabecalho("Materiais")],
         }
     )
 
@@ -190,9 +163,6 @@ def test_a_celula_so_com_espaco_conta_como_vazia():
     conteudo = _livro(
         {
             "Agendas": [_cabecalho("Agendas"), vazia, _linha("Agendas", _agenda())],
-            "Participantes": [_cabecalho("Participantes")],
-            "Pessoas da Aegea": [_cabecalho("Pessoas da Aegea")],
-            "Materiais": [_cabecalho("Materiais")],
         }
     )
 
@@ -237,13 +207,10 @@ def test_a_data_ilegivel_chega_CRUA_e_nao_derruba_o_arquivo():
 
 
 def test_aba_faltando_recusa_o_arquivo_inteiro():
-    """Não faz sentido propor 54 agendas quando a planilha nem tem a aba."""
-    sem_participantes = {
-        aba.nome: [_cabecalho(aba.nome)] for aba in FORMATO if aba.nome != "Participantes"
-    }
-
-    with pytest.raises(RegraViolada, match="Participantes"):
-        ler(_livro(sem_participantes))
+    """Sem a aba Agendas não há nada a importar, e o nome dela está na mensagem:
+    quem renomeou a aba precisa saber qual nome o servidor procura."""
+    with pytest.raises(RegraViolada, match="Agendas"):
+        ler(_livro({"Outra coisa": [["Código"]]}))
 
 
 def test_coluna_faltando_recusa_e_diz_qual():
@@ -265,29 +232,6 @@ def test_codigo_repetido_recusa_o_arquivo():
         ler(_completa(agendas=[_agenda("A1"), _agenda("A1", date(2026, 9, 26), "Outro")]))
 
 
-def test_linha_filha_com_codigo_orfao_recusa_e_cita_o_codigo():
-    """A pessoa apagou a agenda e esqueceu os participantes dela. Importar os
-    participantes de uma agenda que não existe é impossível, e ignorá-los em
-    silêncio perderia gente da reunião."""
-    with pytest.raises(RegraViolada, match="A9"):
-        ler(
-            _completa(
-                agendas=[_agenda("A1")],
-                participantes=[{"Código": "A9", "Pessoa": "Ana Prado"}],
-            )
-        )
-
-
-def test_o_codigo_orfao_e_apontado_em_QUALQUER_aba_filha():
-    """As três abas filhas têm o mesmo vínculo, e uma guarda que só olha
-    Participantes deixaria Materiais e Pessoas da Aegea sem rede."""
-    with pytest.raises(RegraViolada, match="A9"):
-        ler(
-            _completa(
-                agendas=[_agenda("A1")],
-                materiais=[{"Código": "A9", "Título": "Nota técnica"}],
-            )
-        )
 
 
 def test_arquivo_que_nao_e_xlsx_recusa_com_mensagem_util():
@@ -364,41 +308,7 @@ def test_duas_agendas_sem_codigo_nao_colidem():
     assert len(codigos) == 2
 
 
-def test_agenda_sem_codigo_COM_filha_orfa_ainda_recusa():
-    """A exceção que não tem como ser resolvida: o participante aponta para um
-    código, e uma agenda sem código não pode ser apontada. Gerar um no servidor
-    não ajuda — ele não existia quando a pessoa preencheu a planilha."""
-    with pytest.raises(RegraViolada, match="A9"):
-        ler(
-            _completa(
-                agendas=[_agenda(codigo=None)],
-                participantes=[{"Código": "A9", "Pessoa": "Ana Prado"}],
-            )
-        )
 
-
-def test_a_mensagem_do_orfao_explica_que_a_agenda_precisa_de_codigo():
-    """Sem isto, a pessoa lê "A9 não existe na aba Agendas", olha a planilha, vê
-    a agenda lá, e não entende — porque o que falta é o CÓDIGO dela."""
-    with pytest.raises(RegraViolada, match="[Cc]ódigo"):
-        ler(
-            _completa(
-                agendas=[_agenda(codigo=None)],
-                participantes=[{"Código": "A9", "Pessoa": "Ana Prado"}],
-            )
-        )
-
-
-def test_codigo_escrito_continua_ligando_as_filhas():
-    """O contrapeso: quem escreve o código continua podendo referenciá-lo."""
-    lido = ler(
-        _completa(
-            agendas=[_agenda("A1")],
-            participantes=[{"Código": "A1", "Pessoa": "Ana Prado"}],
-        )
-    )
-
-    assert lido["Participantes"][0].celulas["Código"] == "A1"
 
 
 def test_um_codigo_escrito_que_imita_o_gerado_e_recusado():
@@ -529,9 +439,6 @@ def test_a_linha_em_branco_continua_sendo_ignorada():
                 _linha("Agendas", _agenda("A1")),
                 [None for _ in _cabecalho("Agendas")],
             ],
-            "Participantes": [_cabecalho("Participantes")],
-            "Pessoas da Aegea": [_cabecalho("Pessoas da Aegea")],
-            "Materiais": [_cabecalho("Materiais")],
         }
     )
 
@@ -539,21 +446,6 @@ def test_a_linha_em_branco_continua_sendo_ignorada():
 
     assert len(lido["Agendas"]) == 1
 
-
-def test_idem_na_aba_filha_tambem_funciona():
-    """Dez participantes da mesma instituição numa reunião é o caso comum."""
-    lido = ler(
-        _completa(
-            agendas=[_agenda("A1")],
-            participantes=[
-                {"Código": "A1", "Pessoa": "Ana Prado", "Presença": "presente"},
-                {"Código": "idem", "Pessoa": "Bruno Lima", "Presença": "idem"},
-            ],
-        )
-    )
-
-    assert lido["Participantes"][1].celulas["Código"] == "A1"
-    assert lido["Participantes"][1].celulas["Presença"] == "presente"
 
 
 def test_o_marcador_esta_na_lista_suspensa_de_um_vocabulario_fechado():
@@ -660,23 +552,6 @@ def test_o_CODIGO_da_agenda_nunca_herda():
     assert codigos[0] == "A1"
     assert codigos[1] != "A1"
 
-
-def test_na_aba_filha_o_codigo_herda_junto_com_o_resto():
-    """Dez participantes da mesma reunião: um `idem` e só os nomes mudam."""
-    lido = ler(
-        _completa(
-            agendas=[_agenda("A1")],
-            participantes=[
-                {"Código": "A1", "Pessoa": "Ana Prado", "Presença": "presente"},
-                {"Pessoa": "Bruno Lima", "Presença": "idem"},
-            ],
-        )
-    )
-
-    segunda = lido["Participantes"][1].celulas
-    assert segunda["Código"] == "A1"
-    assert segunda["Presença"] == "presente"
-    assert segunda["Pessoa"] == "Bruno Lima"
 
 
 def test_a_heranca_de_linha_segue_valendo_em_cadeia():

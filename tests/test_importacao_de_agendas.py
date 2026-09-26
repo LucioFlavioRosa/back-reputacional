@@ -14,24 +14,17 @@ from app.dominio.importacao_de_agendas import (
 )
 
 
-def test_as_quatro_abas_de_preenchimento_existem():
-    assert [aba.nome for aba in FORMATO] == [
-        "Agendas",
-        "Participantes",
-        "Pessoas da Aegea",
-        "Materiais",
-    ]
+def test_o_formato_tem_uma_aba_de_preenchimento_so():
+    """UMA ABA SÓ, por decisão do dono: quem preenche 54 reuniões não quer pular
+    entre abas, e o vínculo por `Código` entre elas era a parte que mais
+    confundia. As pessoas e os materiais viraram colunas numeradas."""
+    assert [aba.nome for aba in FORMATO] == ["Agendas"]
 
 
 def test_a_aba_de_agendas_comeca_pelo_codigo():
-    """O `Código` é o que liga as abas filhas, e por isso é a primeira coluna:
-    quem preenche precisa vê-lo antes de tudo."""
+    """Primeira coluna porque é a referência da linha: é por ele que a conferência
+    e as mensagens de erro chamam a agenda de que estão falando."""
     assert aba_de("Agendas").colunas[0].nome == "Código"
-
-
-def test_toda_aba_filha_tem_codigo():
-    for aba in FORMATO[1:]:
-        assert aba.colunas[0].nome == "Código", aba.nome
 
 
 def test_nenhum_vocabulario_e_editavel_e_fechado_ao_mesmo_tempo():
@@ -379,27 +372,26 @@ def test_linha_sem_divergencia_nao_vira_grupo():
 def test_a_ordem_das_colunas_segue_o_FORMULARIO():
     """QUEM PREENCHE A PLANILHA JÁ CONHECE O FORMULÁRIO.
 
-    A ordem não é estética: a pessoa que registra 54 reuniões conhece a sequência
-    da tela de nova interação, e uma planilha com os campos em outra ordem a
-    obriga a procurar cada um. Área era a última coluna (AA, depois de três de
-    Tema) e é a SEGUNDA seção do formulário — o dono notou justamente por isso:
-    procurou e não achou.
+    A ordem não é estética: quem registra 54 reuniões conhece a sequência da tela
+    de nova interação, e uma planilha com os campos em outra ordem a obriga a
+    procurar cada um. `Área` era a última coluna e é a SEGUNDA seção do
+    formulário — o dono procurou e não achou.
 
-    A sequência abaixo é a das seções numeradas do formulário:
-      1. Tipo de interação
-      2. Área(s)
-      3. Identificação — data, instituição, UF, unidade, temas
-      5. Onde — modalidade, local
-      6. Situação e expectativa
-      8. Outputs — relato, encaminhamentos, pendências, observações
-      9. Desfecho — clima, resultado, desdobramento
-
-    As seções 4, 7 e 10 (participantes e materiais) são abas filhas, e a
-    "Relevância" e o "Público" do formulário não entram: são derivados do
-    cadastro da instituição, e pô-los aqui abriria a chance de a agenda
-    contradizê-lo.
+    As colunas de PESSOA e MATERIAL vêm depois das da agenda, e não na posição das
+    seções 4, 7 e 10 do formulário: elas são quatro grupos numerados, e intercalá-
+    los no meio dos campos da agenda faria a pessoa rolar para os lados no meio do
+    preenchimento de uma coisa só.
     """
-    assert [coluna.nome for coluna in aba_de("Agendas").colunas] == [
+    # Filtra pelo CAMPO e não pelo dígito no nome: `Tema 1` e `Área 1` são
+    # numeradas e são campos da agenda, não grupos de pessoa ou material.
+    DOS_GRUPOS = {"outra_parte", "participacoes", "materiais"}
+    da_agenda = [
+        coluna.nome
+        for coluna in aba_de("Agendas").colunas
+        if coluna.campo not in DOS_GRUPOS
+    ]
+
+    assert da_agenda == [
         "Código",
         # 1. Tipo de interação
         "Tipo de interação",
@@ -434,6 +426,34 @@ def test_a_ordem_das_colunas_segue_o_FORMULARIO():
         "Clima",
         "Desfecho",
         "Desdobra em outra interação?",
+    ]
+
+
+def test_os_grupos_numerados_vem_no_fim_e_em_ordem():
+    """Interlocutores, pessoas da Aegea e materiais, cada grupo inteiro antes do
+    seguinte — e não `Interlocutor 1, Pessoa 1, Interlocutor 2`, que faria quem
+    preenche saltar de assunto a cada duas colunas."""
+    DOS_GRUPOS = {"outra_parte", "participacoes", "materiais"}
+    numeradas = [
+        coluna.nome for coluna in aba_de("Agendas").colunas if coluna.campo in DOS_GRUPOS
+    ]
+
+    assert numeradas[:4] == [
+        "Interlocutor 1",
+        "Presença 1",
+        "Interlocutor 2",
+        "Presença 2",
+    ]
+    assert numeradas[8:11] == [
+        "Pessoa da Aegea 1",
+        "Papel 1",
+        "Presença da Aegea 1",
+    ]
+    assert numeradas[-4:] == [
+        "Momento 3",
+        "Título 3",
+        "Link 3",
+        "Observação do material 3",
     ]
 
 

@@ -35,12 +35,14 @@ from collections.abc import Mapping
 
 from app.dominio.erros import RegraViolada
 from app.dominio.importacao_de_agendas import (
+    ABA_PRINCIPAL,
     COLUNA_DA_CATEGORIA_DE_INSTITUICAO,
     FORMATO,
     MARCADOR_DE_REPETICAO,
     ROTULO_DO_VOCABULARIO,
     VOCABULARIOS_EDITAVEIS,
     VOCABULARIOS_FECHADOS,
+    aba_de,
 )
 
 #: Linhas de dados que a lista suspensa da aba AGENDAS cobre, além do
@@ -50,6 +52,23 @@ from app.dominio.importacao_de_agendas import (
 #: passar de 500 é pior do que não ter lista suspensa nenhuma ali, porque ela
 #: falsamente sugere que a linha é válida.
 _LINHAS_DE_AGENDAS = 500
+
+#: A coluna que recebe a data da agenda. Pelo NOME e não pelo índice: a ordem das
+#: colunas segue a sequência dos campos do formulário e já mudou uma vez.
+COLUNA_DA_DATA = "Data"
+
+#: O formato da célula, em código do Excel. É o formato brasileiro porque é o que
+#: a pessoa digita, e é ele que faz o Excel ler `25/09/2026` como 25 de setembro —
+#: numa célula "Geral" a mesma digitação pode virar texto, ou ser lida no formato
+#: americano e cair em outro dia.
+FORMATO_DA_DATA_NA_TELA = "DD/MM/YYYY"
+
+#: O piso da validação de data. Ele NÃO julga a agenda: existe só para dar ao
+#: Excel um critério de data a comparar, porque a validação de data pede um
+#: operador. Sem teto de propósito — agenda prevista é caso normal (`status` tem
+#: "previsto"), e um teto recusaria dado legítimo, que é pior que não travar.
+PISO_DA_DATA = "DATE(2000,1,1)"
+
 
 #: Linhas de dados que a lista suspensa das abas FILHAS cobre (Participantes,
 #: Pessoas da Aegea, Materiais). Estas NÃO têm o teto de Agendas: uma agenda
@@ -236,6 +255,54 @@ def gerar(vocabularios: Mapping[str, list[str]]) -> bytes:
             )
             planilha.add_data_validation(validacao)
             validacao.add(f"{letra}2:{letra}{teto + 1}")
+
+    # -- a coluna Data: travada como data, e formatada como data --------------
+    #
+    # AS DUAS METADES SÃO NECESSÁRIAS, e cada uma resolve um problema diferente:
+    #
+    # A VALIDAÇÃO recusa na hora o que não é data — `25/09/26`, `set/25`,
+    # `25.09.2026`, `amanhã`. Sem ela nada é recusado no Excel: tudo isso chega
+    # ao servidor como texto, e a conferência acusa "data ilegível" numa linha
+    # que a pessoa jurava ter preenchido, depois de ela já ter feito as 54.
+    #
+    # O FORMATO DA CÉLULA é o que faz o Excel INTERPRETAR a digitação como data
+    # brasileira. Numa célula "Geral", `25/09/2026` pode virar texto — e então a
+    # validação recusaria o que estava certo, que é o pior dos mundos: a pessoa
+    # digita a data correta e o arquivo diz que não é data.
+    agendas = pasta[ABA_PRINCIPAL]
+    indice_da_data = next(
+        (
+            indice
+            for indice, coluna in enumerate(aba_de(ABA_PRINCIPAL).colunas, start=1)
+            if coluna.nome == COLUNA_DA_DATA
+        ),
+        None,
+    )
+    if indice_da_data is not None:
+        letra_da_data = get_column_letter(indice_da_data)
+        faixa_da_data = f"{letra_da_data}2:{letra_da_data}{_LINHAS_DE_AGENDAS + 1}"
+        data_valida = DataValidation(
+            type="date",
+            operator="greaterThanOrEqual",
+            formula1=PISO_DA_DATA,
+            # EM BRANCO CONTINUA PASSANDO: a linha vazia é o normal no meio de um
+            # arquivo, e o `idem` herda a data da linha de cima. Travar o branco
+            # aqui brigaria com as duas coisas.
+            allow_blank=True,
+            showErrorMessage=True,
+            errorTitle="Data inválida",
+            error=(
+                "Escreva a data no formato dd/mm/aaaa — por exemplo 25/09/2026. "
+                "O texto não vale: a agenda é ordenada e filtrada por data, e o "
+                "que não é data não chega ao painel."
+            ),
+        )
+        agendas.add_data_validation(data_valida)
+        data_valida.add(faixa_da_data)
+        # NA DIMENSÃO DA COLUNA, e não célula por célula: escrever o formato em
+        # `A2..A501` CRIA as 500 células, o arquivo passa a ter 501 linhas usadas
+        # e o `Ctrl+End` de quem abre o modelo vai para o fim do nada.
+        agendas.column_dimensions[letra_da_data].number_format = FORMATO_DA_DATA_NA_TELA
 
     saida = io.BytesIO()
     pasta.save(saida)

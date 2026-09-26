@@ -94,6 +94,49 @@ def semente(sessao):
     }
 
 
+#: Como cada "linha de aba filha" dos testes vira colunas numeradas.
+#:
+#: AS ABAS FILHAS DEIXARAM DE EXISTIR, mas os testes seguem dizendo "esta agenda
+#: tem estes participantes" — que é a intenção, e ela não mudou. O helper faz a
+#: tradução, e é por isso que dezessete testes sobreviveram à mudança de formato
+#: sem precisar reescrever o que cada um quer provar.
+_GRUPOS_DO_HELPER = {
+    "participantes": {"Pessoa": "Interlocutor {n}", "Presença": "Presença {n}"},
+    "pessoas_aegea": {
+        "Pessoa": "Pessoa da Aegea {n}",
+        "Papel": "Papel {n}",
+        "Presença": "Presença da Aegea {n}",
+    },
+    "materiais": {
+        "Momento": "Momento {n}",
+        "Título": "Título {n}",
+        "Link": "Link {n}",
+        "Observação": "Observação do material {n}",
+    },
+}
+
+
+def _com_grupos(
+    agenda: dict,
+    participantes: list[dict] = (),
+    pessoas_aegea: list[dict] = (),
+    materiais: list[dict] = (),
+) -> dict:
+    """A agenda com as pessoas e os materiais nas colunas numeradas dela."""
+    valores = dict(agenda)
+    for chave, linhas in (
+        ("participantes", participantes),
+        ("pessoas_aegea", pessoas_aegea),
+        ("materiais", materiais),
+    ):
+        moldes = _GRUPOS_DO_HELPER[chave]
+        for numero, linha in enumerate(linhas, start=1):
+            for campo, molde in moldes.items():
+                if campo in linha and linha[campo] is not None:
+                    valores[molde.format(n=numero)] = linha[campo]
+    return valores
+
+
 def _preenchida(
     sessao,
     agendas: list[dict] = (),
@@ -104,6 +147,10 @@ def _preenchida(
 ) -> bytes:
     """O modelo de verdade, preenchido — o caminho que a pessoa faz.
 
+    As pessoas e os materiais entram nas COLUNAS NUMERADAS da agenda a que
+    pertencem, casada pelo `Código`. Quem não tem código vai para a primeira, que
+    é o caso de quase todo teste: uma agenda só.
+
     `declarar` acrescenta nomes às abas de vocabulário editáveis: é a declaração
     de intenção que `classificar` distingue de digitar direto na célula.
     """
@@ -112,32 +159,39 @@ def _preenchida(
     conteudo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
     pasta = load_workbook(io.BytesIO(conteudo))
 
-    por_aba = {
-        "Agendas": agendas,
-        "Participantes": participantes,
-        "Pessoas da Aegea": pessoas_aegea,
-        "Materiais": materiais,
-    }
-    for nome, linhas in por_aba.items():
-        folha = pasta[nome]
-        cabecalho = [celula.value for celula in next(folha.iter_rows())]
-        for valores in linhas:
-            desconhecidas = set(valores) - set(cabecalho)
-            assert not desconhecidas, f"coluna que não existe em {nome!r}: {sorted(desconhecidas)}"
-            folha.append([valores.get(coluna) for coluna in cabecalho])
+    def do_codigo(linhas, codigo):
+        return [
+            linha
+            for linha in linhas
+            if linha.get("Código", codigo) == codigo or "Código" not in linha
+        ]
+
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    for valores in agendas:
+        codigo = valores.get("Código")
+        completa = _com_grupos(
+            valores,
+            do_codigo(participantes, codigo),
+            do_codigo(pessoas_aegea, codigo),
+            do_codigo(materiais, codigo),
+        )
+        desconhecidas = set(completa) - set(cabecalho)
+        assert not desconhecidas, f"coluna que não existe: {sorted(desconhecidas)}"
+        folha.append([completa.get(coluna) for coluna in cabecalho])
 
     for chave, nomes in (declarar or {}).items():
-        folha = pasta[ROTULO_DO_VOCABULARIO[chave]]
+        folha_do_vocabulario = pasta[ROTULO_DO_VOCABULARIO[chave]]
         for nome in nomes:
             # A ABA DE INSTITUIÇÕES TEM DUAS COLUNAS: nome e CATEGORIA de público.
             # É dela que o tipo nasce, e o tipo deriva a frente da agenda — a
             # importação recusa criar instituição sem categoria válida.
             if chave == "instituicoes":
-                folha.append(
+                folha_do_vocabulario.append(
                     list(nome) if isinstance(nome, tuple) else [nome, "Poder Executivo"]
                 )
             else:
-                folha.append([nome])
+                folha_do_vocabulario.append([nome])
 
     saida = io.BytesIO()
     pasta.save(saida)
@@ -485,16 +539,16 @@ def test_o_custo_nao_cresce_com_o_numero_de_agendas(sessao, semente):
     )
 
 
-def test_toda_coluna_de_aba_filha_tem_campo():
+def test_toda_coluna_numerada_tem_grupo():
     """O GUARDA DA COLUNA NOVA NUMA ABA FILHA.
 
-    As colunas das abas filhas têm `campo=""` em `FORMATO`, porque não alimentam
-    um campo da interação e sim um item de lista — então o guarda de destino da
-    Tarefa 2 não as alcança. Sem este teste, uma coluna nova em Participantes
-    apareceria no modelo, a pessoa a preencheria, e o valor não chegaria a lugar
-    nenhum: sem erro no Excel, sem erro no servidor, sem nada.
+    As colunas numeradas alimentam uma LISTA e não um campo escalar, então o
+    guarda de destino da Tarefa 2 não as alcança. Sem este teste, uma coluna nova
+    — um `Interlocutor 5`, um `Cargo 1` — apareceria no modelo, a pessoa a
+    preencheria, e o valor não chegaria a lugar nenhum: sem erro no Excel, sem
+    erro no servidor, sem nada.
     """
-    assert importar_agendas.colunas_de_aba_filha_sem_campo() == []
+    assert importar_agendas.colunas_numeradas_sem_grupo() == []
 
 
 def test_nenhum_vocabulario_tem_duas_fontes():
@@ -569,8 +623,9 @@ def test_material_com_link_e_sem_titulo_e_recusado(sessao, semente):
 
 
 def test_participante_da_outra_parte_sem_pessoa_e_recusado(sessao, semente):
-    """Regra 3. A planilha PRODUZ isto: quem preenche 54 agendas digita a coluna
-    de código inteira primeiro e as pessoas depois — e para no meio."""
+    """Regra 3. A planilha PRODUZ isto: a pessoa preenche a presença e esquece o
+    nome, ou apaga o nome e deixa o resto. O grupo tem dado, então o vazio é
+    omissão e não espaço sobrando."""
     conteudo = _preenchida(
         sessao, agendas=[_agenda(semente)], participantes=[{"Código": "A1", "Presença": "presente"}]
     )
@@ -578,7 +633,7 @@ def test_participante_da_outra_parte_sem_pessoa_e_recusado(sessao, semente):
     (proposta,) = importar_agendas.propor(sessao, conteudo)
 
     assert proposta.entrada is None
-    assert any("Pessoa" in d.mensagem for d in proposta.divergencias)
+    assert any("Interlocutor 1" in d.mensagem for d in proposta.divergencias)
 
 
 def test_participante_que_nao_pertence_a_instituicao_e_recusado(sessao, semente):
@@ -753,7 +808,9 @@ def test_linha_filha_com_cadastro_declarado_NAO_perde_os_outros_campos(sessao, s
     pendentes = [p for p in proposta.filhas_pendentes if p["campo_da_lista"] == "outra_parte"]
     assert pendentes, proposta.filhas_pendentes
     assert pendentes[0]["valores"]["presenca"] == "presente"
-    assert pendentes[0]["valores"]["principal"] is True
+    # `principal` NÃO está aqui: ele deixou de ser um valor preenchido e passou a
+    # ser implícito pela posição — o `Interlocutor 1` é o principal. O item que
+    # espera cadastro guarda o que a PESSOA escreveu, e ela não escreve isso.
 
 def test_nome_ambiguo_no_cadastro_TRAVA_em_vez_de_escolher_sozinho(sessao, semente):
     """O DEFEITO 4. A unicidade de `instituicao` é (nome_normalizado, tipo) — a
@@ -812,3 +869,26 @@ def test_interlocutor_homonimo_em_outra_instituicao_tambem_e_ambiguo(sessao, sem
     assert any("mais de um" in d.mensagem and d.trava for d in proposta.divergencias), [
         d.mensagem for d in proposta.divergencias
     ]
+
+
+def test_nenhuma_coluna_de_GRUPO_entra_no_mapa_de_campo_unico():
+    """O DEFEITO QUE A ABA ÚNICA TROUXE, e ele passou por todos os outros testes.
+
+    `Interlocutor 1` virou coluna da aba de agendas, e o laço das colunas
+    simples a resolvia uma SEGUNDA vez — sob `campo="outra_parte"`, que não é um
+    campo de valor único mas uma lista. A chave crua `outra_parte` entrava no mapa
+    campo → vocabulário com o vocabulário da última coluna numerada que o laço
+    via (`presenca`), e `_decisoes` a consultava para descobrir o que criar.
+
+    O efeito: um interlocutor novo e declarado ia para `a_criar` duas vezes, a
+    segunda como se fosse um cadastro de `presenca` — e a confirmação recusava
+    com "não sei criar um cadastro em 'presenca'", depois de a pessoa ter
+    conferido tudo. O upload dizia que estava tudo certo."""
+    from app.casos_de_uso.importar_agendas import _VOCABULARIO_DO_CAMPO, GRUPOS_NUMERADOS
+
+    cruas = [campo for campo in _VOCABULARIO_DO_CAMPO if campo in GRUPOS_NUMERADOS]
+
+    assert cruas == []
+    # E o mapa prefixado continua lá — a guarda não pode passar por o mapa estar vazio.
+    assert _VOCABULARIO_DO_CAMPO["outra_parte.interlocutor_id"] == "interlocutores"
+    assert _VOCABULARIO_DO_CAMPO["outra_parte.presenca"] == "presenca"

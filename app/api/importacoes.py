@@ -227,7 +227,7 @@ def _grupos(sessao, linhas) -> list[GrupoSaida]:
         # A DESCARTADA SAI DA CONTA: descartar é uma resolução, e a linha não
         # segura mais a confirmação. Mantê-la no agrupamento faria o botão de
         # confirmar continuar apagado depois de a pessoa já ter decidido.
-        if linha.aba == "Agendas" and linha.decisao != "descartada"
+        if linha.decisao != "descartada"
     ]
 
     # `vocabularios` uma vez por campo distinto, e não por grupo: uma tela com
@@ -378,26 +378,6 @@ def subir(sessao: Sessao, usuario: UsuarioLogado, arquivo: Arquivo) -> Importaca
                 for divergencia in proposta.divergencias
             ],
         )
-        # O BRUTO DAS ABAS FILHAS TAMBÉM, uma `importacao_linha` por linha delas.
-        #
-        # Antes só as linhas de Agendas eram gravadas, e o arquivo original de
-        # Participantes, Pessoas da Aegea e Materiais não ficava em lugar nenhum —
-        # contra a invariante da 0008 de preservar o bruto para reprocessar e para
-        # responder de onde veio um registro. Pior no caso de uma linha filha que
-        # espera cadastro: o que a pessoa preencheu não estaria em parte alguma.
-        for filha in proposta.linhas_filhas:
-            repositorio_importacao.gravar_linha(
-                sessao,
-                importacao_id=importacao.id,
-                aba=filha.aba,
-                linha_origem=filha.numero,
-                dados_brutos={
-                    **filha.celulas,
-                    CHAVE_DO_HERDADO: dict(filha.herdado),
-                },
-                proposta=None,
-                divergencias=[],
-            )
     repositorio_importacao.marcar_aguardando_conferencia(sessao, importacao)
 
     return _saida(sessao, importacao, repositorio_importacao.linhas_de(sessao, importacao.id))

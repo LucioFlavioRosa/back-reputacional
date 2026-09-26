@@ -186,6 +186,30 @@ ROTULO_DO_VOCABULARIO: dict[str, str] = {
     "momento": "Momento",
 }
 
+#: Quantas pessoas e materiais cabem numa linha de agenda.
+#:
+#: TUDO NUMA ABA SÓ foi decisão do dono, e o preço é este: com participantes em
+#: colunas numeradas, existe um teto. Medi o banco de desenvolvimento antes de
+#: escolher — interlocutores no máximo 2, pessoas da Aegea 3, materiais 2 — e dei
+#: folga acima do observado. A ressalva importa: aquele banco é semeado, não é a
+#: realidade do cliente, então estes números são a melhor estimativa disponível e
+#: não um limite conhecido.
+#:
+#: AMPLIAR É TROCAR O NÚMERO. O `FORMATO` se monta a partir daqui, o gerador e o
+#: leitor o leem, e nenhum outro lugar sabe quantos são.
+INTERLOCUTORES_POR_AGENDA = 4
+PESSOAS_DA_AEGEA_POR_AGENDA = 4
+MATERIAIS_POR_AGENDA = 3
+
+#: O PRIMEIRO INTERLOCUTOR É O PRINCIPAL, por convenção.
+#:
+#: Com abas filhas havia uma coluna `Principal` para marcá-lo. Em colunas
+#: numeradas, uma coluna dizendo "qual número é o principal" seria mais difícil de
+#: preencher do que listar a pessoa mais importante primeiro — que é como gente
+#: lista gente.
+PRIMEIRO_INTERLOCUTOR_E_PRINCIPAL = True
+
+
 _AGENDAS = Aba(
     nome="Agendas",
     colunas=(
@@ -252,49 +276,88 @@ _AGENDAS = Aba(
         Coluna(nome="Clima", campo="clima", vocabulario="climas"),
         Coluna(nome="Desfecho", campo="resultado", vocabulario="resultados"),
         Coluna(nome="Desdobra em outra interação?", campo="preve_desdobramento"),
+        # -- 4. Quem participou ou irá participar --------------------------
+        #
+        # PELA OUTRA PARTE. O interlocutor 1 é o PRINCIPAL — ver
+        # `PRIMEIRO_INTERLOCUTOR_E_PRINCIPAL`. A instituição dele é a da própria
+        # linha, o que resolve de graça o que as abas filhas deixavam implícito:
+        # quem pode falar por qual instituição está escrito ao lado.
+        *(
+            coluna
+            for numero in range(1, INTERLOCUTORES_POR_AGENDA + 1)
+            for coluna in (
+                Coluna(
+                    nome=f"Interlocutor {numero}",
+                    campo="outra_parte",
+                    vocabulario="interlocutores",
+                ),
+                Coluna(
+                    nome=f"Presença {numero}",
+                    campo="outra_parte",
+                    vocabulario="presenca",
+                ),
+            )
+        ),
+        # PELA AEGEA.
+        *(
+            coluna
+            for numero in range(1, PESSOAS_DA_AEGEA_POR_AGENDA + 1)
+            for coluna in (
+                Coluna(
+                    nome=f"Pessoa da Aegea {numero}",
+                    campo="participacoes",
+                    vocabulario="pessoas_aegea",
+                ),
+                Coluna(nome=f"Papel {numero}", campo="participacoes", vocabulario="papel"),
+                Coluna(
+                    nome=f"Presença da Aegea {numero}",
+                    campo="participacoes",
+                    vocabulario="presenca",
+                ),
+            )
+        ),
+        # -- 7 e 10. Materiais ---------------------------------------------
+        #
+        # O momento diz se é de antes ou de depois da reunião, e é por isso que os
+        # materiais não se separam em dois grupos de colunas.
+        *(
+            coluna
+            for numero in range(1, MATERIAIS_POR_AGENDA + 1)
+            for coluna in (
+                Coluna(
+                    nome=f"Momento {numero}", campo="materiais", vocabulario="momento"
+                ),
+                Coluna(nome=f"Título {numero}", campo="materiais"),
+                Coluna(nome=f"Link {numero}", campo="materiais"),
+                Coluna(nome=f"Observação do material {numero}", campo="materiais"),
+            )
+        ),
     ),
 )
 
-_PARTICIPANTES = Aba(
-    nome="Participantes",
-    colunas=(
-        Coluna(nome="Código", campo=""),
-        # `Pessoa` aqui é o interlocutor — pessoa da OUTRA parte —, e por isso
-        # aponta para o vocabulário `interlocutores`, não `pessoas_aegea`.
-        Coluna(nome="Pessoa", campo="", vocabulario="interlocutores"),
-        Coluna(nome="Presença", campo="", vocabulario="presenca"),
-        # O interlocutor PRINCIPAL não é coluna da Agenda: é quem estiver
-        # marcado aqui. Uma coluna separada em Agendas permitiria que as duas
-        # informações discordassem — ver "O que não entra na planilha".
-        Coluna(nome="Principal", campo=""),
-    ),
-)
 
-_PESSOAS_DA_AEGEA = Aba(
-    nome="Pessoas da Aegea",
-    colunas=(
-        Coluna(nome="Código", campo=""),
-        Coluna(nome="Pessoa", campo="", vocabulario="pessoas_aegea"),
-        Coluna(nome="Papel", campo="", vocabulario="papel"),
-        Coluna(nome="Presença", campo="", vocabulario="presenca"),
-    ),
-)
 
-_MATERIAIS = Aba(
-    nome="Materiais",
-    colunas=(
-        Coluna(nome="Código", campo=""),
-        Coluna(nome="Momento", campo="", vocabulario="momento"),
-        Coluna(nome="Título", campo=""),
-        Coluna(nome="Link", campo=""),
-        Coluna(nome="Observação", campo=""),
-    ),
-)
 
 #: As quatro abas de preenchimento, na ordem em que a pessoa as encontra no
 #: arquivo: a agenda primeiro (dona do `Código`), depois as três abas filhas
 #: que se ligam a ela por ele.
-FORMATO: tuple[Aba, ...] = (_AGENDAS, _PARTICIPANTES, _PESSOAS_DA_AEGEA, _MATERIAIS)
+#: UMA ABA SÓ. As três abas filhas — Participantes, Pessoas da Aegea e Materiais
+#: — deixaram de existir por decisão do dono: quem preenche 54 reuniões não quer
+#: pular entre abas, e o vínculo por `Código` entre elas era a parte que mais
+#: confundia.
+#:
+#: O QUE SE GANHOU DE GRAÇA: a instituição do interlocutor está na mesma linha que
+#: ele, então "quem pode falar por qual instituição" deixou de ser inferido. E o
+#: `Código` deixou de ser necessário para ligar coisa alguma — segue existindo só
+#: para a pessoa reconhecer a linha numa mensagem.
+#:
+#: O QUE SE PERDEU: o teto. Participante além do teto não cabe na planilha, e
+#: entra editando a agenda pela tela.
+FORMATO: tuple[Aba, ...] = (_AGENDAS,)
+
+#: A aba que a pessoa preenche. Os vocabulários têm abas próprias, geradas a
+#: partir do banco; esta é a única que recebe dado.
+ABA_PRINCIPAL = _AGENDAS.nome
 
 
 #: Toda chave de `InteracaoEntrada.model_fields` classificada em um de quatro

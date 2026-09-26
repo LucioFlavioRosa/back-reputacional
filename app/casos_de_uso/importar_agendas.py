@@ -55,6 +55,10 @@ from app.dominio.frentes import TIPO_DA_CATEGORIA_DE_PUBLICO
 from app.dominio.importacao_de_agendas import (
     DECISOES_DE_DIVERGENCIA,
     FORMATO,
+    INTERLOCUTORES_POR_AGENDA,
+    MATERIAIS_POR_AGENDA,
+    PESSOAS_DA_AEGEA_POR_AGENDA,
+    PRIMEIRO_INTERLOCUTOR_E_PRINCIPAL,
     VOCABULARIOS_FECHADOS,
     VOCABULARIOS_QUE_A_IMPORTACAO_CRIA,
     Divergencia,
@@ -116,44 +120,49 @@ NO_CODIGO: dict[str, tuple[str, ...]] = {
     "momento": MOMENTOS_DE_MATERIAL,
 }
 
-#: Coluna da aba filha → campo da entrada correspondente. As colunas das abas
-#: filhas têm `campo=""` em `FORMATO` de propósito: elas não alimentam um campo
-#: da interação, e sim um item de lista. O mapeamento é aqui, e um teste prende
-#: cada coluna a uma entrada desta tabela.
-CAMPOS_DAS_ABAS_FILHAS: dict[str, dict[str, str]] = {
-    "Participantes": {
-        "Pessoa": "interlocutor_id",
-        "Presença": "presenca",
-        "Principal": "principal",
-    },
-    "Pessoas da Aegea": {"Pessoa": "pessoa_aegea_id", "Papel": "papel", "Presença": "presenca"},
-    "Materiais": {
-        "Momento": "momento",
-        "Título": "titulo",
-        "Link": "url",
-        "Observação": "observacao",
-    },
-}
-
-#: Em qual campo de `InteracaoEntrada` a lista de cada aba filha entra, e com
-#: qual modelo cada linha dela é montada.
-LISTAS_DAS_ABAS_FILHAS: dict[str, tuple[str, type]] = {
-    "Participantes": ("outra_parte", ParticipanteDaOutraParteEntrada),
-    "Pessoas da Aegea": ("participacoes", ParticipacaoEntrada),
-    "Materiais": ("materiais", MaterialEntrada),
-}
-
-#: As colunas sem as quais a linha da aba filha não tem sentido — as recusas 1,
-#: 2, 3 e 5 de `IMPEDIMENTOS_DA_PLANILHA`.
+#: As colunas numeradas que montam cada lista de `InteracaoEntrada`.
 #:
-#: MATERIAIS EXIGE O LINK, e aqui a planilha é mais estrita que o formulário de
-#: propósito: o front aceita arquivo OU link porque tem upload, e uma planilha
-#: não tem. Um material sem link nem arquivo não leva a lugar nenhum, e deixá-lo
-#: passar gravaria um título que aponta para nada.
-COLUNAS_EXIGIDAS_DAS_FILHAS: dict[str, tuple[str, ...]] = {
-    "Participantes": ("Pessoa",),
-    "Pessoas da Aegea": ("Pessoa",),
-    "Materiais": ("Título", "Link"),
+#: TUDO NUMA ABA SÓ. Antes eram três abas filhas ligadas pelo `Código`; agora cada
+#: pessoa e cada material é um GRUPO de colunas numeradas na própria linha da
+#: agenda. O que se ganhou: a instituição do interlocutor está na mesma linha que
+#: ele, então "quem pode falar por qual instituição" deixou de ser inferido.
+#:
+#: Cada grupo diz qual campo de `InteracaoEntrada` alimenta, com que modelo cada
+#: item é montado, e o sufixo de cada coluna dele — `"Interlocutor {n}"` vira
+#: `interlocutor_id`. Um teste prende cada coluna numerada de `FORMATO` a uma
+#: entrada aqui, senão uma coluna nova apareceria no modelo e não chegaria a
+#: lugar nenhum.
+GRUPOS_NUMERADOS: dict[str, dict] = {
+    "outra_parte": {
+        "modelo": ParticipanteDaOutraParteEntrada,
+        "quantos": INTERLOCUTORES_POR_AGENDA,
+        "colunas": {"Interlocutor {n}": "interlocutor_id", "Presença {n}": "presenca"},
+        "exigida": "Interlocutor {n}",
+    },
+    "participacoes": {
+        "modelo": ParticipacaoEntrada,
+        "quantos": PESSOAS_DA_AEGEA_POR_AGENDA,
+        "colunas": {
+            "Pessoa da Aegea {n}": "pessoa_aegea_id",
+            "Papel {n}": "papel",
+            "Presença da Aegea {n}": "presenca",
+        },
+        "exigida": "Pessoa da Aegea {n}",
+    },
+    "materiais": {
+        "modelo": MaterialEntrada,
+        "quantos": MATERIAIS_POR_AGENDA,
+        "colunas": {
+            "Momento {n}": "momento",
+            "Título {n}": "titulo",
+            "Link {n}": "url",
+            "Observação do material {n}": "observacao",
+        },
+        # O material precisa de título E de link: a planilha não tem como subir
+        # arquivo, então sem link ele não leva a lugar nenhum.
+        "exigida": "Título {n}",
+        "tambem_exigida": "Link {n}",
+    },
 }
 
 #: Os campos que `InteracaoEntrada` exige. Sem um deles não há proposta nenhuma
@@ -212,13 +221,10 @@ class Proposta:
     #: Guardado como DADO e não só dentro do texto de uma divergência: a
     #: confirmação precisa do valor, não da frase que o descreve.
     a_criar: tuple[tuple[str, str], ...] = ()
-    #: As linhas de aba filha que não deu para montar porque esperam um cadastro.
-    #: Guardam o que a pessoa preencheu — descartar a linha levaria `Presença` e
-    #: `Principal` com ela, que era o segundo defeito da revisão.
+    #: Os grupos de colunas que não deu para montar porque esperam um cadastro.
+    #: Guardam o que a pessoa preencheu — descartá-los levaria a presença e o papel
+    #: com eles, e ela não preencheu aquilo para nada.
     filhas_pendentes: tuple[Mapping[str, object], ...] = ()
-    #: O bruto das abas filhas desta agenda, para o upload persistir. Sem isto o
-    #: arquivo original das abas filhas não ficava em lugar nenhum.
-    linhas_filhas: tuple[LinhaBruta, ...] = ()
 
     @property
     def travada(self) -> bool:
@@ -444,41 +450,47 @@ def _resolver(
     return _Resolucao()
 
 
-def _filhas_por_codigo(
-    por_aba: Mapping[str, list[LinhaBruta]],
+def _listas_da_linha(
+    linha: LinhaBruta,
     indice: dict[str, dict[str, object]],
     declarados: Mapping[str, frozenset[str]],
     apontados: Mapping[tuple[str, str], object] = MAPPING_VAZIO,
     categorias_declaradas: Mapping[str, str] = MAPPING_VAZIO,
-) -> dict[str, dict[str, list]]:
-    """Código da agenda → o que as abas filhas dela produziram.
+) -> tuple[dict[str, list], list[Divergencia], list[tuple[str, str]], list[Mapping]]:
+    """As pessoas e os materiais de UMA linha, montados das colunas numeradas.
 
-    AGRUPA UMA VEZ, e não uma busca por agenda: com 54 agendas e 200
-    participantes, varrer a aba filha por agenda seria varrê-la 54 vezes.
+    TUDO NUMA ABA SÓ. Antes cada pessoa era uma linha numa aba filha, ligada pelo
+    `Código`; agora é um grupo de colunas na própria linha da agenda. O vínculo
+    deixou de existir, e com ele a classe inteira de erro que ele produzia — código
+    órfão, código repetido, participante na agenda errada.
 
-    Devolve, por código, quatro coisas sob chaves reservadas: os itens montados
-    (por campo da lista), as divergências, as linhas que ESPERAM UM CADASTRO com
-    os valores que já se conhece, e os cadastros a criar. A linha que espera
-    cadastro não pode ser descartada: ela leva `Presença` e `Principal` com ela,
-    e a pessoa não preencheu aquilo para nada.
+    Devolve quatro coisas: as listas montadas por campo, as divergências, os
+    cadastros a criar, e os itens que ESPERAM um cadastro com o que já se sabe
+    deles. O item que espera não pode ser descartado: ele leva a presença e o papel
+    com ele, e a pessoa não preencheu aquilo para nada.
+
+    O GRUPO VAZIO É IGNORADO em silêncio, e é o caso comum: a agenda tem dois
+    interlocutores e a planilha tem espaço para quatro. Acusar "falta o
+    Interlocutor 3" em toda linha afogaria a conferência em pendências inventadas.
     """
-    agrupado: dict[str, dict[str, list]] = {}
-    pendencias: dict[str, list[Divergencia]] = {}
-    esperando: dict[str, list[Mapping[str, object]]] = {}
-    criar: dict[str, list[tuple[str, str]]] = {}
+    colunas = {coluna.nome: coluna for coluna in aba_de(ABA_PRINCIPAL).colunas}
+    listas: dict[str, list] = {}
+    divergencias: list[Divergencia] = []
+    a_criar: list[tuple[str, str]] = []
+    esperando: list[Mapping] = []
 
-    for nome_da_aba, (campo_da_lista, modelo) in LISTAS_DAS_ABAS_FILHAS.items():
-        mapeamento = CAMPOS_DAS_ABAS_FILHAS[nome_da_aba]
-        colunas = {coluna.nome: coluna for coluna in aba_de(nome_da_aba).colunas}
+    for campo_da_lista, grupo in GRUPOS_NUMERADOS.items():
+        for numero in range(1, grupo["quantos"] + 1):
+            do_grupo: dict[str, object] = {}
+            do_item: list[Divergencia] = []
+            criar_do_item: list[tuple[str, str]] = []
+            algo_preenchido = False
 
-        for linha in por_aba[nome_da_aba]:
-            codigo = str(linha.celulas[COLUNA_DO_CODIGO])
-            divergencias: list[Divergencia] = []
-            valores: dict[str, object] = {}
-            a_criar: list[tuple[str, str]] = []
-
-            for coluna_nome, campo in mapeamento.items():
+            for molde, campo in grupo["colunas"].items():
+                coluna_nome = molde.format(n=numero)
                 bruto = linha.celulas.get(coluna_nome)
+                if bruto is not None:
+                    algo_preenchido = True
                 coluna = colunas[coluna_nome]
                 if coluna.vocabulario:
                     resolucao = _resolver(
@@ -488,83 +500,73 @@ def _filhas_por_codigo(
                         f"{campo_da_lista}.{campo}",
                         indice,
                         declarados,
-                        divergencias,
+                        do_item,
                         apontados,
                         categorias_declaradas,
                     )
                     resolvido = resolucao.valor
                     if resolucao.a_criar is not None:
-                        a_criar.append(resolucao.a_criar)
-                elif campo == "principal":
-                    resolvido = _booleano(bruto) or False
+                        criar_do_item.append(resolucao.a_criar)
                 else:
                     resolvido = bruto
                 if resolvido is not None:
-                    valores[campo] = resolvido
+                    do_grupo[campo] = resolvido
 
-            for exigida in COLUNAS_EXIGIDAS_DAS_FILHAS[nome_da_aba]:
-                # Uma coluna preenchida com nome NOVO não está "faltando": ela
-                # espera cadastro. Acusá-la de ausente seria a mesma confusão
-                # entre travar e esperar que a revisão apontou.
-                if linha.celulas.get(exigida) is None:
-                    divergencias.append(
+            if not algo_preenchido:
+                # O grupo em branco é espaço sobrando, não omissão.
+                continue
+
+            for chave in ("exigida", "tambem_exigida"):
+                molde = grupo.get(chave)
+                if not molde:
+                    continue
+                coluna_nome = molde.format(n=numero)
+                if linha.celulas.get(coluna_nome) is None:
+                    do_item.append(
                         Divergencia(
                             campo=campo_da_lista,
-                            valor=codigo,
-                            mensagem=(
-                                f"Linha {linha.numero} da aba {nome_da_aba!r}: "
-                                f"falta {exigida}."
-                            ),
+                            valor=coluna_nome,
+                            mensagem=f"Falta {coluna_nome}, e o grupo {numero} tem dado.",
                             trava=True,
                         )
                     )
 
-            destino = agrupado.setdefault(codigo, {})
-            pendencias.setdefault(codigo, []).extend(divergencias)
-            criar.setdefault(codigo, []).extend(a_criar)
+            divergencias.extend(do_item)
+            a_criar.extend(criar_do_item)
 
-            if any(divergencia.trava for divergencia in divergencias):
-                # Travou: a pessoa precisa decidir algo antes. Montar o modelo
-                # sem o id obrigatório estouraria a validação do Pydantic, e a
-                # pendência já está registrada para ela resolver.
+            if any(divergencia.trava for divergencia in do_item):
                 continue
-            if a_criar:
-                # NÃO TRAVOU, só espera o cadastro nascer. Guarda o que já se
-                # sabe — descartar a linha aqui era o segundo defeito da revisão,
-                # e levava `Presença` e `Principal` embora.
-                esperando.setdefault(codigo, []).append(
+            if criar_do_item:
+                esperando.append(
                     {
                         "campo_da_lista": campo_da_lista,
                         "linha_origem": linha.numero,
-                        "valores": valores,
-                        "aguardando": tuple(a_criar),
+                        "valores": do_grupo,
+                        "aguardando": tuple(criar_do_item),
                     }
                 )
                 continue
+
+            # O PRIMEIRO INTERLOCUTOR É O PRINCIPAL. Com abas filhas havia uma
+            # coluna para marcá-lo; em colunas numeradas, listar a pessoa mais
+            # importante primeiro é mais fácil de preencher do que dizer "qual
+            # número é o principal".
+            if campo_da_lista == "outra_parte" and PRIMEIRO_INTERLOCUTOR_E_PRINCIPAL:
+                do_grupo["principal"] = numero == 1
+
             try:
-                destino.setdefault(campo_da_lista, []).append(modelo(**valores))
+                listas.setdefault(campo_da_lista, []).append(grupo["modelo"](**do_grupo))
             except Exception as erro:  # noqa: BLE001 - vira pendência, não 500
-                pendencias[codigo].append(
+                divergencias.append(
                     Divergencia(
                         campo=campo_da_lista,
-                        valor=str(valores),
-                        mensagem=f"Linha {linha.numero} da aba {nome_da_aba!r}: {erro}",
+                        valor=str(do_grupo),
+                        mensagem=f"Grupo {numero} de {campo_da_lista}: {erro}",
                         trava=True,
                     )
                 )
 
-    for codigo, divergencias in pendencias.items():
-        agrupado.setdefault(codigo, {})["__divergencias__"] = divergencias
-    for codigo, pendentes in esperando.items():
-        agrupado.setdefault(codigo, {})["__esperando__"] = pendentes
-    for codigo, cadastros in criar.items():
-        agrupado.setdefault(codigo, {})["__a_criar__"] = cadastros
-    return agrupado
-
-
-#: As chaves que `_filhas_por_codigo` usa para carregar o que não é lista de
-#: itens. Ficam numeradas aqui para o laço da agenda não as confundir com campo.
-_RESERVADAS = ("__divergencias__", "__esperando__", "__a_criar__")
+    return listas, divergencias, a_criar, esperando
 
 
 def _quem_representa(sessao: Session) -> dict[object, frozenset]:
@@ -682,18 +684,10 @@ def propor_de_linhas(
     é o que impede a confirmação de reimplementar a resolução e divergir dela.
     """
     indice = _indice(sessao)
-    filhas = _filhas_por_codigo(por_aba, indice, declarados, apontados, categorias_declaradas)
     representantes = _quem_representa(sessao)
 
     colunas_de_agenda = aba_de(ABA_PRINCIPAL).colunas
     propostas: list[Proposta] = []
-
-    filhas_brutas: dict[str, list[LinhaBruta]] = {}
-    for aba in FORMATO:
-        if aba.nome == ABA_PRINCIPAL:
-            continue
-        for filha in por_aba[aba.nome]:
-            filhas_brutas.setdefault(str(filha.celulas[COLUNA_DO_CODIGO]), []).append(filha)
 
     for linha in por_aba[ABA_PRINCIPAL]:
         divergencias: list[Divergencia] = []
@@ -703,6 +697,11 @@ def propor_de_linhas(
 
         for coluna in colunas_de_agenda:
             if not coluna.campo:
+                continue
+            if coluna.campo in GRUPOS_NUMERADOS:
+                # Coluna de grupo numerado: quem a lê é `_listas_da_linha`, que
+                # sabe a qual item ela pertence. Aqui ela seria resolvida como se
+                # fosse campo de valor único da agenda.
                 continue
             bruto = linha.celulas.get(coluna.nome)
             e_lista = coluna.campo in ("temas", "areas")
@@ -773,14 +772,16 @@ def propor_de_linhas(
 
         campos.update(listas)
 
-        codigo = str(linha.celulas[COLUNA_DO_CODIGO])
-        da_agenda = filhas.get(codigo, {})
-        divergencias.extend(da_agenda.get("__divergencias__", []))
-        esperando = tuple(da_agenda.get("__esperando__", ()))
-        a_criar.extend(da_agenda.get("__a_criar__", ()))
-        for campo_da_lista, itens in da_agenda.items():
-            if campo_da_lista not in _RESERVADAS:
-                campos[campo_da_lista] = itens
+        # AS PESSOAS E OS MATERIAIS SAEM DA PRÓPRIA LINHA, das colunas
+        # numeradas. Antes vinham de abas filhas ligadas pelo `Código`, e o
+        # vínculo era a parte que mais confundia quem preenchia.
+        listas_da_linha, das_listas, criar_das_listas, esperando_tuplas = _listas_da_linha(
+            linha, indice, declarados, apontados, categorias_declaradas
+        )
+        divergencias.extend(das_listas)
+        a_criar.extend(criar_das_listas)
+        esperando = tuple(esperando_tuplas)
+        campos.update(listas_da_linha)
 
         # `a_criar` sem repetição, preservando a ordem em que apareceu: a mesma
         # instituição declarada em duas colunas é UM cadastro a criar.
@@ -847,7 +848,6 @@ def propor_de_linhas(
                 divergencias=divergencias,
                 a_criar=pendentes_de_cadastro,
                 filhas_pendentes=esperando,
-                linhas_filhas=tuple(filhas_brutas.get(codigo, ())),
             )
         )
 
@@ -1120,48 +1120,48 @@ def _reconferir(sessao: Session, a_criar, apontados) -> None:
 def _instituicao_de_cada_interlocutor(linhas, indice) -> dict[str, object]:
     """Interlocutor novo → a instituição da agenda em que ele aparece.
 
-    É A ÚNICA RESPOSTA POSSÍVEL, e ela é boa: a planilha não tem onde dizer a
-    instituição de um interlocutor novo, e é a própria agenda que afirma que
-    aquela pessoa representava aquele órgão naquela reunião.
+    COM TUDO NUMA ABA, a resposta é vizinha de coluna: o interlocutor e a
+    instituição estão na MESMA linha. Antes isto atravessava duas abas ligadas
+    pelo `Código`, e era a parte mais frágil da inferência.
 
-    SEM ISTO o interlocutor nascia solto, e a recusa 4 — participante tem de
-    pertencer à instituição da agenda — o rejeitava NA CONFIRMAÇÃO: o upload dizia
-    "vou criar", a pessoa conferia tudo, e o último passo devolvia conflito por
-    uma pessoa que ela mesma declarou.
+    SEM ISTO o interlocutor nasceria solto, e a recusa 4 — participante tem de
+    pertencer à instituição da agenda — o rejeitaria NA CONFIRMAÇÃO: o upload
+    diria "vou criar", a pessoa conferiria tudo, e o último passo devolveria
+    conflito por uma pessoa que ela mesma declarou.
     """
-    from app.casos_de_uso.ler_planilha_de_agendas import COLUNA_DO_CODIGO
-
-    instituicao_por_codigo: dict[str, object] = {}
-    for linha in linhas:
-        if linha.aba != ABA_PRINCIPAL or linha.decisao == "descartada":
-            continue
-        brutos = linha.dados_brutos or {}
-        nome = brutos.get("Instituição")
-        if not nome:
-            continue
-        instituicao_por_codigo[str(brutos.get(COLUNA_DO_CODIGO))] = indice.get(
-            "instituicoes", {}
-        ).get(normalizar(str(nome)))
-
     de_quem: dict[str, object] = {}
     ambiguos: set[str] = set()
+    moldes = [
+        molde
+        for molde in GRUPOS_NUMERADOS["outra_parte"]["colunas"]
+        if GRUPOS_NUMERADOS["outra_parte"]["colunas"][molde] == "interlocutor_id"
+    ]
+
     for linha in linhas:
-        if linha.aba != "Participantes" or linha.decisao == "descartada":
+        if linha.decisao == "descartada":
             continue
         brutos = linha.dados_brutos or {}
-        pessoa = brutos.get("Pessoa")
-        if not pessoa:
+        nome_da_instituicao = brutos.get("Instituição")
+        if not nome_da_instituicao:
             continue
-        chave = normalizar(str(pessoa))
-        instituicao = instituicao_por_codigo.get(str(brutos.get(COLUNA_DO_CODIGO)))
+        instituicao = indice.get("instituicoes", {}).get(
+            normalizar(str(nome_da_instituicao))
+        )
         if instituicao is None:
             continue
-        if chave in de_quem and de_quem[chave] != instituicao:
-            # A MESMA PESSOA NOVA em agendas de instituições diferentes: não há
-            # como escolher, e escolher errado a faria ser recusada em toda edição
-            # futura daquela agenda. Quem sabe é quem cadastra.
-            ambiguos.add(str(pessoa))
-        de_quem[chave] = instituicao
+        for molde in moldes:
+            for numero in range(1, INTERLOCUTORES_POR_AGENDA + 1):
+                pessoa = brutos.get(molde.format(n=numero))
+                if not pessoa:
+                    continue
+                chave = normalizar(str(pessoa))
+                if chave in de_quem and de_quem[chave] != instituicao:
+                    # A MESMA PESSOA NOVA em agendas de instituições diferentes:
+                    # não há como escolher, e escolher errado a faria ser recusada
+                    # em toda edição futura daquela agenda. Quem sabe é quem
+                    # cadastra.
+                    ambiguos.add(str(pessoa))
+                de_quem[chave] = instituicao
 
     if ambiguos:
         raise RegraViolada(
@@ -1439,30 +1439,44 @@ _VOCABULARIO_DO_CAMPO: dict[str, str] = {
         for aba in FORMATO
         if aba.nome == ABA_PRINCIPAL
         for coluna in aba.colunas
-        if coluna.campo and coluna.vocabulario
+        if coluna.campo and coluna.vocabulario and coluna.campo not in GRUPOS_NUMERADOS
     },
+    # Os campos das listas vêm prefixados — `outra_parte.interlocutor_id` — e o
+    # vocabulário deles sai da PRIMEIRA coluna de cada grupo numerado: os quatro
+    # `Interlocutor {n}` apontam para o mesmo vocabulário, então basta uma.
     **{
-        f"{LISTAS_DAS_ABAS_FILHAS[nome][0]}.{campo}": coluna.vocabulario
-        for nome, mapeamento in CAMPOS_DAS_ABAS_FILHAS.items()
-        for coluna in aba_de(nome).colunas
-        for campo in [mapeamento.get(coluna.nome)]
-        if campo and coluna.vocabulario
+        f"{campo_da_lista}.{campo}": vocabulario
+        for campo_da_lista, grupo in GRUPOS_NUMERADOS.items()
+        for molde, campo in grupo["colunas"].items()
+        for vocabulario in [
+            {
+                coluna.nome: coluna.vocabulario
+                for coluna in aba_de(ABA_PRINCIPAL).colunas
+            }.get(molde.format(n=1))
+        ]
+        if vocabulario
     },
 }
 
 
-def colunas_de_aba_filha_sem_campo() -> Sequence[str]:
-    """As colunas de aba filha que ninguém mapeou para um campo.
+def colunas_numeradas_sem_grupo() -> Sequence[str]:
+    """As colunas numeradas de `FORMATO` que nenhum grupo mapeia.
 
-    PÚBLICA porque é um teste que a usa, e não o código de produção: a guarda
-    vive em `tests/test_importar_agendas.py`. Um `assert` de módulo pareceria
-    mais forte e seria mais fraco — `python -O` o removeria, e violá-lo
-    derrubaria a aplicação inteira na importação em vez de deixar um teste
-    vermelho para quem acrescentou a coluna.
+    PÚBLICA porque é um teste que a usa. Sem ela, uma coluna numerada nova
+    apareceria no modelo, a pessoa a preencheria, e o valor não chegaria a lugar
+    nenhum: sem erro no Excel, sem erro no servidor, sem nada.
     """
-    faltando = []
-    for nome_da_aba, mapeamento in CAMPOS_DAS_ABAS_FILHAS.items():
-        for coluna in aba_de(nome_da_aba).colunas:
-            if coluna.nome != COLUNA_DO_CODIGO and coluna.nome not in mapeamento:
-                faltando.append(f"{nome_da_aba}.{coluna.nome}")
-    return faltando
+    mapeadas = {
+        molde.format(n=numero)
+        for grupo in GRUPOS_NUMERADOS.values()
+        for molde in grupo["colunas"]
+        for numero in range(1, grupo["quantos"] + 1)
+    }
+    numeradas = {
+        coluna.nome
+        for coluna in aba_de(ABA_PRINCIPAL).colunas
+        if coluna.campo in GRUPOS_NUMERADOS
+    }
+    return sorted(numeradas - mapeadas)
+
+

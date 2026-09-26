@@ -561,41 +561,6 @@ def test_a_linha_limpa_nao_gera_grupo_nenhum(cliente_admin, sessao, semente):
 # os defeitos que a revisão do Codex achou
 # =============================================================================
 
-def test_o_bruto_das_abas_filhas_TAMBEM_e_gravado(cliente_admin, sessao, semente):
-    """O DEFEITO 3: só as linhas de Agendas viravam `importacao_linha`, e o bruto
-    das abas filhas não ficava em lugar nenhum — contra a invariante da 0008 de
-    preservar o arquivo para poder reprocessar e responder de onde veio o dado."""
-    from datetime import date
-
-    from openpyxl import load_workbook
-
-    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
-    pasta = load_workbook(io.BytesIO(modelo))
-    agendas = pasta["Agendas"]
-    cabecalho = [celula.value for celula in next(agendas.iter_rows())]
-    valores = {
-        "Código": "A1",
-        "Data": date(2026, 9, 25),
-        "Instituição": semente["instituicao"].nome,
-        "UF": "SP",
-    }
-    agendas.append([valores.get(coluna) for coluna in cabecalho])
-
-    participantes = pasta["Participantes"]
-    cabecalho_p = [celula.value for celula in next(participantes.iter_rows())]
-    linha_p = {"Código": "A1", "Pessoa": semente["interlocutor"].nome, "Presença": "presente"}
-    participantes.append([linha_p.get(coluna) for coluna in cabecalho_p])
-
-    saida = io.BytesIO()
-    pasta.save(saida)
-
-    corpo = cliente_admin.post(
-        "/api/importacoes", files={"arquivo": ("dia.xlsx", saida.getvalue(), TIPO_XLSX)}
-    ).json()
-
-    das_filhas = [linha for linha in corpo["linhas"] if linha["aba"] == "Participantes"]
-    assert das_filhas, [linha["aba"] for linha in corpo["linhas"]]
-    assert das_filhas[0]["dados_brutos"]["Pessoa"] == semente["interlocutor"].nome
 
 def test_pendencias_conta_LINHAS_e_nao_grupos(cliente_admin, sessao, semente):
     """O DEFEITO 5: o campo diz "quantas linhas seguram a confirmação" e contava
@@ -1859,16 +1824,16 @@ def test_o_que_a_pessoa_digitou_nao_entra_no_herdado(cliente_admin, sessao, seme
 def test_interlocutor_novo_declarado_VIRA_participante_na_confirmacao(
     cliente_admin, sessao, semente
 ):
-    """ACHADO DA REVISÃO FINAL, e o cenário que nenhum teste cruzava.
+    """ACHADO DA REVISÃO FINAL, e a aba única simplificou a correção.
 
-    O interlocutor nascia só com nome, sem `instituicao_id`. A recusa 4 — o
-    participante tem de pertencer à instituição da agenda — então o rejeitava NA
-    CONFIRMAÇÃO: o upload dizia "vou criar", a pessoa conferia tudo, e o
-    último passo devolvia conflito por uma pessoa que ela mesma declarou.
+    O interlocutor nascia só com nome, sem `instituicao_id`, e a recusa 4 — o
+    participante tem de pertencer à instituição da agenda — o rejeitava NA
+    CONFIRMAÇÃO: o upload dizia "vou criar", a pessoa conferia tudo, e o último
+    passo devolvia conflito por uma pessoa que ela mesma declarou.
 
-    A instituição dele vem da AGENDA em que ele aparece. É a única resposta
-    possível: a planilha não tem onde dizê-la, e é a agenda que afirma que aquela
-    pessoa representava aquele órgão naquela reunião.
+    COM TUDO NUMA ABA, a resposta está na própria linha: a instituição da agenda e
+    o nome do interlocutor são vizinhos de coluna. Não há nada a inferir entre
+    abas, nem uma coluna nova a pedir.
     """
     from datetime import date
 
@@ -1888,16 +1853,10 @@ def test_interlocutor_novo_declarado_VIRA_participante_na_confirmacao(
                 "Data": date(2026, 9, 25),
                 "Instituição": semente["instituicao"].nome,
                 "UF": "SP",
+                "Interlocutor 1": "Carla Nova",
+                "Presença 1": "presente",
             }.get(coluna)
             for coluna in cabecalho
-        ]
-    )
-    participantes = pasta["Participantes"]
-    cabecalho_p = [celula.value for celula in next(participantes.iter_rows())]
-    participantes.append(
-        [
-            {"Código": "A1", "Pessoa": "Carla Nova", "Presença": "presente"}.get(coluna)
-            for coluna in cabecalho_p
         ]
     )
     pasta[ROTULO_DO_VOCABULARIO["interlocutores"]].append(["Carla Nova"])
@@ -1914,18 +1873,13 @@ def test_interlocutor_novo_declarado_VIRA_participante_na_confirmacao(
     assert resposta.status_code == 201, resposta.text
     assert resposta.json()["criadas"] == 1
 
-    # E a pessoa nova pertence à instituição da agenda, senão a recusa 4 a
-    # rejeitaria em qualquer edição futura daquela agenda pela tela.
     nova = sessao.scalars(
         select(Interlocutor).where(Interlocutor.nome_normalizado == normalizar("Carla Nova"))
     ).first()
     assert nova is not None
     assert nova.instituicao_id == semente["instituicao"].id
 
-    # E ela de fato ficou ligada à agenda criada.
     ligacoes = sessao.scalars(
-        select(InteracaoInterlocutor).where(
-            InteracaoInterlocutor.interlocutor_id == nova.id
-        )
+        select(InteracaoInterlocutor).where(InteracaoInterlocutor.interlocutor_id == nova.id)
     ).all()
     assert len(ligacoes) == 1

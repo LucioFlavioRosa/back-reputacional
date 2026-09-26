@@ -177,3 +177,109 @@ def test_a_coluna_do_codigo_explica_quando_preencher():
     comentario = planilha["A1"].comment
     assert comentario is not None, "a célula do Código precisa explicar quando preencher"
     assert "participante" in comentario.text.lower()
+
+
+# =============================================================================
+# a coluna Data: travada como data, não como texto
+# =============================================================================
+
+
+def _validacao_da_data(planilha):
+    """A validação que cobre a coluna Data da aba Agendas."""
+    from app.casos_de_uso.modelo_de_importacao import COLUNA_DA_DATA
+    from app.dominio.importacao_de_agendas import ABA_PRINCIPAL, aba_de
+
+    agendas = planilha[ABA_PRINCIPAL]
+    letra = _letra_da_coluna(aba_de(ABA_PRINCIPAL), COLUNA_DA_DATA)
+    for validacao in agendas.data_validations.dataValidation:
+        if validacao.type == "date" and any(
+            str(faixa).startswith(f"{letra}2:") for faixa in validacao.sqref.ranges
+        ):
+            return validacao
+    return None
+
+
+def _letra_da_coluna(aba, nome: str) -> str:
+    from openpyxl.utils import get_column_letter
+
+    for indice, coluna in enumerate(aba.colunas, start=1):
+        if coluna.nome == nome:
+            return get_column_letter(indice)
+    raise AssertionError(f"a aba não tem a coluna {nome!r}")
+
+
+def test_a_coluna_de_data_TRAVA_o_que_nao_e_data():
+    """O PEDIDO DO DONO DO PRODUTO, e o defeito mais silencioso da planilha.
+
+    Sem isto o Excel aceita `25/09/26`, `set/25`, `25.09.2026` ou o texto
+    `amanhã` na coluna Data. Nenhum deles é recusado na hora; todos chegam ao
+    servidor como texto, e a conferência acusa "data ilegível" numa linha que a
+    pessoa jurava ter preenchido — depois de ela já ter feito as 54.
+
+    Travar na célula é o único momento em que o erro custa uma tecla. O
+    `showErrorMessage` é o que separa a restrição de verdade da decoração: sem
+    ele o Excel desenha a validação e aceita tudo por cima."""
+    validacao = _validacao_da_data(_abrir(gerar(VOCABULARIOS)))
+
+    assert validacao is not None, "a coluna Data não tem validação de data"
+    assert validacao.showErrorMessage is True
+    assert validacao.allow_blank is True
+
+
+def test_a_mensagem_de_erro_da_data_DIZ_O_FORMATO():
+    """"Valor inválido" não ensina nada. A mensagem tem de dizer o formato, com
+    um exemplo: quem digitou `25/9/26` precisa saber o que o arquivo espera."""
+    from app.casos_de_uso.modelo_de_importacao import FORMATO_DA_DATA_NA_TELA
+
+    validacao = _validacao_da_data(_abrir(gerar(VOCABULARIOS)))
+
+    assert "dd/mm/aaaa" in validacao.error.lower()
+    assert FORMATO_DA_DATA_NA_TELA == "DD/MM/YYYY"
+
+
+def test_a_COLUNA_de_data_vem_com_o_formato_brasileiro():
+    """O formato é a outra metade da trava: sem ele, quem digita `25/09/2026` numa
+    célula Geral pode ver o Excel guardar o dia errado, ou guardar TEXTO — e então
+    a validação recusaria o que estava certo, que é o pior dos mundos.
+
+    NA COLUNA e não nas células: ver
+    `test_o_formato_da_data_nao_materializa_as_500_linhas`."""
+    from app.casos_de_uso.modelo_de_importacao import (
+        COLUNA_DA_DATA,
+        FORMATO_DA_DATA_NA_TELA,
+    )
+    from app.dominio.importacao_de_agendas import ABA_PRINCIPAL, aba_de
+
+    agendas = _abrir(gerar(VOCABULARIOS))[ABA_PRINCIPAL]
+    letra = _letra_da_coluna(aba_de(ABA_PRINCIPAL), COLUNA_DA_DATA)
+
+    assert agendas.column_dimensions[letra].number_format == FORMATO_DA_DATA_NA_TELA
+
+
+def test_o_formato_da_data_nao_materializa_as_500_linhas():
+    """O DEFEITO QUE A SUÍTE INTEIRA PEGOU, e nenhum teste da planilha sozinho.
+
+    Formatar `A2:A501` célula por célula CRIA as 500 células. O modelo passa a ter
+    501 linhas usadas: quem abre vê o `Ctrl+End` cair no fim do nada, e toda linha
+    acrescentada por código vai para a 502 em vez da 2 — foi assim que seis testes
+    de outro arquivo quebraram de uma vez.
+
+    O modelo sai com UMA linha usada: o cabeçalho."""
+    from app.dominio.importacao_de_agendas import ABA_PRINCIPAL
+
+    agendas = _abrir(gerar(VOCABULARIOS))[ABA_PRINCIPAL]
+
+    assert agendas.max_row == 1
+
+
+def test_a_data_aceita_o_passado_e_o_futuro():
+    """A agenda PREVISTA é caso normal — `status` tem "previsto" —, e a
+    importação também serve para registrar o histórico. Uma faixa apertada
+    recusaria dado legítimo, que é pior que não travar: o piso existe só para
+    que o Excel tenha um critério de data, não para julgar a agenda."""
+    from datetime import date
+
+    validacao = _validacao_da_data(_abrir(gerar(VOCABULARIOS)))
+
+    assert validacao.operator == "greaterThanOrEqual"
+    assert str(date(2000, 1, 1).year) in str(validacao.formula1)
