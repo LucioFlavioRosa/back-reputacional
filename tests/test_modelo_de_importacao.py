@@ -152,3 +152,23 @@ def test_o_vocabulario_vazio_nao_quebra_o_arquivo():
     planilha = _abrir(gerar(vazio))
 
     assert "Agendas" in planilha.sheetnames
+
+
+def test_a_coluna_do_codigo_explica_quando_preencher():
+    """O CÓDIGO CONFUNDE SE NÃO SE EXPLICAR.
+
+    Ele é a primeira coluna da planilha e fica em branco na maioria das linhas —
+    quem abre o arquivo pela primeira vez não tem como saber se esqueceu de
+    preencher algo. O comentário na célula do cabeçalho diz as duas metades da
+    regra: em branco quando a agenda não tem participante nem material, escrito
+    quando tem, porque é ele que liga as linhas.
+
+    Vai como COMENTÁRIO e não como célula: a Tarefa 4 lê a linha 1 contra
+    `FORMATO`, e uma célula a mais ali é a divergência entre gerador e leitor que
+    o domínio existe para impedir.
+    """
+    planilha = _abrir(gerar(VOCABULARIOS))["Agendas"]
+
+    comentario = planilha["A1"].comment
+    assert comentario is not None, "a célula do Código precisa explicar quando preencher"
+    assert "participante" in comentario.text.lower()

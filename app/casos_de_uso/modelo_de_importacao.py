@@ -104,8 +104,21 @@ def gerar(vocabularios: Mapping[str, list[str]]) -> bytes:
             # docstring do domínio existe para evitar — o comentário fica
             # visível a quem abre a aba (marcador vermelho, texto ao passar o
             # mouse) e invisível a quem lê valor de célula.
+            # UM COMENTÁRIO, DOIS FATOS, na primeira célula onde a pessoa passa
+            # o mouse. O do Código vem antes porque é a dúvida imediata de quem
+            # abre o arquivo: a coluna fica em branco na maioria das linhas, e sem
+            # explicação quem preenche não sabe se esqueceu alguma coisa.
             planilha["A1"].comment = Comment(
-                "Máximo de 500 agendas por arquivo.", "Painel Reputacional"
+                "Deixe em branco quando a agenda não tiver participante nem "
+                "material: o servidor põe um código sozinho."
+                "\n\n"
+                "Escreva um código (A1, A2...) quando ela tiver: é ele que liga "
+                "esta linha às abas Participantes, Pessoas da Aegea e Materiais, "
+                "e o servidor não tem como adivinhar qual pessoa esteve em qual "
+                "reunião."
+                "\n\n"
+                "Máximo de 500 agendas por arquivo.",
+                "Painel Reputacional",
             )
 
     # -- abas de vocabulário: uma lista em coluna A, com DefinedName ----------
