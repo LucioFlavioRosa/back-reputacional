@@ -270,6 +270,17 @@ def _indice(sessao: Session) -> dict[str, dict[str, object]]:
     return indice
 
 
+def indice_do_vocabulario(sessao: Session, vocabulario: str) -> dict[str, object]:
+    """Nome normalizado → valor que entra na interação, para UM vocabulário.
+
+    A API a usa para dar à sugestão o `alvo` que `apontar` aceita. Passa pelo
+    `_indice` inteiro de propósito: é a MESMA resolução que a proposta usa, com o
+    mesmo filtro de `ativo` e a mesma marca de ambiguidade — uma segunda leitura
+    com regra própria é como as duas verdades nascem.
+    """
+    return _indice(sessao).get(vocabulario, {})
+
+
 def vocabularios(sessao: Session) -> dict[str, list[str]]:
     """Os nomes que a pessoa LÊ, por vocabulário — o que o modelo `.xlsx` lista.
 
@@ -919,12 +930,29 @@ def resolver(
         # ou de climas é mudança de REGRA — os KPIs dependem dela —, e isso é
         # código e migration. Sem esta guarda, a tela de conferência oferecia
         # uma porta lateral para a mesma coisa.
-        vocabulario = vocabulario_do_campo(campo)
-        if vocabulario in VOCABULARIOS_FECHADOS:
+        if not pode_criar(campo):
+            vocabulario = vocabulario_do_campo(campo)
+            if vocabulario in VOCABULARIOS_FECHADOS:
+                motivo = (
+                    "esta lista é fechada, e mudá-la é mudança de regra, não de "
+                    "cadastro"
+                )
+            elif vocabulario is None:
+                # Campo sem vocabulário — uma data ilegível, uma UF inválida.
+                # "Criar" não significa nada ali, e aceitar apagaria a pendência
+                # para ela voltar como conflito na confirmação.
+                motivo = (
+                    "este campo não tem cadastro: o valor precisa ser corrigido na "
+                    "planilha, ou as linhas descartadas"
+                )
+            else:
+                motivo = (
+                    "este cadastro é mantido pela tela de Administração, e não pela "
+                    "importação"
+                )
             raise RegraViolada(
-                f"{valor!r} não pode ser cadastrado: esta lista é fechada, e "
-                "mudá-la é mudança de regra, não de cadastro. Aponte para um "
-                "valor existente ou descarte as linhas."
+                f"{valor!r} não pode ser cadastrado por aqui: {motivo}. Aponte para "
+                "um valor existente ou descarte as linhas."
             )
     elif decisao == "apontar":
         if not alvo:
@@ -1309,6 +1337,18 @@ def cancelar(sessao: Session, importacao_id) -> None:
         raise RegraViolada("Esta importação já foi confirmada e não pode ser cancelada.")
     importacao.situacao = "cancelada"
     sessao.flush()
+
+
+def pode_criar(campo: str) -> bool:
+    """A importação sabe criar cadastro para este campo?
+
+    A TELA PERGUNTA ISTO para não oferecer um botão que o servidor recusa. Antes
+    ela mostrava "Cadastrar como novo" em todo grupo, e um dicionário administrado
+    saía da pendência como `criar` para falhar só na confirmação — depois de a
+    pessoa ter conferido tudo.
+    """
+    vocabulario = vocabulario_do_campo(campo)
+    return vocabulario in VOCABULARIOS_QUE_A_IMPORTACAO_CRIA
 
 
 def vocabulario_do_campo(campo: str) -> str | None:

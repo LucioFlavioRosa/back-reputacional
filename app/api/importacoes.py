@@ -30,6 +30,7 @@ from app.banco import repositorio_importacao
 from app.banco.sessao import SessaoDoPedido
 from app.casos_de_uso import importar_agendas, modelo_de_importacao
 from app.dominio.importacao_de_agendas import Divergencia, agrupar
+from app.dominio.texto import normalizar
 
 TIPO_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -73,6 +74,19 @@ class LinhaSaida(BaseModel):
     divergencias: list
 
 
+class SugestaoSaida(BaseModel):
+    """Um nome parecido, com o id que resolve a pendência num clique.
+
+    O NOME SOZINHO NÃO SERVIA. A tela mandava o nome como `alvo`, e o servidor
+    valida `alvo` como id ou código — então o atalho PRINCIPAL da conferência
+    devolvia 422. A sugestão carrega os dois: o nome que a pessoa reconhece e o
+    alvo que o servidor aceita.
+    """
+
+    nome: str
+    alvo: str
+
+
 class GrupoSaida(BaseModel):
     """Uma decisão que resolve várias linhas — o bloco "o que precisa de você"."""
 
@@ -80,7 +94,10 @@ class GrupoSaida(BaseModel):
     valor: str
     linhas: list[int]
     trava: bool
-    sugestoes: list[str]
+    sugestoes: list[SugestaoSaida]
+    #: Se a importação sabe criar cadastro para este campo. A tela usa isto para
+    #: não oferecer "Cadastrar como novo" onde o servidor vai recusar.
+    pode_criar: bool
 
 
 class ACriarSaida(BaseModel):
@@ -132,6 +149,20 @@ def _nomes_conhecidos(sessao, campo: str) -> list[str]:
     if vocabulario is None:
         return []
     return importar_agendas.vocabularios(sessao).get(vocabulario, [])
+
+
+def _alvo_de(sessao, campo: str, nome: str) -> str | None:
+    """O id (ou código) do cadastro com este nome — o que `apontar` aceita.
+
+    RESOLVE AQUI e não no domínio: `agrupar` compara TEXTO para achar o parecido,
+    e não deve saber de tabela nenhuma. Quem conhece a ponte nome→id é este
+    módulo, que já a usa para propor.
+    """
+    vocabulario = importar_agendas.vocabulario_do_campo(campo)
+    if vocabulario is None:
+        return None
+    valor = importar_agendas.indice_do_vocabulario(sessao, vocabulario).get(normalizar(nome))
+    return None if valor is None else str(valor)
 
 
 def _decididas(linhas) -> list[ACriarSaida]:
@@ -209,7 +240,14 @@ def _grupos(sessao, linhas) -> list[GrupoSaida]:
                     valor=grupo.valor,
                     linhas=list(grupo.linhas),
                     trava=grupo.trava,
-                    sugestoes=list(grupo.sugestoes),
+                    pode_criar=importar_agendas.pode_criar(grupo.campo),
+                    sugestoes=[
+                        SugestaoSaida(nome=nome, alvo=alvo)
+                        for nome in grupo.sugestoes
+                        # A sugestão sem alvo não entra: oferecer um atalho que o
+                        # servidor recusa é pior que não oferecer atalho.
+                        if (alvo := _alvo_de(sessao, grupo.campo, nome)) is not None
+                    ],
                 )
             )
     return sorted(saida, key=lambda grupo: (not grupo.trava, -len(grupo.linhas), grupo.valor))

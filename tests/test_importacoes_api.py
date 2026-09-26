@@ -504,7 +504,9 @@ def test_o_grupo_oferece_o_nome_parecido_que_JA_existe(cliente_admin, sessao, se
     ).json()
 
     (grupo,) = [g for g in corpo["grupos"] if g["campo"] == "instituicao_id"]
-    assert "Prefeitura Municipal de Campinas" in grupo["sugestoes"]
+    # A sugestão carrega nome E alvo: o nome que a pessoa reconhece e o id que
+    # o servidor aceita em `apontar`.
+    assert "Prefeitura Municipal de Campinas" in [s["nome"] for s in grupo["sugestoes"]]
 
 
 def test_o_que_trava_vem_ANTES_do_que_so_avisa(cliente_admin, sessao, semente):
@@ -1656,3 +1658,115 @@ def test_dicionario_administrado_nao_promete_criar_e_trava_na_hora(
         d["mensagem"] for linha in criada["linhas"] for d in linha["divergencias"]
     )
     assert "Administração" in mensagens
+
+
+# =============================================================================
+# os achados Important da revisão final do Codex
+# =============================================================================
+
+
+def test_a_sugestao_traz_o_ALVO_que_o_servidor_aceita(cliente_admin, sessao, importacao_com_quatro):
+    """DEFEITO 1 DA REVISÃO FINAL, e o pior de todos: a sugestão era só um NOME, a
+    tela mandava o nome como `alvo`, e `_cadastro_existe` valida id ou código —
+    então o atalho PRINCIPAL da conferência devolvia 422. A ação central da tela
+    não funcionava, e nenhum teste cruzava os dois lados."""
+    parecida = Instituicao(
+        nome="Prefeitura Municipal de Campinas",
+        nome_normalizado=normalizar("Prefeitura Municipal de Campinas"),
+        tipo="orgao",
+        uf="SP",
+    )
+    sessao.add(parecida)
+    sessao.flush()
+
+    estado = cliente_admin.get(f"/api/importacoes/{importacao_com_quatro['id']}").json()
+    (grupo,) = [g for g in estado["grupos"] if g["campo"] == "instituicao_id"]
+
+    assert grupo["sugestoes"], "sem sugestão não há atalho"
+    sugestao = grupo["sugestoes"][0]
+    assert sugestao["nome"] == "Prefeitura Municipal de Campinas"
+    assert sugestao["alvo"] == str(parecida.id)
+
+    # E o alvo que ela oferece é aceito de verdade — é o cruzamento que faltava.
+    resposta = cliente_admin.patch(
+        f"/api/importacoes/{importacao_com_quatro['id']}/resolucoes",
+        json={
+            "campo": grupo["campo"],
+            "valor": grupo["valor"],
+            "decisao": "apontar",
+            "alvo": sugestao["alvo"],
+        },
+    )
+
+    assert resposta.status_code == 200, resposta.text
+    assert resposta.json()["pendencias"] == 0
+
+
+def test_o_grupo_diz_se_da_para_CRIAR(cliente_admin, sessao, semente):
+    """DEFEITO 3. A tela oferecia "Cadastrar como novo" em TODO grupo, e o servidor
+    só barrava vocabulário fechado — então um dicionário administrado saía da
+    pendência como `criar` e falhava na confirmação, depois de a pessoa ter
+    conferido tudo. Agora o servidor diz, por grupo, se criar é possível."""
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    valores = {
+        "Código": "A1",
+        "Data": date(2026, 9, 25),
+        "Instituição": "Orgao Novo",
+        "UF": "SP",
+        "Unidade de negócio": "Unidade Inventada",
+    }
+    folha.append([valores.get(coluna) for coluna in cabecalho])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    corpo = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+
+    por_campo = {g["campo"]: g for g in corpo["grupos"]}
+    # Instituição é cadastro livre: a importação cria.
+    assert por_campo["instituicao_id"]["pode_criar"] is True
+    # Unidade de negócio é dicionário administrado: cadastra-se na Administração.
+    assert por_campo["unidade_negocio_id"]["pode_criar"] is False
+
+
+def test_criar_num_campo_SEM_vocabulario_recusa(cliente_admin, sessao, semente):
+    """DEFEITO 3, a outra metade: uma data ilegível não tem vocabulário nenhum, e
+    "criar" não significa nada ali. Sem a recusa, a decisão apagava a pendência e
+    ela voltava como conflito na confirmação."""
+
+    from openpyxl import load_workbook
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    valores = {
+        "Código": "A1",
+        "Data": "25 de setembro",
+        "Instituição": semente["instituicao"].nome,
+        "UF": "SP",
+    }
+    folha.append([valores.get(coluna) for coluna in cabecalho])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+    (grupo,) = [g for g in criada["grupos"] if g["campo"] == "data_interacao"]
+    assert grupo["pode_criar"] is False
+
+    resposta = cliente_admin.patch(
+        f"/api/importacoes/{criada['id']}/resolucoes",
+        json={"campo": "data_interacao", "valor": grupo["valor"], "decisao": "criar"},
+    )
+
+    assert resposta.status_code == 422
