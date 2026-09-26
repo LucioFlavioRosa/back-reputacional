@@ -263,13 +263,6 @@ def test_codigo_repetido_recusa_o_arquivo():
         ler(_completa(agendas=[_agenda("A1"), _agenda("A1", date(2026, 9, 26), "Outro")]))
 
 
-def test_agenda_sem_codigo_recusa():
-    """O código é o que liga as abas. Uma agenda sem ele não pode receber
-    participante nenhum, e a pessoa não teria como descobrir por quê."""
-    with pytest.raises(RegraViolada, match="[Cc]ódigo"):
-        ler(_completa(agendas=[_agenda(codigo=None)]))
-
-
 def test_linha_filha_com_codigo_orfao_recusa_e_cita_o_codigo():
     """A pessoa apagou a agenda e esqueceu os participantes dela. Importar os
     participantes de uma agenda que não existe é impossível, e ignorá-los em
@@ -325,3 +318,92 @@ def test_exatamente_no_teto_passa():
     lido = ler(_completa(agendas=[_agenda(f"A{i}") for i in range(500)]))
 
     assert len(lido["Agendas"]) == 500
+
+
+# =============================================================================
+# o Código é opcional quando a agenda não tem filhas
+# =============================================================================
+
+
+def test_agenda_sem_codigo_e_sem_filhas_e_aceita():
+    """O CÓDIGO NÃO É IDENTIDADE DA AGENDA, é só o vínculo com as abas filhas.
+
+    Quem tem 54 reuniões para registrar não deve preencher uma coluna que não
+    serve para nada nas linhas que não têm participante nem material. A linha já
+    se identifica por `linha_origem`, que o servidor grava sozinho.
+    """
+    lido = ler(_completa(agendas=[_agenda(codigo=None)]))
+
+    assert len(lido["Agendas"]) == 1
+
+
+def test_a_agenda_sem_codigo_ganha_um_do_servidor():
+    """Ela precisa de UM código internamente, para o agrupamento das filhas
+    funcionar sem um caso especial em cada passo — mas é o servidor que o põe."""
+    lido = ler(_completa(agendas=[_agenda(codigo=None)]))
+
+    assert lido["Agendas"][0].celulas["Código"]
+
+
+def test_o_codigo_gerado_cita_a_linha_de_onde_veio():
+    """Para a pessoa reconhecer de qual linha ele fala, se ele aparecer numa
+    mensagem de erro."""
+    lido = ler(_completa(agendas=[_agenda(codigo=None)]))
+
+    assert "2" in str(lido["Agendas"][0].celulas["Código"])
+
+
+def test_duas_agendas_sem_codigo_nao_colidem():
+    """Sem isto, o servidor geraria o mesmo código duas vezes e a própria recusa
+    de código repetido derrubaria um arquivo perfeitamente válido."""
+    lido = ler(_completa(agendas=[_agenda(codigo=None), _agenda(codigo=None)]))
+
+    codigos = {linha.celulas["Código"] for linha in lido["Agendas"]}
+    assert len(codigos) == 2
+
+
+def test_agenda_sem_codigo_COM_filha_orfa_ainda_recusa():
+    """A exceção que não tem como ser resolvida: o participante aponta para um
+    código, e uma agenda sem código não pode ser apontada. Gerar um no servidor
+    não ajuda — ele não existia quando a pessoa preencheu a planilha."""
+    with pytest.raises(RegraViolada, match="A9"):
+        ler(
+            _completa(
+                agendas=[_agenda(codigo=None)],
+                participantes=[{"Código": "A9", "Pessoa": "Ana Prado"}],
+            )
+        )
+
+
+def test_a_mensagem_do_orfao_explica_que_a_agenda_precisa_de_codigo():
+    """Sem isto, a pessoa lê "A9 não existe na aba Agendas", olha a planilha, vê
+    a agenda lá, e não entende — porque o que falta é o CÓDIGO dela."""
+    with pytest.raises(RegraViolada, match="[Cc]ódigo"):
+        ler(
+            _completa(
+                agendas=[_agenda(codigo=None)],
+                participantes=[{"Código": "A9", "Pessoa": "Ana Prado"}],
+            )
+        )
+
+
+def test_codigo_escrito_continua_ligando_as_filhas():
+    """O contrapeso: quem escreve o código continua podendo referenciá-lo."""
+    lido = ler(
+        _completa(
+            agendas=[_agenda("A1")],
+            participantes=[{"Código": "A1", "Pessoa": "Ana Prado"}],
+        )
+    )
+
+    assert lido["Participantes"][0].celulas["Código"] == "A1"
+
+
+def test_um_codigo_escrito_que_imita_o_gerado_e_recusado():
+    """Se alguém escrever exatamente o que o servidor geraria, o código deixaria
+    de ser único e a filha ligaria na agenda errada. Recusar é a saída honesta:
+    só quem escreveu sabe o que quis dizer."""
+    from app.casos_de_uso.ler_planilha_de_agendas import codigo_da_linha
+
+    with pytest.raises(RegraViolada, match="reservado"):
+        ler(_completa(agendas=[_agenda(codigo=codigo_da_linha(3)), _agenda(codigo=None)]))

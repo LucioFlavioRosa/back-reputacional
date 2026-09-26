@@ -54,6 +54,27 @@ ABA_PRINCIPAL = "Agendas"
 #: A coluna que liga as abas. Vive em todas as quatro.
 COLUNA_DO_CODIGO = "Código"
 
+#: O prefixo do código que o SERVIDOR gera para uma agenda sem código.
+#:
+#: O CÓDIGO NÃO É IDENTIDADE DA AGENDA — é só o vínculo com as abas filhas, e a
+#: linha já se identifica por `linha_origem`. Quem tem 54 reuniões para registrar
+#: não deve preencher uma coluna que não serve para nada nas linhas sem
+#: participante nem material.
+#:
+#: Ele existe de qualquer forma porque o agrupamento das filhas trabalha por
+#: código, e um `None` no meio disso viraria um caso especial em cada passo.
+PREFIXO_DO_CODIGO_GERADO = "linha "
+
+
+def codigo_da_linha(numero: int) -> str:
+    """O código que o servidor dá a uma agenda que não tem um.
+
+    CITA A LINHA para a pessoa reconhecer de qual agenda ele fala quando ele
+    aparecer numa mensagem — "linha 7" ela encontra na planilha; um uuid, não.
+    """
+    return f"{PREFIXO_DO_CODIGO_GERADO}{numero}"
+
+
 #: Formatos de data que uma planilha de verdade entrega quando a célula é
 #: TEXTO em vez de data: o brasileiro que a pessoa digita e o ISO que todo
 #: export de sistema produz. A ordem importa — "03/04/2026" é 3 de abril aqui.
@@ -191,11 +212,24 @@ def _codigos_das_agendas(linhas: list[LinhaBruta]) -> set[str]:
     for linha in linhas:
         codigo = linha.celulas.get(COLUNA_DO_CODIGO)
         if codigo is None:
-            raise RegraViolada(
-                f"A agenda da linha {linha.numero} está sem Código. "
-                "É ele que liga a agenda aos participantes e materiais dela."
-            )
+            # SEM CÓDIGO, O SERVIDOR PÕE UM. A coluna só serve para ligar as abas
+            # filhas, e uma agenda que não tem filha não tem o que ligar — exigir
+            # o preenchimento seria trabalho manual sem função, em cada uma das 54
+            # linhas de um dia cheio.
+            codigo = codigo_da_linha(linha.numero)
+            linha.celulas[COLUNA_DO_CODIGO] = codigo  # type: ignore[index]
         codigo = str(codigo)
+        if codigo.startswith(PREFIXO_DO_CODIGO_GERADO) and codigo != codigo_da_linha(
+            linha.numero
+        ):
+            # Escrever à mão o que o servidor geraria para OUTRA linha faria o
+            # código deixar de ser único, e a filha ligaria na agenda errada. Só
+            # quem escreveu sabe o que quis dizer.
+            raise RegraViolada(
+                f"O Código {codigo!r} é reservado: o servidor usa {PREFIXO_DO_CODIGO_GERADO!r} "
+                "seguido do número da linha para as agendas que deixam a coluna em "
+                "branco. Escolha outro código."
+            )
         if codigo in vistos:
             raise RegraViolada(
                 f"O Código {codigo!r} aparece em duas agendas. Com o código "
@@ -223,7 +257,9 @@ def _conferir_vinculo(aba: Aba, linhas: list[LinhaBruta], codigos: set[str]) -> 
         if str(codigo) not in codigos:
             raise RegraViolada(
                 f"A linha {linha.numero} da aba {aba.nome!r} aponta para o "
-                f"Código {str(codigo)!r}, que não existe na aba Agendas."
+                f"Código {str(codigo)!r}, que não existe na aba Agendas. "
+                "Se a agenda está lá mas sem Código na coluna, escreva um: é ele "
+                "que liga as duas linhas, e o servidor não tem como adivinhá-lo."
             )
 
 
