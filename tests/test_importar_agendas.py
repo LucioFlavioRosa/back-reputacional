@@ -664,3 +664,141 @@ def test_a_mesma_pessoa_em_papeis_DIFERENTES_passa(sessao, semente):
 
     assert proposta.divergencias == []
     assert len(proposta.entrada.participacoes) == 2
+
+
+# =============================================================================
+# os defeitos que a revisão do Codex achou
+# =============================================================================
+
+def test_instituicao_declarada_nao_trava_NENHUMA_divergencia(sessao, semente):
+    """O DEFEITO 1 DA REVISÃO, e o que meu teste anterior deixou passar.
+
+    `test_a_instituicao_DECLARADA_na_aba_nao_trava_e_espera_criacao` filtrava só
+    as divergências com `campo == "instituicao_id"`. A que o Pydantic gerava tinha
+    `campo == ""`, ficava fora do filtro, e o teste dava verde com a linha
+    travada. Este olha TODAS — que é o que a promessa "declarar não é pendência"
+    de fato significa.
+    """
+    conteudo = _preenchida(
+        sessao,
+        agendas=[_agenda(semente, **{"Instituição": "Prefeitura de Campinas"})],
+        declarar={"instituicoes": ["Prefeitura de Campinas"]},
+    )
+
+    (proposta,) = importar_agendas.propor(sessao, conteudo)
+
+    travam = [d for d in proposta.divergencias if d.trava]
+    assert travam == [], [d.mensagem for d in travam]
+
+def test_a_proposta_diz_O_QUE_vai_criar(sessao, semente):
+    """Sem isto, a confirmação não tem como saber o que criar: o valor só existe
+    dentro da mensagem de uma divergência, em texto."""
+    conteudo = _preenchida(
+        sessao,
+        agendas=[_agenda(semente, **{"Instituição": "Prefeitura de Campinas"})],
+        declarar={"instituicoes": ["Prefeitura de Campinas"]},
+    )
+
+    (proposta,) = importar_agendas.propor(sessao, conteudo)
+
+    assert ("instituicoes", "Prefeitura de Campinas") in proposta.a_criar
+
+def test_esperar_criacao_e_diferente_de_estar_travada(sessao, semente):
+    """As duas dão `entrada is None`, e a tela precisa distingui-las: uma pede
+    decisão da pessoa, a outra só espera a confirmação."""
+    esperando = _preenchida(
+        sessao,
+        agendas=[_agenda(semente, **{"Instituição": "Prefeitura de Campinas"})],
+        declarar={"instituicoes": ["Prefeitura de Campinas"]},
+    )
+    travada = _preenchida(
+        sessao, agendas=[_agenda(semente, **{"Instituição": "Prefeitura de Campos"})]
+    )
+
+    (a,) = importar_agendas.propor(sessao, esperando)
+    (b,) = importar_agendas.propor(sessao, travada)
+
+    assert a.entrada is None and a.a_criar and not any(d.trava for d in a.divergencias)
+    assert b.entrada is None and not b.a_criar and any(d.trava for d in b.divergencias)
+
+def test_linha_filha_com_cadastro_declarado_NAO_perde_os_outros_campos(sessao, semente):
+    """O DEFEITO 2: a linha inteira era descartada, levando Presença e Principal.
+
+    O interlocutor novo ainda não tem id — quem o cria é a confirmação —, mas o
+    resto do que a pessoa preencheu não pode desaparecer no caminho.
+    """
+    conteudo = _preenchida(
+        sessao,
+        agendas=[_agenda(semente)],
+        participantes=[
+            {"Código": "A1", "Pessoa": "Bruno Novo", "Presença": "presente", "Principal": "sim"}
+        ],
+        declarar={"interlocutores": ["Bruno Novo"]},
+    )
+
+    (proposta,) = importar_agendas.propor(sessao, conteudo)
+
+    assert not any(d.trava for d in proposta.divergencias)
+    assert ("interlocutores", "Bruno Novo") in proposta.a_criar
+    pendentes = [p for p in proposta.filhas_pendentes if p["campo_da_lista"] == "outra_parte"]
+    assert pendentes, proposta.filhas_pendentes
+    assert pendentes[0]["valores"]["presenca"] == "presente"
+    assert pendentes[0]["valores"]["principal"] is True
+
+def test_nome_ambiguo_no_cadastro_TRAVA_em_vez_de_escolher_sozinho(sessao, semente):
+    """O DEFEITO 4. A unicidade de `instituicao` é (nome_normalizado, tipo) — a
+    migration 0002 diz por quê: "Águas do Rio" existe como area_interna e pode
+    existir como orgao. Um dicionário nome→id achata as duas e a planilha aponta
+    silenciosamente para a errada. Travar é o único comportamento honesto: só a
+    pessoa sabe de qual delas ela falava."""
+    gemea = Instituicao(
+        nome=semente["instituicao"].nome,
+        nome_normalizado=semente["instituicao"].nome_normalizado,
+        tipo="orgao",
+        uf="SP",
+    )
+    sessao.add(gemea)
+    sessao.flush()
+
+    conteudo = _preenchida(sessao, agendas=[_agenda(semente)])
+
+    (proposta,) = importar_agendas.propor(sessao, conteudo)
+
+    assert proposta.entrada is None
+    assert any(
+        d.campo == "instituicao_id" and d.trava and "mais de um" in d.mensagem
+        for d in proposta.divergencias
+    ), [d.mensagem for d in proposta.divergencias]
+
+def test_interlocutor_homonimo_em_outra_instituicao_tambem_e_ambiguo(sessao, semente):
+    """O mesmo defeito em `interlocutor`, cuja unicidade é
+    (nome_normalizado, instituicao_id): duas "Ana Prado" de instituições
+    diferentes é situação comum, não exótica."""
+    outra = Instituicao(
+        nome="Prefeitura de Campos",
+        nome_normalizado=normalizar("Prefeitura de Campos"),
+        tipo="orgao",
+        uf="RJ",
+    )
+    sessao.add(outra)
+    sessao.flush()
+    sessao.add(
+        Interlocutor(
+            nome=semente["interlocutor"].nome,
+            nome_normalizado=semente["interlocutor"].nome_normalizado,
+            instituicao_id=outra.id,
+        )
+    )
+    sessao.flush()
+
+    conteudo = _preenchida(
+        sessao,
+        agendas=[_agenda(semente)],
+        participantes=[{"Código": "A1", "Pessoa": semente["interlocutor"].nome}],
+    )
+
+    (proposta,) = importar_agendas.propor(sessao, conteudo)
+
+    assert any("mais de um" in d.mensagem and d.trava for d in proposta.divergencias), [
+        d.mensagem for d in proposta.divergencias
+    ]

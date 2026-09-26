@@ -88,19 +88,21 @@ def semente(sessao):
     )
     sessao.add(instituicao)
     sessao.flush()
+    interlocutor = Interlocutor(
+        nome="Ana Prado",
+        nome_normalizado=normalizar("Ana Prado"),
+        instituicao_id=instituicao.id,
+    )
     sessao.add_all(
         [
-            Interlocutor(
-                nome="Ana Prado",
-                nome_normalizado=normalizar("Ana Prado"),
-                instituicao_id=instituicao.id,
-            ),
+            interlocutor,
             PessoaAegea(nome="Radamés Casseb", nome_normalizado=normalizar("Radamés Casseb")),
         ]
     )
     sessao.flush()
     return {
         "instituicao": instituicao,
+        "interlocutor": interlocutor,
         "formato": sessao.scalars(select(FormatoInteracao).limit(1)).first(),
         "clima": sessao.scalars(select(Clima).limit(1)).first(),
     }
@@ -456,7 +458,12 @@ def test_a_mesma_instituicao_desconhecida_vira_UM_grupo_com_as_linhas(
     assert grupo["valor"] == "Prefeitura de Campinas"
     assert grupo["linhas"] == [2, 3, 4, 5]
     assert grupo["trava"] is True
-    assert corpo["pendencias"] == 1
+    # QUATRO pendências e UMA decisão. Este teste dizia `pendencias == 1`, e com
+    # isso codificava o defeito que a revisão do Codex achou: o campo promete
+    # "quantas linhas seguram a confirmação" e contava grupos, fazendo o cabeçalho
+    # mentir sobre o tamanho do trabalho.
+    assert corpo["pendencias"] == 4
+    assert corpo["decisoes_pendentes"] == 1
 
 
 def test_o_grupo_oferece_o_nome_parecido_que_JA_existe(cliente_admin, sessao, semente):
@@ -546,3 +553,104 @@ def test_a_linha_limpa_nao_gera_grupo_nenhum(cliente_admin, sessao, semente):
 
     assert corpo["grupos"] == []
     assert corpo["pendencias"] == 0
+
+
+# =============================================================================
+# os defeitos que a revisão do Codex achou
+# =============================================================================
+
+def test_o_bruto_das_abas_filhas_TAMBEM_e_gravado(cliente_admin, sessao, semente):
+    """O DEFEITO 3: só as linhas de Agendas viravam `importacao_linha`, e o bruto
+    das abas filhas não ficava em lugar nenhum — contra a invariante da 0008 de
+    preservar o arquivo para poder reprocessar e responder de onde veio o dado."""
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    agendas = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(agendas.iter_rows())]
+    valores = {
+        "Código": "A1",
+        "Data": date(2026, 9, 25),
+        "Instituição": semente["instituicao"].nome,
+        "UF": "SP",
+    }
+    agendas.append([valores.get(coluna) for coluna in cabecalho])
+
+    participantes = pasta["Participantes"]
+    cabecalho_p = [celula.value for celula in next(participantes.iter_rows())]
+    linha_p = {"Código": "A1", "Pessoa": semente["interlocutor"].nome, "Presença": "presente"}
+    participantes.append([linha_p.get(coluna) for coluna in cabecalho_p])
+
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    corpo = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("dia.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+
+    das_filhas = [linha for linha in corpo["linhas"] if linha["aba"] == "Participantes"]
+    assert das_filhas, [linha["aba"] for linha in corpo["linhas"]]
+    assert das_filhas[0]["dados_brutos"]["Pessoa"] == semente["interlocutor"].nome
+
+def test_pendencias_conta_LINHAS_e_nao_grupos(cliente_admin, sessao, semente):
+    """O DEFEITO 5: o campo diz "quantas linhas seguram a confirmação" e contava
+    grupos. Quatro linhas travadas por um grupo devolviam 1, e o cabeçalho da
+    tela mentia sobre o tamanho do trabalho."""
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    for i in range(4):
+        valores = {
+            "Código": f"A{i}",
+            "Data": date(2026, 9, 21 + i),
+            "Instituição": "Prefeitura de Campinas",
+            "UF": "SP",
+        }
+        folha.append([valores.get(coluna) for coluna in cabecalho])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    corpo = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("dia.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+
+    assert corpo["pendencias"] == 4
+    assert corpo["decisoes_pendentes"] == 1
+
+def test_celula_de_HORA_nao_estoura_no_commit(cliente_admin, sessao, semente):
+    """O DEFEITO 6: `para_json` cobria date, datetime e UUID, e uma célula
+    formatada como hora chega `time` — estourando no flush do JSONB, longe de
+    quem montou o dado. É a classe de erro que a função existe para evitar."""
+    from datetime import date, time
+
+    from openpyxl import load_workbook
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    valores = {
+        "Código": "A1",
+        "Data": date(2026, 9, 25),
+        "Instituição": semente["instituicao"].nome,
+        "UF": "SP",
+        "Local": time(14, 30),
+    }
+    folha.append([valores.get(coluna) for coluna in cabecalho])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    resposta = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("dia.xlsx", saida.getvalue(), TIPO_XLSX)}
+    )
+
+    assert resposta.status_code == 201, resposta.text
+    assert resposta.json()["linhas"][0]["dados_brutos"]["Local"] == "14:30:00"

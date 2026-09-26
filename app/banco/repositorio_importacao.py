@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Mapping, Sequence
-from datetime import date, datetime
+from datetime import date, datetime, time
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select
@@ -26,14 +27,27 @@ from app.dominio.erros import NaoEncontrado
 
 
 def para_json(valor: Any) -> Any:
-    """O mesmo dado, com `date`, `datetime` e `UUID` virados em texto."""
+    """O mesmo dado, com o que o JSON não aceita virado em texto.
+
+    `time` E `Decimal` ESTÃO AQUI porque uma planilha os produz sem aviso: uma
+    célula formatada como hora num campo livre (`Local`, `Observação`) chega
+    `time`, e uma célula numérica chega `Decimal`. Sem a conversão, o erro só
+    aparece no flush do JSONB — longe de quem montou o dado, com a transação já
+    suja. Foi um achado de revisão, não hipótese.
+    """
     if isinstance(valor, Mapping):
         return {str(chave): para_json(item) for chave, item in valor.items()}
     if isinstance(valor, (list, tuple)):
         return [para_json(item) for item in valor]
-    if isinstance(valor, (datetime, date)):
+    if isinstance(valor, (datetime, date, time)):
         return valor.isoformat()
     if isinstance(valor, uuid.UUID):
+        return str(valor)
+    if isinstance(valor, Decimal):
+        # Uma célula numérica do Excel pode chegar `Decimal`, e `json.dumps` não
+        # sabe serializá-la. `float` perde precisão em teoria; aqui o valor é
+        # texto livre que ninguém soma, e `str` preservaria as casas de um
+        # número que a pessoa digitou — é o que ela reconhece de volta.
         return str(valor)
     return valor
 

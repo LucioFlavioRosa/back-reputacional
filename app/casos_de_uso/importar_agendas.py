@@ -150,6 +150,17 @@ COLUNAS_EXIGIDAS_DAS_FILHAS: dict[str, tuple[str, ...]] = {
 #: a montar, então a divergência TRAVA.
 OBRIGATORIOS = ("data_interacao", "instituicao_id", "uf")
 
+#: Marca um nome que casa com MAIS DE UM cadastro.
+#:
+#: A unicidade de `instituicao` é `(nome_normalizado, tipo)` e a de
+#: `interlocutor` é `(nome_normalizado, instituicao_id)` — a migration 0002 diz
+#: por quê: "Águas do Rio" existe como `area_interna` e pode existir como
+#: `orgao`, e duas "Ana Prado" em instituições diferentes é situação comum. Um
+#: índice nome→id ACHATA as duas e a planilha passa a apontar silenciosamente
+#: para a errada. Travar é o único comportamento honesto: só quem preencheu sabe
+#: de qual delas falava.
+AMBIGUO = object()
+
 #: O campo sob o qual a possível duplicata aparece na conferência.
 #:
 #: NOME PRÓPRIO, e não `data_interacao`: o agrupamento junta por `(campo, valor)`,
@@ -167,14 +178,41 @@ _NAO = frozenset({"nao", "n", "false", "falso", "0"})
 class Proposta:
     """O que a importação entendeu de UMA linha da aba Agendas.
 
-    `entrada` é `None` quando alguma divergência trava: sem os campos que
-    `InteracaoEntrada` exige não há objeto válido a montar, e montá-lo pela
-    metade só adiaria o erro para a confirmação.
+    `entrada` é `None` em DOIS casos diferentes, e distingui-los é o ponto:
+
+      - **travada**: alguma divergência trava. A pessoa precisa decidir algo
+        antes de isto virar agenda.
+      - **esperando criação**: `a_criar` não está vazio. Nada falta à pessoa —
+        ela já declarou o cadastro novo na aba editável —, só não existe ainda o
+        id para montar o `InteracaoEntrada`. Quem cria é a confirmação.
+
+    Tratar os dois como a mesma coisa era o defeito que a revisão achou: um nome
+    escrito corretamente na aba de cadastro fazia a linha travar, o oposto do que
+    a spec manda.
     """
 
     linha: LinhaBruta
     entrada: InteracaoEntrada | None
     divergencias: list[Divergencia] = field(default_factory=list)
+    #: `(vocabulário, nome)` de cada cadastro que a confirmação precisa criar.
+    #: Guardado como DADO e não só dentro do texto de uma divergência: a
+    #: confirmação precisa do valor, não da frase que o descreve.
+    a_criar: tuple[tuple[str, str], ...] = ()
+    #: As linhas de aba filha que não deu para montar porque esperam um cadastro.
+    #: Guardam o que a pessoa preencheu — descartar a linha levaria `Presença` e
+    #: `Principal` com ela, que era o segundo defeito da revisão.
+    filhas_pendentes: tuple[Mapping[str, object], ...] = ()
+    #: O bruto das abas filhas desta agenda, para o upload persistir. Sem isto o
+    #: arquivo original das abas filhas não ficava em lugar nenhum.
+    linhas_filhas: tuple[LinhaBruta, ...] = ()
+
+    @property
+    def travada(self) -> bool:
+        return any(divergencia.trava for divergencia in self.divergencias)
+
+    @property
+    def esperando_criacao(self) -> bool:
+        return not self.travada and bool(self.a_criar)
 
 
 def _indice(sessao: Session) -> dict[str, dict[str, object]]:
@@ -191,11 +229,16 @@ def _indice(sessao: Session) -> dict[str, dict[str, object]]:
         # usá-lo evita normalizar em Python o que o banco já tem pronto.
         tem_normalizado = hasattr(fonte.tabela, "nome_normalizado")
         alvo = fonte.tabela.nome_normalizado if tem_normalizado else fonte.tabela.nome
-        indice[chave] = {
-            (nome if tem_normalizado else normalizar(nome)): valor
-            for nome, valor in sessao.execute(select(alvo, coluna)).all()
-            if nome
-        }
+        por_nome: dict[str, object] = {}
+        for nome, valor in sessao.execute(select(alvo, coluna)).all():
+            if not nome:
+                continue
+            campo = nome if tem_normalizado else normalizar(nome)
+            # O SEGUNDO com o mesmo nome não sobrescreve o primeiro: marca os
+            # dois como ambíguos. Sobrescrever é o que fazia a planilha apontar
+            # para a instituição errada sem nada avisar.
+            por_nome[campo] = AMBIGUO if campo in por_nome else valor
+        indice[chave] = por_nome
     for chave, codigos in NO_CODIGO.items():
         indice[chave] = {normalizar(codigo): codigo for codigo in codigos}
     return indice
@@ -233,6 +276,20 @@ def _booleano(valor: object) -> bool | None | str:
     return str(valor)
 
 
+@dataclass(frozen=True, slots=True)
+class _Resolucao:
+    """O que saiu de uma célula: o valor, ou o cadastro que falta criar.
+
+    DUAS SAÍDAS E NÃO UMA. Devolver só `None` para "não resolvi" misturava
+    "não sei o que é isto" com "isto ainda vai ser criado" — e era essa mistura
+    que fazia um cadastro declarado travar a linha.
+    """
+
+    valor: object | None = None
+    #: `(vocabulário, nome)` quando a confirmação precisa criar este cadastro.
+    a_criar: tuple[str, str] | None = None
+
+
 def _resolver(
     valor: object,
     coluna_nome: str,
@@ -241,20 +298,35 @@ def _resolver(
     indice: dict[str, dict[str, object]],
     declarados: Mapping[str, frozenset[str]],
     divergencias: list[Divergencia],
-) -> object | None:
-    """O valor resolvido, ou `None` com a divergência anotada."""
+) -> _Resolucao:
+    """O valor resolvido, o cadastro a criar, ou a divergência anotada."""
     if valor is None:
-        return None
+        return _Resolucao()
     texto = str(valor)
     conhecidos = indice.get(vocabulario, {})
     veredito = classificar(texto, vocabulario, conhecidos, declarados.get(vocabulario, frozenset()))
 
     if veredito == "resolve":
-        return conhecidos[normalizar(texto)]
+        achado = conhecidos[normalizar(texto)]
+        if achado is AMBIGUO:
+            divergencias.append(
+                Divergencia(
+                    campo=campo,
+                    valor=texto,
+                    mensagem=(
+                        f"{coluna_nome}: existe mais de um cadastro com o nome "
+                        f"{texto!r}. Escolha qual na conferência."
+                    ),
+                    trava=True,
+                )
+            )
+            return _Resolucao()
+        return _Resolucao(valor=achado)
 
     if veredito == "cria":
         # Declarado na aba editável: não é pendência da pessoa, é trabalho da
-        # confirmação. Aparece na conferência como "vou criar", sem travar.
+        # confirmação. Aparece na conferência como "vou criar", sem travar — e o
+        # valor volta em `a_criar` para a confirmação ter o que criar.
         divergencias.append(
             Divergencia(
                 campo=campo,
@@ -263,7 +335,7 @@ def _resolver(
                 trava=False,
             )
         )
-        return None
+        return _Resolucao(a_criar=(vocabulario, texto))
 
     fechado = vocabulario in VOCABULARIOS_FECHADOS
     motivo = (
@@ -273,7 +345,7 @@ def _resolver(
         f"escreva-o também na aba de cadastro."
     )
     divergencias.append(Divergencia(campo=campo, valor=texto, mensagem=motivo, trava=True))
-    return None
+    return _Resolucao()
 
 
 def _filhas_por_codigo(
@@ -281,13 +353,21 @@ def _filhas_por_codigo(
     indice: dict[str, dict[str, object]],
     declarados: Mapping[str, frozenset[str]],
 ) -> dict[str, dict[str, list]]:
-    """Código da agenda → {campo da lista: [itens]}, com as divergências dentro.
+    """Código da agenda → o que as abas filhas dela produziram.
 
     AGRUPA UMA VEZ, e não uma busca por agenda: com 54 agendas e 200
     participantes, varrer a aba filha por agenda seria varrê-la 54 vezes.
+
+    Devolve, por código, quatro coisas sob chaves reservadas: os itens montados
+    (por campo da lista), as divergências, as linhas que ESPERAM UM CADASTRO com
+    os valores que já se conhece, e os cadastros a criar. A linha que espera
+    cadastro não pode ser descartada: ela leva `Presença` e `Principal` com ela,
+    e a pessoa não preencheu aquilo para nada.
     """
     agrupado: dict[str, dict[str, list]] = {}
     pendencias: dict[str, list[Divergencia]] = {}
+    esperando: dict[str, list[Mapping[str, object]]] = {}
+    criar: dict[str, list[tuple[str, str]]] = {}
 
     for nome_da_aba, (campo_da_lista, modelo) in LISTAS_DAS_ABAS_FILHAS.items():
         mapeamento = CAMPOS_DAS_ABAS_FILHAS[nome_da_aba]
@@ -297,12 +377,13 @@ def _filhas_por_codigo(
             codigo = str(linha.celulas[COLUNA_DO_CODIGO])
             divergencias: list[Divergencia] = []
             valores: dict[str, object] = {}
+            a_criar: list[tuple[str, str]] = []
 
             for coluna_nome, campo in mapeamento.items():
                 bruto = linha.celulas.get(coluna_nome)
                 coluna = colunas[coluna_nome]
                 if coluna.vocabulario:
-                    resolvido = _resolver(
+                    resolucao = _resolver(
                         bruto,
                         coluna_nome,
                         coluna.vocabulario,
@@ -311,6 +392,9 @@ def _filhas_por_codigo(
                         declarados,
                         divergencias,
                     )
+                    resolvido = resolucao.valor
+                    if resolucao.a_criar is not None:
+                        a_criar.append(resolucao.a_criar)
                 elif campo == "principal":
                     resolvido = _booleano(bruto) or False
                 else:
@@ -319,6 +403,9 @@ def _filhas_por_codigo(
                     valores[campo] = resolvido
 
             for exigida in COLUNAS_EXIGIDAS_DAS_FILHAS[nome_da_aba]:
+                # Uma coluna preenchida com nome NOVO não está "faltando": ela
+                # espera cadastro. Acusá-la de ausente seria a mesma confusão
+                # entre travar e esperar que a revisão apontou.
                 if linha.celulas.get(exigida) is None:
                     divergencias.append(
                         Divergencia(
@@ -334,10 +421,25 @@ def _filhas_por_codigo(
 
             destino = agrupado.setdefault(codigo, {})
             pendencias.setdefault(codigo, []).extend(divergencias)
-            if divergencias:
-                # A linha filha com pendência não entra na lista: montar o modelo
+            criar.setdefault(codigo, []).extend(a_criar)
+
+            if any(divergencia.trava for divergencia in divergencias):
+                # Travou: a pessoa precisa decidir algo antes. Montar o modelo
                 # sem o id obrigatório estouraria a validação do Pydantic, e a
-                # pendência já está registrada para a pessoa resolver.
+                # pendência já está registrada para ela resolver.
+                continue
+            if a_criar:
+                # NÃO TRAVOU, só espera o cadastro nascer. Guarda o que já se
+                # sabe — descartar a linha aqui era o segundo defeito da revisão,
+                # e levava `Presença` e `Principal` embora.
+                esperando.setdefault(codigo, []).append(
+                    {
+                        "campo_da_lista": campo_da_lista,
+                        "linha_origem": linha.numero,
+                        "valores": valores,
+                        "aguardando": tuple(a_criar),
+                    }
+                )
                 continue
             try:
                 destino.setdefault(campo_da_lista, []).append(modelo(**valores))
@@ -353,7 +455,16 @@ def _filhas_por_codigo(
 
     for codigo, divergencias in pendencias.items():
         agrupado.setdefault(codigo, {})["__divergencias__"] = divergencias
+    for codigo, pendentes in esperando.items():
+        agrupado.setdefault(codigo, {})["__esperando__"] = pendentes
+    for codigo, cadastros in criar.items():
+        agrupado.setdefault(codigo, {})["__a_criar__"] = cadastros
     return agrupado
+
+
+#: As chaves que `_filhas_por_codigo` usa para carregar o que não é lista de
+#: itens. Ficam numeradas aqui para o laço da agenda não as confundir com campo.
+_RESERVADAS = ("__divergencias__", "__esperando__", "__a_criar__")
 
 
 def _quem_representa(sessao: Session) -> dict[object, frozenset]:
@@ -456,10 +567,18 @@ def propor(sessao: Session, conteudo: bytes) -> list[Proposta]:
     colunas_de_agenda = aba_de(ABA_PRINCIPAL).colunas
     propostas: list[Proposta] = []
 
+    filhas_brutas: dict[str, list[LinhaBruta]] = {}
+    for aba in FORMATO:
+        if aba.nome == ABA_PRINCIPAL:
+            continue
+        for filha in por_aba[aba.nome]:
+            filhas_brutas.setdefault(str(filha.celulas[COLUNA_DO_CODIGO]), []).append(filha)
+
     for linha in por_aba[ABA_PRINCIPAL]:
         divergencias: list[Divergencia] = []
         campos: dict[str, object] = {}
         listas: dict[str, list[object]] = {}
+        a_criar: list[tuple[str, str]] = []
 
         for coluna in colunas_de_agenda:
             if not coluna.campo:
@@ -468,7 +587,7 @@ def propor(sessao: Session, conteudo: bytes) -> list[Proposta]:
             e_lista = coluna.campo in ("temas", "areas")
 
             if coluna.vocabulario:
-                valor = _resolver(
+                resolucao = _resolver(
                     bruto,
                     coluna.nome,
                     coluna.vocabulario,
@@ -477,6 +596,9 @@ def propor(sessao: Session, conteudo: bytes) -> list[Proposta]:
                     declarados,
                     divergencias,
                 )
+                valor = resolucao.valor
+                if resolucao.a_criar is not None:
+                    a_criar.append(resolucao.a_criar)
             elif coluna.campo == "data_interacao":
                 valor = bruto if isinstance(bruto, date) else None
                 if bruto is not None and valor is None:
@@ -531,15 +653,30 @@ def propor(sessao: Session, conteudo: bytes) -> list[Proposta]:
         codigo = str(linha.celulas[COLUNA_DO_CODIGO])
         da_agenda = filhas.get(codigo, {})
         divergencias.extend(da_agenda.get("__divergencias__", []))
+        esperando = tuple(da_agenda.get("__esperando__", ()))
+        a_criar.extend(da_agenda.get("__a_criar__", ()))
         for campo_da_lista, itens in da_agenda.items():
-            if campo_da_lista != "__divergencias__":
+            if campo_da_lista not in _RESERVADAS:
                 campos[campo_da_lista] = itens
+
+        # `a_criar` sem repetição, preservando a ordem em que apareceu: a mesma
+        # instituição declarada em duas colunas é UM cadastro a criar.
+        pendentes_de_cadastro = tuple(dict.fromkeys(a_criar))
+        aguardando_por_campo = {
+            divergencia.campo
+            for divergencia in divergencias
+            if not divergencia.trava and divergencia.campo != CAMPO_DA_DUPLICATA
+        }
 
         faltando = [campo for campo in OBRIGATORIOS if campo not in campos]
         for campo in faltando:
             # Só anuncia o que ainda não tem divergência própria: uma instituição
             # que não existe já foi explicada acima, e repetir a mesma pendência
-            # com outras palavras faria a pessoa procurar dois problemas.
+            # com outras palavras faria a pessoa procurar dois problemas. Um campo
+            # que ESPERA CADASTRO também não é "falta": ele já tem a sua linha na
+            # conferência dizendo que vai ser criado.
+            if campo in aguardando_por_campo:
+                continue
             if not any(d.campo == campo for d in divergencias):
                 divergencias.append(
                     Divergencia(
@@ -551,7 +688,12 @@ def propor(sessao: Session, conteudo: bytes) -> list[Proposta]:
                 )
 
         entrada = None
-        if not any(d.trava for d in divergencias):
+        travada = any(d.trava for d in divergencias)
+        # NÃO TENTA MONTAR quando algo espera cadastro: faltaria o id obrigatório,
+        # o Pydantic estouraria, e o erro genérico entraria como divergência que
+        # TRAVA — transformando um cadastro corretamente declarado em pendência.
+        # Era o primeiro defeito que a revisão do Codex achou.
+        if not travada and not pendentes_de_cadastro and not esperando:
             try:
                 entrada = InteracaoEntrada(**campos)
             except Exception as erro:  # noqa: BLE001 - vira pendência, não 500
@@ -575,7 +717,16 @@ def propor(sessao: Session, conteudo: bytes) -> list[Proposta]:
                 divergencias.extend(do_formulario)
                 entrada = None
 
-        propostas.append(Proposta(linha=linha, entrada=entrada, divergencias=divergencias))
+        propostas.append(
+            Proposta(
+                linha=linha,
+                entrada=entrada,
+                divergencias=divergencias,
+                a_criar=pendentes_de_cadastro,
+                filhas_pendentes=esperando,
+                linhas_filhas=tuple(filhas_brutas.get(codigo, ())),
+            )
+        )
 
     return _avisar_duplicatas(sessao, propostas)
 

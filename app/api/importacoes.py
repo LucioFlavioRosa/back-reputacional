@@ -91,9 +91,14 @@ class ImportacaoSaida(BaseModel):
     #: A segunda vista — as 54 linhas, para descartar uma específica.
     linhas: list[LinhaSaida]
 
-    #: Quantas linhas ainda seguram a confirmação. O cabeçalho da tela mostra
-    #: isto, e o botão de confirmar só acende quando é zero.
+    #: Quantas LINHAS ainda seguram a confirmação — não quantos grupos. Doze
+    #: linhas travadas por um mesmo valor são doze pendências, e dizer "1" faria
+    #: o cabeçalho mentir sobre o tamanho do trabalho. Foi um achado de revisão.
     pendencias: int
+    #: Quantas DECISÕES resolvem essas linhas. É o número de cliques que a pessoa
+    #: tem pela frente, e os dois juntos é que contam a história: "12 linhas
+    #: presas por 2 decisões".
+    decisoes_pendentes: int
 
 
 def _nomes_conhecidos(sessao, campo: str) -> list[str]:
@@ -158,13 +163,19 @@ def _grupos(sessao, linhas) -> list[GrupoSaida]:
 
 def _saida(sessao, importacao, linhas) -> ImportacaoSaida:
     grupos = _grupos(sessao, linhas)
+    # As linhas, e não os grupos: uma linha presa por duas decisões diferentes
+    # conta UMA vez, e doze linhas presas pela mesma decisão contam doze.
+    linhas_presas = {
+        numero for grupo in grupos if grupo.trava for numero in grupo.linhas
+    }
     return ImportacaoSaida(
         id=str(importacao.id),
         arquivo_nome=importacao.arquivo_nome,
         situacao=importacao.situacao,
         criado_em=importacao.criado_em.isoformat(),
         grupos=grupos,
-        pendencias=sum(1 for grupo in grupos if grupo.trava),
+        pendencias=len(linhas_presas),
+        decisoes_pendentes=sum(1 for grupo in grupos if grupo.trava),
         linhas=[
             LinhaSaida(
                 id=linha.id,
@@ -242,6 +253,23 @@ def subir(sessao: Sessao, usuario: UsuarioLogado, arquivo: Arquivo) -> Importaca
                 for divergencia in proposta.divergencias
             ],
         )
+        # O BRUTO DAS ABAS FILHAS TAMBÉM, uma `importacao_linha` por linha delas.
+        #
+        # Antes só as linhas de Agendas eram gravadas, e o arquivo original de
+        # Participantes, Pessoas da Aegea e Materiais não ficava em lugar nenhum —
+        # contra a invariante da 0008 de preservar o bruto para reprocessar e para
+        # responder de onde veio um registro. Pior no caso de uma linha filha que
+        # espera cadastro: o que a pessoa preencheu não estaria em parte alguma.
+        for filha in proposta.linhas_filhas:
+            repositorio_importacao.gravar_linha(
+                sessao,
+                importacao_id=importacao.id,
+                aba=filha.aba,
+                linha_origem=filha.numero,
+                dados_brutos=filha.celulas,
+                proposta=None,
+                divergencias=[],
+            )
     repositorio_importacao.marcar_aguardando_conferencia(sessao, importacao)
 
     return _saida(sessao, importacao, repositorio_importacao.linhas_de(sessao, importacao.id))
