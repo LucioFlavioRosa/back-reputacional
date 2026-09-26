@@ -409,3 +409,170 @@ def test_um_codigo_escrito_que_imita_o_gerado_e_recusado():
 
     with pytest.raises(RegraViolada, match="reservado"):
         ler(_completa(agendas=[_agenda(codigo=codigo_da_linha(3)), _agenda(codigo=None)]))
+
+
+# =============================================================================
+# `idem`: repetir o valor da linha de cima, dizendo que repete
+# =============================================================================
+
+
+def test_idem_repete_o_valor_da_linha_de_cima():
+    """UM DIA DE 54 REUNIÕES tem a mesma instituição, a mesma UF e a mesma data em
+    dezenas de linhas, e digitar tudo de novo é trabalho e é erro.
+
+    O MARCADOR É EXPLÍCITO, e não "vazio herda": vazio continua significando
+    vazio. Sem isso, deixar um campo em branco de propósito passaria a copiar o de
+    cima, e um esquecimento viraria dado errado em silêncio — o oposto do que esta
+    funcionalidade inteira defende.
+    """
+    lido = ler(
+        _completa(
+            agendas=[
+                _agenda("A1", onde="Valor Econômico"),
+                _agenda("A2", onde="idem"),
+            ]
+        )
+    )
+
+    assert lido["Agendas"][1].celulas["Instituição"] == "Valor Econômico"
+
+
+def test_idem_nao_se_confunde_com_vazio():
+    """O contrapeso, e o motivo de o marcador existir: a célula em branco continua
+    em branco, mesmo com valor na linha de cima."""
+    lido = ler(
+        _completa(
+            agendas=[
+                _agenda("A1", onde="Valor Econômico"),
+                {"Código": "A2", "Data": date(2026, 9, 26), "UF": "SP"},
+            ]
+        )
+    )
+
+    assert lido["Agendas"][1].celulas["Instituição"] is None
+
+
+def test_idem_vale_para_qualquer_coluna():
+    lido = ler(
+        _completa(
+            agendas=[
+                {**_agenda("A1"), "UF": "RJ", "Local": "Sede"},
+                {**_agenda("A2"), "UF": "idem", "Local": "idem"},
+            ]
+        )
+    )
+
+    assert lido["Agendas"][1].celulas["UF"] == "RJ"
+    assert lido["Agendas"][1].celulas["Local"] == "Sede"
+
+
+def test_idem_em_cadeia_repete_o_ULTIMO_valor_de_verdade():
+    """Três linhas com `idem` seguem repetindo o valor original, e não o marcador."""
+    lido = ler(
+        _completa(
+            agendas=[
+                _agenda("A1", onde="Valor Econômico"),
+                _agenda("A2", onde="idem"),
+                _agenda("A3", onde="idem"),
+            ]
+        )
+    )
+
+    assert [linha.celulas["Instituição"] for linha in lido["Agendas"]] == [
+        "Valor Econômico",
+        "Valor Econômico",
+        "Valor Econômico",
+    ]
+
+
+def test_idem_ignora_caixa_e_acento():
+    """A pessoa digita "Idem", "IDEM" ou escolhe da lista suspensa."""
+    lido = ler(
+        _completa(
+            agendas=[_agenda("A1", onde="Valor Econômico"), _agenda("A2", onde="IDEM")]
+        )
+    )
+
+    assert lido["Agendas"][1].celulas["Instituição"] == "Valor Econômico"
+
+
+def test_idem_repete_a_DATA_como_data_e_nao_como_texto():
+    """A conversão de data roda DEPOIS da herança, senão a linha herdaria o texto
+    "idem" e a data viraria divergência numa linha que a pessoa preencheu certo."""
+    lido = ler(
+        _completa(
+            agendas=[
+                _agenda("A1", quando=date(2026, 9, 25)),
+                _agenda("A2", quando="idem"),
+            ]
+        )
+    )
+
+    assert lido["Agendas"][1].celulas["Data"] == date(2026, 9, 25)
+
+
+def test_idem_sem_nada_acima_recusa_e_diz_onde():
+    """`idem` é uma instrução ao leitor, e uma instrução que ele não pode cumprir é
+    problema de estrutura — como um cabeçalho que não bate. A mensagem cita a
+    linha e a coluna porque a correção é de uma célula."""
+    with pytest.raises(RegraViolada, match="[Ii]dem"):
+        ler(_completa(agendas=[_agenda("A1", onde="idem")]))
+
+
+def test_a_linha_em_branco_continua_sendo_ignorada():
+    """A verificação de linha vazia roda ANTES da herança, senão o rastro de um
+    Ctrl+V viraria uma cópia da agenda de cima — agendas que ninguém digitou."""
+    conteudo = _livro(
+        {
+            "Agendas": [
+                _cabecalho("Agendas"),
+                _linha("Agendas", _agenda("A1")),
+                [None for _ in _cabecalho("Agendas")],
+            ],
+            "Participantes": [_cabecalho("Participantes")],
+            "Pessoas da Aegea": [_cabecalho("Pessoas da Aegea")],
+            "Materiais": [_cabecalho("Materiais")],
+        }
+    )
+
+    lido = ler(conteudo)
+
+    assert len(lido["Agendas"]) == 1
+
+
+def test_idem_na_aba_filha_tambem_funciona():
+    """Dez participantes da mesma instituição numa reunião é o caso comum."""
+    lido = ler(
+        _completa(
+            agendas=[_agenda("A1")],
+            participantes=[
+                {"Código": "A1", "Pessoa": "Ana Prado", "Presença": "presente"},
+                {"Código": "idem", "Pessoa": "Bruno Lima", "Presença": "idem"},
+            ],
+        )
+    )
+
+    assert lido["Participantes"][1].celulas["Código"] == "A1"
+    assert lido["Participantes"][1].celulas["Presença"] == "presente"
+
+
+def test_o_marcador_esta_na_lista_suspensa_de_um_vocabulario_fechado():
+    """SEM ISSO O MARCADOR NÃO SERVE nas colunas que mais se repetem: a validação
+    de vocabulário fechado BLOQUEIA valor fora da lista, então `idem` digitado em
+    Clima seria recusado pelo próprio Excel antes de chegar ao servidor."""
+    import io as _io
+
+    from openpyxl import load_workbook
+
+    from app.casos_de_uso.modelo_de_importacao import gerar
+    from app.dominio.importacao_de_agendas import MARCADOR_DE_REPETICAO, ROTULO_DO_VOCABULARIO
+
+    vocabularios = {
+        chave: ["Um", "Outro"]
+        for chave in ROTULO_DO_VOCABULARIO
+    }
+    pasta = load_workbook(_io.BytesIO(gerar(vocabularios)))
+    folha = pasta[ROTULO_DO_VOCABULARIO["climas"]]
+    valores = [celula.value for (celula,) in folha.iter_rows(min_col=1, max_col=1)]
+
+    assert MARCADOR_DE_REPETICAO in valores

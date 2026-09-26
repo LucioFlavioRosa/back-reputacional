@@ -37,6 +37,7 @@ from app.dominio.erros import RegraViolada
 from app.dominio.importacao_de_agendas import (
     COLUNA_DA_CATEGORIA_DE_INSTITUICAO,
     FORMATO,
+    MARCADOR_DE_REPETICAO,
     ROTULO_DO_VOCABULARIO,
     VOCABULARIOS_EDITAVEIS,
     VOCABULARIOS_FECHADOS,
@@ -147,8 +148,13 @@ def gerar(vocabularios: Mapping[str, list[str]]) -> bytes:
             planilha.append([rotulo_singular(chave), COLUNA_DA_CATEGORIA_DE_INSTITUICAO])
         for valor in valores:
             planilha.append([valor])
+        # O MARCADOR ENTRA NA LISTA, e precisa entrar: a validação de vocabulário
+        # FECHADO bloqueia valor fora da lista, então `idem` digitado em Clima
+        # seria recusado pelo próprio Excel antes de chegar ao servidor. Na lista,
+        # ele ainda ganha a vantagem de ser escolhido em vez de digitado.
+        planilha.append([MARCADOR_DE_REPETICAO])
 
-        ultima_linha = len(valores) + (1 if e_de_instituicao else 0)
+        ultima_linha = len(valores) + 1 + (1 if e_de_instituicao else 0)
         if chave in VOCABULARIOS_FECHADOS:
             planilha.protection.sheet = True
         else:

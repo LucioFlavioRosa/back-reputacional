@@ -33,6 +33,7 @@ from app.dominio.erros import RegraViolada
 from app.dominio.importacao_de_agendas import (
     COLUNA_DA_CATEGORIA_DE_INSTITUICAO,
     FORMATO,
+    MARCADOR_DE_REPETICAO,
     ROTULO_DO_VOCABULARIO,
     VOCABULARIOS_EDITAVEIS,
     Aba,
@@ -184,16 +185,36 @@ def _linhas_da_aba(aba: Aba, folha) -> list[LinhaBruta]:
     indices = _indices(aba, cabecalho)
     e_data = {coluna.nome for coluna in aba.colunas if coluna.campo == "data_interacao"}
 
+    #: O último valor DE VERDADE de cada coluna — o que `idem` repete. Guarda o
+    #: valor original e nunca o marcador, senão uma cadeia de `idem` repetiria a
+    #: palavra em vez do dado.
+    ultimo: dict[str, object] = {}
+
     lidas: list[LinhaBruta] = []
     for numero, valores in enumerate(linhas, start=2):
         celulas = {
             nome: _texto(valores[posicao]) if posicao < len(valores) else None
             for nome, posicao in indices.items()
         }
-        # A linha inteiramente vazia é o rastro de um preenchimento abandonado
-        # ou de um Ctrl+V. Propô-la daria uma divergência por coluna.
+        # A LINHA VAZIA É CONFERIDA ANTES DA HERANÇA. É o rastro de um
+        # preenchimento abandonado ou de um Ctrl+V, e propô-la daria uma
+        # divergência por coluna. Se a herança rodasse primeiro, esse rastro
+        # viraria uma CÓPIA da agenda de cima — agendas que ninguém digitou.
         if all(valor is None for valor in celulas.values()):
             continue
+
+        for nome, valor in celulas.items():
+            if isinstance(valor, str) and normalizar(valor) == MARCADOR_DE_REPETICAO:
+                if nome not in ultimo:
+                    raise RegraViolada(
+                        f"Na linha {numero} da aba {aba.nome!r}, a coluna {nome!r} "
+                        f"tem {MARCADOR_DE_REPETICAO!r} mas não há linha acima com "
+                        "valor para repetir. Escreva o valor nesta linha."
+                    )
+                celulas[nome] = ultimo[nome]
+            elif valor is not None:
+                ultimo[nome] = valor
+
         for nome in e_data:
             celulas[nome] = data_de_celula(celulas[nome])
         lidas.append(LinhaBruta(aba=aba.nome, numero=numero, celulas=celulas))
@@ -329,7 +350,13 @@ def ler_declarados(conteudo: bytes) -> dict[str, frozenset[str]]:
         normalizar("Instituição"),
         normalizar(COLUNA_DA_CATEGORIA_DE_INSTITUICAO),
     }
-    return declarados
+    # O MARCADOR ESTÁ NA LISTA de todas as abas de vocabulário, para poder ser
+    # escolhido na suspensa — mas ele é instrução, não cadastro. Sem esta
+    # subtração, `idem` viraria uma instituição a criar.
+    return {
+        chave: nomes - {MARCADOR_DE_REPETICAO}
+        for chave, nomes in declarados.items()
+    }
 
 
 def ler_categorias_declaradas(conteudo: bytes) -> dict[str, str]:

@@ -97,6 +97,19 @@ VOCABULARIOS_QUE_A_IMPORTACAO_CRIA: frozenset[str] = frozenset(
 #: E o tipo importa porque DERIVA A FRENTE da agenda — `derivar_frente` diz que
 #: "o tipo já basta, sozinho, para todos os tipos menos dois". Chutá-lo daria
 #: frente errada em toda agenda daquela instituição.
+#: O que a pessoa escreve numa célula para repetir a linha de cima.
+#:
+#: UM MARCADOR EXPLÍCITO, e não "vazio herda". A diferença é a razão de ele
+#: existir: com vazio herdando, deixar um campo em branco de propósito passaria a
+#: copiar o de cima, e um ESQUECIMENTO viraria dado errado em silêncio — o oposto
+#: do que esta funcionalidade defende, já que a conferência existe justamente para
+#: nada ser adivinhado. Com o marcador, vazio continua vazio, a intenção fica
+#: escrita no arquivo, e quem confere vê o que vai acontecer.
+#:
+#: Um dia de 54 reuniões repete a mesma instituição, a mesma UF e a mesma data em
+#: dezenas de linhas, e digitar tudo de novo é trabalho e é erro. Daí o marcador.
+MARCADOR_DE_REPETICAO = "idem"
+
 COLUNA_DA_CATEGORIA_DE_INSTITUICAO = "Categoria de público"
 
 #: Vocabulários fechados: mudar um valor aqui é mudança de regra de negócio
@@ -164,7 +177,7 @@ ROTULO_DO_VOCABULARIO: dict[str, str] = {
     "areas_pessoa": "Áreas",
     "status": "Situação",
     "climas": "Clima",
-    "resultados": "Resultado",
+    "resultados": "Desfecho",
     "iniciativas": "Iniciativa",
     "modalidade": "Modalidade",
     "presenca": "Presença",
@@ -225,9 +238,9 @@ _AGENDAS = Aba(
         # -- 6. Situação e expectativa -------------------------------------
         Coluna(nome="Iniciativa", campo="iniciativa", vocabulario="iniciativas"),
         Coluna(nome="Situação", campo="status", vocabulario="status"),
-        Coluna(nome="Nota da situação", campo="nota_situacao"),
-        Coluna(nome="Declinado por", campo="declinado_por"),
-        Coluna(nome="Motivo do declínio", campo="motivo_declinio"),
+        Coluna(nome="Nota sobre o aceite", campo="nota_situacao"),
+        Coluna(nome="Quem negou", campo="declinado_por"),
+        Coluna(nome="Por que foi negado", campo="motivo_declinio"),
         Coluna(nome="Clima esperado", campo="clima_esperado", vocabulario="climas"),
         Coluna(nome="Expectativa", campo="expectativa"),
         # -- 8. Outputs da interação ---------------------------------------
@@ -237,8 +250,8 @@ _AGENDAS = Aba(
         Coluna(nome="Observações", campo="observacoes"),
         # -- 9. Desfecho da interação --------------------------------------
         Coluna(nome="Clima", campo="clima", vocabulario="climas"),
-        Coluna(nome="Resultado", campo="resultado", vocabulario="resultados"),
-        Coluna(nome="Prevê desdobramento", campo="preve_desdobramento"),
+        Coluna(nome="Desfecho", campo="resultado", vocabulario="resultados"),
+        Coluna(nome="Desdobra em outra interação?", campo="preve_desdobramento"),
     ),
 )
 

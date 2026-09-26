@@ -5,6 +5,7 @@ import io
 from app.casos_de_uso.modelo_de_importacao import gerar
 from app.dominio.importacao_de_agendas import (
     FORMATO,
+    MARCADOR_DE_REPETICAO,
     ROTULO_DO_VOCABULARIO,
     VOCABULARIOS_EDITAVEIS,
     VOCABULARIOS_FECHADOS,
@@ -142,7 +143,11 @@ def test_o_definedname_de_cada_vocabulario_resolve_para_a_aba_certa():
             for (celula,) in planilha[nome_da_aba][intervalo]
             if celula.value is not None
         ]
-        assert lidos == valores, chave
+        # O MARCADOR DE REPETIÇÃO FECHA A LISTA, e está dentro do intervalo de
+        # propósito: a validação de vocabulário fechado bloqueia valor fora da
+        # lista, então `idem` precisa estar nela para poder ser escrito — e
+        # ficando na lista, é escolhido em vez de digitado.
+        assert lidos == [*valores, MARCADOR_DE_REPETICAO], chave
 
 
 def test_o_vocabulario_vazio_nao_quebra_o_arquivo():

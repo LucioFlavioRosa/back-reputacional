@@ -251,7 +251,9 @@ def test_o_vocabulario_de_CODIGO_resolve_pelo_proprio_codigo(sessao, semente):
 
 
 def test_sim_e_nao_viram_booleano(sessao, semente):
-    conteudo = _preenchida(sessao, agendas=[_agenda(semente, **{"Prevê desdobramento": "sim"})])
+    conteudo = _preenchida(
+        sessao, agendas=[_agenda(semente, **{"Desdobra em outra interação?": "sim"})]
+    )
 
     (proposta,) = importar_agendas.propor(sessao, conteudo)
 

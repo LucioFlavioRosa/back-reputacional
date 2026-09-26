@@ -420,9 +420,9 @@ def test_a_ordem_das_colunas_segue_o_FORMULARIO():
         # 6. Situação e expectativa
         "Iniciativa",
         "Situação",
-        "Nota da situação",
-        "Declinado por",
-        "Motivo do declínio",
+        "Nota sobre o aceite",
+        "Quem negou",
+        "Por que foi negado",
         "Clima esperado",
         "Expectativa",
         # 8. Outputs da interação
@@ -432,8 +432,8 @@ def test_a_ordem_das_colunas_segue_o_FORMULARIO():
         "Observações",
         # 9. Desfecho da interação
         "Clima",
-        "Resultado",
-        "Prevê desdobramento",
+        "Desfecho",
+        "Desdobra em outra interação?",
     ]
 
 
