@@ -1883,3 +1883,283 @@ def test_interlocutor_novo_declarado_VIRA_participante_na_confirmacao(
         select(InteracaoInterlocutor).where(InteracaoInterlocutor.interlocutor_id == nova.id)
     ).all()
     assert len(ligacoes) == 1
+
+
+# =============================================================================
+# o achado Alto da revisão da aba única
+# =============================================================================
+
+
+def test_a_instituicao_APONTADA_e_a_que_o_interlocutor_novo_recebe(
+    cliente_admin, sessao, semente
+):
+    """ACHADO ALTO DO CODEX, e o defeito mais feio que a revisão achou.
+
+    Com DUAS instituições de mesmo nome normalizado, o upload trava a linha por
+    ambiguidade e a pessoa escolhe qual na conferência. A criação do interlocutor
+    novo, porém, relia `dados_brutos["Instituição"]` contra o índice CRU — onde
+    aquele nome vale `AMBIGUO`, um sentinela, não um id. O interlocutor nascia com
+    o sentinela no lugar da chave estrangeira.
+
+    O caminho todo já tinha corrido: a pessoa subiu, conferiu, escolheu a
+    instituição certa e mandou confirmar. A decisão dela existia e estava gravada
+    — só não era consultada nesse ponto."""
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    from app.banco.tabelas_stakeholders import Instituicao
+    from app.dominio.importacao_de_agendas import ROTULO_DO_VOCABULARIO
+
+    # A HOMÔNIMA: mesmo nome normalizado, outra UF, outro cadastro. O banco
+    # permite — `instituicao` é única por `(nome_normalizado, tipo)`.
+    gemea = Instituicao(
+        nome=semente["instituicao"].nome,
+        nome_normalizado=semente["instituicao"].nome_normalizado,
+        tipo="orgao",
+        uf="RJ",
+    )
+    sessao.add(gemea)
+    sessao.flush()
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    folha.append(
+        [
+            {
+                "Código": "A1",
+                "Data": date(2026, 9, 25),
+                "Instituição": semente["instituicao"].nome,
+                "UF": "SP",
+                "Interlocutor 1": "Bruno Novo",
+                "Presença 1": "presente",
+            }.get(coluna)
+            for coluna in cabecalho
+        ]
+    )
+    pasta[ROTULO_DO_VOCABULARIO["interlocutores"]].append(["Bruno Novo"])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+    # A linha trava: o nome da instituição não decide qual das duas é.
+    assert criada["pendencias"] >= 1, criada["grupos"]
+
+    # A pessoa escolhe a gêmea do Rio na conferência.
+    resolucao = cliente_admin.patch(
+        f"/api/importacoes/{criada['id']}/resolucoes",
+        json={
+            "campo": "instituicao_id",
+            "valor": semente["instituicao"].nome,
+            "decisao": "apontar",
+            "alvo": str(gemea.id),
+        },
+    )
+    assert resolucao.status_code == 200, resolucao.text
+
+    confirmacao = cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao")
+
+    assert confirmacao.status_code == 201, confirmacao.text
+    nova = sessao.scalars(
+        select(Interlocutor).where(Interlocutor.nome_normalizado == normalizar("Bruno Novo"))
+    ).first()
+    assert nova is not None
+    # O ID QUE A PESSOA ESCOLHEU, e não o sentinela nem a outra homônima.
+    assert nova.instituicao_id == gemea.id
+
+
+# =============================================================================
+# a relação instituição -> interlocutor, no servidor
+# =============================================================================
+
+
+def _com_interlocutor(sessao, semente, instituicao_nome, pessoa, declarar=None):
+    """Uma agenda naquela instituição, com aquela pessoa no `Interlocutor 1`.
+
+    `declarar` é `(nome, instituicao)` escrito na aba de interlocutores — a
+    declaração de intenção, agora com a instituição ao lado.
+    """
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    from app.dominio.importacao_de_agendas import ROTULO_DO_VOCABULARIO
+
+    modelo = modelo_de_importacao.gerar(
+        importar_agendas.vocabularios(sessao),
+        importar_agendas.interlocutores_com_instituicao(sessao),
+    )
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    folha.append(
+        [
+            {
+                "Código": "A1",
+                "Data": date(2026, 9, 25),
+                "Instituição": instituicao_nome,
+                "UF": "SP",
+                "Interlocutor 1": pessoa,
+                "Presença 1": "presente",
+            }.get(coluna)
+            for coluna in cabecalho
+        ]
+    )
+    if declarar:
+        pasta[ROTULO_DO_VOCABULARIO["interlocutores"]].append(list(declarar))
+    saida = io.BytesIO()
+    pasta.save(saida)
+    return saida.getvalue()
+
+
+def _outra_instituicao(sessao, nome="Câmara Municipal", tipo="orgao"):
+    from app.banco.tabelas_stakeholders import Instituicao
+
+    instituicao = Instituicao(
+        nome=nome, nome_normalizado=normalizar(nome), tipo=tipo, uf="SP"
+    )
+    sessao.add(instituicao)
+    sessao.flush()
+    return instituicao
+
+
+def test_o_HOMONIMO_e_desfeito_pela_instituicao_da_linha(cliente_admin, sessao, semente):
+    """O GANHO DE GRAÇA DA RELAÇÃO. "Assessoria da liderança" existe em vários
+    órgãos — é cargo, não nome próprio —, e `interlocutor` é único por
+    `(nome_normalizado, instituicao_id)`, então o banco permite o homônimo.
+
+    Pelo nome sozinho, a importação travava: "existe mais de um cadastro com este
+    nome, escolha qual". Com a instituição da linha, não há o que escolher: é a
+    pessoa daquele órgão. Uma pendência que a pessoa não precisava resolver."""
+    from app.banco.tabelas_interacoes import InteracaoInterlocutor
+    from app.banco.tabelas_stakeholders import Interlocutor as Tabela
+
+    outra = _outra_instituicao(sessao)
+    for instituicao in (semente["instituicao"], outra):
+        sessao.add(
+            Tabela(
+                nome="Assessoria da liderança",
+                nome_normalizado=normalizar("Assessoria da liderança"),
+                instituicao_id=instituicao.id,
+            )
+        )
+    sessao.flush()
+
+    conteudo = _com_interlocutor(
+        sessao, semente, outra.nome, "Assessoria da liderança"
+    )
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", conteudo, TIPO_XLSX)}
+    ).json()
+
+    assert criada["pendencias"] == 0, criada["grupos"]
+    confirmacao = cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao")
+    assert confirmacao.status_code == 201, confirmacao.text
+    # A pessoa DAQUELE órgão, e não a homônima do outro.
+    escolhida = sessao.scalars(
+        select(Tabela).where(
+            Tabela.nome_normalizado == normalizar("Assessoria da liderança"),
+            Tabela.instituicao_id == outra.id,
+        )
+    ).first()
+    ligacoes = sessao.scalars(
+        select(InteracaoInterlocutor).where(
+            InteracaoInterlocutor.interlocutor_id == escolhida.id
+        )
+    ).all()
+    assert len(ligacoes) == 1
+
+
+def test_interlocutor_de_OUTRA_instituicao_trava_e_diz_de_quem_ele_e(
+    cliente_admin, sessao, semente
+):
+    """O ERRO QUE A SUSPENSA DEPENDENTE PREVINE, travado também no servidor — a
+    planilha convertida para o Google Sheets pode perder a validação, e o arquivo
+    pode nem ter saído do nosso modelo.
+
+    "Ana Prado" é do Valor Econômico. Usada numa agenda da Câmara, ela violaria a
+    regra de que o participante pertence à instituição da agenda — e essa regra
+    recusava na CONFIRMAÇÃO, depois de a pessoa ter conferido tudo. Agora recusa no
+    upload, junto das outras pendências, dizendo de quem a pessoa é."""
+    outra = _outra_instituicao(sessao)
+
+    conteudo = _com_interlocutor(sessao, semente, outra.nome, "Ana Prado")
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", conteudo, TIPO_XLSX)}
+    ).json()
+
+    assert criada["pendencias"] >= 1
+    # ONDE A PESSOA LÊ: a tabela de linhas da conferência mostra a mensagem de cada
+    # divergência (`ConferirImportacao.tsx`); o bloco agrupado monta o próprio
+    # cabeçalho a partir de campo e valor.
+    mensagens = " ".join(
+        divergencia["mensagem"]
+        for linha in criada["linhas"]
+        for divergencia in linha["divergencias"]
+    )
+    assert "Ana Prado" in mensagens
+    # A mensagem diz de QUEM ela é, que é o que permite consertar sem procurar.
+    assert semente["instituicao"].nome in mensagens
+
+
+def test_a_instituicao_DECLARADA_ao_lado_precisa_bater_com_a_da_agenda(
+    cliente_admin, sessao, semente
+):
+    """A contradição declarada, pega no upload.
+
+    Declarar "Carla Nova — Câmara Municipal" e usá-la numa agenda do Valor
+    Econômico é pedir duas coisas incompatíveis: a regra 4 diz que o participante
+    pertence à instituição da agenda. Criar a pessoa em um dos dois órgãos e
+    esperar que dê certo é o tipo de chute que erra calado."""
+    _outra_instituicao(sessao)
+
+    conteudo = _com_interlocutor(
+        sessao,
+        semente,
+        semente["instituicao"].nome,
+        "Carla Nova",
+        declarar=("Carla Nova", "Câmara Municipal"),
+    )
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", conteudo, TIPO_XLSX)}
+    ).json()
+
+    assert criada["pendencias"] >= 1, criada["grupos"]
+    mensagens = " ".join(
+        divergencia["mensagem"]
+        for linha in criada["linhas"]
+        for divergencia in linha["divergencias"]
+    )
+    assert "Carla Nova" in mensagens
+    assert "uma instituição só" in mensagens
+
+
+def test_a_instituicao_declarada_IGUAL_a_da_agenda_cria_a_pessoa_nela(
+    cliente_admin, sessao, semente
+):
+    """O caminho feliz da declaração: o órgão escrito ao lado é o da agenda, e a
+    pessoa nasce nele. Escrever o órgão é o que a suspensa da coluna B oferece, e
+    confirmá-lo aqui é o que torna a coluna útil em vez de decorativa."""
+    conteudo = _com_interlocutor(
+        sessao,
+        semente,
+        semente["instituicao"].nome,
+        "Carla Nova",
+        declarar=("Carla Nova", semente["instituicao"].nome),
+    )
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", conteudo, TIPO_XLSX)}
+    ).json()
+    assert criada["pendencias"] == 0, criada["grupos"]
+
+    confirmacao = cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao")
+
+    assert confirmacao.status_code == 201, confirmacao.text
+    nova = sessao.scalars(
+        select(Interlocutor).where(Interlocutor.nome_normalizado == normalizar("Carla Nova"))
+    ).first()
+    assert nova.instituicao_id == semente["instituicao"].id

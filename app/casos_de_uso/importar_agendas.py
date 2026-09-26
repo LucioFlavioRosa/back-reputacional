@@ -49,10 +49,12 @@ from app.casos_de_uso.ler_planilha_de_agendas import (
     ler,
     ler_categorias_declaradas,
     ler_declarados,
+    ler_instituicoes_dos_interlocutores,
 )
 from app.dominio.erros import Conflito, RegraViolada
 from app.dominio.frentes import TIPO_DA_CATEGORIA_DE_PUBLICO
 from app.dominio.importacao_de_agendas import (
+    COLUNA_DA_INSTITUICAO_DA_AGENDA,
     DECISOES_DE_DIVERGENCIA,
     FORMATO,
     INTERLOCUTORES_POR_AGENDA,
@@ -273,7 +275,67 @@ def _indice(sessao: Session) -> dict[str, dict[str, object]]:
         indice[chave] = por_nome
     for chave, codigos in NO_CODIGO.items():
         indice[chave] = {normalizar(codigo): codigo for codigo in codigos}
+    # O ÍNDICE QUE DESFAZ O HOMÔNIMO. "Assessoria da liderança" é cargo, não nome
+    # próprio, e existe em vários órgãos — o banco permite, porque `interlocutor` é
+    # único por `(nome_normalizado, instituicao_id)`. Pelo nome sozinho a
+    # importação travava pedindo que a pessoa escolhesse qual; com a instituição da
+    # linha não há o que escolher.
+    indice[CHAVE_POR_INSTITUICAO] = _interlocutores_por_instituicao(sessao)
+    indice[CHAVE_ORGAOS_DO_NOME] = _orgaos_de_cada_interlocutor(sessao)
     return indice
+
+
+#: Chave do índice auxiliar: `(instituicao_id, nome normalizado) -> interlocutor_id`.
+CHAVE_POR_INSTITUICAO = "interlocutores_por_instituicao"
+
+
+def _interlocutores_por_instituicao(sessao: Session) -> dict[tuple[str, str], object]:
+    """`(id da instituição, nome normalizado)` → id do interlocutor.
+
+    Dois interlocutores com o mesmo nome NA MESMA instituição não existem — o
+    banco tem índice único para isso —, então esta chave nunca é ambígua.
+    """
+    from app.banco.tabelas_stakeholders import Interlocutor
+
+    linhas = sessao.execute(
+        _so_ativos(
+            select(Interlocutor.instituicao_id, Interlocutor.nome, Interlocutor.id),
+            Interlocutor,
+        )
+    ).all()
+    return {
+        (str(instituicao_id), normalizar(nome)): pessoa_id
+        for instituicao_id, nome, pessoa_id in linhas
+        if instituicao_id and nome
+    }
+
+
+#: Chave do índice auxiliar: `nome normalizado do interlocutor -> nomes dos órgãos`.
+CHAVE_ORGAOS_DO_NOME = "orgaos_do_interlocutor"
+
+
+def _orgaos_de_cada_interlocutor(sessao: Session) -> dict[str, tuple[str, ...]]:
+    """Nome normalizado → os nomes das instituições em que aquele nome existe.
+
+    SÓ PARA A MENSAGEM, e a mensagem é o ponto: "Ana Prado não é da Câmara
+    Municipal" manda a pessoa procurar; "Ana Prado é do Valor Econômico" a deixa
+    consertar sem sair da tela. Todo o custo é uma consulta a mais no upload.
+    """
+    from app.banco.tabelas_stakeholders import Instituicao, Interlocutor
+
+    linhas = sessao.execute(
+        _so_ativos(
+            select(Interlocutor.nome, Instituicao.nome).join(
+                Instituicao, Interlocutor.instituicao_id == Instituicao.id
+            ),
+            Interlocutor,
+        )
+    ).all()
+    de_quem: dict[str, set[str]] = {}
+    for pessoa, orgao in linhas:
+        if pessoa and orgao:
+            de_quem.setdefault(normalizar(pessoa), set()).add(orgao)
+    return {nome: tuple(sorted(orgaos)) for nome, orgaos in de_quem.items()}
 
 
 def indice_do_vocabulario(sessao: Session, vocabulario: str) -> dict[str, object]:
@@ -306,6 +368,35 @@ def vocabularios(sessao: Session) -> dict[str, list[str]]:
     for chave, codigos in NO_CODIGO.items():
         listas[chave] = list(codigos)
     return listas
+
+
+def interlocutores_com_instituicao(sessao: Session) -> list[tuple[str, str]]:
+    """(nome do interlocutor, nome da instituição dele) — os pares que a aba lista.
+
+    A RELAÇÃO QUE O FRONT TEM, servida à planilha. `interlocutoresDaInstituicao`,
+    em `src/dominio/frentes.ts`, reduz a lista do formulário ao `instituicao_id`
+    escolhido; a planilha só consegue fazer o mesmo se souber de quem é cada um.
+
+    SÓ OS ATIVOS, dos dois lados: oferecer alguém de uma instituição desativada
+    seria convidar a escolher o que a importação recusa — e é a mesma regra que a
+    tela usa, que checa a pessoa E o órgão.
+
+    Sem instituição a pessoa não entra: ela não tem como aparecer numa suspensa
+    dependente, e o cadastro solto é defeito de base, não caso a suportar aqui.
+    """
+    from app.banco.tabelas_stakeholders import Instituicao, Interlocutor
+
+    linhas = sessao.execute(
+        _so_ativos(
+            select(Interlocutor.nome, Instituicao.nome).join(
+                Instituicao, Interlocutor.instituicao_id == Instituicao.id
+            ),
+            Interlocutor,
+        )
+        .where(Instituicao.ativo.is_(True))
+        .order_by(Instituicao.nome, Interlocutor.nome)
+    ).all()
+    return [(pessoa, orgao) for pessoa, orgao in linhas if pessoa and orgao]
 
 
 def _booleano(valor: object) -> bool | None | str:
@@ -450,12 +541,111 @@ def _resolver(
     return _Resolucao()
 
 
+def _conferir_orgao_declarado(
+    texto: str,
+    coluna_nome: str,
+    campo: str,
+    instituicao_escrita: str,
+    instituicoes_dos_interlocutores: Mapping[str, str],
+    divergencias: list[Divergencia],
+) -> None:
+    """A contradição entre o órgão declarado ao lado do nome e o da agenda.
+
+    Declarar "Carla Nova — Câmara Municipal" e usá-la numa agenda do Valor
+    Econômico é pedir duas coisas incompatíveis, e o domínio só diz isso na
+    CONFIRMAÇÃO — depois da conferência inteira. Criar a pessoa em um dos dois e
+    seguir seria escolher por ela, calado, num dado que nenhuma tela mostra depois.
+
+    Sem órgão declarado não há contradição: a pessoa nasce na instituição da
+    agenda, que é o comportamento de antes desta coluna existir.
+    """
+    declarado = instituicoes_dos_interlocutores.get(normalizar(texto))
+    if not declarado or not instituicao_escrita:
+        return
+    if declarado == normalizar(instituicao_escrita):
+        return
+    divergencias.append(
+        Divergencia(
+            campo=campo,
+            valor=texto,
+            mensagem=(
+                f"{coluna_nome}: você declarou {texto!r} na aba de interlocutores como "
+                f"sendo de outra instituição, e esta agenda é de "
+                f"{instituicao_escrita!r}. Um interlocutor fala por uma instituição "
+                "só — deixe as duas iguais."
+            ),
+            trava=True,
+        )
+    )
+
+
+def _interlocutor_da_instituicao(
+    texto: str,
+    coluna_nome: str,
+    campo: str,
+    indice: dict,
+    instituicao_id: object,
+    instituicao_escrita: str,
+    divergencias: list[Divergencia],
+) -> _Resolucao | None:
+    """O interlocutor daquela instituição, a recusa, ou `None` para seguir adiante.
+
+    A RELAÇÃO QUE O FRONT TEM, do lado do servidor.
+    `interlocutoresDaInstituicao` reduz a lista do formulário ao órgão escolhido;
+    aqui a mesma informação faz duas coisas que a lista solta não fazia:
+
+    DESFAZ O HOMÔNIMO. "Assessoria da liderança" é cargo, não nome próprio, e
+    existe em vários órgãos — o banco permite, porque `interlocutor` é único por
+    `(nome_normalizado, instituicao_id)`. Pelo nome sozinho a importação travava
+    pedindo à pessoa que escolhesse qual; com o órgão da linha não há o que
+    escolher, e a pendência desaparece.
+
+    RECUSA NO UPLOAD quem é de outro órgão. A regra 4 do domínio — o participante
+    pertence à instituição da agenda — recusava isso na CONFIRMAÇÃO, depois de a
+    pessoa ter conferido tudo. A suspensa dependente previne o erro no Excel, mas
+    a planilha convertida para o Google Sheets pode perder a validação, e o
+    arquivo pode não ter saído do nosso modelo: quem garante é aqui.
+
+    `None` significa "não sei, siga pelo caminho normal" — sem órgão na linha, ou
+    com um nome que não existe em cadastro nenhum, que é o caminho de quem declara
+    alguém novo.
+    """
+    if instituicao_id is None or instituicao_id is AMBIGUO:
+        return None
+    chave = normalizar(texto)
+    achado = indice.get(CHAVE_POR_INSTITUICAO, {}).get((str(instituicao_id), chave))
+    if achado is not None:
+        return _Resolucao(valor=achado)
+    orgaos = indice.get(CHAVE_ORGAOS_DO_NOME, {}).get(chave, ())
+    if not orgaos:
+        # O nome não existe em cadastro nenhum: é criação, e quem trata disso é
+        # `_resolver` com a declaração da aba.
+        return None
+    divergencias.append(
+        Divergencia(
+            campo=campo,
+            valor=texto,
+            mensagem=(
+                f"{coluna_nome}: {texto!r} não é de {instituicao_escrita!r}, e sim de "
+                f"{' ou '.join(repr(orgao) for orgao in orgaos)}. Um interlocutor fala "
+                "por uma instituição só — corrija a pessoa, a instituição da agenda, "
+                "ou aponte para o cadastro certo na conferência."
+            ),
+            trava=True,
+        )
+    )
+    return _Resolucao()
+
+
 def _listas_da_linha(
     linha: LinhaBruta,
     indice: dict[str, dict[str, object]],
     declarados: Mapping[str, frozenset[str]],
     apontados: Mapping[tuple[str, str], object] = MAPPING_VAZIO,
     categorias_declaradas: Mapping[str, str] = MAPPING_VAZIO,
+    instituicao_id: object = None,
+    instituicao_escrita: str = "",
+    instituicoes_dos_interlocutores: Mapping[str, str] = MAPPING_VAZIO,
 ) -> tuple[dict[str, list], list[Divergencia], list[tuple[str, str]], list[Mapping]]:
     """As pessoas e os materiais de UMA linha, montados das colunas numeradas.
 
@@ -493,17 +683,43 @@ def _listas_da_linha(
                     algo_preenchido = True
                 coluna = colunas[coluna_nome]
                 if coluna.vocabulario:
-                    resolucao = _resolver(
-                        bruto,
-                        coluna_nome,
-                        coluna.vocabulario,
-                        f"{campo_da_lista}.{campo}",
-                        indice,
-                        declarados,
-                        do_item,
-                        apontados,
-                        categorias_declaradas,
-                    )
+                    campo_cheio = f"{campo_da_lista}.{campo}"
+                    resolucao = None
+                    if coluna.vocabulario == "interlocutores" and bruto is not None:
+                        # A DECISÃO DA PESSOA AINDA VEM PRIMEIRO: se ela apontou um
+                        # cadastro para este nome na conferência, é aquele, e nem a
+                        # instituição da linha desfaz isso.
+                        if apontados.get((campo_cheio, str(bruto))) is None:
+                            resolucao = _interlocutor_da_instituicao(
+                                str(bruto),
+                                coluna_nome,
+                                campo_cheio,
+                                indice,
+                                instituicao_id,
+                                instituicao_escrita,
+                                do_item,
+                            )
+                        if resolucao is None:
+                            _conferir_orgao_declarado(
+                                str(bruto),
+                                coluna_nome,
+                                campo_cheio,
+                                instituicao_escrita,
+                                instituicoes_dos_interlocutores,
+                                do_item,
+                            )
+                    if resolucao is None:
+                        resolucao = _resolver(
+                            bruto,
+                            coluna_nome,
+                            coluna.vocabulario,
+                            campo_cheio,
+                            indice,
+                            declarados,
+                            do_item,
+                            apontados,
+                            categorias_declaradas,
+                        )
                     resolvido = resolucao.valor
                     if resolucao.a_criar is not None:
                         criar_do_item.append(resolucao.a_criar)
@@ -665,6 +881,7 @@ def propor(sessao: Session, conteudo: bytes) -> list[Proposta]:
         ler(conteudo),
         ler_declarados(conteudo),
         categorias_declaradas=ler_categorias_declaradas(conteudo),
+        instituicoes_dos_interlocutores=ler_instituicoes_dos_interlocutores(conteudo),
     )
 
 
@@ -674,6 +891,7 @@ def propor_de_linhas(
     declarados: Mapping[str, frozenset[str]],
     apontados: Mapping[tuple[str, str], object] = MAPPING_VAZIO,
     categorias_declaradas: Mapping[str, str] = MAPPING_VAZIO,
+    instituicoes_dos_interlocutores: Mapping[str, str] = MAPPING_VAZIO,
 ) -> list[Proposta]:
     """O mesmo, a partir de linhas JÁ LIDAS.
 
@@ -775,8 +993,19 @@ def propor_de_linhas(
         # AS PESSOAS E OS MATERIAIS SAEM DA PRÓPRIA LINHA, das colunas
         # numeradas. Antes vinham de abas filhas ligadas pelo `Código`, e o
         # vínculo era a parte que mais confundia quem preenchia.
+        # A INSTITUIÇÃO DA LINHA JÁ ESTÁ RESOLVIDA aqui: o laço das colunas
+        # simples rodou antes, e é dele que sai `campos["instituicao_id"]`. É essa
+        # ordem que permite ao interlocutor ser resolvido DENTRO do órgão da agenda,
+        # como o formulário do front faz.
         listas_da_linha, das_listas, criar_das_listas, esperando_tuplas = _listas_da_linha(
-            linha, indice, declarados, apontados, categorias_declaradas
+            linha,
+            indice,
+            declarados,
+            apontados,
+            categorias_declaradas,
+            instituicao_id=campos.get("instituicao_id"),
+            instituicao_escrita=str(linha.celulas.get(COLUNA_DA_INSTITUICAO_DA_AGENDA) or ""),
+            instituicoes_dos_interlocutores=instituicoes_dos_interlocutores,
         )
         divergencias.extend(das_listas)
         a_criar.extend(criar_das_listas)
@@ -1117,7 +1346,9 @@ def _reconferir(sessao: Session, a_criar, apontados) -> None:
             )
 
 
-def _instituicao_de_cada_interlocutor(linhas, indice) -> dict[str, object]:
+def _instituicao_de_cada_interlocutor(
+    linhas, indice, escolhidos: Mapping[tuple[str, str], object] = MAPPING_VAZIO
+) -> dict[str, object]:
     """Interlocutor novo → a instituição da agenda em que ele aparece.
 
     COM TUDO NUMA ABA, a resposta é vizinha de coluna: o interlocutor e a
@@ -1128,6 +1359,13 @@ def _instituicao_de_cada_interlocutor(linhas, indice) -> dict[str, object]:
     pertencer à instituição da agenda — o rejeitaria NA CONFIRMAÇÃO: o upload
     diria "vou criar", a pessoa conferiria tudo, e o último passo devolveria
     conflito por uma pessoa que ela mesma declarou.
+
+    `escolhidos` VEM PRIMEIRO, e é o achado Alto da revisão. Quando duas
+    instituições têm o mesmo nome normalizado, o índice cru devolve `AMBIGUO` —
+    um sentinela, não um id — e era ele que ia para a chave estrangeira do
+    interlocutor novo, estourando no `flush` com "can't adapt type 'object'". A
+    pessoa tinha escolhido qual instituição era, na conferência; a decisão estava
+    gravada e só não era consultada aqui.
     """
     de_quem: dict[str, object] = {}
     ambiguos: set[str] = set()
@@ -1144,10 +1382,19 @@ def _instituicao_de_cada_interlocutor(linhas, indice) -> dict[str, object]:
         nome_da_instituicao = brutos.get("Instituição")
         if not nome_da_instituicao:
             continue
-        instituicao = indice.get("instituicoes", {}).get(
-            normalizar(str(nome_da_instituicao))
-        )
+        # A DECISÃO DA PESSOA ANTES DO ÍNDICE: `("instituicao_id", nome)` é a
+        # mesma chave que a resolução usa, então o nome ambíguo que ela desfez na
+        # conferência já vem resolvido aqui.
+        instituicao = escolhidos.get(("instituicao_id", str(nome_da_instituicao)))
         if instituicao is None:
+            instituicao = indice.get("instituicoes", {}).get(
+                normalizar(str(nome_da_instituicao))
+            )
+        if instituicao is None or instituicao is AMBIGUO:
+            # AMBÍGUO SEM DECISÃO não vira chute: a linha está travada e a
+            # confirmação já a recusa antes de chegar aqui. O que esta guarda
+            # impede é o sentinela virar chave estrangeira se algum caminho
+            # futuro chegar sem a decisão.
             continue
         for molde in moldes:
             for numero in range(1, INTERLOCUTORES_POR_AGENDA + 1):
@@ -1173,7 +1420,12 @@ def _instituicao_de_cada_interlocutor(linhas, indice) -> dict[str, object]:
 
 
 def _criar_cadastros(
-    sessao: Session, a_criar, categorias: Mapping[str, str], indice: Mapping, linhas
+    sessao: Session,
+    a_criar,
+    categorias: Mapping[str, str],
+    indice: Mapping,
+    linhas,
+    escolhidos: Mapping[tuple[str, str], object] = MAPPING_VAZIO,
 ) -> int:
     """Cria os cadastros declarados, no MESMO commit das agendas.
 
@@ -1194,7 +1446,7 @@ def _criar_cadastros(
     for (vocabulario, valor), _campo in sorted(a_criar.items(), key=peso):
         if vocabulario != "instituicoes" and not de_quem:
             sessao.flush()
-            de_quem = _instituicao_de_cada_interlocutor(linhas, _indice(sessao))
+            de_quem = _instituicao_de_cada_interlocutor(linhas, _indice(sessao), escolhidos)
         if vocabulario == "instituicoes":
             # O CAMINHO CANÔNICO: a categoria vem da planilha e o TIPO NASCE DELA,
             # exatamente como `api/stakeholders.py` faz — "a tela de cadastro nao
@@ -1328,12 +1580,14 @@ def confirmar(sessao: Session, importacao_id, usuario) -> Resumo:
 
     a_criar, apontados = _decisoes(linhas)
     _reconferir(sessao, a_criar, apontados)
-    cadastros = _criar_cadastros(
-        sessao, a_criar, _categorias_declaradas(linhas), _indice(sessao), linhas
-    )
 
     # Os apontamentos convertidos para o tipo da coluna, uma vez: a resolução os
     # consulta por linha, e converter lá dentro repetiria o trabalho.
+    #
+    # ANTES DE CRIAR OS CADASTROS, e não depois: a criação do interlocutor novo
+    # precisa saber de qual instituição ele é, e quando o nome da instituição é
+    # ambíguo é SÓ a decisão da pessoa que responde isso. Calcular depois foi o
+    # achado Alto da revisão — ver `_instituicao_de_cada_interlocutor`.
     escolhidos: dict[tuple[str, str], object] = {}
     for (campo, valor), alvo in apontados.items():
         vocabulario = vocabulario_do_campo(campo)
@@ -1343,6 +1597,10 @@ def confirmar(sessao: Session, importacao_id, usuario) -> Resumo:
         else:
             coluna = getattr(fonte.tabela, fonte.resolve_para)
             escolhidos[(campo, valor)] = _no_tipo_da_coluna(coluna, alvo)
+
+    cadastros = _criar_cadastros(
+        sessao, a_criar, _categorias_declaradas(linhas), _indice(sessao), linhas, escolhidos
+    )
 
     # A RESOLUÇÃO RODA DE NOVO, contra o banco com os cadastros já criados. É a
     # mesma máquina do upload — `propor_de_linhas` —, e não uma segunda

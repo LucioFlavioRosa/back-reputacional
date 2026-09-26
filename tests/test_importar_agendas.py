@@ -662,7 +662,13 @@ def test_participante_que_nao_pertence_a_instituicao_e_recusado(sessao, semente)
     (proposta,) = importar_agendas.propor(sessao, conteudo)
 
     assert proposta.entrada is None
-    assert any("não pertence" in d.mensagem for d in proposta.divergencias)
+    # A RECUSA MUDOU DE LUGAR: ela era da validação da entrada, no fim, e agora
+    # acontece na RESOLUÇÃO da coluna, porque a resolução passou a saber de qual
+    # instituição é cada interlocutor. O ganho está na mensagem: ela diz de quem a
+    # pessoa é, e consertar não exige procurar em outra tela.
+    assert any(
+        "Prefeitura de Campos" in d.mensagem and d.trava for d in proposta.divergencias
+    ), [d.mensagem for d in proposta.divergencias]
 
 
 def test_participante_da_propria_instituicao_passa(sessao, semente):
@@ -837,10 +843,18 @@ def test_nome_ambiguo_no_cadastro_TRAVA_em_vez_de_escolher_sozinho(sessao, semen
         for d in proposta.divergencias
     ), [d.mensagem for d in proposta.divergencias]
 
-def test_interlocutor_homonimo_em_outra_instituicao_tambem_e_ambiguo(sessao, semente):
-    """O mesmo defeito em `interlocutor`, cuja unicidade é
-    (nome_normalizado, instituicao_id): duas "Ana Prado" de instituições
-    diferentes é situação comum, não exótica."""
+def test_interlocutor_homonimo_RESOLVE_pela_instituicao_da_linha(sessao, semente):
+    """A AMBIGUIDADE DEIXOU DE SER PENDÊNCIA quando a linha diz o órgão.
+
+    Duas "Ana Prado" de instituições diferentes é comum, não exótico, e
+    `interlocutor` é único por `(nome_normalizado, instituicao_id)` — o banco
+    permite. Antes desta mudança a importação travava a linha pedindo que a pessoa
+    escolhesse qual das duas; mas a linha JÁ DIZ o órgão da agenda, e é a mesma
+    informação que o formulário do front usa para reduzir a lista. Não havia o que
+    perguntar.
+
+    O guarda da ambiguidade continua onde ainda é preciso: ver
+    `test_o_homonimo_ainda_e_ambiguo_quando_a_instituicao_nao_resolve`."""
     outra = Instituicao(
         nome="Prefeitura de Campos",
         nome_normalizado=normalizar("Prefeitura de Campos"),
@@ -861,6 +875,46 @@ def test_interlocutor_homonimo_em_outra_instituicao_tambem_e_ambiguo(sessao, sem
     conteudo = _preenchida(
         sessao,
         agendas=[_agenda(semente)],
+        participantes=[{"Código": "A1", "Pessoa": semente["interlocutor"].nome}],
+    )
+
+    (proposta,) = importar_agendas.propor(sessao, conteudo)
+
+    assert proposta.entrada is not None, [d.mensagem for d in proposta.divergencias]
+    # A Ana Prado DA INSTITUIÇÃO DA AGENDA, e não a homônima da Prefeitura.
+    (participante,) = proposta.entrada.outra_parte
+    assert participante.interlocutor_id == semente["interlocutor"].id
+
+
+def test_o_homonimo_ainda_e_ambiguo_quando_a_instituicao_nao_resolve(sessao, semente):
+    """O CONTRAPESO, e sem ele a mudança acima seria perigosa.
+
+    Se a instituição da linha não resolve — nome que não existe no cadastro —, a
+    importação não tem como desfazer o homônimo, e escolher uma das duas pessoas
+    seria chutar em silêncio num vínculo que nenhuma tela mostra depois. Aí a
+    ambiguidade volta a ser pendência, que é o comportamento correto."""
+    outra = Instituicao(
+        nome="Prefeitura de Campos",
+        nome_normalizado=normalizar("Prefeitura de Campos"),
+        tipo="orgao",
+        uf="RJ",
+    )
+    sessao.add(outra)
+    sessao.flush()
+    sessao.add(
+        Interlocutor(
+            nome=semente["interlocutor"].nome,
+            nome_normalizado=semente["interlocutor"].nome_normalizado,
+            instituicao_id=outra.id,
+        )
+    )
+    sessao.flush()
+
+    agenda = _agenda(semente)
+    agenda["Instituição"] = "Órgão que ninguém cadastrou"
+    conteudo = _preenchida(
+        sessao,
+        agendas=[agenda],
         participantes=[{"Código": "A1", "Pessoa": semente["interlocutor"].nome}],
     )
 

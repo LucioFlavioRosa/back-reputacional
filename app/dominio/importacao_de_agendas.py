@@ -112,6 +112,36 @@ MARCADOR_DE_REPETICAO = "idem"
 
 COLUNA_DA_CATEGORIA_DE_INSTITUICAO = "Categoria de público"
 
+#: A coluna que diz de qual instituição é cada interlocutor, na aba de
+#: interlocutores.
+#:
+#: É A RELAÇÃO QUE O FRONT TEM E A PLANILHA NÃO TINHA. Em
+#: `src/dominio/frentes.ts`, `interlocutoresDaInstituicao` filtra a lista pelo
+#: `instituicao_id`: escolher o órgão já reduz a lista a quem fala por ele. Aqui
+#: as duas abas eram listas soltas, e quem preenchia escolhia entre TODOS os
+#: interlocutores da base — inclusive os de outro órgão, erro que só a conferência
+#: pegava. E é o banco que já pede esta informação: `interlocutor` é único por
+#: `(nome_normalizado, instituicao_id)`, então o nome, sozinho, pode não decidir
+#: qual pessoa é.
+COLUNA_DA_INSTITUICAO_DO_INTERLOCUTOR = "Instituição"
+
+#: A coluna da instituição NA ABA DE AGENDAS. Tem o mesmo rótulo da de cima, em
+#: outra aba, e as duas são referenciadas juntas na fórmula da suspensa
+#: dependente — nomeá-las separado é o que impede trocar uma pela outra.
+COLUNA_DA_INSTITUICAO_DA_AGENDA = "Instituição"
+
+#: Aba de vocabulário → o rótulo da SEGUNDA coluna dela.
+#:
+#: As demais abas são uma coluna de nomes, porque nada mais é preciso para criar
+#: um tema. Estas duas pedem mais: sem a categoria de público, o tipo da
+#: instituição seria chute, e o tipo deriva a frente de toda agenda dela; sem a
+#: instituição do interlocutor, a pessoa nasce solta e a lista suspensa não tem
+#: como se reduzir.
+SEGUNDA_COLUNA_DO_VOCABULARIO: dict[str, str] = {
+    "instituicoes": COLUNA_DA_CATEGORIA_DE_INSTITUICAO,
+    "interlocutores": COLUNA_DA_INSTITUICAO_DO_INTERLOCUTOR,
+}
+
 #: Vocabulários fechados: mudar um valor aqui é mudança de regra de negócio
 #: (os KPIs e a taxa de resolutividade dependem deles), então é código e
 #: migration — nunca uma linha na planilha. O servidor recusa valor novo

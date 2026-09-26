@@ -32,10 +32,10 @@ from datetime import date, datetime
 from app.dominio.erros import RegraViolada
 from app.dominio.importacao_de_agendas import (
     ABA_PRINCIPAL,
-    COLUNA_DA_CATEGORIA_DE_INSTITUICAO,
     FORMATO,
     MARCADOR_DE_REPETICAO,
     ROTULO_DO_VOCABULARIO,
+    SEGUNDA_COLUNA_DO_VOCABULARIO,
     VOCABULARIOS_EDITAVEIS,
     Aba,
 )
@@ -370,12 +370,17 @@ def ler_declarados(conteudo: bytes) -> dict[str, frozenset[str]]:
             if isinstance(aparado, str):
                 nomes.add(normalizar(aparado))
         declarados[chave] = frozenset(nomes)
-    # A aba de instituições tem CABEÇALHO, e "Instituição" não é uma instituição
-    # declarada. Sem isto, a palavra do cabeçalho entraria como cadastro a criar.
-    declarados["instituicoes"] = declarados["instituicoes"] - {
-        normalizar("Instituição"),
-        normalizar(COLUNA_DA_CATEGORIA_DE_INSTITUICAO),
-    }
+    # AS ABAS DE DUAS COLUNAS TÊM CABEÇALHO, e a palavra do cabeçalho não é um
+    # cadastro declarado. Sem isto, "Instituição" entraria como instituição a
+    # criar. Vale para as duas abas — instituições e interlocutores —, e vem do
+    # mapa do domínio em vez de uma linha escrita à mão por aba: a terceira aba de
+    # duas colunas já nasceria coberta.
+    for chave, segunda in SEGUNDA_COLUNA_DO_VOCABULARIO.items():
+        if chave in declarados:
+            declarados[chave] = declarados[chave] - {
+                normalizar(segunda),
+                *(normalizar(cabecalho) for cabecalho in _CABECALHOS_POSSIVEIS[chave]),
+            }
     # O MARCADOR ESTÁ NA LISTA de todas as abas de vocabulário, para poder ser
     # escolhido na suspensa — mas ele é instrução, não cadastro. Sem esta
     # subtração, `idem` viraria uma instituição a criar.
@@ -385,25 +390,61 @@ def ler_declarados(conteudo: bytes) -> dict[str, frozenset[str]]:
     }
 
 
+#: Os nomes que podem estar no cabeçalho da coluna A de cada aba de duas colunas.
+#: O rótulo mudou uma vez ("Instituições" → "Instituição") e pode mudar de novo; um
+#: cabeçalho não reconhecido vira cadastro a criar, que é o tipo de defeito que
+#: aparece como "por que ele quer criar uma instituição chamada Instituição?".
+_CABECALHOS_POSSIVEIS: dict[str, tuple[str, ...]] = {
+    "instituicoes": ("Instituição", "Instituições"),
+    "interlocutores": ("Interlocutor", "Interlocutores"),
+}
+
+
+def _segunda_coluna(conteudo: bytes, chave: str) -> dict[str, str]:
+    """Nome normalizado da coluna A → valor normalizado da coluna B.
+
+    UMA LEITURA, DUAS CHAMADORAS: a categoria de público da instituição e a
+    instituição do interlocutor são a mesma pergunta feita a abas diferentes. Duas
+    cópias divergiriam no dia em que uma delas aprendesse a aparar algo novo.
+    """
+    pasta = _abrir(conteudo)
+    rotulo = ROTULO_DO_VOCABULARIO[chave]
+    if rotulo not in pasta.sheetnames:
+        return {}
+    cabecalhos = {normalizar(nome) for nome in _CABECALHOS_POSSIVEIS.get(chave, ())}
+    valores: dict[str, str] = {}
+    for nome, ao_lado in pasta[rotulo].iter_rows(min_col=1, max_col=2, values_only=True):
+        aparado = _texto(nome)
+        if not isinstance(aparado, str):
+            continue
+        primeira = normalizar(aparado)
+        if primeira in cabecalhos:
+            continue
+        aparado_ao_lado = _texto(ao_lado)
+        if isinstance(aparado_ao_lado, str):
+            valores[primeira] = normalizar(aparado_ao_lado)
+    return valores
+
+
+def ler_instituicoes_dos_interlocutores(conteudo: bytes) -> dict[str, str]:
+    """Nome normalizado do interlocutor → a instituição escrita ao lado dele.
+
+    A COLUNA B DA ABA DE INTERLOCUTORES, que é a relação que o front tem. Quem
+    declara alguém novo escolhe o órgão na suspensa ao lado do nome, e é isso que
+    permite recusar no UPLOAD a contradição entre o órgão declarado e o da agenda —
+    em vez de deixá-la estourar na confirmação, depois da conferência inteira.
+
+    Devolve o nome da instituição, não o id: quem resolve nome para cadastro é a
+    proposta, com o mesmo `classificar` de todo o resto. Resolver aqui seria uma
+    segunda resolução, com regra própria.
+    """
+    return _segunda_coluna(conteudo, "interlocutores")
+
+
 def ler_categorias_declaradas(conteudo: bytes) -> dict[str, str]:
     """Nome normalizado → categoria de público, da coluna B da aba de instituições.
 
     É DELA QUE O TIPO NASCE, e o tipo deriva a frente da agenda. Quem declara o
     cadastro declara a categoria, como a tela de cadastro também exige.
     """
-    pasta = _abrir(conteudo)
-    rotulo = ROTULO_DO_VOCABULARIO["instituicoes"]
-    if rotulo not in pasta.sheetnames:
-        return {}
-    categorias: dict[str, str] = {}
-    for nome, tipo in pasta[rotulo].iter_rows(min_col=1, max_col=2, values_only=True):
-        aparado = _texto(nome)
-        if not isinstance(aparado, str):
-            continue
-        chave = normalizar(aparado)
-        if chave in (normalizar("Instituição"),):
-            continue
-        aparado_categoria = _texto(tipo)
-        if isinstance(aparado_categoria, str):
-            categorias[chave] = normalizar(aparado_categoria)
-    return categorias
+    return _segunda_coluna(conteudo, "instituicoes")

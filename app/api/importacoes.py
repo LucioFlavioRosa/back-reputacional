@@ -311,7 +311,13 @@ def baixar_o_modelo(sessao: Sessao) -> Response:
     instituições do dia em que foi gerado, e a pessoa preencheria com um
     vocabulário que já mudou — cada nome novo viraria divergência sem motivo.
     """
-    conteudo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    # OS PARES (pessoa, instituição) VÃO JUNTO: é a relação que o formulário do
+    # front tem — escolher o órgão reduz a lista de quem fala por ele — e é dela que
+    # sai a lista suspensa dependente da coluna Interlocutor.
+    conteudo = modelo_de_importacao.gerar(
+        importar_agendas.vocabularios(sessao),
+        importar_agendas.interlocutores_com_instituicao(sessao),
+    )
     return Response(
         content=conteudo,
         media_type=TIPO_XLSX,

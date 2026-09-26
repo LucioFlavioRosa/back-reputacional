@@ -147,7 +147,12 @@ def test_o_definedname_de_cada_vocabulario_resolve_para_a_aba_certa():
         # propósito: a validação de vocabulário fechado bloqueia valor fora da
         # lista, então `idem` precisa estar nela para poder ser escrito — e
         # ficando na lista, é escolhido em vez de digitado.
-        assert lidos == [*valores, MARCADOR_DE_REPETICAO], chave
+        # A ABA DE INTERLOCUTORES NÃO LISTA `vocabularios`: ela lista os PARES
+        # (pessoa, instituição), que é a relação que o front tem. O nome definido
+        # segue cobrindo a coluna A — é a lista inteira, e é a rede da suspensa
+        # dependente quando o órgão da linha não é reconhecido.
+        esperados = [] if chave == "interlocutores" else valores
+        assert lidos == [*esperados, MARCADOR_DE_REPETICAO], chave
 
 
 def test_o_vocabulario_vazio_nao_quebra_o_arquivo():
@@ -283,3 +288,102 @@ def test_a_data_aceita_o_passado_e_o_futuro():
 
     assert validacao.operator == "greaterThanOrEqual"
     assert str(date(2000, 1, 1).year) in str(validacao.formula1)
+
+
+# =============================================================================
+# a relação instituição -> interlocutores
+# =============================================================================
+#
+# O QUE O FRONT FAZ e a planilha não fazia. `interlocutoresDaInstituicao`, em
+# `src/dominio/frentes.ts`, filtra a lista pelo `instituicao_id` da instituição
+# escolhida: ao escolher o órgão, a pessoa já vê só quem fala por ele. Na planilha
+# as duas abas eram listas soltas — nome de instituição de um lado, nome de pessoa
+# do outro, sem nada dizendo quem é de quem. Quem preenche 54 agendas escolhia
+# entre TODOS os interlocutores da base, e o erro só aparecia na conferência.
+
+PARES = [
+    ("Ana Prado", "Valor Econômico"),
+    ("Assessoria da liderança", "Câmara Municipal"),
+    ("Assessoria da liderança", "Valor Econômico"),
+    ("Bruno Lima", "Câmara Municipal"),
+]
+
+
+def _com_pares(conteudo=None):
+    return _abrir(gerar(VOCABULARIOS, PARES))
+
+
+def test_a_aba_de_interlocutores_DIZ_de_quem_cada_um_e():
+    """A relação tem de estar VISÍVEL na planilha, e não só na validação: é o que
+    responde "quem fala por este órgão?" para quem está preenchendo, e é o que
+    permite ao servidor desfazer homônimo sem perguntar."""
+    from app.dominio.importacao_de_agendas import (
+        COLUNA_DA_INSTITUICAO_DO_INTERLOCUTOR,
+        ROTULO_DO_VOCABULARIO,
+    )
+
+    aba = _com_pares()[ROTULO_DO_VOCABULARIO["interlocutores"]]
+    linhas = [(a, b) for a, b, *_ in aba.iter_rows(min_col=1, max_col=2, values_only=True)]
+
+    assert linhas[0] == ("Interlocutor", COLUNA_DA_INSTITUICAO_DO_INTERLOCUTOR)
+    assert ("Ana Prado", "Valor Econômico") in linhas
+
+
+def test_os_interlocutores_vem_AGRUPADOS_por_instituicao():
+    """AGRUPADOS E CONTÍGUOS, e não é estética: a lista suspensa dependente é um
+    `OFFSET` a partir da primeira linha da instituição, com altura igual à
+    contagem dela. Se as linhas de um mesmo órgão ficarem separadas, a suspensa
+    daquele órgão mostra as pessoas do vizinho."""
+    from app.dominio.importacao_de_agendas import ROTULO_DO_VOCABULARIO
+
+    aba = _com_pares()[ROTULO_DO_VOCABULARIO["interlocutores"]]
+    instituicoes = [
+        linha[1]
+        for linha in aba.iter_rows(min_row=2, min_col=1, max_col=2, values_only=True)
+        if linha[1]
+    ]
+
+    # Cada instituição aparece num bloco só: o número de blocos é o número de
+    # instituições distintas.
+    blocos = [nome for i, nome in enumerate(instituicoes) if i == 0 or instituicoes[i - 1] != nome]
+    assert len(blocos) == len(set(blocos)), instituicoes
+
+
+def test_a_coluna_de_instituicao_do_interlocutor_TEM_a_suspensa_de_instituicoes():
+    """Quem cadastra alguém novo escreve o nome na coluna A e escolhe o órgão na B.
+    Digitar o órgão à mão aqui erraria a grafia e criaria a pessoa solta."""
+    from app.dominio.importacao_de_agendas import ROTULO_DO_VOCABULARIO
+
+    aba = _com_pares()[ROTULO_DO_VOCABULARIO["interlocutores"]]
+    formulas = {dv.formula1 for dv in aba.data_validations.dataValidation}
+
+    assert "=instituicoes" in formulas
+
+
+def test_a_suspensa_de_interlocutor_DEPENDE_da_instituicao_da_linha():
+    """O CORAÇÃO DO PEDIDO: escolher a instituição já reduz a lista de pessoas.
+
+    A fórmula cita a coluna da instituição DA MESMA LINHA, a aba de
+    interlocutores, e cai na lista inteira quando o órgão não é reconhecido —
+    porque o órgão novo, digitado, é caminho normal, e uma suspensa vazia ali
+    pareceria defeito."""
+    from app.casos_de_uso.modelo_de_importacao import _letra_de_coluna
+    from app.dominio.importacao_de_agendas import ABA_PRINCIPAL, aba_de
+
+    agendas = _com_pares()[ABA_PRINCIPAL]
+    letra_da_instituicao = _letra_de_coluna(aba_de(ABA_PRINCIPAL), "Instituição")
+    dependentes = [
+        dv
+        for dv in agendas.data_validations.dataValidation
+        if dv.formula1 and "OFFSET" in dv.formula1
+    ]
+
+    assert len(dependentes) == 4, "uma por coluna Interlocutor 1..4"
+    formula = dependentes[0].formula1
+    assert f"${letra_da_instituicao}2" in formula
+    assert "Interlocutores" in formula
+    # A rede: órgão não reconhecido cai na lista inteira, que é o nome definido.
+    assert ",interlocutores," in formula
+    # E não trava, pelo mesmo motivo de sempre: digitar nome novo é como se
+    # cadastra alguém.
+    assert dependentes[0].showErrorMessage is False
