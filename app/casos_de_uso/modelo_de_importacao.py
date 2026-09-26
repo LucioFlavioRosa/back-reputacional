@@ -34,7 +34,9 @@ import io
 from collections.abc import Mapping
 
 from app.dominio.erros import RegraViolada
+from app.dominio.frentes import TIPOS_DE_INSTITUICAO
 from app.dominio.importacao_de_agendas import (
+    COLUNA_DO_TIPO_DE_INSTITUICAO,
     FORMATO,
     ROTULO_DO_VOCABULARIO,
     VOCABULARIOS_EDITAVEIS,
@@ -55,6 +57,16 @@ _LINHAS_DE_AGENDAS = 500
 #: 500 aplicado a elas sufocaria uma única agenda com muita gente — por isso
 #: usam um valor único generoso, em vez do teto que rege a aba-mãe.
 _LINHAS_DE_ABAS_FILHAS = 2000
+
+
+def rotulo_singular(chave: str) -> str:
+    """O nome da COLUNA na aba de vocabulário, quando ela tem cabeçalho.
+
+    "Instituições" nomeia a aba; "Instituição" nomeia a coluna. A diferença
+    importa porque o cabeçalho fica ao lado de "Tipo", e um plural ali leria como
+    se a célula aceitasse várias.
+    """
+    return {"instituicoes": "Instituição"}.get(chave, ROTULO_DO_VOCABULARIO[chave])
 
 
 def gerar(vocabularios: Mapping[str, list[str]]) -> bytes:
@@ -113,10 +125,18 @@ def gerar(vocabularios: Mapping[str, list[str]]) -> bytes:
         # uma aba de preenchimento já criada, e o nome que a pessoa vê é
         # exatamente `rotulo`, sem desvio.
         planilha = pasta.create_sheet(rotulo)
+        # A ABA DE INSTITUIÇÕES TEM CABEÇALHO E DUAS COLUNAS, e é a única. O tipo
+        # deriva a frente da agenda, então criar uma instituição sem ele obrigaria
+        # o servidor a chutar — e o chute erra a frente de toda agenda daquela
+        # instituição. As outras abas seguem sendo uma lista de nomes, porque nada
+        # mais é preciso para criar um interlocutor ou um tema.
+        e_de_instituicao = chave == "instituicoes"
+        if e_de_instituicao:
+            planilha.append([rotulo_singular(chave), COLUNA_DO_TIPO_DE_INSTITUICAO])
         for valor in valores:
             planilha.append([valor])
 
-        ultima_linha = len(valores)
+        ultima_linha = len(valores) + (1 if e_de_instituicao else 0)
         if chave in VOCABULARIOS_FECHADOS:
             planilha.protection.sheet = True
         else:
@@ -129,8 +149,27 @@ def gerar(vocabularios: Mapping[str, list[str]]) -> bytes:
         # cadastradas). `max(..., 1)` garante que o intervalo sempre cubra ao
         # menos a linha 1 — vazia, mas um `DefinedName` sem nenhuma célula
         # dentro do intervalo é o que de fato quebraria o arquivo.
-        intervalo = f"'{rotulo}'!$A$1:$A${max(ultima_linha, 1)}"
+        primeira = 2 if e_de_instituicao else 1
+        intervalo = f"'{rotulo}'!$A${primeira}:$A${max(ultima_linha, primeira)}"
         pasta.defined_names[chave] = DefinedName(chave, attr_text=intervalo)
+
+    # -- a lista de tipos, na coluna B da aba de instituições -----------------
+    #
+    # Sem ela a pessoa digita "orgão" com acento ou "veículo" e a importação
+    # recusa um tipo que ela acha que escreveu certo.
+    from openpyxl.worksheet.datavalidation import DataValidation as _DV
+
+    aba_das_instituicoes = pasta[ROTULO_DO_VOCABULARIO["instituicoes"]]
+    tipos = _DV(
+        type="list",
+        formula1='"' + ",".join(sorted(TIPOS_DE_INSTITUICAO)) + '"',
+        allow_blank=True,
+        showErrorMessage=True,
+        errorTitle="Tipo inválido",
+        error="Escolha um dos tipos da lista.",
+    )
+    aba_das_instituicoes.add_data_validation(tipos)
+    tipos.add(f"B2:B{_LINHAS_DE_ABAS_FILHAS}")
 
     # -- listas suspensas: uma DataValidation por coluna com vocabulário ------
     for aba in FORMATO:

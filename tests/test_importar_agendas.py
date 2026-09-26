@@ -129,7 +129,14 @@ def _preenchida(
     for chave, nomes in (declarar or {}).items():
         folha = pasta[ROTULO_DO_VOCABULARIO[chave]]
         for nome in nomes:
-            folha.append([nome])
+            # A ABA DE INSTITUIÇÕES TEM DUAS COLUNAS: nome e tipo. O tipo deriva a
+            # frente da agenda, e a importação recusa criar instituição sem ele —
+            # chutar erraria a frente de toda agenda daquela instituição. Os testes
+            # que declaram por nome só ganham o tipo padrão do caso deles.
+            if chave == "instituicoes":
+                folha.append(list(nome) if isinstance(nome, tuple) else [nome, "orgao"])
+            else:
+                folha.append([nome])
 
     saida = io.BytesIO()
     pasta.save(saida)

@@ -47,12 +47,15 @@ from app.casos_de_uso.ler_planilha_de_agendas import (
     LinhaBruta,
     ler,
     ler_declarados,
+    ler_tipos_declarados,
 )
 from app.dominio.erros import Conflito, RegraViolada
+from app.dominio.frentes import TIPOS_DE_INSTITUICAO
 from app.dominio.importacao_de_agendas import (
     DECISOES_DE_DIVERGENCIA,
     FORMATO,
     VOCABULARIOS_FECHADOS,
+    VOCABULARIOS_QUE_A_IMPORTACAO_CRIA,
     Divergencia,
     aba_de,
     classificar,
@@ -222,6 +225,18 @@ class Proposta:
         return not self.travada and bool(self.a_criar)
 
 
+def _so_ativos(consulta, tabela):
+    """A consulta filtrada por `ativo`, quando a tabela tem a coluna.
+
+    AS APIS NORMAIS JÁ FILTRAM — `api/stakeholders.py` e `api/catalogo.py` — e a
+    importação não filtrava: uma linha limpa podia confirmar apontando para uma
+    instituição desativada, ressuscitando na Base um cadastro que alguém tirou de
+    circulação de propósito.
+    """
+    coluna = getattr(tabela, "ativo", None)
+    return consulta if coluna is None else consulta.where(coluna.is_(True))
+
+
 def _indice(sessao: Session) -> dict[str, dict[str, object]]:
     """Vocabulário → (nome normalizado → o valor que entra na interação).
 
@@ -237,7 +252,7 @@ def _indice(sessao: Session) -> dict[str, dict[str, object]]:
         tem_normalizado = hasattr(fonte.tabela, "nome_normalizado")
         alvo = fonte.tabela.nome_normalizado if tem_normalizado else fonte.tabela.nome
         por_nome: dict[str, object] = {}
-        for nome, valor in sessao.execute(select(alvo, coluna)).all():
+        for nome, valor in sessao.execute(_so_ativos(select(alvo, coluna), fonte.tabela)).all():
             if not nome:
                 continue
             campo = nome if tem_normalizado else normalizar(nome)
@@ -260,7 +275,12 @@ def vocabularios(sessao: Session) -> dict[str, list[str]]:
     """
     listas: dict[str, list[str]] = {}
     for chave, fonte in NO_BANCO.items():
-        nomes = sessao.scalars(select(fonte.tabela.nome).order_by(fonte.tabela.nome)).all()
+        # SÓ OS ATIVOS, como as telas de cadastro e de catálogo já fazem. Oferecer
+        # um cadastro aposentado na lista suspensa seria convidar a pessoa a
+        # escolher exatamente o que a importação vai recusar.
+        nomes = sessao.scalars(
+            _so_ativos(select(fonte.tabela.nome), fonte.tabela).order_by(fonte.tabela.nome)
+        ).all()
         listas[chave] = [nome for nome in nomes if nome]
     for chave, codigos in NO_CODIGO.items():
         listas[chave] = list(codigos)
@@ -306,6 +326,7 @@ def _resolver(
     declarados: Mapping[str, frozenset[str]],
     divergencias: list[Divergencia],
     apontados: Mapping[tuple[str, str], object] = MAPPING_VAZIO,
+    tipos_declarados: Mapping[str, str] = MAPPING_VAZIO,
 ) -> _Resolucao:
     """O valor resolvido, o cadastro a criar, ou a divergência anotada."""
     if valor is None:
@@ -339,6 +360,32 @@ def _resolver(
         return _Resolucao(valor=achado)
 
     if veredito == "cria":
+        # O TIPO DA INSTITUIÇÃO É EXIGIDO AQUI, no upload, e não na confirmação.
+        # Ele deriva a frente da agenda, então sem ele a criação chutaria — e o
+        # chute erra a frente de TODA agenda daquela instituição. Recusar agora põe
+        # a pendência na tela junto das outras, em vez de fazer a confirmação
+        # falhar depois de a pessoa já ter conferido tudo.
+        tipo = (
+            tipos_declarados.get(normalizar(texto))
+            if vocabulario == "instituicoes"
+            else None
+        )
+        if vocabulario == "instituicoes" and tipo not in TIPOS_DE_INSTITUICAO:
+            divergencias.append(
+                Divergencia(
+                    campo=campo,
+                    valor=texto,
+                    mensagem=(
+                        f"{coluna_nome}: {texto!r} foi declarada sem um tipo válido. "
+                        "Escreva o tipo na coluna ao lado, na aba de instituições — é "
+                        "ele que define a frente da agenda. Válidos: "
+                        + ", ".join(sorted(TIPOS_DE_INSTITUICAO))
+                        + "."
+                    ),
+                    trava=True,
+                )
+            )
+            return _Resolucao()
         # Declarado na aba editável: não é pendência da pessoa, é trabalho da
         # confirmação. Aparece na conferência como "vou criar", sem travar — e o
         # valor volta em `a_criar` para a confirmação ter o que criar.
@@ -348,6 +395,7 @@ def _resolver(
                 valor=texto,
                 mensagem=f"{coluna_nome}: vou cadastrar {texto!r}, que você declarou na aba.",
                 trava=False,
+                tipo_declarado=tipo,
                 # MARCA A AÇÃO já aqui, e não só quando a pessoa decide na tela:
                 # é assim que a confirmação encontra o que criar sem depender do
                 # arquivo original, que não fica guardado. Declarar na aba e
@@ -357,13 +405,25 @@ def _resolver(
         )
         return _Resolucao(a_criar=(vocabulario, texto))
 
-    fechado = vocabulario in VOCABULARIOS_FECHADOS
-    motivo = (
-        f"{coluna_nome}: {texto!r} não está na lista, e esta lista não aceita valor novo."
-        if fechado
-        else f"{coluna_nome}: {texto!r} não existe no cadastro. Se é novo, "
-        f"escreva-o também na aba de cadastro."
-    )
+    # TRÊS CASOS, TRÊS MENSAGENS, porque a saída de cada um é diferente e mandar
+    # a pessoa pelo caminho errado é pior que não dizer nada.
+    if vocabulario in VOCABULARIOS_FECHADOS:
+        motivo = (
+            f"{coluna_nome}: {texto!r} não está na lista, e esta lista não aceita "
+            "valor novo — mudá-la é mudança de regra. Escolha um dos valores."
+        )
+    elif vocabulario not in VOCABULARIOS_QUE_A_IMPORTACAO_CRIA:
+        # Dicionário administrado: escrever na aba NÃO resolve, e dizer que
+        # resolve mandaria a pessoa tentar duas vezes a mesma coisa.
+        motivo = (
+            f"{coluna_nome}: {texto!r} não existe. Este cadastro é mantido pela "
+            "tela de Administração — cadastre-o lá e aponte para ele aqui."
+        )
+    else:
+        motivo = (
+            f"{coluna_nome}: {texto!r} não existe no cadastro. Se é novo, "
+            "escreva-o também na aba de cadastro da planilha."
+        )
     divergencias.append(Divergencia(campo=campo, valor=texto, mensagem=motivo, trava=True))
     return _Resolucao()
 
@@ -373,6 +433,7 @@ def _filhas_por_codigo(
     indice: dict[str, dict[str, object]],
     declarados: Mapping[str, frozenset[str]],
     apontados: Mapping[tuple[str, str], object] = MAPPING_VAZIO,
+    tipos_declarados: Mapping[str, str] = MAPPING_VAZIO,
 ) -> dict[str, dict[str, list]]:
     """Código da agenda → o que as abas filhas dela produziram.
 
@@ -413,6 +474,7 @@ def _filhas_por_codigo(
                         declarados,
                         divergencias,
                         apontados,
+                        tipos_declarados,
                     )
                     resolvido = resolucao.valor
                     if resolucao.a_criar is not None:
@@ -580,7 +642,12 @@ def impedimentos(entrada: InteracaoEntrada, podem_representar: frozenset) -> lis
 
 def propor(sessao: Session, conteudo: bytes) -> list[Proposta]:
     """Uma proposta por linha da aba Agendas, a partir do arquivo."""
-    return propor_de_linhas(sessao, ler(conteudo), ler_declarados(conteudo))
+    return propor_de_linhas(
+        sessao,
+        ler(conteudo),
+        ler_declarados(conteudo),
+        tipos_declarados=ler_tipos_declarados(conteudo),
+    )
 
 
 def propor_de_linhas(
@@ -588,6 +655,7 @@ def propor_de_linhas(
     por_aba: Mapping[str, list[LinhaBruta]],
     declarados: Mapping[str, frozenset[str]],
     apontados: Mapping[tuple[str, str], object] = MAPPING_VAZIO,
+    tipos_declarados: Mapping[str, str] = MAPPING_VAZIO,
 ) -> list[Proposta]:
     """O mesmo, a partir de linhas JÁ LIDAS.
 
@@ -598,7 +666,7 @@ def propor_de_linhas(
     é o que impede a confirmação de reimplementar a resolução e divergir dela.
     """
     indice = _indice(sessao)
-    filhas = _filhas_por_codigo(por_aba, indice, declarados, apontados)
+    filhas = _filhas_por_codigo(por_aba, indice, declarados, apontados, tipos_declarados)
     representantes = _quem_representa(sessao)
 
     colunas_de_agenda = aba_de(ABA_PRINCIPAL).colunas
@@ -633,6 +701,7 @@ def propor_de_linhas(
                     declarados,
                     divergencias,
                     apontados,
+                    tipos_declarados,
                 )
                 valor = resolucao.valor
                 if resolucao.a_criar is not None:
@@ -918,7 +987,12 @@ def _cadastro_existe(sessao: Session, campo: str, alvo: str) -> bool:
         # ao Postgres e voltava como erro de banco — 500 e "erro interno" para
         # quem só mandou algo inesperado num campo da API.
         return False
-    return sessao.scalar(select(coluna).where(coluna == convertido)) is not None
+    return (
+        sessao.scalar(
+            _so_ativos(select(coluna).where(coluna == convertido), fonte.tabela)
+        )
+        is not None
+    )
 
 
 def _no_tipo_da_coluna(coluna, alvo: str):
@@ -965,6 +1039,22 @@ def _decisoes(linhas) -> tuple[dict[tuple[str, str], str], dict[tuple[str, str],
     return a_criar, apontados
 
 
+def _tipos_declarados(linhas) -> dict[str, str]:
+    """O tipo de cada instituição a criar, guardado no upload.
+
+    VEM DA DIVERGÊNCIA e não do arquivo, porque o arquivo não é guardado. O
+    upload anota o tipo declarado em `tipo_declarado` ao marcar `acao="criar"`.
+    """
+    tipos: dict[str, str] = {}
+    for linha in linhas:
+        if linha.decisao == "descartada":
+            continue
+        for bruta in linha.divergencias or []:
+            if bruta.get("acao") == "criar" and bruta.get("tipo_declarado"):
+                tipos[normalizar(bruta["valor"])] = bruta["tipo_declarado"]
+    return tipos
+
+
 def _reconferir(sessao: Session, a_criar, apontados) -> None:
     """A RECONFERÊNCIA — o passo mais delicado da funcionalidade.
 
@@ -994,7 +1084,7 @@ def _reconferir(sessao: Session, a_criar, apontados) -> None:
             )
 
 
-def _criar_cadastros(sessao: Session, a_criar) -> int:
+def _criar_cadastros(sessao: Session, a_criar, tipos: Mapping[str, str]) -> int:
     """Cria os cadastros declarados, no MESMO commit das agendas.
 
     É por isso que nada nasce no upload: se nascesse, cancelar a conferência
@@ -1006,12 +1096,20 @@ def _criar_cadastros(sessao: Session, a_criar) -> int:
     criados = 0
     for (vocabulario, valor), _campo in a_criar.items():
         if vocabulario == "instituicoes":
-            # `tipo` é obrigatório e a planilha não o pergunta. `orgao` é o padrão
-            # honesto: é o que a coordenação importa em volume, e a alternativa
-            # seria pedir uma coluna a mais em toda linha para o caso raro.
+            # O TIPO VEM DA PLANILHA, da coluna B da aba de instituições. Chutar
+            # `orgao` dava frente errada em toda agenda daquela instituição, porque
+            # `derivar_frente` deriva do tipo — e frente errada contamina toda
+            # leitura agrupada por frente. Quem declara o cadastro declara o tipo.
+            tipo = tipos.get(normalizar(valor))
+            if tipo not in TIPOS_DE_INSTITUICAO:
+                raise RegraViolada(
+                    f"A instituição {valor!r} foi declarada sem um tipo válido. "
+                    f"Escreva o tipo na coluna ao lado, na aba de instituições: "
+                    f"{', '.join(sorted(TIPOS_DE_INSTITUICAO))}."
+                )
             sessao.add(
                 Instituicao(
-                    nome=valor, nome_normalizado=normalizar(valor), tipo="orgao", uf="NA"
+                    nome=valor, nome_normalizado=normalizar(valor), tipo=tipo, uf="NA"
                 )
             )
         elif vocabulario == "interlocutores":
@@ -1024,7 +1122,7 @@ def _criar_cadastros(sessao: Session, a_criar) -> int:
             # `livre` e não `estrategico`: tema estratégico é vocabulário fechado
             # do modelo, e a planilha não o amplia.
             sessao.add(Tema(nome=valor, nivel="livre"))
-        else:
+        else:  # pragma: no cover - `classificar` já não deixa chegar aqui
             raise RegraViolada(
                 f"Não sei criar um cadastro em {vocabulario!r} pela importação. "
                 "Cadastre-o pela tela de Administração e aponte para ele."
@@ -1109,7 +1207,7 @@ def confirmar(sessao: Session, importacao_id, usuario) -> Resumo:
 
     a_criar, apontados = _decisoes(linhas)
     _reconferir(sessao, a_criar, apontados)
-    cadastros = _criar_cadastros(sessao, a_criar)
+    cadastros = _criar_cadastros(sessao, a_criar, _tipos_declarados(linhas))
 
     # Os apontamentos convertidos para o tipo da coluna, uma vez: a resolução os
     # consulta por linha, e converter lá dentro repetiria o trabalho.

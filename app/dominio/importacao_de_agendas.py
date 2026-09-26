@@ -71,6 +71,28 @@ VOCABULARIOS_EDITAVEIS: frozenset[str] = frozenset(
     }
 )
 
+#: Os únicos vocabulários que a IMPORTAÇÃO cria.
+#:
+#: Editável não quer dizer criável-pela-planilha. `unidades_negocio`,
+#: `formatos_interacao` e `areas_pessoa` são DICIONÁRIO ADMINISTRADO: a
+#: coordenação os mantém pela tela de Administração, e uma unidade de negócio
+#: nova é decisão de estrutura da companhia, não um nome que se digita no meio de
+#: 54 agendas. Antes eles prometiam "vou criar" na conferência e falhavam no
+#: ÚLTIMO passo, depois de a pessoa já ter conferido tudo — a recusa agora é no
+#: upload, dizendo o que fazer.
+VOCABULARIOS_QUE_A_IMPORTACAO_CRIA: frozenset[str] = frozenset(
+    {"instituicoes", "interlocutores", "pessoas_aegea", "temas"}
+)
+
+#: A coluna extra que a aba de vocabulário de instituições tem.
+#:
+#: O TIPO DERIVA A FRENTE DA AGENDA — `derivar_frente` diz que "o tipo já basta,
+#: sozinho, para todos os tipos menos dois". Criar uma instituição com um tipo
+#: adivinhado dá frente errada em TODA agenda daquela instituição, e frente errada
+#: contamina toda leitura agrupada por frente. Então a planilha pergunta, em vez
+#: de o servidor chutar.
+COLUNA_DO_TIPO_DE_INSTITUICAO = "Tipo"
+
 #: Vocabulários fechados: mudar um valor aqui é mudança de regra de negócio
 #: (os KPIs e a taxa de resolutividade dependem deles), então é código e
 #: migration — nunca uma linha na planilha. O servidor recusa valor novo
@@ -556,6 +578,10 @@ class Divergencia:
     acao: str | None = None
     #: O id do cadastro escolhido, quando `acao == "apontar"`.
     alvo: str | None = None
+    #: O tipo declarado na aba, quando o cadastro a criar é uma instituição.
+    #: Viaja com a divergência porque o ARQUIVO NÃO É GUARDADO: na confirmação é
+    #: daqui que sai o tipo, e sem ele a criação voltaria a chutar.
+    tipo_declarado: str | None = None
 
 
 def classificar(
@@ -598,5 +624,10 @@ def classificar(
     if chave in conhecidos:
         return "resolve"
     if vocabulario in VOCABULARIOS_FECHADOS:
+        return "diverge"
+    # Editável não é o mesmo que criável pela planilha: dicionário administrado
+    # se cadastra na Administração, e prometer "vou criar" aqui só adiaria a
+    # recusa para o último passo da conferência.
+    if vocabulario not in VOCABULARIOS_QUE_A_IMPORTACAO_CRIA:
         return "diverge"
     return "cria" if chave in declarados else "diverge"

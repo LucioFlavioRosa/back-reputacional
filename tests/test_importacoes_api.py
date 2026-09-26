@@ -949,7 +949,9 @@ def com_cadastro_novo(cliente_admin, sessao, semente):
         "UF": "SP",
     }
     folha.append([valores.get(coluna) for coluna in cabecalho])
-    pasta[ROTULO_DO_VOCABULARIO["instituicoes"]].append(["Prefeitura de Campinas"])
+    # COM O TIPO: ele deriva a frente da agenda, e a importação recusa criar
+    # instituição sem ele — chutar erraria a frente de toda agenda dela.
+    pasta[ROTULO_DO_VOCABULARIO["instituicoes"]].append(["Prefeitura de Campinas", "orgao"])
     saida = io.BytesIO()
     pasta.save(saida)
 
@@ -1255,7 +1257,9 @@ def test_o_declarado_na_aba_ja_aparece_como_a_criar(cliente_admin, sessao, semen
         "UF": "SP",
     }
     folha.append([valores.get(coluna) for coluna in cabecalho])
-    pasta[ROTULO_DO_VOCABULARIO["instituicoes"]].append(["Prefeitura de Campinas"])
+    # COM O TIPO: ele deriva a frente da agenda, e a importação recusa criar
+    # instituição sem ele — chutar erraria a frente de toda agenda dela.
+    pasta[ROTULO_DO_VOCABULARIO["instituicoes"]].append(["Prefeitura de Campinas", "orgao"])
     saida = io.BytesIO()
     pasta.save(saida)
 
@@ -1423,3 +1427,218 @@ def test_a_confirmacao_nao_faz_commit_por_conta_propria(cliente_admin, sessao, l
 
     assert resposta.status_code == 201, resposta.text
     assert chamadas == [], "confirmar comitou por conta própria"
+
+
+# =============================================================================
+# os defeitos que a revisão do Codex achou na Tarefa 11
+# =============================================================================
+
+
+def _com_declaracao(sessao, semente, nome: str, tipo: str | None = None):
+    """Uma agenda com instituição nova, declarada na aba com (ou sem) o tipo."""
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    from app.dominio.importacao_de_agendas import ROTULO_DO_VOCABULARIO
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    valores = {"Código": "A1", "Data": date(2026, 9, 25), "Instituição": nome, "UF": "SP"}
+    folha.append([valores.get(coluna) for coluna in cabecalho])
+    pasta[ROTULO_DO_VOCABULARIO["instituicoes"]].append([nome, tipo] if tipo else [nome])
+    saida = io.BytesIO()
+    pasta.save(saida)
+    return saida.getvalue()
+
+
+def test_a_aba_de_instituicoes_pede_o_TIPO(sessao):
+    """DEFEITO 1. O tipo da instituição DERIVA A FRENTE da agenda — o próprio
+    `derivar_frente` diz que "o tipo já basta, sozinho, para todos os tipos menos
+    dois". Criar com um `orgao` adivinhado dava frente errada em toda agenda
+    daquela instituição, contaminando toda leitura agrupada por frente. A planilha
+    tem de perguntar."""
+    from openpyxl import load_workbook
+
+    pasta = load_workbook(
+        io.BytesIO(modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao)))
+    )
+    from app.dominio.importacao_de_agendas import ROTULO_DO_VOCABULARIO
+
+    folha = pasta[ROTULO_DO_VOCABULARIO["instituicoes"]]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+
+    assert cabecalho[:2] == ["Instituição", "Tipo"]
+
+
+def test_a_instituicao_criada_usa_o_TIPO_declarado(cliente_admin, sessao, semente):
+    """E o tipo que chega ao banco é o que a pessoa escreveu, não um palpite."""
+    from sqlalchemy import select as sel
+
+    conteudo = _com_declaracao(sessao, semente, "Valor Novo", tipo="veiculo")
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", conteudo, TIPO_XLSX)}
+    ).json()
+    assert criada["pendencias"] == 0, criada["grupos"]
+
+    cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao")
+
+    nova = sessao.scalars(
+        sel(Instituicao).where(Instituicao.nome_normalizado == normalizar("Valor Novo"))
+    ).first()
+    assert nova is not None
+    assert nova.tipo == "veiculo"
+
+
+def test_instituicao_declarada_SEM_tipo_trava(cliente_admin, sessao, semente):
+    """Sem o tipo não há como criar sem adivinhar, e adivinhar erra a frente.
+    Travar devolve a decisão a quem sabe."""
+    conteudo = _com_declaracao(sessao, semente, "Orgao Sem Tipo")
+
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", conteudo, TIPO_XLSX)}
+    ).json()
+
+    assert criada["pendencias"] == 1
+    mensagens = " ".join(
+        d["mensagem"] for linha in criada["linhas"] for d in linha["divergencias"]
+    ).lower()
+    assert "tipo" in mensagens, mensagens
+
+
+def test_instituicao_declarada_com_tipo_INVALIDO_trava(cliente_admin, sessao, semente):
+    conteudo = _com_declaracao(sessao, semente, "Coisa", tipo="inventado")
+
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", conteudo, TIPO_XLSX)}
+    ).json()
+
+    assert criada["pendencias"] == 1
+
+
+def test_cadastro_INATIVO_nao_resolve(cliente_admin, sessao, semente):
+    """DEFEITO 2. `_indice` não filtrava `ativo`, então uma linha limpa podia
+    confirmar apontando para instituição desativada — divergindo das APIs
+    normais, que filtram ativos, e ressuscitando na Base um cadastro que alguém
+    tirou de circulação de propósito."""
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    aposentada = Instituicao(
+        nome="Jornal Extinto",
+        nome_normalizado=normalizar("Jornal Extinto"),
+        tipo="veiculo",
+        uf="SP",
+        ativo=False,
+    )
+    sessao.add(aposentada)
+    sessao.flush()
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    valores = {
+        "Código": "A1",
+        "Data": date(2026, 9, 25),
+        "Instituição": "Jornal Extinto",
+        "UF": "SP",
+    }
+    folha.append([valores.get(coluna) for coluna in cabecalho])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+
+    assert criada["pendencias"] == 1, criada["grupos"]
+
+
+def test_o_modelo_nao_oferece_cadastro_inativo_na_lista(cliente_admin, sessao, semente):
+    """A outra ponta: se o inativo não resolve, oferecê-lo na lista suspensa seria
+    convidar a pessoa a escolher o que vai ser recusado."""
+    sessao.add(
+        Instituicao(
+            nome="Jornal Extinto",
+            nome_normalizado=normalizar("Jornal Extinto"),
+            tipo="veiculo",
+            uf="SP",
+            ativo=False,
+        )
+    )
+    sessao.flush()
+
+    listas = importar_agendas.vocabularios(sessao)
+
+    assert "Jornal Extinto" not in listas["instituicoes"]
+
+
+def test_apontar_para_um_cadastro_INATIVO_recusa(cliente_admin, sessao, importacao_com_quatro):
+    """E a reconferência também: um alvo desativado depois da decisão passava."""
+    aposentada = Instituicao(
+        nome="Prefeitura Extinta",
+        nome_normalizado=normalizar("Prefeitura Extinta"),
+        tipo="orgao",
+        uf="SP",
+        ativo=False,
+    )
+    sessao.add(aposentada)
+    sessao.flush()
+
+    resposta = cliente_admin.patch(
+        f"/api/importacoes/{importacao_com_quatro['id']}/resolucoes",
+        json={
+            "campo": "instituicao_id",
+            "valor": "Prefeitura de Campinas",
+            "decisao": "apontar",
+            "alvo": str(aposentada.id),
+        },
+    )
+
+    assert resposta.status_code == 422
+
+
+def test_dicionario_administrado_nao_promete_criar_e_trava_na_hora(
+    cliente_admin, sessao, semente
+):
+    """DEFEITO 3. `unidades_negocio`, `formatos_interacao` e `areas_pessoa` são
+    editáveis, então `_resolver` prometia "vou criar" — mas `_criar_cadastros` não
+    sabe criá-los, e a recusa só aparecia no ÚLTIMO passo, depois de a pessoa ter
+    conferido tudo. Eles são dicionário administrado, não cadastro livre: a
+    divergência trava desde o upload, dizendo para cadastrar na Administração."""
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    from app.dominio.importacao_de_agendas import ROTULO_DO_VOCABULARIO
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    valores = {
+        "Código": "A1",
+        "Data": date(2026, 9, 25),
+        "Instituição": semente["instituicao"].nome,
+        "UF": "SP",
+        "Unidade de negócio": "Unidade Inventada",
+    }
+    folha.append([valores.get(coluna) for coluna in cabecalho])
+    pasta[ROTULO_DO_VOCABULARIO["unidades_negocio"]].append(["Unidade Inventada"])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+
+    assert criada["pendencias"] == 1, criada["grupos"]
+    assert criada["a_criar"] == []
+    mensagens = " ".join(
+        d["mensagem"] for linha in criada["linhas"] for d in linha["divergencias"]
+    )
+    assert "Administração" in mensagens
