@@ -176,18 +176,33 @@ ROTULO_DO_VOCABULARIO: dict[str, str] = {
 _AGENDAS = Aba(
     nome="Agendas",
     colunas=(
+        # A ORDEM É A DO FORMULÁRIO, e não é estética: quem registra 54 reuniões
+        # conhece a sequência da tela de nova interação, e uma planilha com os
+        # campos em outra ordem a obriga a procurar cada um. `Área` era a última
+        # coluna, depois de três de `Tema`, e é a SEGUNDA seção do formulário —
+        # o dono do produto procurou e não achou.
+        #
+        # Os comentários marcam as seções numeradas da tela. As de participantes
+        # e materiais (4, 7 e 10) são abas filhas, e "Público" e "Relevância" não
+        # entram: saem do cadastro da instituição, e uma coluna para eles
+        # permitiria que a agenda contradissesse o órgão.
         # `Código` é inventado por quem preenche (A1, A2…) e repetido nas abas
         # filhas — é o único conceito novo que a planilha introduz, e por isso
         # vem primeiro: quem preenche precisa vê-lo antes de tudo.
         Coluna(nome="Código", campo=""),
+        # -- 1. Tipo de interação ------------------------------------------
+        Coluna(
+            nome="Tipo de interação", campo="formato_interacao_id", vocabulario="formatos_interacao"
+        ),
+        # -- 2. Área(s) ----------------------------------------------------
+        Coluna(nome="Área 1", campo="areas", vocabulario="areas_pessoa"),
+        Coluna(nome="Área 2", campo="areas", vocabulario="areas_pessoa"),
+        # -- 3. Identificação ----------------------------------------------
         Coluna(nome="Data", campo="data_interacao", obrigatoria=True),
         # Instituição em branco não identifica agenda nenhuma — é o mínimo que
         # a distingue de outra, junto com a Data.
         Coluna(
             nome="Instituição", campo="instituicao_id", vocabulario="instituicoes", obrigatoria=True
-        ),
-        Coluna(
-            nome="Tipo de interação", campo="formato_interacao_id", vocabulario="formatos_interacao"
         ),
         # UF não é vocabulário de aba: são as 27 siglas fixas mais NA/IN que
         # `app/dominio/recorte.py › ABRANGENCIAS_VALIDAS` já enumera — criar
@@ -197,22 +212,6 @@ _AGENDAS = Aba(
         Coluna(
             nome="Unidade de negócio", campo="unidade_negocio_id", vocabulario="unidades_negocio"
         ),
-        Coluna(nome="Modalidade", campo="modalidade", vocabulario="modalidade"),
-        Coluna(nome="Local", campo="local"),
-        Coluna(nome="Situação", campo="status", vocabulario="status"),
-        Coluna(nome="Iniciativa", campo="iniciativa", vocabulario="iniciativas"),
-        Coluna(nome="Nota da situação", campo="nota_situacao"),
-        Coluna(nome="Declinado por", campo="declinado_por"),
-        Coluna(nome="Motivo do declínio", campo="motivo_declinio"),
-        Coluna(nome="Clima esperado", campo="clima_esperado", vocabulario="climas"),
-        Coluna(nome="Expectativa", campo="expectativa"),
-        Coluna(nome="Prevê desdobramento", campo="preve_desdobramento"),
-        Coluna(nome="Clima", campo="clima", vocabulario="climas"),
-        Coluna(nome="Resultado", campo="resultado", vocabulario="resultados"),
-        Coluna(nome="Relato", campo="relato"),
-        Coluna(nome="Repercussão e encaminhamentos", campo="encaminhamentos"),
-        Coluna(nome="Pendências", campo="pendencias"),
-        Coluna(nome="Observações", campo="observacoes"),
         # Temas e áreas são COLUNAS, não abas: são poucos por agenda, e uma
         # aba própria custaria duas abas a mais para um vocabulário que cabe
         # em três/duas colunas com lista suspensa. O teto é arbitrário e
@@ -220,8 +219,26 @@ _AGENDAS = Aba(
         Coluna(nome="Tema 1", campo="temas", vocabulario="temas"),
         Coluna(nome="Tema 2", campo="temas", vocabulario="temas"),
         Coluna(nome="Tema 3", campo="temas", vocabulario="temas"),
-        Coluna(nome="Área 1", campo="areas", vocabulario="areas_pessoa"),
-        Coluna(nome="Área 2", campo="areas", vocabulario="areas_pessoa"),
+        # -- 5. Onde será ou foi realizada ---------------------------------
+        Coluna(nome="Modalidade", campo="modalidade", vocabulario="modalidade"),
+        Coluna(nome="Local", campo="local"),
+        # -- 6. Situação e expectativa -------------------------------------
+        Coluna(nome="Iniciativa", campo="iniciativa", vocabulario="iniciativas"),
+        Coluna(nome="Situação", campo="status", vocabulario="status"),
+        Coluna(nome="Nota da situação", campo="nota_situacao"),
+        Coluna(nome="Declinado por", campo="declinado_por"),
+        Coluna(nome="Motivo do declínio", campo="motivo_declinio"),
+        Coluna(nome="Clima esperado", campo="clima_esperado", vocabulario="climas"),
+        Coluna(nome="Expectativa", campo="expectativa"),
+        # -- 8. Outputs da interação ---------------------------------------
+        Coluna(nome="Relato", campo="relato"),
+        Coluna(nome="Repercussão e encaminhamentos", campo="encaminhamentos"),
+        Coluna(nome="Pendências", campo="pendencias"),
+        Coluna(nome="Observações", campo="observacoes"),
+        # -- 9. Desfecho da interação --------------------------------------
+        Coluna(nome="Clima", campo="clima", vocabulario="climas"),
+        Coluna(nome="Resultado", campo="resultado", vocabulario="resultados"),
+        Coluna(nome="Prevê desdobramento", campo="preve_desdobramento"),
     ),
 )
 

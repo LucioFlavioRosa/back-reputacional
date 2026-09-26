@@ -374,3 +374,74 @@ def test_linha_sem_divergencia_nao_vira_grupo():
     from app.dominio.importacao_de_agendas import agrupar
 
     assert agrupar([(2, []), (3, [])]) == []
+
+
+def test_a_ordem_das_colunas_segue_o_FORMULARIO():
+    """QUEM PREENCHE A PLANILHA JÁ CONHECE O FORMULÁRIO.
+
+    A ordem não é estética: a pessoa que registra 54 reuniões conhece a sequência
+    da tela de nova interação, e uma planilha com os campos em outra ordem a
+    obriga a procurar cada um. Área era a última coluna (AA, depois de três de
+    Tema) e é a SEGUNDA seção do formulário — o dono notou justamente por isso:
+    procurou e não achou.
+
+    A sequência abaixo é a das seções numeradas do formulário:
+      1. Tipo de interação
+      2. Área(s)
+      3. Identificação — data, instituição, UF, unidade, temas
+      5. Onde — modalidade, local
+      6. Situação e expectativa
+      8. Outputs — relato, encaminhamentos, pendências, observações
+      9. Desfecho — clima, resultado, desdobramento
+
+    As seções 4, 7 e 10 (participantes e materiais) são abas filhas, e a
+    "Relevância" e o "Público" do formulário não entram: são derivados do
+    cadastro da instituição, e pô-los aqui abriria a chance de a agenda
+    contradizê-lo.
+    """
+    assert [coluna.nome for coluna in aba_de("Agendas").colunas] == [
+        "Código",
+        # 1. Tipo de interação
+        "Tipo de interação",
+        # 2. Área(s)
+        "Área 1",
+        "Área 2",
+        # 3. Identificação
+        "Data",
+        "Instituição",
+        "UF",
+        "Unidade de negócio",
+        "Tema 1",
+        "Tema 2",
+        "Tema 3",
+        # 5. Onde será ou foi realizada
+        "Modalidade",
+        "Local",
+        # 6. Situação e expectativa
+        "Iniciativa",
+        "Situação",
+        "Nota da situação",
+        "Declinado por",
+        "Motivo do declínio",
+        "Clima esperado",
+        "Expectativa",
+        # 8. Outputs da interação
+        "Relato",
+        "Repercussão e encaminhamentos",
+        "Pendências",
+        "Observações",
+        # 9. Desfecho da interação
+        "Clima",
+        "Resultado",
+        "Prevê desdobramento",
+    ]
+
+
+def test_o_que_o_formulario_deriva_nao_e_coluna():
+    """"Público" e "Relevância" aparecem no formulário e NÃO na planilha: os dois
+    saem do cadastro da instituição. Uma coluna para eles permitiria que a agenda
+    contradissesse o órgão — que é o que derivar resolveu."""
+    nomes = {coluna.nome for coluna in aba_de("Agendas").colunas}
+
+    assert "Público" not in nomes
+    assert "Relevância" not in nomes

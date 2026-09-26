@@ -118,12 +118,14 @@ def test_a_ordem_das_colunas_nao_importa():
     """O leitor casa por NOME. Uma pessoa que arrasta uma coluna no Excel não
     devia ver o arquivo inteiro recusado — e quem lê por posição recusaria, ou
     pior, leria o valor da coluna vizinha como se fosse o certo."""
-    nomes = _cabecalho("Agendas")
-    trocado = [nomes[2], nomes[1], nomes[0], *nomes[3:]]
+    # INVERTE O CABEÇALHO INTEIRO, e não só as três primeiras: a versão antiga
+    # trocava as três da frente, e quando a ordem das colunas mudou para seguir o
+    # formulário essas três passaram a não carregar valor nenhum — o teste seguia
+    # verde sem provar nada. Invertido, toda coluna preenchida muda de lugar.
+    nomes = list(reversed(_cabecalho("Agendas")))
+    trocado = nomes
     valores = _agenda()
-    linha = [valores.get(nomes[2]), valores.get(nomes[1]), valores.get(nomes[0])] + [
-        None for _ in nomes[3:]
-    ]
+    linha = [valores.get(nome) for nome in nomes]
     conteudo = _livro(
         {
             "Agendas": [trocado, linha],
