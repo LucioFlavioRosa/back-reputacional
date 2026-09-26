@@ -95,6 +95,27 @@ def marcar_aguardando_conferencia(sessao: Session, importacao: Importacao) -> No
     sessao.flush()
 
 
+def linhas_com(
+    sessao: Session, importacao_id: uuid.UUID, *, campo: str, valor: str
+) -> list[ImportacaoLinha]:
+    """As linhas cuja lista de divergências contém este `(campo, valor)`.
+
+    USA CONTENÇÃO (`@>`) e não `->>`: os dois índices GIN da 0008 não entram com
+    `->>`, e a consulta cairia para varredura sequencial sem nada parecer errado.
+    A própria migration deixa este exemplo escrito.
+    """
+    return list(
+        sessao.scalars(
+            select(ImportacaoLinha)
+            .where(
+                ImportacaoLinha.importacao_id == importacao_id,
+                ImportacaoLinha.divergencias.contains([{"campo": campo, "valor": valor}]),
+            )
+            .order_by(ImportacaoLinha.aba, ImportacaoLinha.linha_origem)
+        ).all()
+    )
+
+
 def obter(sessao: Session, importacao_id: uuid.UUID) -> Importacao:
     importacao = sessao.get(Importacao, importacao_id)
     if importacao is None:

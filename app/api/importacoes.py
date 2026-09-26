@@ -132,7 +132,10 @@ def _grupos(sessao, linhas) -> list[GrupoSaida]:
             ],
         )
         for linha in linhas
-        if linha.aba == "Agendas"
+        # A DESCARTADA SAI DA CONTA: descartar é uma resolução, e a linha não
+        # segura mais a confirmação. Mantê-la no agrupamento faria o botão de
+        # confirmar continuar apagado depois de a pessoa já ter decidido.
+        if linha.aba == "Agendas" and linha.decisao != "descartada"
     ]
 
     # `vocabularios` uma vez por campo distinto, e não por grupo: uma tela com
@@ -273,6 +276,42 @@ def subir(sessao: Sessao, usuario: UsuarioLogado, arquivo: Arquivo) -> Importaca
     repositorio_importacao.marcar_aguardando_conferencia(sessao, importacao)
 
     return _saida(sessao, importacao, repositorio_importacao.linhas_de(sessao, importacao.id))
+
+
+class ResolucaoEntrada(BaseModel):
+    """Uma decisão sobre um grupo de divergência."""
+
+    campo: str
+    valor: str
+    #: `apontar` para um cadastro existente, `criar` um novo, ou `descartar` as
+    #: linhas. Validado no domínio e não por `Literal` aqui: a mensagem de recusa
+    #: sai em português dizendo quais valem, em vez de erro de esquema.
+    decisao: str
+    #: O id do cadastro escolhido. Obrigatório quando `decisao == "apontar"`.
+    alvo: str | None = None
+
+
+@rotas.patch("/{importacao_id}/resolucoes")
+def resolver_divergencia(
+    sessao: Sessao, importacao_id: UUID, entrada: ResolucaoEntrada
+) -> ImportacaoSaida:
+    """Uma decisão, todas as linhas que aquele valor segurava.
+
+    É O QUE FAZ A CONFERÊNCIA ESCALAR com o volume em vez de crescer junto com
+    ele: "Instituição não encontrada em 12 linhas" vira um clique, e não doze
+    cliques idênticos. Sem isto, um dia de 54 agendas com o mesmo órgão
+    desconhecido faria a pessoa parar de conferir e passar a clicar.
+    """
+    importacao = repositorio_importacao.obter(sessao, importacao_id)
+    importar_agendas.resolver(
+        sessao,
+        importacao_id,
+        campo=entrada.campo,
+        valor=entrada.valor,
+        decisao=entrada.decisao,
+        alvo=entrada.alvo,
+    )
+    return _saida(sessao, importacao, repositorio_importacao.linhas_de(sessao, importacao_id))
 
 
 @rotas.get("/{importacao_id}")

@@ -438,6 +438,13 @@ class GrupoDeDivergencia:
     sugestoes: tuple[str, ...] = ()
 
 
+#: As decisões que uma pessoa pode tomar sobre um grupo de divergência.
+#:
+#: `descartar` não aparece aqui porque não é decisão SOBRE a divergência: é
+#: decisão sobre a LINHA, e vive em `importacao_linha.decisao`.
+DECISOES_DE_DIVERGENCIA = ("apontar", "criar")
+
+
 #: Quão parecido um nome tem de ser para virar sugestão. 0.6 é o padrão do
 #: `difflib`, e mexer nisto é escolher entre dois erros: mais baixo oferece
 #: "Valor Econômico" para "Prefeitura de Campinas", mais alto deixa de oferecer
@@ -538,6 +545,17 @@ class Divergencia:
     #: das divergências, e por isso tem default — uma tupla, nunca lista, para
     #: não haver default mutável compartilhado entre todas elas.
     sugestoes: Sequence[str] = field(default_factory=tuple)
+
+    #: O que a pessoa DECIDIU sobre esta divergência, quando decidiu: `apontar`
+    #: para um cadastro existente, ou `criar` um novo. `None` enquanto ninguém
+    #: decidiu nada.
+    #:
+    #: A decisão fica NA divergência e não numa tabela à parte porque é dela que
+    #: a confirmação precisa: ao percorrer as linhas, a instrução está ao lado do
+    #: valor a que se refere, sem uma segunda consulta para casar as duas.
+    acao: str | None = None
+    #: O id do cadastro escolhido, quando `acao == "apontar"`.
+    alvo: str | None = None
 
 
 def classificar(

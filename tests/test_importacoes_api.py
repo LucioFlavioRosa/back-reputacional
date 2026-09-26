@@ -654,3 +654,253 @@ def test_celula_de_HORA_nao_estoura_no_commit(cliente_admin, sessao, semente):
 
     assert resposta.status_code == 201, resposta.text
     assert resposta.json()["linhas"][0]["dados_brutos"]["Local"] == "14:30:00"
+
+
+# =============================================================================
+# resolver um grupo resolve todas as linhas dele
+# =============================================================================
+
+
+@pytest.fixture
+def importacao_com_quatro(cliente_admin, sessao, semente):
+    """Quatro agendas presas pela MESMA instituição desconhecida.
+
+    É a forma do problema real: um dia inteiro com o mesmo órgão que ninguém
+    cadastrou ainda. Uma decisão tem de destravar as quatro.
+    """
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    for i in range(4):
+        valores = {
+            "Código": f"A{i}",
+            "Data": date(2026, 9, 21 + i),
+            "Instituição": "Prefeitura de Campinas",
+            "UF": "SP",
+        }
+        folha.append([valores.get(coluna) for coluna in cabecalho])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    resposta = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("dia.xlsx", saida.getvalue(), TIPO_XLSX)}
+    )
+    assert resposta.status_code == 201, resposta.text
+    return resposta.json()
+
+
+def test_apontar_para_uma_existente_resolve_as_quatro_linhas(
+    cliente_admin, sessao, semente, importacao_com_quatro
+):
+    """UMA DECISÃO, QUATRO LINHAS — é o que faz a conferência escalar."""
+    parecida = Instituicao(
+        nome="Prefeitura Municipal de Campinas",
+        nome_normalizado=normalizar("Prefeitura Municipal de Campinas"),
+        tipo="orgao",
+        uf="SP",
+    )
+    sessao.add(parecida)
+    sessao.flush()
+
+    resposta = cliente_admin.patch(
+        f"/api/importacoes/{importacao_com_quatro['id']}/resolucoes",
+        json={
+            "campo": "instituicao_id",
+            "valor": "Prefeitura de Campinas",
+            "decisao": "apontar",
+            "alvo": str(parecida.id),
+        },
+    )
+
+    assert resposta.status_code == 200, resposta.text
+    corpo = resposta.json()
+    assert corpo["pendencias"] == 0
+    assert corpo["decisoes_pendentes"] == 0
+
+
+def test_apontar_registra_para_qual_cadastro(cliente_admin, sessao, semente, importacao_com_quatro):
+    """Sem guardar o alvo, a confirmação não saberia para onde apontar — e a
+    decisão da pessoa teria sido só um número que baixou na tela."""
+    parecida = Instituicao(
+        nome="Prefeitura Municipal de Campinas",
+        nome_normalizado=normalizar("Prefeitura Municipal de Campinas"),
+        tipo="orgao",
+        uf="SP",
+    )
+    sessao.add(parecida)
+    sessao.flush()
+
+    cliente_admin.patch(
+        f"/api/importacoes/{importacao_com_quatro['id']}/resolucoes",
+        json={
+            "campo": "instituicao_id",
+            "valor": "Prefeitura de Campinas",
+            "decisao": "apontar",
+            "alvo": str(parecida.id),
+        },
+    )
+
+    estado = cliente_admin.get(f"/api/importacoes/{importacao_com_quatro['id']}").json()
+    resolvidas = [
+        divergencia
+        for linha in estado["linhas"]
+        for divergencia in linha["divergencias"]
+        if divergencia.get("acao") == "apontar"
+    ]
+    assert len(resolvidas) == 4
+    assert all(d["alvo"] == str(parecida.id) for d in resolvidas)
+
+
+def test_criar_transforma_o_que_travava_em_cadastro_a_criar(
+    cliente_admin, importacao_com_quatro
+):
+    """A pessoa confirma que é cadastro novo mesmo — digitou na célula sem
+    declarar na aba, e agora decide na tela. Deixa de travar."""
+    resposta = cliente_admin.patch(
+        f"/api/importacoes/{importacao_com_quatro['id']}/resolucoes",
+        json={
+            "campo": "instituicao_id",
+            "valor": "Prefeitura de Campinas",
+            "decisao": "criar",
+        },
+    )
+
+    assert resposta.status_code == 200, resposta.text
+    assert resposta.json()["pendencias"] == 0
+
+
+def test_descartar_tira_as_linhas_sem_apagar_o_bruto(cliente_admin, importacao_com_quatro):
+    """`dados_brutos` fica: é o que permite reprocessar quando a regra de leitura
+    mudar, e responder de onde veio o registro."""
+    cliente_admin.patch(
+        f"/api/importacoes/{importacao_com_quatro['id']}/resolucoes",
+        json={
+            "campo": "instituicao_id",
+            "valor": "Prefeitura de Campinas",
+            "decisao": "descartar",
+        },
+    )
+
+    estado = cliente_admin.get(f"/api/importacoes/{importacao_com_quatro['id']}").json()
+    descartadas = [linha for linha in estado["linhas"] if linha["decisao"] == "descartada"]
+    assert len(descartadas) == 4
+    assert all(linha["dados_brutos"] for linha in descartadas)
+
+
+def test_a_linha_descartada_nao_conta_mais_como_pendencia(cliente_admin, importacao_com_quatro):
+    """Descartar é uma resolução: a linha sai do caminho da confirmação."""
+    resposta = cliente_admin.patch(
+        f"/api/importacoes/{importacao_com_quatro['id']}/resolucoes",
+        json={
+            "campo": "instituicao_id",
+            "valor": "Prefeitura de Campinas",
+            "decisao": "descartar",
+        },
+    )
+
+    assert resposta.json()["pendencias"] == 0
+
+
+def test_resolver_um_valor_que_nao_esta_pendente_recusa(cliente_admin, importacao_com_quatro):
+    """Recusar em vez de não fazer nada: um 200 silencioso faria a tela mostrar
+    "resolvido" para uma decisão que não alcançou linha nenhuma."""
+    resposta = cliente_admin.patch(
+        f"/api/importacoes/{importacao_com_quatro['id']}/resolucoes",
+        json={"campo": "instituicao_id", "valor": "Não existe", "decisao": "criar"},
+    )
+
+    assert resposta.status_code == 422
+
+
+def test_apontar_sem_alvo_recusa(cliente_admin, importacao_com_quatro):
+    resposta = cliente_admin.patch(
+        f"/api/importacoes/{importacao_com_quatro['id']}/resolucoes",
+        json={
+            "campo": "instituicao_id",
+            "valor": "Prefeitura de Campinas",
+            "decisao": "apontar",
+        },
+    )
+
+    assert resposta.status_code == 422
+
+
+def test_apontar_para_um_cadastro_que_nao_existe_recusa(cliente_admin, importacao_com_quatro):
+    """Sem esta guarda, a decisão gravaria um id que a confirmação não encontra —
+    e o erro apareceria lá, longe de quem escolheu."""
+    resposta = cliente_admin.patch(
+        f"/api/importacoes/{importacao_com_quatro['id']}/resolucoes",
+        json={
+            "campo": "instituicao_id",
+            "valor": "Prefeitura de Campinas",
+            "decisao": "apontar",
+            "alvo": "00000000-0000-0000-0000-000000000000",
+        },
+    )
+
+    assert resposta.status_code == 422
+
+
+def test_decisao_desconhecida_recusa(cliente_admin, importacao_com_quatro):
+    resposta = cliente_admin.patch(
+        f"/api/importacoes/{importacao_com_quatro['id']}/resolucoes",
+        json={
+            "campo": "instituicao_id",
+            "valor": "Prefeitura de Campinas",
+            "decisao": "inventada",
+        },
+    )
+
+    assert resposta.status_code == 422
+
+
+def test_resolver_nao_mexe_em_linha_de_outro_valor(cliente_admin, sessao, semente):
+    """Duas divergências diferentes, uma decisão: só as linhas daquele valor."""
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    for codigo, instituicao in (("A1", "Prefeitura de Campinas"), ("A2", "Prefeitura de Campos")):
+        valores = {
+            "Código": codigo,
+            "Data": date(2026, 9, 25),
+            "Instituição": instituicao,
+            "UF": "SP",
+        }
+        folha.append([valores.get(coluna) for coluna in cabecalho])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("dia.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+    assert criada["pendencias"] == 2
+
+    resposta = cliente_admin.patch(
+        f"/api/importacoes/{criada['id']}/resolucoes",
+        json={
+            "campo": "instituicao_id",
+            "valor": "Prefeitura de Campinas",
+            "decisao": "descartar",
+        },
+    )
+
+    assert resposta.json()["pendencias"] == 1
+
+
+def test_resolver_uma_importacao_que_nao_existe_devolve_404(cliente_admin):
+    resposta = cliente_admin.patch(
+        "/api/importacoes/00000000-0000-0000-0000-000000000000/resolucoes",
+        json={"campo": "instituicao_id", "valor": "X", "decisao": "criar"},
+    )
+
+    assert resposta.status_code == 404

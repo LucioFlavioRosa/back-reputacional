@@ -47,7 +47,9 @@ from app.casos_de_uso.ler_planilha_de_agendas import (
     ler,
     ler_declarados,
 )
+from app.dominio.erros import RegraViolada
 from app.dominio.importacao_de_agendas import (
+    DECISOES_DE_DIVERGENCIA,
     FORMATO,
     VOCABULARIOS_FECHADOS,
     Divergencia,
@@ -768,6 +770,90 @@ def _avisar_duplicatas(sessao: Session, propostas: list[Proposta]) -> list[Propo
             )
         vistos.add(par)
     return propostas
+
+
+def resolver(
+    sessao: Session,
+    importacao_id,
+    *,
+    campo: str,
+    valor: str,
+    decisao: str,
+    alvo: str | None = None,
+) -> int:
+    """Aplica UMA decisão a TODAS as linhas que aquele valor segurava.
+
+    Devolve quantas linhas foram alcançadas. Zero é recusa e não sucesso
+    silencioso: um 200 com nada feito faria a tela mostrar "resolvido" para uma
+    decisão que não encontrou linha nenhuma, e a pessoa seguiria adiante achando
+    que tratou o problema.
+
+    O QUE ACONTECE COM A PROPOSTA. Nada, aqui. A decisão é gravada ao lado do
+    valor a que se refere, e é a confirmação (Tarefa 11) que reconstrói as
+    entradas — porque ela precisa reconferir tudo contra o banco de qualquer
+    forma, já que o cadastro pode ter mudado entre subir e confirmar. Reescrever
+    a proposta agora criaria uma segunda verdade para a confirmação desconfiar.
+    """
+    from app.banco import repositorio_importacao
+
+    if decisao == "descartar":
+        pass
+    elif decisao not in DECISOES_DE_DIVERGENCIA:
+        raise RegraViolada(
+            f"Decisão inválida: {decisao!r}. Use "
+            f"{', '.join(DECISOES_DE_DIVERGENCIA)} ou 'descartar'."
+        )
+    elif decisao == "apontar":
+        if not alvo:
+            raise RegraViolada("Para apontar é preciso dizer para qual cadastro.")
+        if not _cadastro_existe(sessao, campo, alvo):
+            raise RegraViolada(
+                f"O cadastro {alvo!r} não existe. Recarregue a conferência: ele "
+                "pode ter sido apagado desde que a tela abriu."
+            )
+
+    alcancadas = repositorio_importacao.linhas_com(
+        sessao, importacao_id, campo=campo, valor=valor
+    )
+    if not alcancadas:
+        raise RegraViolada(
+            f"Nenhuma linha desta importação está pendente por {valor!r} em "
+            f"{campo!r}. A conferência pode estar desatualizada — recarregue."
+        )
+
+    for linha in alcancadas:
+        if decisao == "descartar":
+            linha.decisao = "descartada"
+            continue
+        linha.decisao = "corrigida"
+        # Reatribui a lista inteira: o SQLAlchemy não observa mutação DENTRO de
+        # um JSONB, e alterar o dicionário no lugar não marcaria a linha como
+        # suja — a decisão da pessoa desapareceria no fim da requisição.
+        linha.divergencias = [
+            (
+                {**bruta, "trava": False, "acao": decisao, "alvo": alvo}
+                if bruta.get("campo") == campo and bruta.get("valor") == valor
+                else bruta
+            )
+            for bruta in (linha.divergencias or [])
+        ]
+    sessao.flush()
+    return len(alcancadas)
+
+
+def _cadastro_existe(sessao: Session, campo: str, alvo: str) -> bool:
+    """O alvo de um `apontar` existe mesmo?
+
+    Sem esta guarda a decisão gravaria um id que a confirmação não encontra, e o
+    erro apareceria lá — longe de quem escolheu, depois de a pessoa já ter
+    conferido tudo.
+    """
+    vocabulario = vocabulario_do_campo(campo)
+    fonte = NO_BANCO.get(vocabulario or "")
+    if fonte is None:
+        return False
+    coluna = getattr(fonte.tabela, fonte.resolve_para)
+    return sessao.scalar(select(coluna).where(coluna == alvo)) is not None
 
 
 def vocabulario_do_campo(campo: str) -> str | None:
