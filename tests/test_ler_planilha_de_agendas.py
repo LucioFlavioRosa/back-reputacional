@@ -576,3 +576,121 @@ def test_o_marcador_esta_na_lista_suspensa_de_um_vocabulario_fechado():
     valores = [celula.value for (celula,) in folha.iter_rows(min_col=1, max_col=1)]
 
     assert MARCADOR_DE_REPETICAO in valores
+
+
+# =============================================================================
+# um `idem` vale para a linha toda
+# =============================================================================
+
+
+def test_um_idem_faz_a_linha_INTEIRA_herdar():
+    """O PONTO QUE FAZ O MARCADOR VALER A PENA.
+
+    Escrever `idem` em cada uma das 27 colunas não economiza nada — troca digitar
+    27 valores por digitar 27 marcadores. Um `idem` em qualquer célula declara
+    "esta linha repete a de cima", e o resto vem de graça.
+    """
+    lido = ler(
+        _completa(
+            agendas=[
+                {**_agenda("A1"), "UF": "RJ", "Local": "Sede", "Expectativa": "Destravar"},
+                {"Código": "A2", "Data": "idem"},
+            ]
+        )
+    )
+
+    segunda = lido["Agendas"][1].celulas
+    assert segunda["Data"] == date(2026, 9, 25)
+    assert segunda["Instituição"] == "Valor Econômico"
+    assert segunda["UF"] == "RJ"
+    assert segunda["Local"] == "Sede"
+    assert segunda["Expectativa"] == "Destravar"
+
+
+def test_o_que_a_pessoa_PREENCHEU_prevalece_sobre_a_heranca():
+    """É o caso de uso real: o dia é o mesmo, a instituição é outra. Ela escreve
+    `idem` uma vez e só o que muda."""
+    lido = ler(
+        _completa(
+            agendas=[
+                {**_agenda("A1"), "UF": "RJ"},
+                {"Código": "A2", "Data": "idem", "Instituição": "Outro Órgão"},
+            ]
+        )
+    )
+
+    segunda = lido["Agendas"][1].celulas
+    assert segunda["Instituição"] == "Outro Órgão"
+    assert segunda["UF"] == "RJ"
+
+
+def test_a_linha_SEM_idem_nao_herda_nada():
+    """A GARANTIA QUE NÃO SE PERDE: quem não pediu herança não recebe. Vazio
+    continua vazio, e um esquecimento continua virando pendência em vez de dado
+    inventado — a linha opta por herdar, uma linha de cada vez."""
+    lido = ler(
+        _completa(
+            agendas=[
+                {**_agenda("A1"), "UF": "RJ", "Local": "Sede"},
+                {"Código": "A2", "Data": date(2026, 9, 26), "Instituição": "Outro"},
+            ]
+        )
+    )
+
+    segunda = lido["Agendas"][1].celulas
+    assert segunda["UF"] is None
+    assert segunda["Local"] is None
+
+
+def test_o_CODIGO_da_agenda_nunca_herda():
+    """Herdar o código faria duas agendas terem o mesmo, e o arquivo seria
+    recusado por código repetido — a herança derrubaria o arquivo que ela deveria
+    facilitar. Na aba Agendas o código IDENTIFICA a linha; nas filhas ele
+    REFERENCIA outra, e é por isso que lá ele herda."""
+    lido = ler(
+        _completa(
+            agendas=[
+                _agenda("A1"),
+                {"Data": "idem"},
+            ]
+        )
+    )
+
+    codigos = [linha.celulas["Código"] for linha in lido["Agendas"]]
+    assert codigos[0] == "A1"
+    assert codigos[1] != "A1"
+
+
+def test_na_aba_filha_o_codigo_herda_junto_com_o_resto():
+    """Dez participantes da mesma reunião: um `idem` e só os nomes mudam."""
+    lido = ler(
+        _completa(
+            agendas=[_agenda("A1")],
+            participantes=[
+                {"Código": "A1", "Pessoa": "Ana Prado", "Presença": "presente"},
+                {"Pessoa": "Bruno Lima", "Presença": "idem"},
+            ],
+        )
+    )
+
+    segunda = lido["Participantes"][1].celulas
+    assert segunda["Código"] == "A1"
+    assert segunda["Presença"] == "presente"
+    assert segunda["Pessoa"] == "Bruno Lima"
+
+
+def test_a_heranca_de_linha_segue_valendo_em_cadeia():
+    """Cinco reuniões no mesmo dia: `idem` em cada linha, e todas herdam o
+    original — não o marcador."""
+    lido = ler(
+        _completa(
+            agendas=[
+                {**_agenda("A1"), "UF": "RJ"},
+                {"Código": "A2", "Data": "idem", "Instituição": "B"},
+                {"Código": "A3", "Data": "idem", "Instituição": "C"},
+            ]
+        )
+    )
+
+    assert [linha.celulas["UF"] for linha in lido["Agendas"]] == ["RJ", "RJ", "RJ"]
+    assert [linha.celulas["Data"] for linha in lido["Agendas"]] == [date(2026, 9, 25)] * 3

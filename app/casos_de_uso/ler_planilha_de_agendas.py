@@ -203,16 +203,44 @@ def _linhas_da_aba(aba: Aba, folha) -> list[LinhaBruta]:
         if all(valor is None for valor in celulas.values()):
             continue
 
+        # UM `idem` VALE PARA A LINHA TODA, e é isso que faz o marcador economizar
+        # trabalho: escrevê-lo em cada uma das 27 colunas trocaria digitar 27
+        # valores por digitar 27 marcadores, e não pouparia nada.
+        #
+        # A linha OPTA por herdar, uma de cada vez. Quem não escreveu `idem` não
+        # herda nada — vazio continua vazio, e um esquecimento continua virando
+        # pendência em vez de dado inventado. É a diferença entre isto e "vazio
+        # herda", que tiraria a possibilidade de deixar um campo vazio de propósito.
+        repete = any(
+            isinstance(valor, str) and normalizar(valor) == MARCADOR_DE_REPETICAO
+            for valor in celulas.values()
+        )
+
         for nome, valor in celulas.items():
-            if isinstance(valor, str) and normalizar(valor) == MARCADOR_DE_REPETICAO:
-                if nome not in ultimo:
-                    raise RegraViolada(
-                        f"Na linha {numero} da aba {aba.nome!r}, a coluna {nome!r} "
-                        f"tem {MARCADOR_DE_REPETICAO!r} mas não há linha acima com "
-                        "valor para repetir. Escreva o valor nesta linha."
-                    )
+            marcado = isinstance(valor, str) and normalizar(valor) == MARCADOR_DE_REPETICAO
+
+            if marcado and nome not in ultimo:
+                raise RegraViolada(
+                    f"Na linha {numero} da aba {aba.nome!r}, a coluna {nome!r} "
+                    f"tem {MARCADOR_DE_REPETICAO!r} mas não há linha acima com "
+                    "valor para repetir. Escreva o valor nesta linha."
+                )
+
+            # O CÓDIGO DA AGENDA NUNCA HERDA por tabela — duas agendas com o mesmo
+            # código fariam o arquivo ser recusado por código repetido, e a herança
+            # derrubaria o arquivo que ela existe para facilitar. Na aba Agendas o
+            # código IDENTIFICA a linha; nas filhas ele REFERENCIA outra, e lá
+            # herdar é justamente o que serve — dez participantes da mesma reunião.
+            if nome == COLUNA_DO_CODIGO and aba.nome == ABA_PRINCIPAL and not marcado:
+                continue
+
+            if marcado or (repete and valor is None and nome in ultimo):
                 celulas[nome] = ultimo[nome]
-            elif valor is not None:
+
+        # `ultimo` guarda o valor FINAL da linha, para uma cadeia de `idem` repetir
+        # o dado original e nunca o marcador.
+        for nome, valor in celulas.items():
+            if valor is not None:
                 ultimo[nome] = valor
 
         for nome in e_data:
