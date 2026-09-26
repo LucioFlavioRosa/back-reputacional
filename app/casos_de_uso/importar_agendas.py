@@ -23,7 +23,8 @@ campo que a pessoa preencheu certo.
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import UTC, date, datetime
+from types import MappingProxyType
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -47,7 +48,7 @@ from app.casos_de_uso.ler_planilha_de_agendas import (
     ler,
     ler_declarados,
 )
-from app.dominio.erros import RegraViolada
+from app.dominio.erros import Conflito, RegraViolada
 from app.dominio.importacao_de_agendas import (
     DECISOES_DE_DIVERGENCIA,
     FORMATO,
@@ -151,6 +152,10 @@ COLUNAS_EXIGIDAS_DAS_FILHAS: dict[str, tuple[str, ...]] = {
 #: Os campos que `InteracaoEntrada` exige. Sem um deles não há proposta nenhuma
 #: a montar, então a divergência TRAVA.
 OBRIGATORIOS = ("data_interacao", "instituicao_id", "uf")
+
+#: Um mapeamento vazio, para default de parâmetro. Um `{}` literal como default
+#: seria compartilhado entre todas as chamadas — e mutável.
+MAPPING_VAZIO: Mapping[tuple[str, str], object] = MappingProxyType({})
 
 #: Marca um nome que casa com MAIS DE UM cadastro.
 #:
@@ -300,11 +305,19 @@ def _resolver(
     indice: dict[str, dict[str, object]],
     declarados: Mapping[str, frozenset[str]],
     divergencias: list[Divergencia],
+    apontados: Mapping[tuple[str, str], object] = MAPPING_VAZIO,
 ) -> _Resolucao:
     """O valor resolvido, o cadastro a criar, ou a divergência anotada."""
     if valor is None:
         return _Resolucao()
     texto = str(valor)
+    # A DECISÃO DA PESSOA VEM PRIMEIRO. Ela já disse, na conferência, que
+    # "Prefeitura de Campinas" é aquele cadastro — e o nome continua não
+    # existindo no banco, então sem isto a confirmação o recusaria de novo e
+    # jogaria fora a decisão que ela tomou.
+    escolhido = apontados.get((campo, texto))
+    if escolhido is not None:
+        return _Resolucao(valor=escolhido)
     conhecidos = indice.get(vocabulario, {})
     veredito = classificar(texto, vocabulario, conhecidos, declarados.get(vocabulario, frozenset()))
 
@@ -335,6 +348,11 @@ def _resolver(
                 valor=texto,
                 mensagem=f"{coluna_nome}: vou cadastrar {texto!r}, que você declarou na aba.",
                 trava=False,
+                # MARCA A AÇÃO já aqui, e não só quando a pessoa decide na tela:
+                # é assim que a confirmação encontra o que criar sem depender do
+                # arquivo original, que não fica guardado. Declarar na aba e
+                # escolher "criar" na conferência passam a ter a MESMA forma.
+                acao="criar",
             )
         )
         return _Resolucao(a_criar=(vocabulario, texto))
@@ -354,6 +372,7 @@ def _filhas_por_codigo(
     por_aba: Mapping[str, list[LinhaBruta]],
     indice: dict[str, dict[str, object]],
     declarados: Mapping[str, frozenset[str]],
+    apontados: Mapping[tuple[str, str], object] = MAPPING_VAZIO,
 ) -> dict[str, dict[str, list]]:
     """Código da agenda → o que as abas filhas dela produziram.
 
@@ -393,6 +412,7 @@ def _filhas_por_codigo(
                         indice,
                         declarados,
                         divergencias,
+                        apontados,
                     )
                     resolvido = resolucao.valor
                     if resolucao.a_criar is not None:
@@ -559,11 +579,26 @@ def impedimentos(entrada: InteracaoEntrada, podem_representar: frozenset) -> lis
 
 
 def propor(sessao: Session, conteudo: bytes) -> list[Proposta]:
-    """Uma proposta por linha da aba Agendas, com o que não resolveu anotado."""
-    por_aba = ler(conteudo)
-    declarados = ler_declarados(conteudo)
+    """Uma proposta por linha da aba Agendas, a partir do arquivo."""
+    return propor_de_linhas(sessao, ler(conteudo), ler_declarados(conteudo))
+
+
+def propor_de_linhas(
+    sessao: Session,
+    por_aba: Mapping[str, list[LinhaBruta]],
+    declarados: Mapping[str, frozenset[str]],
+    apontados: Mapping[tuple[str, str], object] = MAPPING_VAZIO,
+) -> list[Proposta]:
+    """O mesmo, a partir de linhas JÁ LIDAS.
+
+    SEPARADO DE `propor` porque a confirmação não tem o arquivo. Ela reconstrói
+    as linhas de `importacao_linha.dados_brutos` e passa por aqui de novo, contra
+    o banco COMO ELE ESTÁ NAQUELE MOMENTO — que é o que a spec quer dizer por
+    "a resolução é refeita na confirmação". Ter duas portas para a mesma máquina
+    é o que impede a confirmação de reimplementar a resolução e divergir dela.
+    """
     indice = _indice(sessao)
-    filhas = _filhas_por_codigo(por_aba, indice, declarados)
+    filhas = _filhas_por_codigo(por_aba, indice, declarados, apontados)
     representantes = _quem_representa(sessao)
 
     colunas_de_agenda = aba_de(ABA_PRINCIPAL).colunas
@@ -597,6 +632,7 @@ def propor(sessao: Session, conteudo: bytes) -> list[Proposta]:
                     indice,
                     declarados,
                     divergencias,
+                    apontados,
                 )
                 valor = resolucao.valor
                 if resolucao.a_criar is not None:
@@ -803,6 +839,19 @@ def resolver(
             f"Decisão inválida: {decisao!r}. Use "
             f"{', '.join(DECISOES_DE_DIVERGENCIA)} ou 'descartar'."
         )
+    elif decisao == "criar":
+        # A RESOLUÇÃO NÃO PODE CONTORNAR A REGRA DO UPLOAD. `classificar` recusa
+        # valor novo em vocabulário fechado porque mudar a lista de modalidades
+        # ou de climas é mudança de REGRA — os KPIs dependem dela —, e isso é
+        # código e migration. Sem esta guarda, a tela de conferência oferecia
+        # uma porta lateral para a mesma coisa.
+        vocabulario = vocabulario_do_campo(campo)
+        if vocabulario in VOCABULARIOS_FECHADOS:
+            raise RegraViolada(
+                f"{valor!r} não pode ser cadastrado: esta lista é fechada, e "
+                "mudá-la é mudança de regra, não de cadastro. Aponte para um "
+                "valor existente ou descarte as linhas."
+            )
     elif decisao == "apontar":
         if not alvo:
             raise RegraViolada("Para apontar é preciso dizer para qual cadastro.")
@@ -847,13 +896,297 @@ def _cadastro_existe(sessao: Session, campo: str, alvo: str) -> bool:
     Sem esta guarda a decisão gravaria um id que a confirmação não encontra, e o
     erro apareceria lá — longe de quem escolheu, depois de a pessoa já ter
     conferido tudo.
+
+    ATENDE OS DOIS TIPOS DE VOCABULÁRIO. Antes só olhava `NO_BANCO`, e uma
+    Modalidade escrita errada não tinha saída: apontar para `presencial` era
+    recusado como inexistente, e criar é proibido porque a lista é fechada — a
+    pessoa ficava presa numa pendência sem resolução possível.
     """
     vocabulario = vocabulario_do_campo(campo)
-    fonte = NO_BANCO.get(vocabulario or "")
+    if vocabulario is None:
+        return False
+    if vocabulario in NO_CODIGO:
+        # O alvo É o código. Não há tabela a consultar.
+        return alvo in NO_CODIGO[vocabulario]
+    fonte = NO_BANCO.get(vocabulario)
     if fonte is None:
         return False
     coluna = getattr(fonte.tabela, fonte.resolve_para)
-    return sessao.scalar(select(coluna).where(coluna == alvo)) is not None
+    convertido = _no_tipo_da_coluna(coluna, alvo)
+    if convertido is None:
+        # Texto que não cabe no tipo da coluna: `"abc"` num campo UUID ia direto
+        # ao Postgres e voltava como erro de banco — 500 e "erro interno" para
+        # quem só mandou algo inesperado num campo da API.
+        return False
+    return sessao.scalar(select(coluna).where(coluna == convertido)) is not None
+
+
+def _no_tipo_da_coluna(coluna, alvo: str):
+    """`alvo` convertido para o tipo da coluna, ou `None` se não couber."""
+    import uuid as _uuid
+
+    from sqlalchemy import Integer, SmallInteger
+    from sqlalchemy.dialects.postgresql import UUID as _PG_UUID
+
+    tipo = coluna.type
+    try:
+        if isinstance(tipo, _PG_UUID):
+            return _uuid.UUID(str(alvo))
+        if isinstance(tipo, (Integer, SmallInteger)):
+            return int(alvo)
+    except (ValueError, AttributeError, TypeError):
+        return None
+    return alvo
+
+
+@dataclass(frozen=True, slots=True)
+class Resumo:
+    """O que a confirmação fez."""
+
+    criadas: int
+    cadastros: int
+
+
+def _decisoes(linhas) -> tuple[dict[tuple[str, str], str], dict[tuple[str, str], str]]:
+    """O que foi decidido: `(vocabulário, valor) -> criar` e `(campo, valor) -> alvo`."""
+    a_criar: dict[tuple[str, str], str] = {}
+    apontados: dict[tuple[str, str], str] = {}
+    for linha in linhas:
+        if linha.decisao == "descartada":
+            continue
+        for bruta in linha.divergencias or []:
+            acao = bruta.get("acao")
+            if acao == "criar":
+                vocabulario = vocabulario_do_campo(bruta["campo"])
+                if vocabulario:
+                    a_criar[(vocabulario, bruta["valor"])] = bruta["campo"]
+            elif acao == "apontar" and bruta.get("alvo"):
+                apontados[(bruta["campo"], bruta["valor"])] = bruta["alvo"]
+    return a_criar, apontados
+
+
+def _reconferir(sessao: Session, a_criar, apontados) -> None:
+    """A RECONFERÊNCIA — o passo mais delicado da funcionalidade.
+
+    A proposta foi calculada no upload. Entre ele e a confirmação, alguém pode ter
+    cadastrado aquela instituição pela tela de Administração, ou desativado uma
+    que a planilha usava. Confirmar cego criaria a duplicata que a conferência
+    existia para evitar — e duplicata de instituição é o defeito mais caro aqui,
+    porque contamina toda leitura que agrupa por órgão.
+
+    Levanta `Conflito` (409) e não `RegraViolada` (422) de propósito: o que a
+    pessoa mandou estava certo quando ela olhou. Pedir que ela procure um erro no
+    próprio preenchimento seria mandá-la atrás de algo que não existe.
+    """
+    indice = _indice(sessao)
+    for vocabulario, valor in a_criar:
+        if normalizar(valor) in indice.get(vocabulario, {}):
+            raise Conflito(
+                f"{valor!r} já foi cadastrado desde que você subiu a planilha. "
+                "Recarregue a conferência: agora é só apontar para o cadastro que "
+                "existe, em vez de criar um segundo."
+            )
+    for (campo, valor), alvo in apontados.items():
+        if not _cadastro_existe(sessao, campo, alvo):
+            raise Conflito(
+                f"O cadastro que você escolheu para {valor!r} não existe mais. "
+                "Recarregue a conferência e escolha de novo."
+            )
+
+
+def _criar_cadastros(sessao: Session, a_criar) -> int:
+    """Cria os cadastros declarados, no MESMO commit das agendas.
+
+    É por isso que nada nasce no upload: se nascesse, cancelar a conferência
+    deixaria instituições criadas sem nenhuma agenda a que servissem — e cancelar
+    é caminho normal, não falha.
+    """
+    from app.banco.tabelas_stakeholders import Instituicao, Interlocutor, PessoaAegea
+
+    criados = 0
+    for (vocabulario, valor), _campo in a_criar.items():
+        if vocabulario == "instituicoes":
+            # `tipo` é obrigatório e a planilha não o pergunta. `orgao` é o padrão
+            # honesto: é o que a coordenação importa em volume, e a alternativa
+            # seria pedir uma coluna a mais em toda linha para o caso raro.
+            sessao.add(
+                Instituicao(
+                    nome=valor, nome_normalizado=normalizar(valor), tipo="orgao", uf="NA"
+                )
+            )
+        elif vocabulario == "interlocutores":
+            sessao.add(Interlocutor(nome=valor, nome_normalizado=normalizar(valor)))
+        elif vocabulario == "pessoas_aegea":
+            sessao.add(PessoaAegea(nome=valor, nome_normalizado=normalizar(valor)))
+        elif vocabulario == "temas":
+            from app.banco.tabelas_catalogo import Tema
+
+            # `livre` e não `estrategico`: tema estratégico é vocabulário fechado
+            # do modelo, e a planilha não o amplia.
+            sessao.add(Tema(nome=valor, nivel="livre"))
+        else:
+            raise RegraViolada(
+                f"Não sei criar um cadastro em {vocabulario!r} pela importação. "
+                "Cadastre-o pela tela de Administração e aponte para ele."
+            )
+        criados += 1
+    if criados:
+        sessao.flush()
+    return criados
+
+
+def _linhas_para_reler(linhas) -> dict[str, list[LinhaBruta]]:
+    """As linhas gravadas, de volta ao formato que a resolução entende.
+
+    A CONFIRMAÇÃO NÃO TEM O ARQUIVO — ele não é guardado. Tem `dados_brutos`, que
+    é exatamente o que o leitor produziu, e é dele que a resolução roda de novo.
+    A data volta a `date` porque o JSONB a guardou como texto ISO.
+    """
+    from app.casos_de_uso.ler_planilha_de_agendas import data_de_celula
+
+    por_aba: dict[str, list[LinhaBruta]] = {aba.nome: [] for aba in FORMATO}
+    descartados: set[str] = {
+        str((linha.dados_brutos or {}).get(COLUNA_DO_CODIGO))
+        for linha in linhas
+        if linha.aba == ABA_PRINCIPAL and linha.decisao == "descartada"
+    }
+    for linha in linhas:
+        if linha.aba not in por_aba:
+            continue
+        celulas = dict(linha.dados_brutos or {})
+        if str(celulas.get(COLUNA_DO_CODIGO)) in descartados:
+            # A linha descartada sai, e as filhas dela com ela: manter um
+            # participante de uma agenda descartada faria o leitor recusar o
+            # conjunto por código órfão.
+            continue
+        for aba in FORMATO:
+            if aba.nome != linha.aba:
+                continue
+            for coluna in aba.colunas:
+                if coluna.campo == "data_interacao" and coluna.nome in celulas:
+                    celulas[coluna.nome] = data_de_celula(celulas[coluna.nome])
+        por_aba[linha.aba].append(
+            LinhaBruta(aba=linha.aba, numero=linha.linha_origem, celulas=celulas)
+        )
+    return por_aba
+
+
+def confirmar(sessao: Session, importacao_id, usuario) -> Resumo:
+    """Cria os cadastros e as agendas — tudo, ou nada.
+
+    UMA TRANSAÇÃO SÓ, e o commit acontece no teardown da dependência da rota (ver
+    `app/banco/sessao.py`). Não há `sessao.commit()` aqui de propósito: um commit
+    no meio criaria o estado que esta função existe para impedir, o de instituições
+    criadas e agendas não.
+    """
+    from app.banco import repositorio_importacao
+    from app.banco.repositorio_interacoes import RepositorioSQL
+    from app.casos_de_uso import registrar_interacao
+    from app.casos_de_uso.consulta_recebida import validar_consulta
+    from app.casos_de_uso.derivar_esfera import derivar_esfera
+    from app.casos_de_uso.derivar_frente import derivar_frente
+
+    importacao = repositorio_importacao.obter(sessao, importacao_id)
+    if importacao.situacao != "aguardando_conferencia":
+        raise RegraViolada(
+            f"Esta importação está {importacao.situacao!r} e não pode ser "
+            "confirmada. Só uma importação aguardando conferência pode."
+        )
+
+    linhas = repositorio_importacao.linhas_de(sessao, importacao_id)
+    presas = [
+        linha
+        for linha in linhas
+        if linha.aba == ABA_PRINCIPAL
+        and linha.decisao != "descartada"
+        and any(bruta.get("trava") for bruta in (linha.divergencias or []))
+    ]
+    if presas:
+        raise RegraViolada(
+            f"{len(presas)} linha(s) ainda seguram a confirmação. Resolva as "
+            "pendências da conferência antes de confirmar."
+        )
+
+    a_criar, apontados = _decisoes(linhas)
+    _reconferir(sessao, a_criar, apontados)
+    cadastros = _criar_cadastros(sessao, a_criar)
+
+    # Os apontamentos convertidos para o tipo da coluna, uma vez: a resolução os
+    # consulta por linha, e converter lá dentro repetiria o trabalho.
+    escolhidos: dict[tuple[str, str], object] = {}
+    for (campo, valor), alvo in apontados.items():
+        vocabulario = vocabulario_do_campo(campo)
+        fonte = NO_BANCO.get(vocabulario or "")
+        if fonte is None:
+            escolhidos[(campo, valor)] = alvo
+        else:
+            coluna = getattr(fonte.tabela, fonte.resolve_para)
+            escolhidos[(campo, valor)] = _no_tipo_da_coluna(coluna, alvo)
+
+    # A RESOLUÇÃO RODA DE NOVO, contra o banco com os cadastros já criados. É a
+    # mesma máquina do upload — `propor_de_linhas` —, e não uma segunda
+    # implementação que poderia divergir dela.
+    propostas = propor_de_linhas(
+        sessao, _linhas_para_reler(linhas), {}, escolhidos
+    )
+
+    por_linha_de_origem = {
+        linha.linha_origem: linha for linha in linhas if linha.aba == ABA_PRINCIPAL
+    }
+    repositorio = RepositorioSQL(sessao)
+    criadas = 0
+    for proposta in propostas:
+        if proposta.entrada is None:
+            raise Conflito(
+                f"A linha {proposta.linha.numero} deixou de ser resolvível desde a "
+                "conferência: "
+                + "; ".join(d.mensagem for d in proposta.divergencias if d.trava)
+            )
+        entrada = proposta.entrada
+        frente = entrada.frente or derivar_frente(
+            sessao,
+            instituicao_id=entrada.instituicao_id,
+            formato_interacao_id=entrada.formato_interacao_id,
+        )
+        esfera_id = entrada.esfera_id or derivar_esfera(
+            sessao, instituicao_id=entrada.instituicao_id
+        )
+        interacao = entrada.para_dominio(frente=frente, esfera_id=esfera_id)
+        # A PROCEDÊNCIA, e é o que permite responder "de onde veio este registro"
+        # e reprocessar quando a regra de leitura mudar.
+        interacao.fonte = "importacao_planilha"
+        interacao.origem_aba = proposta.linha.aba
+        interacao.origem_linha = proposta.linha.numero
+        validar_consulta(sessao, interacao)
+        criada = registrar_interacao.registrar(
+            repositorio, interacao=interacao, usuario=usuario
+        )
+        gravada = por_linha_de_origem.get(proposta.linha.numero)
+        if gravada is not None:
+            gravada.interacao_id = criada.id
+            gravada.decisao = "aceita" if gravada.decisao == "pendente" else gravada.decisao
+        criadas += 1
+
+    importacao.situacao = "confirmada"
+    importacao.confirmado_em = datetime.now(UTC)
+    sessao.flush()
+    return Resumo(criadas=criadas, cadastros=cadastros)
+
+
+def cancelar(sessao: Session, importacao_id) -> None:
+    """Desiste da importação, sem apagar o que a pessoa preencheu.
+
+    O bruto fica: ela pode querer entender o que deu errado, e é a única cópia
+    daquilo no sistema. E nenhum cadastro precisa ser desfeito, porque nenhum foi
+    criado — é o que `_criar_cadastros` deixa dito.
+    """
+    from app.banco import repositorio_importacao
+
+    importacao = repositorio_importacao.obter(sessao, importacao_id)
+    if importacao.situacao == "confirmada":
+        raise RegraViolada("Esta importação já foi confirmada e não pode ser cancelada.")
+    importacao.situacao = "cancelada"
+    sessao.flush()
 
 
 def vocabulario_do_campo(campo: str) -> str | None:

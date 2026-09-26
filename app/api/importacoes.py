@@ -65,6 +65,9 @@ class LinhaSaida(BaseModel):
     #: planilha e confere o que digitou.
     linha_origem: int
     decisao: str
+    #: A agenda que esta linha virou, depois da confirmação. É o que fecha o laço
+    #: entre a planilha e o registro.
+    interacao_id: str | None
     dados_brutos: dict
     proposta: dict | None
     divergencias: list
@@ -80,14 +83,36 @@ class GrupoSaida(BaseModel):
     sugestoes: list[str]
 
 
+class ACriarSaida(BaseModel):
+    """Um cadastro que a confirmação vai criar, ou um apontamento já decidido.
+
+    É o bloco "o que vou criar" da spec, recolhido por padrão: não pede nada da
+    pessoa, só presta contas do que vai acontecer quando ela confirmar.
+    """
+
+    campo: str
+    valor: str
+    #: `criar` ou `apontar`.
+    acao: str
+    #: O cadastro escolhido, quando `acao == "apontar"`.
+    alvo: str | None
+    linhas: list[int]
+
+
 class ImportacaoSaida(BaseModel):
     id: str
     arquivo_nome: str
     situacao: str
     criado_em: str
+    #: Quando a pessoa confirmou. Nulo enquanto não confirmou.
+    confirmado_em: str | None
     #: As divergências agrupadas por valor, ordenadas pelo que destrava mais.
-    #: É a vista principal da conferência: uma decisão, doze linhas.
+    #: É a vista principal da conferência: uma decisão, doze linhas. SÓ AS NÃO
+    #: RESOLVIDAS — uma decisão já tomada não é pendência, e deixá-la aqui fazia
+    #: a tela mostrar um aviso brando no lugar da decisão da pessoa.
     grupos: list[GrupoSaida]
+    #: O que já está decidido e vai acontecer na confirmação.
+    a_criar: list[ACriarSaida]
     #: A segunda vista — as 54 linhas, para descartar uma específica.
     linhas: list[LinhaSaida]
 
@@ -107,6 +132,30 @@ def _nomes_conhecidos(sessao, campo: str) -> list[str]:
     if vocabulario is None:
         return []
     return importar_agendas.vocabularios(sessao).get(vocabulario, [])
+
+
+def _decididas(linhas) -> list[ACriarSaida]:
+    """As divergências que já têm decisão, agrupadas como os grupos são."""
+    por_chave: dict[tuple[str, str, str, str | None], list[int]] = {}
+    for linha in linhas:
+        if linha.aba != "Agendas" or linha.decisao == "descartada":
+            continue
+        for bruta in linha.divergencias or []:
+            if not bruta.get("acao"):
+                continue
+            chave = (
+                bruta["campo"],
+                bruta["valor"],
+                bruta["acao"],
+                bruta.get("alvo"),
+            )
+            por_chave.setdefault(chave, []).append(linha.linha_origem)
+    return [
+        ACriarSaida(campo=campo, valor=valor, acao=acao, alvo=alvo, linhas=numeros)
+        for (campo, valor, acao, alvo), numeros in sorted(
+            por_chave.items(), key=lambda par: (-len(par[1]), par[0][1])
+        )
+    ]
 
 
 def _grupos(sessao, linhas) -> list[GrupoSaida]:
@@ -129,6 +178,8 @@ def _grupos(sessao, linhas) -> list[GrupoSaida]:
                     sugestoes=tuple(bruta.get("sugestoes") or ()),
                 )
                 for bruta in (linha.divergencias or [])
+                # A DECIDIDA NÃO É PENDÊNCIA. Ela vai para `a_criar`.
+                if not bruta.get("acao")
             ],
         )
         for linha in linhas
@@ -176,7 +227,11 @@ def _saida(sessao, importacao, linhas) -> ImportacaoSaida:
         arquivo_nome=importacao.arquivo_nome,
         situacao=importacao.situacao,
         criado_em=importacao.criado_em.isoformat(),
+        confirmado_em=(
+            importacao.confirmado_em.isoformat() if importacao.confirmado_em else None
+        ),
         grupos=grupos,
+        a_criar=_decididas(linhas),
         pendencias=len(linhas_presas),
         decisoes_pendentes=sum(1 for grupo in grupos if grupo.trava),
         linhas=[
@@ -185,6 +240,7 @@ def _saida(sessao, importacao, linhas) -> ImportacaoSaida:
                 aba=linha.aba,
                 linha_origem=linha.linha_origem,
                 decisao=linha.decisao,
+                interacao_id=str(linha.interacao_id) if linha.interacao_id else None,
                 dados_brutos=linha.dados_brutos,
                 proposta=linha.proposta,
                 divergencias=linha.divergencias,
@@ -252,6 +308,12 @@ def subir(sessao: Sessao, usuario: UsuarioLogado, arquivo: Arquivo) -> Importaca
                     "mensagem": divergencia.mensagem,
                     "trava": divergencia.trava,
                     "sugestoes": list(divergencia.sugestoes),
+                    # `acao` E `alvo` TAMBÉM. O `cria` do upload já nasce com
+                    # `acao="criar"`, e perdê-los aqui fazia a declaração na aba
+                    # editável reaparecer como pendência branda em vez de ir
+                    # para o bloco "o que vou criar".
+                    "acao": divergencia.acao,
+                    "alvo": divergencia.alvo,
                 }
                 for divergencia in proposta.divergencias
             ],
@@ -311,6 +373,45 @@ def resolver_divergencia(
         decisao=entrada.decisao,
         alvo=entrada.alvo,
     )
+    return _saida(sessao, importacao, repositorio_importacao.linhas_de(sessao, importacao_id))
+
+
+class ConfirmacaoSaida(BaseModel):
+    """O que a confirmação fez."""
+
+    criadas: int
+    cadastros: int
+    situacao: str
+
+
+@rotas.post("/{importacao_id}/confirmacao", status_code=status.HTTP_201_CREATED)
+def confirmar_importacao(
+    sessao: Sessao, usuario: UsuarioLogado, importacao_id: UUID
+) -> ConfirmacaoSaida:
+    """Cria os cadastros e as agendas — tudo, ou nada.
+
+    RECONFERE ANTES. Entre subir e confirmar, alguém pode ter cadastrado pela tela
+    de Administração a mesma instituição que esta importação ia criar. Confirmar
+    cego criaria a duplicata que a conferência existia para evitar, e duplicata de
+    instituição contamina toda leitura que agrupa por órgão. Quando algo mudou, a
+    resposta é 409 e não 422: o que a pessoa mandou estava certo quando ela olhou.
+    """
+    resumo = importar_agendas.confirmar(sessao, importacao_id, usuario)
+    return ConfirmacaoSaida(
+        criadas=resumo.criadas, cadastros=resumo.cadastros, situacao="confirmada"
+    )
+
+
+@rotas.post("/{importacao_id}/cancelamento")
+def cancelar_importacao(sessao: Sessao, importacao_id: UUID) -> ImportacaoSaida:
+    """Desiste da importação, sem apagar o que a pessoa preencheu.
+
+    NADA A DESFAZER: nenhum cadastro foi criado no upload, exatamente para que
+    cancelar não deixe instituições órfãs. O bruto fica porque é a única cópia
+    daquele preenchimento no sistema.
+    """
+    importar_agendas.cancelar(sessao, importacao_id)
+    importacao = repositorio_importacao.obter(sessao, importacao_id)
     return _saida(sessao, importacao, repositorio_importacao.linhas_de(sessao, importacao_id))
 
 

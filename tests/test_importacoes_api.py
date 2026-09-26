@@ -904,3 +904,522 @@ def test_resolver_uma_importacao_que_nao_existe_devolve_404(cliente_admin):
     )
 
     assert resposta.status_code == 404
+
+
+# =============================================================================
+# a confirmação: uma transação só, reconferida contra o banco
+# =============================================================================
+
+
+def _quantas(sessao, tabela) -> int:
+    from sqlalchemy import func
+    from sqlalchemy import select as sel
+
+    return sessao.scalar(sel(func.count()).select_from(tabela))
+
+
+@pytest.fixture
+def limpa(cliente_admin, sessao, semente):
+    """Três agendas que resolvem inteiras — nada a decidir."""
+    corpo = cliente_admin.post(
+        "/api/importacoes",
+        files={"arquivo": ("dia.xlsx", _planilha_de_um_dia(sessao, semente), TIPO_XLSX)},
+    ).json()
+    assert corpo["pendencias"] == 0, corpo["grupos"]
+    return corpo
+
+
+@pytest.fixture
+def com_cadastro_novo(cliente_admin, sessao, semente):
+    """Uma agenda cuja instituição foi DECLARADA na aba editável — a criar."""
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    from app.dominio.importacao_de_agendas import ROTULO_DO_VOCABULARIO
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    valores = {
+        "Código": "A1",
+        "Data": date(2026, 9, 25),
+        "Instituição": "Prefeitura de Campinas",
+        "UF": "SP",
+    }
+    folha.append([valores.get(coluna) for coluna in cabecalho])
+    pasta[ROTULO_DO_VOCABULARIO["instituicoes"]].append(["Prefeitura de Campinas"])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    corpo = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("dia.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+    assert corpo["pendencias"] == 0, corpo["grupos"]
+    return corpo
+
+
+def test_confirmar_cria_as_agendas(cliente_admin, sessao, limpa):
+    from app.banco.tabelas_interacoes import InteracaoRegistro
+
+    antes = _quantas(sessao, InteracaoRegistro)
+
+    resposta = cliente_admin.post(f"/api/importacoes/{limpa['id']}/confirmacao")
+
+    assert resposta.status_code == 201, resposta.text
+    assert _quantas(sessao, InteracaoRegistro) == antes + 3
+    assert resposta.json()["criadas"] == 3
+
+
+def test_confirmar_cria_o_cadastro_declarado_junto(cliente_admin, sessao, com_cadastro_novo):
+    """Os cadastros novos e as agendas nascem no MESMO commit."""
+    from app.banco.tabelas_interacoes import InteracaoRegistro
+
+    antes_inst = _quantas(sessao, Instituicao)
+    antes_ag = _quantas(sessao, InteracaoRegistro)
+
+    resposta = cliente_admin.post(f"/api/importacoes/{com_cadastro_novo['id']}/confirmacao")
+
+    assert resposta.status_code == 201, resposta.text
+    assert _quantas(sessao, Instituicao) == antes_inst + 1
+    assert _quantas(sessao, InteracaoRegistro) == antes_ag + 1
+    assert resposta.json()["cadastros"] == 1
+
+
+def test_a_agenda_criada_guarda_de_onde_veio(cliente_admin, sessao, limpa):
+    """A procedência é o que permite responder "de onde veio este registro" e
+    reprocessar quando a regra de leitura mudar."""
+    from sqlalchemy import select as sel
+
+    from app.banco.tabelas_interacoes import InteracaoRegistro
+
+    cliente_admin.post(f"/api/importacoes/{limpa['id']}/confirmacao")
+
+    criadas = sessao.scalars(
+        sel(InteracaoRegistro).where(InteracaoRegistro.fonte == "importacao_planilha")
+    ).all()
+    assert len(criadas) == 3
+    assert {linha.origem_aba for linha in criadas} == {"Agendas"}
+    assert sorted(linha.origem_linha for linha in criadas) == [2, 3, 4]
+
+
+def test_confirmar_liga_cada_linha_a_sua_agenda(cliente_admin, limpa):
+    """`interacao_id` é o que fecha o laço entre a planilha e o registro."""
+    cliente_admin.post(f"/api/importacoes/{limpa['id']}/confirmacao")
+
+    estado = cliente_admin.get(f"/api/importacoes/{limpa['id']}").json()
+    das_agendas = [linha for linha in estado["linhas"] if linha["aba"] == "Agendas"]
+    assert all(linha["interacao_id"] for linha in das_agendas)
+
+
+def test_confirmar_marca_a_importacao_como_confirmada(cliente_admin, limpa):
+    cliente_admin.post(f"/api/importacoes/{limpa['id']}/confirmacao")
+
+    estado = cliente_admin.get(f"/api/importacoes/{limpa['id']}").json()
+    assert estado["situacao"] == "confirmada"
+    assert estado["confirmado_em"]
+
+
+def test_o_cadastro_que_NASCEU_entre_subir_e_confirmar_para_a_confirmacao(
+    cliente_admin, sessao, com_cadastro_novo
+):
+    """O PONTO MAIS DELICADO DA FUNCIONALIDADE.
+
+    Entre subir e confirmar, alguém cadastrou a mesma instituição pela tela de
+    Administração. Confirmar cego criaria a duplicata que a conferência existia
+    para evitar — e duplicata de instituição é o defeito mais caro aqui, porque
+    espalha por toda leitura que agrupa por órgão.
+    """
+    sessao.add(
+        Instituicao(
+            nome="Prefeitura de Campinas",
+            nome_normalizado=normalizar("Prefeitura de Campinas"),
+            tipo="orgao",
+            uf="SP",
+        )
+    )
+    sessao.flush()
+
+    resposta = cliente_admin.post(f"/api/importacoes/{com_cadastro_novo['id']}/confirmacao")
+
+    assert resposta.status_code == 409, resposta.text
+    assert "Prefeitura de Campinas" in resposta.text
+
+
+def test_confirmar_com_pendencia_que_trava_recusa(cliente_admin, sessao, semente):
+    """O botão fica apagado na tela, e o servidor recusa por conta própria."""
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    valores = {
+        "Código": "A1",
+        "Data": date(2026, 9, 25),
+        "Instituição": "Orgao Que Ninguem Cadastrou",
+        "UF": "SP",
+    }
+    folha.append([valores.get(coluna) for coluna in cabecalho])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("dia.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+    assert criada["pendencias"] == 1
+
+    resposta = cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao")
+
+    assert resposta.status_code == 422
+
+
+def test_confirmar_duas_vezes_recusa(cliente_admin, limpa):
+    """Sem esta guarda, dois cliques no botão criariam as agendas duas vezes."""
+    primeira = cliente_admin.post(f"/api/importacoes/{limpa['id']}/confirmacao")
+    assert primeira.status_code == 201
+
+    segunda = cliente_admin.post(f"/api/importacoes/{limpa['id']}/confirmacao")
+
+    assert segunda.status_code == 422
+
+
+def test_a_linha_descartada_nao_vira_agenda(cliente_admin, sessao, importacao_com_quatro):
+    """Descartar é decisão, e ela tem de valer na confirmação."""
+    from app.banco.tabelas_interacoes import InteracaoRegistro
+
+    cliente_admin.patch(
+        f"/api/importacoes/{importacao_com_quatro['id']}/resolucoes",
+        json={
+            "campo": "instituicao_id",
+            "valor": "Prefeitura de Campinas",
+            "decisao": "descartar",
+        },
+    )
+    antes = _quantas(sessao, InteracaoRegistro)
+
+    resposta = cliente_admin.post(f"/api/importacoes/{importacao_com_quatro['id']}/confirmacao")
+
+    assert resposta.status_code == 201, resposta.text
+    assert _quantas(sessao, InteracaoRegistro) == antes
+    assert resposta.json()["criadas"] == 0
+
+
+def test_apontar_e_confirmar_usa_o_cadastro_escolhido(
+    cliente_admin, sessao, semente, importacao_com_quatro
+):
+    """O caminho completo da conferência: a pessoa aponta e a agenda nasce no
+    cadastro que ela escolheu, não num criado às pressas."""
+    from sqlalchemy import select as sel
+
+    from app.banco.tabelas_interacoes import InteracaoRegistro
+
+    escolhida = Instituicao(
+        nome="Prefeitura Municipal de Campinas",
+        nome_normalizado=normalizar("Prefeitura Municipal de Campinas"),
+        tipo="orgao",
+        uf="SP",
+    )
+    sessao.add(escolhida)
+    sessao.flush()
+
+    cliente_admin.patch(
+        f"/api/importacoes/{importacao_com_quatro['id']}/resolucoes",
+        json={
+            "campo": "instituicao_id",
+            "valor": "Prefeitura de Campinas",
+            "decisao": "apontar",
+            "alvo": str(escolhida.id),
+        },
+    )
+
+    resposta = cliente_admin.post(f"/api/importacoes/{importacao_com_quatro['id']}/confirmacao")
+
+    assert resposta.status_code == 201, resposta.text
+    criadas = sessao.scalars(
+        sel(InteracaoRegistro).where(InteracaoRegistro.instituicao_id == escolhida.id)
+    ).all()
+    assert len(criadas) == 4
+
+
+def test_cancelar_nao_deixa_cadastro_orfao(cliente_admin, sessao, com_cadastro_novo):
+    """Se os cadastros nascessem no upload, cancelar deixaria instituições
+    criadas sem nenhuma agenda a que servissem. É por isso que nada nasce lá."""
+    antes = _quantas(sessao, Instituicao)
+
+    resposta = cliente_admin.post(f"/api/importacoes/{com_cadastro_novo['id']}/cancelamento")
+
+    assert resposta.status_code == 200, resposta.text
+    assert _quantas(sessao, Instituicao) == antes
+    assert resposta.json()["situacao"] == "cancelada"
+
+
+def test_cancelar_preserva_o_bruto(cliente_admin, com_cadastro_novo):
+    """Cancelar não apaga o que a pessoa preencheu: ela pode querer entender o
+    que deu errado, e o bruto é a única cópia daquilo no sistema."""
+    cliente_admin.post(f"/api/importacoes/{com_cadastro_novo['id']}/cancelamento")
+
+    estado = cliente_admin.get(f"/api/importacoes/{com_cadastro_novo['id']}").json()
+    assert all(linha["dados_brutos"] for linha in estado["linhas"])
+
+
+def test_confirmar_uma_cancelada_recusa(cliente_admin, limpa):
+    cliente_admin.post(f"/api/importacoes/{limpa['id']}/cancelamento")
+
+    resposta = cliente_admin.post(f"/api/importacoes/{limpa['id']}/confirmacao")
+
+    assert resposta.status_code == 422
+
+
+def test_confirmar_uma_importacao_que_nao_existe_devolve_404(cliente_admin):
+    resposta = cliente_admin.post(
+        "/api/importacoes/00000000-0000-0000-0000-000000000000/confirmacao"
+    )
+
+    assert resposta.status_code == 404
+
+
+# =============================================================================
+# os defeitos que a revisão do Codex achou na Tarefa 10
+# =============================================================================
+
+
+def test_a_divergencia_resolvida_SAI_das_pendencias_e_vira_a_criar(
+    cliente_admin, importacao_com_quatro
+):
+    """DEFEITO 1. A divergência resolvida ficava na lista com `trava=False`, e o
+    agrupamento a devolvia como se fosse aviso comum — escondendo a decisão que a
+    pessoa tomou e fazendo a tela parecer ter uma pendência branda que não existe.
+    Resolvido é resolvido: sai dos grupos e entra no bloco "o que vou criar"."""
+    resposta = cliente_admin.patch(
+        f"/api/importacoes/{importacao_com_quatro['id']}/resolucoes",
+        json={
+            "campo": "instituicao_id",
+            "valor": "Prefeitura de Campinas",
+            "decisao": "criar",
+        },
+    )
+
+    corpo = resposta.json()
+    assert corpo["grupos"] == [], corpo["grupos"]
+    assert ["Prefeitura de Campinas"] == [item["valor"] for item in corpo["a_criar"]]
+
+
+def test_reaplicar_a_mesma_decisao_recusa(cliente_admin, importacao_com_quatro):
+    """DEFEITO 1, a outra metade. `linhas_com` continuava encontrando a
+    divergência já resolvida, então a guarda de "zero linhas alcançadas" não
+    protegia contra sobrescrever uma decisão tomada — um segundo clique podia
+    trocar "apontar para X" por "criar" sem ninguém perceber."""
+    primeira = cliente_admin.patch(
+        f"/api/importacoes/{importacao_com_quatro['id']}/resolucoes",
+        json={
+            "campo": "instituicao_id",
+            "valor": "Prefeitura de Campinas",
+            "decisao": "criar",
+        },
+    )
+    assert primeira.status_code == 200
+
+    segunda = cliente_admin.patch(
+        f"/api/importacoes/{importacao_com_quatro['id']}/resolucoes",
+        json={
+            "campo": "instituicao_id",
+            "valor": "Prefeitura de Campinas",
+            "decisao": "criar",
+        },
+    )
+
+    assert segunda.status_code == 422
+
+
+def test_o_declarado_na_aba_ja_aparece_como_a_criar(cliente_admin, sessao, semente):
+    """A declaração na aba editável e a decisão "criar" na tela passam a ter a
+    MESMA forma, e as duas aparecem no mesmo bloco — que é o que a spec descreve."""
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    from app.dominio.importacao_de_agendas import ROTULO_DO_VOCABULARIO
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    valores = {
+        "Código": "A1",
+        "Data": date(2026, 9, 25),
+        "Instituição": "Prefeitura de Campinas",
+        "UF": "SP",
+    }
+    folha.append([valores.get(coluna) for coluna in cabecalho])
+    pasta[ROTULO_DO_VOCABULARIO["instituicoes"]].append(["Prefeitura de Campinas"])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    corpo = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("dia.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+
+    assert corpo["grupos"] == []
+    assert [item["valor"] for item in corpo["a_criar"]] == ["Prefeitura de Campinas"]
+
+
+def test_apontar_para_um_vocabulario_DE_CODIGO_funciona(cliente_admin, sessao, semente):
+    """DEFEITO 2. `_cadastro_existe` só olhava `NO_BANCO`, então uma Modalidade
+    escrita errada não podia ser resolvida apontando para um código válido — a
+    pessoa ficava sem saída numa pendência que travava."""
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    valores = {
+        "Código": "A1",
+        "Data": date(2026, 9, 25),
+        "Instituição": semente["instituicao"].nome,
+        "UF": "SP",
+        "Modalidade": "pessoalmente",
+    }
+    folha.append([valores.get(coluna) for coluna in cabecalho])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("dia.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+    assert criada["pendencias"] == 1
+
+    resposta = cliente_admin.patch(
+        f"/api/importacoes/{criada['id']}/resolucoes",
+        json={
+            "campo": "modalidade",
+            "valor": "pessoalmente",
+            "decisao": "apontar",
+            "alvo": "presencial",
+        },
+    )
+
+    assert resposta.status_code == 200, resposta.text
+    assert resposta.json()["pendencias"] == 0
+
+
+def test_criar_num_vocabulario_FECHADO_recusa(cliente_admin, sessao, semente):
+    """DEFEITO 2, a metade pior. `criar` não era validado contra vocabulário
+    fechado, então a resolução contornava a regra que `classificar` enforça no
+    upload: mudar a lista de modalidades é mudança de regra, não de cadastro."""
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    valores = {
+        "Código": "A1",
+        "Data": date(2026, 9, 25),
+        "Instituição": semente["instituicao"].nome,
+        "UF": "SP",
+        "Modalidade": "pessoalmente",
+    }
+    folha.append([valores.get(coluna) for coluna in cabecalho])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("dia.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+
+    resposta = cliente_admin.patch(
+        f"/api/importacoes/{criada['id']}/resolucoes",
+        json={"campo": "modalidade", "valor": "pessoalmente", "decisao": "criar"},
+    )
+
+    assert resposta.status_code == 422
+    assert "fechad" in resposta.text.lower()
+
+
+def test_alvo_malformado_recusa_com_422_e_nao_estoura(cliente_admin, importacao_com_quatro):
+    """DEFEITO 3. `alvo` chega como texto e ia direto comparar com uma coluna
+    UUID. "abc" viraria erro de banco — 500 e "erro interno" para quem só digitou
+    algo inesperado num campo da API."""
+    resposta = cliente_admin.patch(
+        f"/api/importacoes/{importacao_com_quatro['id']}/resolucoes",
+        json={
+            "campo": "instituicao_id",
+            "valor": "Prefeitura de Campinas",
+            "decisao": "apontar",
+            "alvo": "abc",
+        },
+    )
+
+    assert resposta.status_code == 422, resposta.text
+
+
+def test_alvo_nao_numerico_num_campo_de_id_inteiro_recusa(cliente_admin, sessao, semente):
+    """O mesmo, do lado dos dicionários com id inteiro."""
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    valores = {
+        "Código": "A1",
+        "Data": date(2026, 9, 25),
+        "Instituição": semente["instituicao"].nome,
+        "UF": "SP",
+        "Unidade de negócio": "Unidade Que Nao Existe",
+    }
+    folha.append([valores.get(coluna) for coluna in cabecalho])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("dia.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+
+    resposta = cliente_admin.patch(
+        f"/api/importacoes/{criada['id']}/resolucoes",
+        json={
+            "campo": "unidade_negocio_id",
+            "valor": "Unidade Que Nao Existe",
+            "decisao": "apontar",
+            "alvo": "nao-e-numero",
+        },
+    )
+
+    assert resposta.status_code == 422, resposta.text
+
+
+def test_a_confirmacao_nao_faz_commit_por_conta_propria(cliente_admin, sessao, limpa):
+    """OU TUDO ENTRA, OU NADA ENTRA — e é o que garante isso.
+
+    A atomicidade não vem de um `try/except` dentro do caso de uso: vem de a
+    transação ser a da requisição, comitada no teardown da dependência (ver
+    `app/banco/sessao.py`). Um `sessao.commit()` no meio de `confirmar` criaria
+    exatamente o estado que ela existe para impedir — instituições criadas e
+    agendas não —, e nenhum teste de caminho feliz notaria.
+
+    Este teste vigia a ausência de um commit. É a única forma de prender a
+    invariante sem simular a falha, porque dentro da transação do próprio teste
+    um rollback parcial não se distingue de um total.
+    """
+    chamadas = []
+    original = sessao.commit
+    sessao.commit = lambda *a, **k: chamadas.append(1) or original(*a, **k)
+    try:
+        resposta = cliente_admin.post(f"/api/importacoes/{limpa['id']}/confirmacao")
+    finally:
+        sessao.commit = original
+
+    assert resposta.status_code == 201, resposta.text
+    assert chamadas == [], "confirmar comitou por conta própria"

@@ -71,6 +71,20 @@ class NaoEncontrado(ErroDeDominio):
         return self.PUBLICA
 
 
+class Conflito(ErroDeDominio):
+    """O mundo mudou por baixo de quem estava decidindo.
+
+    NÃO É `RegraViolada`, e a diferença importa para quem recebe: `RegraViolada`
+    diz "o que você mandou está errado, corrija"; `Conflito` diz "o que você
+    mandou estava certo quando você olhou, e o estado mudou desde então —
+    recarregue e decida de novo". Um 422 no lugar de 409 faria a pessoa procurar
+    um erro no próprio preenchimento que não existe.
+
+    O caso que a criou: entre subir a planilha e confirmar, alguém cadastrou pela
+    tela de Administração a mesma instituição que a importação ia criar.
+    """
+
+
 class NaoAutorizado(ErroDeDominio):
     """A operação foi recusada. Vira 403.
 

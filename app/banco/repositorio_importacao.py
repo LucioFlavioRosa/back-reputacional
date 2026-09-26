@@ -100,20 +100,36 @@ def linhas_com(
 ) -> list[ImportacaoLinha]:
     """As linhas cuja lista de divergências contém este `(campo, valor)`.
 
+    SÓ AS NÃO RESOLVIDAS. Uma divergência já decidida continua na lista, com
+    `acao` preenchido — e encontrá-la de novo faria um segundo clique sobrescrever
+    a decisão da pessoa em silêncio, trocando "apontar para X" por "criar" sem
+    nada avisar. A guarda de "zero linhas alcançadas" só protege se esta consulta
+    não devolver o que já foi resolvido.
+
     USA CONTENÇÃO (`@>`) e não `->>`: os dois índices GIN da 0008 não entram com
     `->>`, e a consulta cairia para varredura sequencial sem nada parecer errado.
-    A própria migration deixa este exemplo escrito.
+    A própria migration deixa este exemplo escrito. O filtro de `acao` é feito
+    em Python porque "esta chave está ausente" não se expressa por contenção — e
+    o `@>` já reduziu o conjunto a um punhado de linhas.
     """
-    return list(
-        sessao.scalars(
-            select(ImportacaoLinha)
-            .where(
-                ImportacaoLinha.importacao_id == importacao_id,
-                ImportacaoLinha.divergencias.contains([{"campo": campo, "valor": valor}]),
-            )
-            .order_by(ImportacaoLinha.aba, ImportacaoLinha.linha_origem)
-        ).all()
-    )
+    candidatas = sessao.scalars(
+        select(ImportacaoLinha)
+        .where(
+            ImportacaoLinha.importacao_id == importacao_id,
+            ImportacaoLinha.divergencias.contains([{"campo": campo, "valor": valor}]),
+        )
+        .order_by(ImportacaoLinha.aba, ImportacaoLinha.linha_origem)
+    ).all()
+    return [
+        linha
+        for linha in candidatas
+        if any(
+            bruta.get("campo") == campo
+            and bruta.get("valor") == valor
+            and not bruta.get("acao")
+            for bruta in (linha.divergencias or [])
+        )
+    ]
 
 
 def obter(sessao: Session, importacao_id: uuid.UUID) -> Importacao:

@@ -83,7 +83,7 @@ def _texto(valor: object) -> object:
     return aparado or None
 
 
-def _data(valor: object) -> object:
+def data_de_celula(valor: object) -> object:
     """Devolve `date` quando consegue; o valor cru quando não.
 
     Deixar passar cru é deliberado: data ilegível é divergência de UMA linha,
@@ -173,7 +173,7 @@ def _linhas_da_aba(aba: Aba, folha) -> list[LinhaBruta]:
         if all(valor is None for valor in celulas.values()):
             continue
         for nome in e_data:
-            celulas[nome] = _data(celulas[nome])
+            celulas[nome] = data_de_celula(celulas[nome])
         lidas.append(LinhaBruta(aba=aba.nome, numero=numero, celulas=celulas))
     return lidas
 
