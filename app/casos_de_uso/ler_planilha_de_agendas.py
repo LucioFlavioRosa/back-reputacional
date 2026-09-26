@@ -30,7 +30,13 @@ from dataclasses import dataclass
 from datetime import date, datetime
 
 from app.dominio.erros import RegraViolada
-from app.dominio.importacao_de_agendas import FORMATO, Aba
+from app.dominio.importacao_de_agendas import (
+    FORMATO,
+    ROTULO_DO_VOCABULARIO,
+    VOCABULARIOS_EDITAVEIS,
+    Aba,
+)
+from app.dominio.texto import normalizar
 
 #: Primeira barreira, antes de o parser de XML ver o arquivo: um `.xlsx` é um
 #: zip, e todo zip começa assim. É a mesma guarda de `ingerir_mencoes`.
@@ -240,3 +246,44 @@ def ler(conteudo: bytes) -> dict[str, list[LinhaBruta]]:
             _conferir_vinculo(aba, por_aba[aba.nome], codigos)
 
     return por_aba
+
+
+def ler_declarados(conteudo: bytes) -> dict[str, frozenset[str]]:
+    """Os nomes que a pessoa ESCREVEU nas abas de vocabulário editáveis.
+
+    É a metade da regra central da classificação que não vem do banco: escrever
+    um nome novo na aba de cadastro é declaração de intenção — "quero que isto
+    exista" —, e é o que separa cadastro novo de erro de grafia digitado direto
+    na célula da agenda. Ver `classificar`, no domínio.
+
+    ABRE O ARQUIVO UMA SEGUNDA VEZ, de propósito, em vez de `ler` passar a
+    devolver as duas coisas. `ler` tem contrato e testes próprios em torno das
+    quatro abas de preenchimento, e alargá-lo para carregar vocabulário
+    misturaria duas perguntas diferentes — "a estrutura se sustenta?" e "o que a
+    pessoa quer cadastrar?". O custo é um `load_workbook` a mais sobre bytes que
+    já estão na memória, para um arquivo de no máximo 500 agendas.
+
+    SÓ AS EDITÁVEIS. Ler as fechadas não mudaria nada — `classificar` recusa
+    valor novo nelas de qualquer jeito — e carregá-las sugeriria que declarar um
+    clima novo significa algo, quando não significa.
+
+    Uma aba de vocabulário que não existe vale como vazia, e não como recusa: o
+    arquivo de quem apagou a aba que não ia usar continua tendo agendas
+    perfeitamente resolvíveis contra o banco, e o efeito de tolerar é o seguro —
+    o nome novo vira divergência para a pessoa resolver na tela, em vez de
+    cadastro criado sem ela ter declarado nada.
+    """
+    pasta = _abrir(conteudo)
+    declarados: dict[str, frozenset[str]] = {}
+    for chave in VOCABULARIOS_EDITAVEIS:
+        rotulo = ROTULO_DO_VOCABULARIO[chave]
+        if rotulo not in pasta.sheetnames:
+            declarados[chave] = frozenset()
+            continue
+        nomes = set()
+        for (valor,) in pasta[rotulo].iter_rows(min_col=1, max_col=1, values_only=True):
+            aparado = _texto(valor)
+            if isinstance(aparado, str):
+                nomes.add(normalizar(aparado))
+        declarados[chave] = frozenset(nomes)
+    return declarados

@@ -67,7 +67,7 @@ VOCABULARIOS_EDITAVEIS: frozenset[str] = frozenset(
         "temas",
         "unidades_negocio",
         "formatos_interacao",
-        "areas",
+        "areas_pessoa",
     }
 )
 
@@ -129,7 +129,7 @@ ROTULO_DO_VOCABULARIO: dict[str, str] = {
     "temas": "Temas",
     "unidades_negocio": "Unidades de negócio",
     "formatos_interacao": "Tipos de interação",
-    "areas": "Áreas",
+    "areas_pessoa": "Áreas",
     "status": "Situação",
     "climas": "Clima",
     "resultados": "Resultado",
@@ -187,8 +187,8 @@ _AGENDAS = Aba(
         Coluna(nome="Tema 1", campo="temas", vocabulario="temas"),
         Coluna(nome="Tema 2", campo="temas", vocabulario="temas"),
         Coluna(nome="Tema 3", campo="temas", vocabulario="temas"),
-        Coluna(nome="Área 1", campo="areas", vocabulario="areas"),
-        Coluna(nome="Área 2", campo="areas", vocabulario="areas"),
+        Coluna(nome="Área 1", campo="areas", vocabulario="areas_pessoa"),
+        Coluna(nome="Área 2", campo="areas", vocabulario="areas_pessoa"),
     ),
 )
 
