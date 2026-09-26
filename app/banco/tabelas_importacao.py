@@ -91,6 +91,13 @@ class ImportacaoLinha(Tabela):
     #: alguma divergência trava — não há proposta válida a guardar.
     proposta: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
+    #: O que esta linha herdou da linha de cima por `idem`, coluna → valor.
+    #:
+    #: VIVE DENTRO DE `dados_brutos`, sob a chave `__herdado__`, e não numa coluna
+    #: nova: a 0008 não a tem, e acrescentá-la seria migration para um dado que é
+    #: rastro de leitura — não fato do domínio. `dados_brutos` já é o lugar do que
+    #: a planilha disse, e a herança é o que ela disse por `idem`.
+
     #: O que ela não conseguiu resolver sozinha. Lista vazia significa linha
     #: limpa; a tela de conferência ordena por esta coluna.
     #:

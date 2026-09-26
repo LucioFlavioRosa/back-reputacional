@@ -1770,3 +1770,162 @@ def test_criar_num_campo_SEM_vocabulario_recusa(cliente_admin, sessao, semente):
     )
 
     assert resposta.status_code == 422
+
+
+def test_a_conferencia_mostra_o_que_foi_HERDADO(cliente_admin, sessao, semente):
+    """O PROBLEMA QUE O DONO ACHOU AO TESTAR.
+
+    A herança por `idem` é a única parte desta funcionalidade cujo resultado é
+    INVISÍVEL antes de criar as agendas: a célula continua visualmente vazia na
+    planilha, e a conferência mostrava só `dados_brutos` — o que foi digitado. A
+    pessoa não tinha como saber, antes de confirmar, o que de fato seria gravado
+    naquelas células.
+
+    Cada linha passa a dizer também o que foi herdado, por coluna. É o que permite
+    conferir uma linha de `idem` sem confiar na memória do que havia acima.
+    """
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    primeira = {
+        "Código": "A1",
+        "Data": date(2026, 9, 25),
+        "Instituição": semente["instituicao"].nome,
+        "UF": "SP",
+        "Local": "Sede, sala 3",
+    }
+    segunda = {"Código": "A2", "Data": "idem"}
+    for valores in (primeira, segunda):
+        folha.append([valores.get(coluna) for coluna in cabecalho])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    corpo = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+
+    por_linha = {linha["linha_origem"]: linha for linha in corpo["linhas"]}
+
+    # A primeira não herdou nada — ela é a origem.
+    assert por_linha[2]["herdado"] == {}
+
+    # A segunda herdou o que deixou em branco, e a tela pode mostrar cada valor.
+    herdado = por_linha[3]["herdado"]
+    assert herdado["Data"] == "2026-09-25"
+    assert herdado["Instituição"] == semente["instituicao"].nome
+    assert herdado["UF"] == "SP"
+    assert herdado["Local"] == "Sede, sala 3"
+
+
+def test_o_que_a_pessoa_digitou_nao_entra_no_herdado(cliente_admin, sessao, semente):
+    """O contrapeso: a tela precisa distinguir o que ela escreveu do que veio de
+    cima. Sem isso, "herdado" viraria um despejo da linha inteira e não diria
+    nada."""
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    for valores in (
+        {
+            "Código": "A1",
+            "Data": date(2026, 9, 25),
+            "Instituição": semente["instituicao"].nome,
+            "UF": "SP",
+        },
+        {"Código": "A2", "Data": "idem", "UF": "RJ"},
+    ):
+        folha.append([valores.get(coluna) for coluna in cabecalho])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    corpo = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+
+    herdado = {linha["linha_origem"]: linha["herdado"] for linha in corpo["linhas"]}[3]
+    assert "UF" not in herdado, "UF foi digitada, não herdada"
+    assert herdado["Instituição"] == semente["instituicao"].nome
+
+
+def test_interlocutor_novo_declarado_VIRA_participante_na_confirmacao(
+    cliente_admin, sessao, semente
+):
+    """ACHADO DA REVISÃO FINAL, e o cenário que nenhum teste cruzava.
+
+    O interlocutor nascia só com nome, sem `instituicao_id`. A recusa 4 — o
+    participante tem de pertencer à instituição da agenda — então o rejeitava NA
+    CONFIRMAÇÃO: o upload dizia "vou criar", a pessoa conferia tudo, e o
+    último passo devolvia conflito por uma pessoa que ela mesma declarou.
+
+    A instituição dele vem da AGENDA em que ele aparece. É a única resposta
+    possível: a planilha não tem onde dizê-la, e é a agenda que afirma que aquela
+    pessoa representava aquele órgão naquela reunião.
+    """
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    from app.banco.tabelas_interacoes import InteracaoInterlocutor
+    from app.dominio.importacao_de_agendas import ROTULO_DO_VOCABULARIO
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    folha.append(
+        [
+            {
+                "Código": "A1",
+                "Data": date(2026, 9, 25),
+                "Instituição": semente["instituicao"].nome,
+                "UF": "SP",
+            }.get(coluna)
+            for coluna in cabecalho
+        ]
+    )
+    participantes = pasta["Participantes"]
+    cabecalho_p = [celula.value for celula in next(participantes.iter_rows())]
+    participantes.append(
+        [
+            {"Código": "A1", "Pessoa": "Carla Nova", "Presença": "presente"}.get(coluna)
+            for coluna in cabecalho_p
+        ]
+    )
+    pasta[ROTULO_DO_VOCABULARIO["interlocutores"]].append(["Carla Nova"])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+    assert criada["pendencias"] == 0, criada["grupos"]
+
+    resposta = cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao")
+
+    assert resposta.status_code == 201, resposta.text
+    assert resposta.json()["criadas"] == 1
+
+    # E a pessoa nova pertence à instituição da agenda, senão a recusa 4 a
+    # rejeitaria em qualquer edição futura daquela agenda pela tela.
+    nova = sessao.scalars(
+        select(Interlocutor).where(Interlocutor.nome_normalizado == normalizar("Carla Nova"))
+    ).first()
+    assert nova is not None
+    assert nova.instituicao_id == semente["instituicao"].id
+
+    # E ela de fato ficou ligada à agenda criada.
+    ligacoes = sessao.scalars(
+        select(InteracaoInterlocutor).where(
+            InteracaoInterlocutor.interlocutor_id == nova.id
+        )
+    ).all()
+    assert len(ligacoes) == 1

@@ -26,7 +26,7 @@ deixa a pessoa voltar à planilha e conferir o que digitou.
 
 import io
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 
 from app.dominio.erros import RegraViolada
@@ -90,6 +90,13 @@ class LinhaBruta:
     #: O número da linha NO ARQUIVO. A primeira linha de dados é a 2.
     numero: int
     celulas: Mapping[str, object]
+    #: O que veio da linha de cima por `idem`, coluna → valor.
+    #:
+    #: EXISTE PARA A CONFERÊNCIA MOSTRAR. A herança é a única parte desta
+    #: funcionalidade cujo resultado é invisível antes de as agendas nascerem: a
+    #: célula continua visualmente vazia na planilha. Sem isto, a pessoa
+    #: confirmaria 54 agendas confiando na memória do que havia acima.
+    herdado: Mapping[str, object] = field(default_factory=dict)
 
 
 def _texto(valor: object) -> object:
@@ -216,6 +223,7 @@ def _linhas_da_aba(aba: Aba, folha) -> list[LinhaBruta]:
             for valor in celulas.values()
         )
 
+        herdado: dict[str, object] = {}
         for nome, valor in celulas.items():
             marcado = isinstance(valor, str) and normalizar(valor) == MARCADOR_DE_REPETICAO
 
@@ -236,6 +244,7 @@ def _linhas_da_aba(aba: Aba, folha) -> list[LinhaBruta]:
 
             if marcado or (repete and valor is None and nome in ultimo):
                 celulas[nome] = ultimo[nome]
+                herdado[nome] = ultimo[nome]
 
         # `ultimo` guarda o valor FINAL da linha, para uma cadeia de `idem` repetir
         # o dado original e nunca o marcador.
@@ -245,7 +254,14 @@ def _linhas_da_aba(aba: Aba, folha) -> list[LinhaBruta]:
 
         for nome in e_data:
             celulas[nome] = data_de_celula(celulas[nome])
-        lidas.append(LinhaBruta(aba=aba.nome, numero=numero, celulas=celulas))
+        for nome in e_data:
+            if nome in herdado:
+                herdado[nome] = celulas[nome]
+        lidas.append(
+            LinhaBruta(
+                aba=aba.nome, numero=numero, celulas=celulas, herdado=herdado
+            )
+        )
     return lidas
 
 

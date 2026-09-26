@@ -1117,8 +1117,63 @@ def _reconferir(sessao: Session, a_criar, apontados) -> None:
             )
 
 
+def _instituicao_de_cada_interlocutor(linhas, indice) -> dict[str, object]:
+    """Interlocutor novo → a instituição da agenda em que ele aparece.
+
+    É A ÚNICA RESPOSTA POSSÍVEL, e ela é boa: a planilha não tem onde dizer a
+    instituição de um interlocutor novo, e é a própria agenda que afirma que
+    aquela pessoa representava aquele órgão naquela reunião.
+
+    SEM ISTO o interlocutor nascia solto, e a recusa 4 — participante tem de
+    pertencer à instituição da agenda — o rejeitava NA CONFIRMAÇÃO: o upload dizia
+    "vou criar", a pessoa conferia tudo, e o último passo devolvia conflito por
+    uma pessoa que ela mesma declarou.
+    """
+    from app.casos_de_uso.ler_planilha_de_agendas import COLUNA_DO_CODIGO
+
+    instituicao_por_codigo: dict[str, object] = {}
+    for linha in linhas:
+        if linha.aba != ABA_PRINCIPAL or linha.decisao == "descartada":
+            continue
+        brutos = linha.dados_brutos or {}
+        nome = brutos.get("Instituição")
+        if not nome:
+            continue
+        instituicao_por_codigo[str(brutos.get(COLUNA_DO_CODIGO))] = indice.get(
+            "instituicoes", {}
+        ).get(normalizar(str(nome)))
+
+    de_quem: dict[str, object] = {}
+    ambiguos: set[str] = set()
+    for linha in linhas:
+        if linha.aba != "Participantes" or linha.decisao == "descartada":
+            continue
+        brutos = linha.dados_brutos or {}
+        pessoa = brutos.get("Pessoa")
+        if not pessoa:
+            continue
+        chave = normalizar(str(pessoa))
+        instituicao = instituicao_por_codigo.get(str(brutos.get(COLUNA_DO_CODIGO)))
+        if instituicao is None:
+            continue
+        if chave in de_quem and de_quem[chave] != instituicao:
+            # A MESMA PESSOA NOVA em agendas de instituições diferentes: não há
+            # como escolher, e escolher errado a faria ser recusada em toda edição
+            # futura daquela agenda. Quem sabe é quem cadastra.
+            ambiguos.add(str(pessoa))
+        de_quem[chave] = instituicao
+
+    if ambiguos:
+        raise RegraViolada(
+            f"{', '.join(sorted(ambiguos))} aparece em agendas de instituições "
+            "diferentes, e um interlocutor pertence a uma só. Cadastre-o pela tela "
+            "de Administração e aponte para ele na conferência."
+        )
+    return de_quem
+
+
 def _criar_cadastros(
-    sessao: Session, a_criar, categorias: Mapping[str, str], indice: Mapping
+    sessao: Session, a_criar, categorias: Mapping[str, str], indice: Mapping, linhas
 ) -> int:
     """Cria os cadastros declarados, no MESMO commit das agendas.
 
@@ -1128,8 +1183,18 @@ def _criar_cadastros(
     """
     from app.banco.tabelas_stakeholders import Instituicao, Interlocutor, PessoaAegea
 
+    # A ORDEM IMPORTA: o interlocutor precisa do id da instituição da agenda dele,
+    # e essa instituição pode estar sendo criada agora. Instituições primeiro, um
+    # `flush`, e só então o resto — com o índice relido para ver as novas.
+    def peso(entrada) -> int:
+        return 0 if entrada[0][0] == "instituicoes" else 1
+
     criados = 0
-    for (vocabulario, valor), _campo in a_criar.items():
+    de_quem: dict[str, object] = {}
+    for (vocabulario, valor), _campo in sorted(a_criar.items(), key=peso):
+        if vocabulario != "instituicoes" and not de_quem:
+            sessao.flush()
+            de_quem = _instituicao_de_cada_interlocutor(linhas, _indice(sessao))
         if vocabulario == "instituicoes":
             # O CAMINHO CANÔNICO: a categoria vem da planilha e o TIPO NASCE DELA,
             # exatamente como `api/stakeholders.py` faz — "a tela de cadastro nao
@@ -1163,7 +1228,13 @@ def _criar_cadastros(
                 )
             )
         elif vocabulario == "interlocutores":
-            sessao.add(Interlocutor(nome=valor, nome_normalizado=normalizar(valor)))
+            sessao.add(
+                Interlocutor(
+                    nome=valor,
+                    nome_normalizado=normalizar(valor),
+                    instituicao_id=de_quem.get(normalizar(valor)),
+                )
+            )
         elif vocabulario == "pessoas_aegea":
             sessao.add(PessoaAegea(nome=valor, nome_normalizado=normalizar(valor)))
         elif vocabulario == "temas":
@@ -1258,7 +1329,7 @@ def confirmar(sessao: Session, importacao_id, usuario) -> Resumo:
     a_criar, apontados = _decisoes(linhas)
     _reconferir(sessao, a_criar, apontados)
     cadastros = _criar_cadastros(
-        sessao, a_criar, _categorias_declaradas(linhas), _indice(sessao)
+        sessao, a_criar, _categorias_declaradas(linhas), _indice(sessao), linhas
     )
 
     # Os apontamentos convertidos para o tipo da coluna, uma vez: a resolução os

@@ -34,6 +34,10 @@ from app.dominio.texto import normalizar
 
 TIPO_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
+#: A chave sob a qual o herdado viaja dentro de `dados_brutos`. Começa e termina
+#: com dois sublinhados para não colidir com nome de coluna da planilha.
+CHAVE_DO_HERDADO = "__herdado__"
+
 #: O nome que a pessoa vê na pasta de downloads.
 NOME_DO_MODELO = "modelo-de-agendas.xlsx"
 
@@ -70,6 +74,12 @@ class LinhaSaida(BaseModel):
     #: entre a planilha e o registro.
     interacao_id: str | None
     dados_brutos: dict
+    #: O que esta linha herdou da de cima por `idem`, coluna → valor.
+    #:
+    #: A TELA MOSTRA ISTO porque a herança é invisível na planilha: a célula fica
+    #: vazia, e sem este campo a pessoa confirmaria 54 agendas confiando na memória
+    #: do que havia acima.
+    herdado: dict
     proposta: dict | None
     divergencias: list
 
@@ -279,7 +289,12 @@ def _saida(sessao, importacao, linhas) -> ImportacaoSaida:
                 linha_origem=linha.linha_origem,
                 decisao=linha.decisao,
                 interacao_id=str(linha.interacao_id) if linha.interacao_id else None,
-                dados_brutos=linha.dados_brutos,
+                dados_brutos={
+                    chave: valor
+                    for chave, valor in (linha.dados_brutos or {}).items()
+                    if chave != CHAVE_DO_HERDADO
+                },
+                herdado=(linha.dados_brutos or {}).get(CHAVE_DO_HERDADO) or {},
                 proposta=linha.proposta,
                 divergencias=linha.divergencias,
             )
@@ -335,7 +350,13 @@ def subir(sessao: Sessao, usuario: UsuarioLogado, arquivo: Arquivo) -> Importaca
             importacao_id=importacao.id,
             aba=proposta.linha.aba,
             linha_origem=proposta.linha.numero,
-            dados_brutos=proposta.linha.celulas,
+            # O herdado viaja DENTRO de `dados_brutos`, sob uma chave própria: a
+            # 0008 não tem coluna para ele, e acrescentá-la seria migration para um
+            # rastro de leitura. A saída o separa de novo.
+            dados_brutos={
+                **proposta.linha.celulas,
+                CHAVE_DO_HERDADO: dict(proposta.linha.herdado),
+            },
             proposta=(
                 proposta.entrada.model_dump(mode="json") if proposta.entrada is not None else None
             ),
@@ -370,7 +391,10 @@ def subir(sessao: Sessao, usuario: UsuarioLogado, arquivo: Arquivo) -> Importaca
                 importacao_id=importacao.id,
                 aba=filha.aba,
                 linha_origem=filha.numero,
-                dados_brutos=filha.celulas,
+                dados_brutos={
+                    **filha.celulas,
+                    CHAVE_DO_HERDADO: dict(filha.herdado),
+                },
                 proposta=None,
                 divergencias=[],
             )
