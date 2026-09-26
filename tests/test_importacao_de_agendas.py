@@ -127,3 +127,114 @@ def test_frente_esfera_e_tier_sao_derivados():
     assert DESTINO_DO_CAMPO["esfera_id"] == "derivado"
     assert DESTINO_DO_CAMPO["frente"] == "derivado"
     assert DESTINO_DO_CAMPO["tier"] == "derivado"
+
+
+# =============================================================================
+# a classificação: resolve, cria ou diverge
+# =============================================================================
+
+#: O que já está no banco: chave normalizada → nome como está cadastrado.
+CONHECIDOS = {"valor economico": "Valor Econômico"}
+
+
+def test_casa_depois_de_normalizar_caixa_e_acento():
+    from app.dominio.importacao_de_agendas import classificar
+
+    assert classificar("VALOR ECONOMICO", "instituicoes", CONHECIDOS, set()) == "resolve"
+
+
+def test_espaco_invisivel_colado_da_web_ainda_casa():
+    """`\xa0` é o espaço não separável que vem de copiar de uma página. A pessoa
+    não vê diferença nenhuma na tela, e o valor não casaria."""
+    from app.dominio.importacao_de_agendas import classificar
+
+    assert classificar("Valor\xa0Econômico ", "instituicoes", CONHECIDOS, set()) == "resolve"
+
+
+def test_nome_novo_DECLARADO_na_aba_editavel_e_criado():
+    from app.dominio.importacao_de_agendas import classificar
+
+    declarados = {"prefeitura de campinas"}
+
+    assert classificar("Prefeitura de Campinas", "instituicoes", CONHECIDOS, declarados) == "cria"
+
+
+def test_nome_novo_digitado_SO_NA_CELULA_vira_divergencia():
+    """A REGRA CENTRAL. Escrever na aba de cadastro é declaração de intenção;
+    digitar na célula da agenda é, muito mais provavelmente, erro de grafia."""
+    from app.dominio.importacao_de_agendas import classificar
+
+    assert classificar("Prefeitura de Campinas", "instituicoes", CONHECIDOS, set()) == "diverge"
+
+
+def test_o_mesmo_nome_em_duas_grafias_no_MESMO_arquivo_cria_um_so():
+    """Declarado como "Prefeitura de Campinas" e usado como "PREFEITURA DE
+    CAMPINAS": é o mesmo cadastro, e criar dois seria a duplicata que a
+    conferência existe para evitar — agora vinda de dentro do arquivo."""
+    from app.dominio.importacao_de_agendas import classificar
+
+    declarados = {"prefeitura de campinas"}
+
+    assert classificar("PREFEITURA DE CAMPINAS", "instituicoes", CONHECIDOS, declarados) == "cria"
+
+
+def test_vocabulario_FECHADO_nunca_cria_mesmo_declarado():
+    """A aba vem protegida, mas o Google Sheets tira a proteção ao converter.
+    O servidor recusa de qualquer jeito: mudar clima é mudança de regra."""
+    from app.dominio.importacao_de_agendas import classificar
+
+    assert classificar("Eufórico", "climas", {}, {"euforico"}) == "diverge"
+
+
+def test_vocabulario_fechado_com_valor_que_EXISTE_resolve():
+    """O contrapeso: fechado não quer dizer intransponível, quer dizer que a
+    lista é a lista. Sem isto, "fechado sempre diverge" passaria."""
+    from app.dominio.importacao_de_agendas import classificar
+
+    assert classificar("Propositivo", "climas", {"propositivo": "Propositivo"}, set()) == "resolve"
+
+
+def test_valor_vazio_diverge_em_vez_de_casar_com_nada():
+    """Uma célula vazia não é um nome. Sem esta guarda, `normalizar("")` daria
+    `""`, e um `conhecidos` que por acidente tivesse a chave vazia casaria."""
+    from app.dominio.importacao_de_agendas import classificar
+
+    assert classificar("", "instituicoes", CONHECIDOS, set()) == "diverge"
+    assert classificar("   ", "instituicoes", CONHECIDOS, set()) == "diverge"
+
+
+# =============================================================================
+# a divergência que a tela mostra
+# =============================================================================
+
+
+def test_a_divergencia_nasce_sem_sugestao():
+    """`sugestoes` é opcional porque a maioria das divergências não tem nenhuma
+    parecida a oferecer — e um default mutável aqui seria compartilhado entre
+    todas elas."""
+    from app.dominio.importacao_de_agendas import Divergencia
+
+    divergencia = Divergencia(
+        campo="instituicao_id",
+        valor="Prefeitura de Campinas",
+        mensagem="Instituição não encontrada",
+        trava=True,
+    )
+
+    assert divergencia.sugestoes == ()
+
+
+def test_a_divergencia_e_imutavel():
+    """Ela é reescrita na resolução (Tarefa 10) trocando o objeto, não mutando:
+    a lista de divergências de uma linha é comparada por valor, e mutar uma
+    delas mudaria em silêncio o agrupamento que a tela já mostrou."""
+    import dataclasses
+
+    import pytest
+
+    from app.dominio.importacao_de_agendas import Divergencia
+
+    divergencia = Divergencia(campo="c", valor="v", mensagem="m", trava=False)
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        divergencia.trava = True

@@ -19,9 +19,11 @@ fixture de Postgres e sem escrever um `.xlsx` de verdade.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence, Set
+from dataclasses import dataclass, field
 
 from app.dominio.erros import RegraViolada
+from app.dominio.texto import normalizar
 
 
 @dataclass(frozen=True, slots=True)
@@ -368,3 +370,77 @@ def aba_de(nome: str) -> Aba:
         if aba.nome == nome:
             return aba
     raise RegraViolada(f"Aba inválida: {nome!r}. Use uma de {[a.nome for a in FORMATO]}.")
+
+
+@dataclass(frozen=True, slots=True)
+class Divergencia:
+    """O que a importação não conseguiu resolver sozinha, numa linha.
+
+    IMUTÁVEL de propósito. A resolução (Tarefa 10) reescreve a lista de
+    divergências de uma linha trocando os objetos, e não mutando-os: a tela
+    agrupa as divergências por `(campo, valor)` e compara por valor, então uma
+    divergência mutada mudaria em silêncio um agrupamento que a pessoa já está
+    olhando.
+
+    `trava` é a diferença entre as duas severidades da spec, e ela não é
+    cosmética: com `trava=True` o botão de confirmar não acende. Instituição que
+    não existe trava; possível duplicata só avisa, porque duas reuniões com o
+    mesmo órgão no mesmo dia acontecem — e travar por isso ensinaria a pessoa a
+    ignorar o aviso.
+    """
+
+    #: O campo de `InteracaoEntrada` afetado — é por ele que a tela agrupa.
+    campo: str
+    #: O valor como a pessoa escreveu, sem normalizar: é o que ela reconhece.
+    valor: str
+    #: O texto que a pessoa lê.
+    mensagem: str
+    trava: bool
+    #: Nomes parecidos já cadastrados, para a tela oferecer. Vazio na maioria
+    #: das divergências, e por isso tem default — uma tupla, nunca lista, para
+    #: não haver default mutável compartilhado entre todas elas.
+    sugestoes: Sequence[str] = field(default_factory=tuple)
+
+
+def classificar(
+    valor: str,
+    vocabulario: str,
+    conhecidos: Mapping[str, str],
+    declarados: Set[str],
+) -> str:
+    """O que fazer com um valor lido da planilha: `resolve`, `cria` ou `diverge`.
+
+    A DISTINÇÃO ENTRE `conhecidos` E `declarados` É A REGRA CENTRAL DESTE
+    MÓDULO, e é ela que torna defensável a decisão de produto de criar cadastro
+    pela planilha. `conhecidos` é o que está no banco; `declarados` é o que a
+    pessoa escreveu nas ABAS EDITÁVEIS do próprio arquivo.
+
+    Escrever um nome novo na aba de cadastro é declaração de intenção — "quero
+    que isto exista". Digitar o mesmo nome direto na célula da agenda, sem
+    declará-lo, é muito mais provavelmente erro de grafia: "Prefeitura de
+    Campinas" onde o cadastro tem "Prefeitura Municipal de Campinas". Tratar os
+    dois igual é escolher entre dois defeitos — ou a importação cria duplicata
+    em massa a cada erro de digitação, ou ela recusa o cadastro novo que é a
+    razão de existir desta funcionalidade. A distinção evita os dois.
+
+    O vocabulário FECHADO nunca cria, mesmo declarado. A aba dele vai protegida
+    no modelo, mas o Google Sheets descarta a proteção ao converter o arquivo —
+    então proteger a aba é conveniência do Excel, e o controle é aqui. Mudar um
+    clima ou um status é mudança de regra de negócio: os KPIs e a taxa de
+    resolutividade dependem daquela lista, e isso é código e migration.
+
+    `normalizar` cuida da caixa, do acento e do espaço — inclusive do espaço não
+    separável (`\xa0`) colado de uma página web, que o NFKD converte em espaço
+    comum antes de o regex colapsar. Sem isso, um nome idêntico na tela não
+    casaria com o cadastro e a pessoa não teria como descobrir por quê.
+    """
+    chave = normalizar(valor)
+    # Célula vazia não é nome. Sem esta guarda, um `conhecidos` que por acidente
+    # tivesse a chave vazia faria a célula em branco "casar" com um cadastro.
+    if not chave:
+        return "diverge"
+    if chave in conhecidos:
+        return "resolve"
+    if vocabulario in VOCABULARIOS_FECHADOS:
+        return "diverge"
+    return "cria" if chave in declarados else "diverge"
