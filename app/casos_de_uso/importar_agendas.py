@@ -38,6 +38,7 @@ from app.banco.tabelas_catalogo import (
     Tema,
     UnidadeNegocio,
 )
+from app.banco.tabelas_interacoes import InteracaoRegistro
 from app.banco.tabelas_stakeholders import Instituicao, Interlocutor, PessoaAegea
 from app.casos_de_uso.ler_planilha_de_agendas import (
     ABA_PRINCIPAL,
@@ -47,6 +48,7 @@ from app.casos_de_uso.ler_planilha_de_agendas import (
     ler_declarados,
 )
 from app.dominio.importacao_de_agendas import (
+    FORMATO,
     VOCABULARIOS_FECHADOS,
     Divergencia,
     aba_de,
@@ -147,6 +149,14 @@ COLUNAS_EXIGIDAS_DAS_FILHAS: dict[str, tuple[str, ...]] = {
 #: Os campos que `InteracaoEntrada` exige. Sem um deles não há proposta nenhuma
 #: a montar, então a divergência TRAVA.
 OBRIGATORIOS = ("data_interacao", "instituicao_id", "uf")
+
+#: O campo sob o qual a possível duplicata aparece na conferência.
+#:
+#: NOME PRÓPRIO, e não `data_interacao`: o agrupamento junta por `(campo, valor)`,
+#: e usar `data_interacao` misturaria "não consegui ler esta data" com "já existe
+#: agenda nesse dia" — dois problemas com resoluções completamente diferentes na
+#: mesma linha da tela.
+CAMPO_DA_DUPLICATA = "duplicata"
 
 #: Vocabulário de duas palavras que não tem tabela nem lista no domínio.
 _SIM = frozenset({"sim", "s", "true", "verdadeiro", "1"})
@@ -364,6 +374,31 @@ def _quem_representa(sessao: Session) -> dict[object, frozenset]:
     return {chave: frozenset(valores) for chave, valores in por_instituicao.items()}
 
 
+def _ja_existem(sessao: Session, pares: set[tuple]) -> set[tuple]:
+    """Quais (instituição, data) já têm agenda no sistema.
+
+    UMA CONSULTA para o arquivo inteiro, e não uma por agenda. Filtra pelos dois
+    conjuntos e cruza em Python: com no máximo 500 linhas, o `in_` de duas
+    colunas é barato, e o teste de invariância de custo não deixaria passar uma
+    consulta por linha.
+
+    Ignora o que foi arquivado: uma agenda arquivada não é a mesma reunião
+    acontecendo de novo, e avisar sobre ela ensinaria a ignorar o aviso.
+    """
+    if not pares:
+        return set()
+    instituicoes = {instituicao for instituicao, _ in pares}
+    datas = {data for _, data in pares}
+    linhas = sessao.execute(
+        select(InteracaoRegistro.instituicao_id, InteracaoRegistro.data_interacao).where(
+            InteracaoRegistro.instituicao_id.in_(instituicoes),
+            InteracaoRegistro.data_interacao.in_(datas),
+            InteracaoRegistro.arquivado_em.is_(None),
+        )
+    ).all()
+    return {(instituicao, data) for instituicao, data in linhas} & pares
+
+
 def impedimentos(entrada: InteracaoEntrada, podem_representar: frozenset) -> list[Divergencia]:
     """As recusas 4 e 6 — as que só se veem com a proposta inteira montada.
 
@@ -542,7 +577,75 @@ def propor(sessao: Session, conteudo: bytes) -> list[Proposta]:
 
         propostas.append(Proposta(linha=linha, entrada=entrada, divergencias=divergencias))
 
+    return _avisar_duplicatas(sessao, propostas)
+
+
+def _avisar_duplicatas(sessao: Session, propostas: list[Proposta]) -> list[Proposta]:
+    """Marca as agendas que já parecem existir — AVISO, nunca travamento.
+
+    Duas reuniões com o mesmo órgão no mesmo dia acontecem, e travar por isso
+    ensinaria a pessoa a ignorar o aviso. É justamente o aviso que a protege do
+    caso que importa: ela subiu o mesmo arquivo duas vezes.
+
+    Conta também a repetição DENTRO do arquivo, não só contra o banco: subir uma
+    planilha onde a mesma agenda foi colada duas vezes é o mesmo erro visto de
+    outro ângulo.
+    """
+    pares = {
+        (proposta.entrada.instituicao_id, proposta.entrada.data_interacao)
+        for proposta in propostas
+        if proposta.entrada is not None
+    }
+    no_banco = _ja_existem(sessao, pares)
+
+    vistos: set[tuple] = set()
+    for proposta in propostas:
+        if proposta.entrada is None:
+            continue
+        par = (proposta.entrada.instituicao_id, proposta.entrada.data_interacao)
+        if par in no_banco or par in vistos:
+            proposta.divergencias.append(
+                Divergencia(
+                    campo=CAMPO_DA_DUPLICATA,
+                    valor=proposta.entrada.data_interacao.isoformat(),
+                    mensagem=(
+                        "Já existe agenda com esta instituição nesta data. Se são "
+                        "duas reuniões de verdade, pode confirmar."
+                    ),
+                    trava=False,
+                )
+            )
+        vistos.add(par)
     return propostas
+
+
+def vocabulario_do_campo(campo: str) -> str | None:
+    """O vocabulário de onde as sugestões de um campo saem.
+
+    A tela precisa oferecer "nomes parecidos" para uma instituição que não
+    existe, e os nomes parecidos vêm do vocabulário daquela coluna. O `campo` de
+    uma coluna de aba filha vem prefixado (`outra_parte.interlocutor_id`), e é
+    por isso que este mapa é montado dos dois lados.
+    """
+    return _VOCABULARIO_DO_CAMPO.get(campo)
+
+
+_VOCABULARIO_DO_CAMPO: dict[str, str] = {
+    **{
+        coluna.campo: coluna.vocabulario
+        for aba in FORMATO
+        if aba.nome == ABA_PRINCIPAL
+        for coluna in aba.colunas
+        if coluna.campo and coluna.vocabulario
+    },
+    **{
+        f"{LISTAS_DAS_ABAS_FILHAS[nome][0]}.{campo}": coluna.vocabulario
+        for nome, mapeamento in CAMPOS_DAS_ABAS_FILHAS.items()
+        for coluna in aba_de(nome).colunas
+        for campo in [mapeamento.get(coluna.nome)]
+        if campo and coluna.vocabulario
+    },
+}
 
 
 def colunas_de_aba_filha_sem_campo() -> Sequence[str]:

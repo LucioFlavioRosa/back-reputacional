@@ -238,3 +238,139 @@ def test_a_divergencia_e_imutavel():
 
     with pytest.raises(dataclasses.FrozenInstanceError):
         divergencia.trava = True
+
+
+# =============================================================================
+# o agrupamento: a vista que a conferência mostra
+# =============================================================================
+
+
+def _divergencia(valor: str, campo: str = "instituicao_id", trava: bool = True):
+    from app.dominio.importacao_de_agendas import Divergencia
+
+    return Divergencia(
+        campo=campo, valor=valor, mensagem=f"{valor} não existe no cadastro.", trava=trava
+    )
+
+
+def _linhas(*grupos: tuple[str, int]) -> list[tuple[int, list]]:
+    """(valor, quantas) → [(numero_da_linha, [divergencias])], numerando do 2."""
+    linhas: list[tuple[int, list]] = []
+    numero = 2
+    for valor, quantas in grupos:
+        for _ in range(quantas):
+            linhas.append((numero, [_divergencia(valor)]))
+            numero += 1
+    return linhas
+
+
+def test_agrupa_por_valor_e_conta_as_linhas():
+    """Uma decisão, doze linhas — é o que faz a conferência escalar com o volume
+    em vez de crescer junto com ele."""
+    from app.dominio.importacao_de_agendas import agrupar
+
+    grupos = agrupar(_linhas(("Prefeitura de Campinas", 12)))
+
+    assert grupos[0].valor == "Prefeitura de Campinas"
+    assert len(grupos[0].linhas) == 12
+
+
+def test_o_grupo_diz_QUAIS_linhas_ele_segura():
+    """Contar não basta: a pessoa precisa poder ir olhar as linhas."""
+    from app.dominio.importacao_de_agendas import agrupar
+
+    (grupo,) = agrupar(_linhas(("A", 3)))
+
+    # TUPLA e não lista: o grupo é congelado, e um membro mutável dentro de um
+    # dataclass congelado é armadilha — quem recebe o grupo poderia alterar as
+    # linhas dele sem que nada impedisse. A saída JSON é lista de qualquer jeito.
+    assert grupo.linhas == (2, 3, 4)
+
+
+def test_ordena_pelo_que_segura_mais_linhas():
+    """A pessoa resolve primeiro o que destrava mais."""
+    from app.dominio.importacao_de_agendas import agrupar
+
+    grupos = agrupar(_linhas(("B", 3), ("A", 12)))
+
+    assert [g.valor for g in grupos] == ["A", "B"]
+
+
+def test_empate_ordena_pelo_valor_para_a_ordem_ser_ESTAVEL():
+    """Duas leituras da mesma importação têm de dar a mesma tela. Sem desempate,
+    a ordem sairia da iteração de um dicionário e a lista se remexeria entre dois
+    F5 — e a pessoa perderia o lugar onde estava."""
+    from app.dominio.importacao_de_agendas import agrupar
+
+    grupos = agrupar(_linhas(("Zeta", 2), ("Alfa", 2)))
+
+    assert [g.valor for g in grupos] == ["Alfa", "Zeta"]
+
+
+def test_o_mesmo_valor_em_CAMPOS_diferentes_sao_grupos_diferentes():
+    """"Ana Prado" não encontrada como interlocutora e como pessoa da Aegea são
+    dois problemas, com duas resoluções diferentes."""
+    from app.dominio.importacao_de_agendas import agrupar
+
+    grupos = agrupar(
+        [
+            (2, [_divergencia("Ana Prado", campo="outra_parte.interlocutor_id")]),
+            (3, [_divergencia("Ana Prado", campo="participacoes.pessoa_aegea_id")]),
+        ]
+    )
+
+    assert len(grupos) == 2
+
+
+def test_a_sugestao_traz_os_nomes_parecidos():
+    from app.dominio.importacao_de_agendas import agrupar
+
+    (grupo,) = agrupar(
+        _linhas(("Prefeitura de Campinas", 1)),
+        conhecidos=["Prefeitura Municipal de Campinas", "Valor Econômico"],
+    )
+
+    assert "Prefeitura Municipal de Campinas" in grupo.sugestoes
+    assert "Valor Econômico" not in grupo.sugestoes
+
+
+def test_sem_nome_parecido_a_sugestao_fica_vazia():
+    """Oferecer o menos-ruim de uma lista sem nada parecido é pior que não
+    oferecer: a pessoa aponta para o errado por confiar na sugestão."""
+    from app.dominio.importacao_de_agendas import agrupar
+
+    (grupo,) = agrupar(_linhas(("Prefeitura de Campinas", 1)), conhecidos=["Valor Econômico"])
+
+    assert grupo.sugestoes == ()
+
+
+def test_a_duplicata_possivel_NAO_trava():
+    """Duas reuniões com o mesmo órgão no mesmo dia acontecem. Travar por isso
+    ensinaria a pessoa a ignorar o aviso — e é o aviso que a protege do caso em
+    que ela de fato subiu o arquivo duas vezes."""
+    from app.dominio.importacao_de_agendas import agrupar
+
+    (grupo,) = agrupar([(2, [_divergencia("25/09/2026", campo="data_interacao", trava=False)])])
+
+    assert grupo.trava is False
+
+
+def test_o_grupo_trava_se_QUALQUER_linha_dele_travar():
+    """Um grupo é uma decisão só; se ela destrava algumas linhas e não todas, a
+    tela não pode dizer que está tudo resolvido."""
+    from app.dominio.importacao_de_agendas import agrupar
+
+    grupos = agrupar(
+        [
+            (2, [_divergencia("A", trava=False)]),
+            (3, [_divergencia("A", trava=True)]),
+        ]
+    )
+
+    assert grupos[0].trava is True
+
+
+def test_linha_sem_divergencia_nao_vira_grupo():
+    from app.dominio.importacao_de_agendas import agrupar
+
+    assert agrupar([(2, []), (3, [])]) == []

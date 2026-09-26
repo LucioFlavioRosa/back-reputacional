@@ -412,6 +412,96 @@ IMPEDIMENTOS_DA_PLANILHA: dict[str, str] = {
 FORA_DA_PLANILHA: frozenset[str] = frozenset()
 
 
+@dataclass(frozen=True, slots=True)
+class GrupoDeDivergencia:
+    """Uma decisão que resolve VÁRIAS linhas — a unidade da tela de conferência.
+
+    NÃO É TABELA. É uma vista montada ao ler `importacao_linha.divergencias`, e
+    é o que faz a conferência escalar com o volume em vez de crescer junto com
+    ele: "Instituição não encontrada: 'Prefeitura de Campinas' — em 12 linhas",
+    uma decisão, doze linhas resolvidas. Sem o agrupamento, um dia de 54 agendas
+    com o mesmo órgão desconhecido pediria 54 cliques idênticos, e ninguém
+    conferiria de verdade — passaria a clicar.
+    """
+
+    campo: str
+    valor: str
+    #: Os números de linha do ARQUIVO que esta decisão destrava. A pessoa precisa
+    #: poder ir olhá-las: contar não basta para ela decidir.
+    linhas: tuple[int, ...]
+    #: `True` se QUALQUER linha do grupo travava. Uma decisão que destrava
+    #: algumas e não todas não pode fazer a tela dizer que está resolvido.
+    trava: bool
+    #: Nomes parecidos já cadastrados. Vazio quando não há nada parecido — e
+    #: oferecer o menos-ruim de uma lista sem nada parecido é pior que não
+    #: oferecer, porque a pessoa aponta para o errado por confiar na sugestão.
+    sugestoes: tuple[str, ...] = ()
+
+
+#: Quão parecido um nome tem de ser para virar sugestão. 0.6 é o padrão do
+#: `difflib`, e mexer nisto é escolher entre dois erros: mais baixo oferece
+#: "Valor Econômico" para "Prefeitura de Campinas", mais alto deixa de oferecer
+#: "Prefeitura Municipal de Campinas" — que é exatamente o caso que a sugestão
+#: existe para resolver.
+SEMELHANCA_MINIMA = 0.6
+
+#: Quantas sugestões a tela oferece. Três cabem numa linha e ainda deixam a
+#: escolha rápida; uma lista longa devolve à pessoa o trabalho de procurar.
+SUGESTOES_POR_GRUPO = 3
+
+
+def agrupar(
+    linhas: Sequence[tuple[int, Sequence[Divergencia]]],
+    conhecidos: Sequence[str] = (),
+) -> list[GrupoDeDivergencia]:
+    """As divergências de várias linhas, viradas em decisões.
+
+    Agrupa por `(campo, valor)` e não por valor sozinho: "Ana Prado" que não
+    existe como interlocutora e "Ana Prado" que não existe como pessoa da Aegea
+    são dois problemas, com duas resoluções diferentes.
+
+    A ORDEM É POR QUANTAS LINHAS O GRUPO SEGURA, decrescente — a pessoa resolve
+    primeiro o que destrava mais — e desempata pelo valor. O desempate não é
+    capricho: sem ele a ordem sairia da iteração de um dicionário, a lista se
+    remexeria entre dois F5, e a pessoa perderia o lugar onde estava numa tela
+    de 54 agendas.
+    """
+    import difflib
+
+    por_chave: dict[tuple[str, str], list[int]] = {}
+    trava_de: dict[tuple[str, str], bool] = {}
+
+    for numero, divergencias in linhas:
+        for divergencia in divergencias:
+            chave = (divergencia.campo, divergencia.valor)
+            por_chave.setdefault(chave, []).append(numero)
+            trava_de[chave] = trava_de.get(chave, False) or divergencia.trava
+
+    #: `normalizar` dos dois lados para a comparação, mas a SUGESTÃO devolve o
+    #: nome como está cadastrado — é o que a pessoa vai reconhecer e escolher.
+    por_normalizado = {normalizar(nome): nome for nome in conhecidos}
+
+    grupos = [
+        GrupoDeDivergencia(
+            campo=campo,
+            valor=valor,
+            linhas=tuple(numeros),
+            trava=trava_de[(campo, valor)],
+            sugestoes=tuple(
+                por_normalizado[parecido]
+                for parecido in difflib.get_close_matches(
+                    normalizar(valor),
+                    list(por_normalizado),
+                    n=SUGESTOES_POR_GRUPO,
+                    cutoff=SEMELHANCA_MINIMA,
+                )
+            ),
+        )
+        for (campo, valor), numeros in por_chave.items()
+    ]
+    return sorted(grupos, key=lambda grupo: (-len(grupo.linhas), grupo.valor, grupo.campo))
+
+
 def aba_de(nome: str) -> Aba:
     """A aba de `FORMATO` com este nome, ou `RegraViolada` se não existir."""
     for aba in FORMATO:

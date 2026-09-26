@@ -29,6 +29,7 @@ from app.api.dependencias import (
 from app.banco import repositorio_importacao
 from app.banco.sessao import SessaoDoPedido
 from app.casos_de_uso import importar_agendas, modelo_de_importacao
+from app.dominio.importacao_de_agendas import Divergencia, agrupar
 
 TIPO_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -69,20 +70,101 @@ class LinhaSaida(BaseModel):
     divergencias: list
 
 
+class GrupoSaida(BaseModel):
+    """Uma decisão que resolve várias linhas — o bloco "o que precisa de você"."""
+
+    campo: str
+    valor: str
+    linhas: list[int]
+    trava: bool
+    sugestoes: list[str]
+
+
 class ImportacaoSaida(BaseModel):
     id: str
     arquivo_nome: str
     situacao: str
     criado_em: str
+    #: As divergências agrupadas por valor, ordenadas pelo que destrava mais.
+    #: É a vista principal da conferência: uma decisão, doze linhas.
+    grupos: list[GrupoSaida]
+    #: A segunda vista — as 54 linhas, para descartar uma específica.
     linhas: list[LinhaSaida]
 
+    #: Quantas linhas ainda seguram a confirmação. O cabeçalho da tela mostra
+    #: isto, e o botão de confirmar só acende quando é zero.
+    pendencias: int
 
-def _saida(importacao, linhas) -> ImportacaoSaida:
+
+def _nomes_conhecidos(sessao, campo: str) -> list[str]:
+    """Os nomes cadastrados no vocabulário deste campo, para sugerir parecidos."""
+    vocabulario = importar_agendas.vocabulario_do_campo(campo)
+    if vocabulario is None:
+        return []
+    return importar_agendas.vocabularios(sessao).get(vocabulario, [])
+
+
+def _grupos(sessao, linhas) -> list[GrupoSaida]:
+    """As divergências gravadas, viradas em decisões.
+
+    LÊ O QUE ESTÁ NO BANCO e reconstrói `Divergencia` para agrupar: o
+    agrupamento é regra de domínio, e deixar a API agrupar com dicionários
+    soltos poria a mesma regra num segundo lugar — onde ela envelheceria em
+    silêncio quando a severidade mudasse.
+    """
+    por_linha = [
+        (
+            linha.linha_origem,
+            [
+                Divergencia(
+                    campo=bruta["campo"],
+                    valor=bruta["valor"],
+                    mensagem=bruta["mensagem"],
+                    trava=bruta["trava"],
+                    sugestoes=tuple(bruta.get("sugestoes") or ()),
+                )
+                for bruta in (linha.divergencias or [])
+            ],
+        )
+        for linha in linhas
+        if linha.aba == "Agendas"
+    ]
+
+    # `vocabularios` uma vez por campo distinto, e não por grupo: uma tela com
+    # doze grupos de instituição não pode custar doze leituras do diretório.
+    campos = {
+        divergencia.campo for _, divergencias in por_linha for divergencia in divergencias
+    }
+    conhecidos_por_campo = {campo: _nomes_conhecidos(sessao, campo) for campo in campos}
+
+    saida: list[GrupoSaida] = []
+    for campo in sorted(campos):
+        so_deste_campo = [
+            (numero, [d for d in divergencias if d.campo == campo])
+            for numero, divergencias in por_linha
+        ]
+        for grupo in agrupar(so_deste_campo, conhecidos=conhecidos_por_campo[campo]):
+            saida.append(
+                GrupoSaida(
+                    campo=grupo.campo,
+                    valor=grupo.valor,
+                    linhas=list(grupo.linhas),
+                    trava=grupo.trava,
+                    sugestoes=list(grupo.sugestoes),
+                )
+            )
+    return sorted(saida, key=lambda grupo: (not grupo.trava, -len(grupo.linhas), grupo.valor))
+
+
+def _saida(sessao, importacao, linhas) -> ImportacaoSaida:
+    grupos = _grupos(sessao, linhas)
     return ImportacaoSaida(
         id=str(importacao.id),
         arquivo_nome=importacao.arquivo_nome,
         situacao=importacao.situacao,
         criado_em=importacao.criado_em.isoformat(),
+        grupos=grupos,
+        pendencias=sum(1 for grupo in grupos if grupo.trava),
         linhas=[
             LinhaSaida(
                 id=linha.id,
@@ -162,7 +244,7 @@ def subir(sessao: Sessao, usuario: UsuarioLogado, arquivo: Arquivo) -> Importaca
         )
     repositorio_importacao.marcar_aguardando_conferencia(sessao, importacao)
 
-    return _saida(importacao, repositorio_importacao.linhas_de(sessao, importacao.id))
+    return _saida(sessao, importacao, repositorio_importacao.linhas_de(sessao, importacao.id))
 
 
 @rotas.get("/{importacao_id}")
@@ -174,4 +256,4 @@ def retomar(sessao: Sessao, importacao_id: UUID) -> ImportacaoSaida:
     trabalho de subir e reconferir tudo.
     """
     importacao = repositorio_importacao.obter(sessao, importacao_id)
-    return _saida(importacao, repositorio_importacao.linhas_de(sessao, importacao_id))
+    return _saida(sessao, importacao, repositorio_importacao.linhas_de(sessao, importacao_id))

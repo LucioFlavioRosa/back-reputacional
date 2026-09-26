@@ -119,7 +119,11 @@ def _planilha_de_um_dia(sessao, semente, quantas: int = 3) -> bytes:
     for i in range(quantas):
         valores = {
             "Código": f"A{i}",
-            "Data": date(2026, 9, 25),
+            # DATAS DIFERENTES de propósito: com a mesma instituição e a mesma
+            # data, as linhas 2, 3 e 4 seriam duplicatas uma da outra, e todo
+            # teste que usa este helper passaria a carregar um aviso que não tem
+            # nada a ver com o que ele quer provar.
+            "Data": date(2026, 9, 21 + i),
             "Instituição": semente["instituicao"].nome,
             "UF": "SP",
         }
@@ -127,6 +131,38 @@ def _planilha_de_um_dia(sessao, semente, quantas: int = 3) -> bytes:
     saida = io.BytesIO()
     pasta.save(saida)
     return saida.getvalue()
+
+
+def _agenda_ja_no_sistema(cliente, sessao, semente, quando, arquivada: bool = False):
+    """Uma agenda que JÁ existe, para a detecção de duplicata ter o que achar.
+
+    Monta com os ids que o banco de teste tem, e não com códigos escritos aqui:
+    `interacao` exige `frente_id`, `status_id` e `criado_por`, e inventar
+    qualquer um deles daria erro de chave estrangeira em vez de testar o aviso.
+
+    O `cliente` NÃO É DECORAÇÃO: o banco de teste é recriado a cada execução com
+    só o que as migrations inserem, e `usuario` nasce VAZIA. O usuário do
+    `auth_mock` só passa a existir na primeira requisição autenticada — então
+    esta chamada barata é o que dá a `criado_por` alguém a quem apontar.
+    """
+    from app.banco.tabelas_acesso import Usuario
+    from app.banco.tabelas_catalogo import Frente, Status
+    from app.banco.tabelas_interacoes import InteracaoRegistro
+
+    cliente.get("/api/importacoes/modelo")
+
+    registro = InteracaoRegistro(
+        data_interacao=quando,
+        instituicao_id=semente["instituicao"].id,
+        uf="SP",
+        frente_id=sessao.scalars(select(Frente).limit(1)).first().id,
+        status_id=sessao.scalars(select(Status).limit(1)).first().id,
+        criado_por=sessao.scalars(select(Usuario).limit(1)).first().id,
+        arquivado_em=quando if arquivada else None,
+    )
+    sessao.add(registro)
+    sessao.flush()
+    return registro
 
 
 # =============================================================================
@@ -311,3 +347,202 @@ def test_uma_importacao_que_nao_existe_devolve_404(cliente_admin):
     resposta = cliente_admin.get("/api/importacoes/00000000-0000-0000-0000-000000000000")
 
     assert resposta.status_code == 404
+
+
+# =============================================================================
+# a duplicata possível
+# =============================================================================
+
+
+def test_agenda_que_ja_existe_no_banco_AVISA_e_nao_trava(cliente_admin, sessao, semente):
+    """Duas reuniões com o mesmo órgão no mesmo dia acontecem. Travar por isso
+    ensinaria a pessoa a ignorar o aviso — e é o aviso que a protege do caso que
+    importa: ela subiu o mesmo arquivo duas vezes."""
+    from datetime import date
+
+    _agenda_ja_no_sistema(cliente_admin, sessao, semente, date(2026, 9, 21))
+
+    corpo = cliente_admin.post(
+        "/api/importacoes",
+        files={"arquivo": ("dia.xlsx", _planilha_de_um_dia(sessao, semente, quantas=1), TIPO_XLSX)},
+    ).json()
+
+    duplicatas = [grupo for grupo in corpo["grupos"] if grupo["campo"] == "duplicata"]
+    assert duplicatas, corpo["grupos"]
+    assert duplicatas[0]["trava"] is False
+    assert corpo["pendencias"] == 0
+
+
+def test_a_mesma_agenda_repetida_DENTRO_do_arquivo_tambem_avisa(cliente_admin, sessao, semente):
+    """Colar a mesma agenda duas vezes na planilha é o mesmo erro visto de outro
+    ângulo, e quem confere precisa vê-lo antes de criar as duas."""
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    for codigo in ("A1", "A2"):
+        valores = {
+            "Código": codigo,
+            "Data": date(2026, 9, 25),
+            "Instituição": semente["instituicao"].nome,
+            "UF": "SP",
+        }
+        folha.append([valores.get(coluna) for coluna in cabecalho])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    corpo = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("dia.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+
+    duplicatas = [grupo for grupo in corpo["grupos"] if grupo["campo"] == "duplicata"]
+    assert duplicatas, corpo["grupos"]
+    # A PRIMEIRA não é duplicata de nada; a segunda é.
+    assert duplicatas[0]["linhas"] == [3]
+
+
+def test_a_agenda_arquivada_nao_conta_como_duplicata(cliente_admin, sessao, semente):
+    """Uma agenda arquivada não é a mesma reunião acontecendo de novo, e avisar
+    sobre ela ensinaria a ignorar o aviso."""
+    from datetime import date
+
+    _agenda_ja_no_sistema(cliente_admin, sessao, semente, date(2026, 9, 21), arquivada=True)
+
+    corpo = cliente_admin.post(
+        "/api/importacoes",
+        files={"arquivo": ("dia.xlsx", _planilha_de_um_dia(sessao, semente, quantas=1), TIPO_XLSX)},
+    ).json()
+
+    assert [grupo for grupo in corpo["grupos"] if grupo["campo"] == "duplicata"] == []
+
+
+# =============================================================================
+# os grupos na resposta
+# =============================================================================
+
+
+def test_a_mesma_instituicao_desconhecida_vira_UM_grupo_com_as_linhas(
+    cliente_admin, sessao, semente
+):
+    """A vista principal da conferência: uma decisão, várias linhas."""
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    for i in range(4):
+        valores = {
+            "Código": f"A{i}",
+            "Data": date(2026, 9, 25),
+            "Instituição": "Prefeitura de Campinas",
+            "UF": "SP",
+        }
+        folha.append([valores.get(coluna) for coluna in cabecalho])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    corpo = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("dia.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+
+    (grupo,) = [g for g in corpo["grupos"] if g["campo"] == "instituicao_id"]
+    assert grupo["valor"] == "Prefeitura de Campinas"
+    assert grupo["linhas"] == [2, 3, 4, 5]
+    assert grupo["trava"] is True
+    assert corpo["pendencias"] == 1
+
+
+def test_o_grupo_oferece_o_nome_parecido_que_JA_existe(cliente_admin, sessao, semente):
+    """É o que transforma "não existe" em um clique: a pessoa reconhece
+    "Prefeitura Municipal de Campinas" e aponta para ela."""
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    from app.banco.tabelas_stakeholders import Instituicao as Inst
+
+    sessao.add(
+        Inst(
+            nome="Prefeitura Municipal de Campinas",
+            nome_normalizado=normalizar("Prefeitura Municipal de Campinas"),
+            tipo="orgao",
+            uf="SP",
+        )
+    )
+    sessao.flush()
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    valores = {
+        "Código": "A1",
+        "Data": date(2026, 9, 25),
+        "Instituição": "Prefeitura de Campinas",
+        "UF": "SP",
+    }
+    folha.append([valores.get(coluna) for coluna in cabecalho])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    corpo = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("dia.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+
+    (grupo,) = [g for g in corpo["grupos"] if g["campo"] == "instituicao_id"]
+    assert "Prefeitura Municipal de Campinas" in grupo["sugestoes"]
+
+
+def test_o_que_trava_vem_ANTES_do_que_so_avisa(cliente_admin, sessao, semente):
+    """A tela lista em ordem de urgência: o que segura a confirmação primeiro."""
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    _agenda_ja_no_sistema(cliente_admin, sessao, semente, date(2026, 9, 25))
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    # A primeira resolve inteira e é duplicata (avisa); a segunda tem
+    # instituição desconhecida (trava).
+    for codigo, instituicao in (
+        ("A1", semente["instituicao"].nome),
+        ("A2", "Prefeitura de Campinas"),
+    ):
+        valores = {
+            "Código": codigo,
+            "Data": date(2026, 9, 25),
+            "Instituição": instituicao,
+            "UF": "SP",
+        }
+        folha.append([valores.get(coluna) for coluna in cabecalho])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    corpo = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("dia.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+
+    assert [g["trava"] for g in corpo["grupos"]] == sorted(
+        [g["trava"] for g in corpo["grupos"]], reverse=True
+    )
+    assert corpo["grupos"][0]["trava"] is True
+
+
+def test_a_linha_limpa_nao_gera_grupo_nenhum(cliente_admin, sessao, semente):
+    corpo = cliente_admin.post(
+        "/api/importacoes",
+        files={"arquivo": ("dia.xlsx", _planilha_de_um_dia(sessao, semente), TIPO_XLSX)},
+    ).json()
+
+    assert corpo["grupos"] == []
+    assert corpo["pendencias"] == 0
