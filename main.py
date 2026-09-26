@@ -15,6 +15,7 @@ from app.api import (
     catalogo,
     dicionarios,
     exportacoes,
+    importacoes,
     interacoes,
     lentes,
     materiais,
@@ -146,6 +147,7 @@ def criar_app() -> FastAPI:
     app.include_router(stakeholders.rotas)
     app.include_router(catalogo.rotas)
     app.include_router(dicionarios.rotas)
+    app.include_router(importacoes.rotas)
 
     @app.get("/api/saude", tags=["plataforma"])
     def saude() -> dict[str, str]:

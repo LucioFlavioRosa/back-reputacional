@@ -1,0 +1,105 @@
+"""Grava e lê uma importação e as linhas dela.
+
+O QUE VAI PARA O JSONB TEM DE SER JSON. As células de uma planilha chegam com
+`date` do openpyxl, e a proposta carrega `UUID` e `date` do Pydantic — nenhum dos
+dois sobrevive a `json.dumps`. `para_json` converte na fronteira, uma vez, em vez
+de cada chamador lembrar: esquecer a conversão dá `TypeError` no commit, longe do
+código que montou o dado, e com a transação já suja.
+
+A CONSULTA EM `divergencias` USA CONTENÇÃO (`@>`), nunca `->>`. Os dois índices
+GIN da 0008 não entram com `->>`, e a consulta cai para varredura sequencial sem
+nada parecer errado. A própria migration deixa o exemplo.
+"""
+
+from __future__ import annotations
+
+import uuid
+from collections.abc import Mapping, Sequence
+from datetime import date, datetime
+from typing import Any
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.banco.tabelas_importacao import Importacao, ImportacaoLinha
+from app.dominio.erros import NaoEncontrado
+
+
+def para_json(valor: Any) -> Any:
+    """O mesmo dado, com `date`, `datetime` e `UUID` virados em texto."""
+    if isinstance(valor, Mapping):
+        return {str(chave): para_json(item) for chave, item in valor.items()}
+    if isinstance(valor, (list, tuple)):
+        return [para_json(item) for item in valor]
+    if isinstance(valor, (datetime, date)):
+        return valor.isoformat()
+    if isinstance(valor, uuid.UUID):
+        return str(valor)
+    return valor
+
+
+def criar(sessao: Session, *, arquivo_nome: str, criado_por: uuid.UUID) -> Importacao:
+    """A importação em `processando`, antes de qualquer linha.
+
+    NASCE EM `processando` de propósito: se o processamento morrer no meio, a
+    importação fica visivelmente incompleta em vez de aparecer como pronta para
+    conferir, com metade das linhas.
+    """
+    importacao = Importacao(
+        arquivo_nome=arquivo_nome, criado_por=criado_por, situacao="processando"
+    )
+    sessao.add(importacao)
+    sessao.flush()
+    return importacao
+
+
+def gravar_linha(
+    sessao: Session,
+    *,
+    importacao_id: uuid.UUID,
+    aba: str,
+    linha_origem: int,
+    dados_brutos: Mapping[str, Any],
+    proposta: Mapping[str, Any] | None,
+    divergencias: Sequence[Any],
+) -> ImportacaoLinha:
+    linha = ImportacaoLinha(
+        importacao_id=importacao_id,
+        aba=aba,
+        linha_origem=linha_origem,
+        dados_brutos=para_json(dados_brutos),
+        proposta=para_json(proposta) if proposta is not None else None,
+        divergencias=para_json(divergencias),
+    )
+    sessao.add(linha)
+    return linha
+
+
+def marcar_aguardando_conferencia(sessao: Session, importacao: Importacao) -> None:
+    """Só depois de as linhas estarem gravadas — ver `criar`."""
+    importacao.situacao = "aguardando_conferencia"
+    sessao.flush()
+
+
+def obter(sessao: Session, importacao_id: uuid.UUID) -> Importacao:
+    importacao = sessao.get(Importacao, importacao_id)
+    if importacao is None:
+        raise NaoEncontrado(f"Importação {importacao_id} não encontrada.")
+    return importacao
+
+
+def linhas_de(sessao: Session, importacao_id: uuid.UUID) -> list[ImportacaoLinha]:
+    """As linhas na ordem do arquivo — é a ordem em que a pessoa preencheu.
+
+    Ordena por `(aba, linha_origem)` e não por `id`: o `bigserial` reflete a
+    ordem de inserção, que hoje coincide, mas amarrar a apresentação à ordem de
+    escrita faria a tela mudar se algum dia as linhas fossem gravadas em lote
+    por aba.
+    """
+    return list(
+        sessao.scalars(
+            select(ImportacaoLinha)
+            .where(ImportacaoLinha.importacao_id == importacao_id)
+            .order_by(ImportacaoLinha.aba, ImportacaoLinha.linha_origem)
+        ).all()
+    )
