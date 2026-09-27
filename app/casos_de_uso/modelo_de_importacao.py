@@ -115,6 +115,15 @@ def rotulo_singular(chave: str) -> str:
     )
 
 
+#: A coluna que o gerador RESERVA e nunca escreve, em cada aba que sai em pares.
+#:
+#: É COM ELA QUE A SUSPENSA FICA VAZIA. Uma lista suspensa não aceita intervalo de
+#: altura zero, então "nenhuma opção" se faz apontando para uma célula em branco — e
+#: essa célula precisa ser garantidamente branca, senão a suspensa passaria a oferecer
+#: aquele valor em toda linha sem dono escolhido. Um teste confere que ela está vazia.
+COLUNA_DE_RESERVA = "H"
+
+
 def _suspensa_dependente(vocabulario: str, celula_do_dono: str) -> str:
     """A fonte de uma suspensa que se reduz pelo valor de OUTRA célula da mesma linha.
 
@@ -124,21 +133,32 @@ def _suspensa_dependente(vocabulario: str, celula_do_dono: str) -> str:
     aprendesse algo — e a que não aprendeu é sempre a que ninguém está olhando.
 
     COMO FUNCIONA: a aba do vocabulário sai com o valor na coluna A e o DONO na coluna
-    B, agrupada por dono. `MATCH` acha a primeira linha daquele dono, `COUNTIF` diz
-    quantas são, e `OFFSET` recorta esse bloco.
+    B, agrupada por dono. `COUNTIF` diz quantos são daquele dono, `MATCH` acha a primeira
+    linha dele, e `OFFSET` recorta o bloco.
 
-    A REDE DO `ISNA` é necessária nos dois: enquanto a célula do dono estiver vazia — e
-    ela está, na linha em que a pessoa começou a escrever —, o `MATCH` não acha nada, e
-    sem a rede a célula ficaria sem suspensa nenhuma. Cair na lista inteira é degradar
-    para o que funcionava antes, que é diferente de quebrar.
+    SEM DONO OU SEM NINGUÉM, A LISTA FICA VAZIA — e isto era um defeito meu, que o dono
+    do produto achou usando: ela caía na LISTA INTEIRA. Ele criou uma instituição, não
+    atrelou interlocutor nenhum, foi lançar a agenda e viu todos os interlocutores da
+    base.
+
+    MEU ARGUMENTO ERA QUE UMA SUSPENSA VAZIA PARECERIA DEFEITO, e estava errado — o
+    próprio servidor prova: escolher alguém de outro órgão é justamente o que ele RECUSA,
+    porque um interlocutor fala por uma instituição só. A rede convidava ao erro que o
+    passo seguinte rejeita, e na hora em que a pessoa tem 54 linhas para preencher.
+
+    VAZIA DIZ A VERDADE — "este órgão ainda não tem ninguém" — e é o que o front já faz
+    (`interlocutoresDaInstituicao` devolve lista vazia). Digitar continua permitido,
+    porque a coluna não trava: é assim que se declara alguém novo.
     """
     rotulo = ROTULO_DO_VOCABULARIO[vocabulario]
     folha = f"'{rotulo}'" if " " in rotulo else rotulo
     donos = f"{folha}!$B$2:$B${_LINHAS_DE_ABAS_FILHAS}"
-    procura = f"MATCH({celula_do_dono},{donos},0)"
+    quantos = f"COUNTIF({donos},{celula_do_dono})"
+    # `COUNTIF=0` E NÃO `ISNA(MATCH)`: a mesma pergunta, e esta cobre de uma vez o dono
+    # vazio e o dono sem ninguém — que é o caso que estava errado.
     return (
-        f"IF(ISNA({procura}),{vocabulario},"
-        f"OFFSET({folha}!$A$2,{procura}-1,0,COUNTIF({donos},{celula_do_dono}),1))"
+        f"IF({quantos}=0,{folha}!${COLUNA_DE_RESERVA}$1,"
+        f"OFFSET({folha}!$A$2,MATCH({celula_do_dono},{donos},0)-1,0,{quantos},1))"
     )
 
 

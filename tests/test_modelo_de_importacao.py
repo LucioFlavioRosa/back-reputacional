@@ -412,8 +412,12 @@ def test_a_suspensa_de_interlocutor_DEPENDE_da_instituicao_da_linha():
     formula = dependentes[0].formula1
     assert f"${letra_da_instituicao}2" in formula
     assert "Interlocutores" in formula
-    # A rede: órgão não reconhecido cai na lista inteira, que é o nome definido.
-    assert ",interlocutores," in formula
+    # SEM ÓRGÃO OU SEM NINGUÉM, A LISTA FICA VAZIA — ver
+    # `test_a_suspensa_dependente_fica_VAZIA_e_nao_cai_na_lista_inteira`. Antes ela caía
+    # na lista inteira, e isso convidava a escolher alguém de outro órgão: exatamente o
+    # que o servidor recusa.
+    assert ",interlocutores," not in formula
+    assert "COUNTIF" in formula
     # E não trava, pelo mesmo motivo de sempre: digitar nome novo é como se
     # cadastra alguém.
     assert dependentes[0].showErrorMessage is False
@@ -781,8 +785,8 @@ def test_a_SUBCATEGORIA_se_reduz_pela_categoria_da_linha():
     # Aponta para a COLUNA DA CATEGORIA da mesma linha — a quinta da aba.
     assert "$E2" in formula, formula
     assert "Subcategorias de público" in formula
-    # E cai na lista inteira enquanto a categoria estiver vazia.
-    assert ",subcategorias_publico," in formula
+    # E fica VAZIA enquanto a categoria estiver vazia, em vez de oferecer todas.
+    assert ",subcategorias_publico," not in formula
 
 
 def test_a_aba_de_subcategorias_sai_com_a_CATEGORIA_dona_ao_lado():
@@ -797,3 +801,73 @@ def test_a_aba_de_subcategorias_sai_com_a_CATEGORIA_dona_ao_lado():
 
     assert linhas[0] == ("Subcategoria", "Categoria de público")
     assert ("Federal", "Poder Executivo") in linhas
+
+
+def test_a_suspensa_dependente_fica_VAZIA_e_nao_cai_na_lista_inteira():
+    """O DEFEITO QUE O DONO DO PRODUTO ACHOU AO USAR, e era uma decisão minha errada.
+
+    Ele criou uma instituição, não atrelou interlocutor nenhum a ela, foi lançar a agenda
+    — e a suspensa mostrou TODOS os interlocutores da base.
+
+    EU TINHA POSTO ESSA REDE de propósito, com o argumento de que uma suspensa vazia
+    pareceria defeito. O argumento estava errado, e por uma razão que o próprio servidor
+    prova: escolher alguém de outro órgão é justamente o que ele RECUSA (um interlocutor
+    fala por uma instituição só). A rede convidava ao erro que o passo seguinte rejeita —
+    e fazia isso na hora em que a pessoa está com 54 linhas para preencher.
+
+    VAZIA É A RESPOSTA CERTA, e é o que o front já faz: `interlocutoresDaInstituicao`
+    devolve lista vazia sem instituição escolhida e sem ninguém daquele órgão. A suspensa
+    vazia diz a verdade — "este órgão ainda não tem ninguém cadastrado" — e digitar
+    continua permitido, porque a coluna não trava: é assim que se declara alguém novo.
+    """
+    from app.dominio.importacao_de_agendas import ABA_PRINCIPAL
+
+    agendas = _abrir(gerar(VOCABULARIOS, PARES))[ABA_PRINCIPAL]
+    dependentes = [
+        dv
+        for dv in agendas.data_validations.dataValidation
+        if dv.formula1 and "OFFSET" in dv.formula1
+    ]
+
+    assert dependentes
+    for dv in dependentes:
+        # A LISTA INTEIRA NÃO É MAIS A SAÍDA: o nome do vocabulário não pode aparecer
+        # como alternativa do `IF`.
+        assert ",interlocutores," not in dv.formula1, dv.formula1
+        # E a condição passou a ser "quantos são", que também cobre o dono vazio.
+        assert "COUNTIF" in dv.formula1, dv.formula1
+
+
+def test_a_suspensa_da_SUBCATEGORIA_tambem_fica_vazia():
+    """O mesmo mecanismo, a mesma regra: sem categoria escolhida, nenhuma subcategoria —
+    e não todas elas."""
+    from app.dominio.importacao_de_agendas import ROTULO_DO_VOCABULARIO
+
+    folha = _abrir(gerar(VOCABULARIOS, PARES))[ROTULO_DO_VOCABULARIO["instituicoes"]]
+    (dependente,) = [
+        dv
+        for dv in folha.data_validations.dataValidation
+        if dv.formula1 and "OFFSET" in dv.formula1
+    ]
+
+    assert ",subcategorias_publico," not in dependente.formula1, dependente.formula1
+
+
+def test_a_celula_de_reserva_da_suspensa_vazia_esta_SEMPRE_em_branco():
+    """A GUARDA DO TRUQUE. Uma lista suspensa não aceita intervalo de altura zero, então
+    "vazia" se faz apontando para uma célula em branco. Essa célula fica numa coluna que
+    o gerador reserva e nunca escreve — e se algum dia escrever, a suspensa passaria a
+    oferecer aquele valor em toda linha sem órgão."""
+    from app.casos_de_uso.modelo_de_importacao import COLUNA_DE_RESERVA
+    from app.dominio.importacao_de_agendas import (
+        ROTULO_DO_VOCABULARIO,
+        VOCABULARIOS_EM_PARES,
+    )
+
+    planilha = _abrir(gerar(VOCABULARIOS, PARES))
+
+    for chave in VOCABULARIOS_EM_PARES:
+        folha = planilha[ROTULO_DO_VOCABULARIO[chave]]
+        for linha in range(1, 6):
+            celula = folha[f"{COLUNA_DE_RESERVA}{linha}"]
+            assert celula.value is None, (chave, celula.coordinate, celula.value)
