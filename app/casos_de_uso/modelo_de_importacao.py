@@ -138,9 +138,14 @@ def _fonte_da_lista(coluna, colunas: Sequence, quantos_interlocutores: int) -> s
         return f"={coluna.vocabulario}"
     rotulo = ROTULO_DO_VOCABULARIO["interlocutores"]
     folha = f"'{rotulo}'" if " " in rotulo else rotulo
-    # A última linha do bloco de dados: o cabeçalho, os pares, o marcador e a
-    # linha em branco do convite a cadastrar.
-    ultima = quantos_interlocutores + 3
+    # MUITO ALÉM DAS LINHAS DE HOJE, e era a mesma armadilha do nome definido: a
+    # fórmula procurava a instituição num intervalo que terminava na última linha
+    # EXISTENTE quando o arquivo foi gerado, então um interlocutor acrescentado abaixo
+    # disso não aparecia na suspensa da agenda.
+    #
+    # Célula em branco nunca casa com um nome de órgão, então olhar além do conteúdo
+    # não custa nada: `MATCH` e `COUNTIF` simplesmente não a encontram.
+    ultima = _LINHAS_DE_ABAS_FILHAS
     instituicao = f"${_letra_de_coluna(colunas, COLUNA_DA_INSTITUICAO_DA_AGENDA)}2"
     orgaos = f"{folha}!$B$2:$B${ultima}"
     procura = f"MATCH({instituicao},{orgaos},0)"
@@ -270,23 +275,39 @@ def gerar(
         # TODAS estas abas, onde nunca foi um valor daquele vocabulário: quem abria
         # a suspensa de Clima via uma instrução de preenchimento entre os climas. A
         # instrução virou a coluna `Repetir a linha de cima`.
-        quantos = len(interlocutores) if chave == "interlocutores" else len(valores)
-        ultima_linha = quantos + (1 if segunda_coluna else 0)
         if chave in VOCABULARIOS_FECHADOS:
             planilha.protection.sheet = True
-        else:
-            # A linha em branco depois do último valor é o convite a
-            # cadastrar: escrever aqui é a declaração de intenção que a spec
-            # distingue de digitar direto na célula da agenda.
-            ultima_linha += 1
 
-        # Uma base nova pode não ter NENHUM valor ainda (zero instituições
-        # cadastradas). `max(..., 1)` garante que o intervalo sempre cubra ao
-        # menos a linha 1 — vazia, mas um `DefinedName` sem nenhuma célula
-        # dentro do intervalo é o que de fato quebraria o arquivo.
+        # O INTERVALO ACOMPANHA O CONTEÚDO, e era aqui o defeito que o dono do
+        # produto achou ao usar: ele acrescentou instituições na aba e elas não
+        # apareceram na suspensa da agenda.
+        #
+        # ERA UM INTERVALO FIXO — os valores do banco mais UMA linha em branco, o
+        # "convite a cadastrar". Quem acrescentava duas via a primeira na lista e a
+        # segunda não, sem aviso nenhum. E o desfecho era o pior possível: ela
+        # digitava o nome na agenda, a suspensa não o tinha, e a linha virava
+        # pendência de um cadastro que ela mesma acabara de declarar.
+        #
+        # `OFFSET` COM ALTURA DE `COUNTA` resolve porque a altura é calculada pelo
+        # Excel na hora de abrir a lista — é quantas linhas têm conteúdo AGORA, e não
+        # quantas tinham quando o arquivo foi gerado. Não há mais linha de convite: a
+        # pessoa escreve onde quiser abaixo do último valor.
+        #
+        # `MAX(..., 1)` porque uma base nova pode não ter nenhum valor, e um intervalo
+        # de altura ZERO é inválido — o Excel recusaria o arquivo inteiro ao abrir, que
+        # é o pior momento possível para um erro.
+        #
+        # O `-1` DAS ABAS DE DUAS COLUNAS desconta o cabeçalho, que `COUNTA` conta.
+        # Sem ele a lista teria uma linha vazia no fim, oferecida para escolher.
         primeira = 2 if segunda_coluna else 1
-        intervalo = f"'{rotulo}'!$A${primeira}:$A${max(ultima_linha, primeira)}"
-        pasta.defined_names[chave] = DefinedName(chave, attr_text=intervalo)
+        desconto = "-1" if segunda_coluna else ""
+        pasta.defined_names[chave] = DefinedName(
+            chave,
+            attr_text=(
+                f"OFFSET('{rotulo}'!$A${primeira},0,0,"
+                f"MAX(COUNTA('{rotulo}'!$A:$A){desconto},1),1)"
+            ),
+        )
 
     # -- a lista de tipos, na coluna B da aba de instituições -----------------
     #

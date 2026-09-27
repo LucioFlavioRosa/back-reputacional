@@ -2649,3 +2649,65 @@ def test_a_conferencia_diz_o_TIPO_de_cada_coluna(cliente_admin, sessao, semente)
     assert tipos["Instituição"] == "lista"
     assert tipos["Relato"] == "prosa"
     assert tipos["Local"] == "texto"
+
+
+def test_instituicao_E_interlocutor_NOVOS_no_mesmo_arquivo(cliente_admin, sessao, semente):
+    """O QUE O DONO DO PRODUTO QUER FAZER: declarar a instituição uma vez, e o
+    interlocutor dela ao lado, sem preencher o mesmo dado duas vezes.
+
+    É O CASO MAIS DIFÍCIL DA CRIAÇÃO EM CASCATA: o interlocutor precisa do id de uma
+    instituição que ainda não existe quando a linha é lida. A ordem em `_criar_cadastros`
+    existe para isto — instituições primeiro, um `flush`, e o índice relido — e este
+    teste é o que prova que ela funciona de ponta a ponta."""
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    from app.banco.tabelas_stakeholders import Instituicao
+    from app.dominio.importacao_de_agendas import ROTULO_DO_VOCABULARIO
+
+    modelo = modelo_de_importacao.gerar(
+        importar_agendas.vocabularios(sessao),
+        importar_agendas.interlocutores_com_instituicao(sessao),
+    )
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    folha.append(
+        [
+            {
+                "Data": date(2026, 9, 27),
+                "Instituição": "Instituto Novo",
+                "UF": "SP",
+                "Interlocutor 1": "Pessoa Nova",
+            }.get(coluna)
+            for coluna in cabecalho
+        ]
+    )
+    # Declarados nas abas: a instituição com a categoria, e a pessoa com a instituição.
+    pasta[ROTULO_DO_VOCABULARIO["instituicoes"]].append(["Instituto Novo", "Poder Executivo"])
+    pasta[ROTULO_DO_VOCABULARIO["interlocutores"]].append(["Pessoa Nova", "Instituto Novo"])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+    assert criada["pendencias"] == 0, [
+        d["mensagem"] for linha in criada["linhas"] for d in linha["divergencias"]
+    ]
+
+    confirmacao = cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao")
+
+    assert confirmacao.status_code == 201, confirmacao.text
+    instituicao = sessao.scalars(
+        select(Instituicao).where(Instituicao.nome_normalizado == normalizar("Instituto Novo"))
+    ).first()
+    assert instituicao is not None
+    pessoa = sessao.scalars(
+        select(Interlocutor).where(Interlocutor.nome_normalizado == normalizar("Pessoa Nova"))
+    ).first()
+    # A PESSOA NASCE NA INSTITUIÇÃO QUE NASCEU AGORA — é o vínculo que o dono não quer
+    # ter de digitar duas vezes.
+    assert pessoa is not None
+    assert pessoa.instituicao_id == instituicao.id

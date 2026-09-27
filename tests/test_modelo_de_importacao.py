@@ -6,6 +6,7 @@ from app.casos_de_uso.modelo_de_importacao import gerar
 from app.dominio.importacao_de_agendas import (
     FORMATO,
     ROTULO_DO_VOCABULARIO,
+    SEGUNDA_COLUNA_DO_VOCABULARIO,
     VOCABULARIOS_EDITAVEIS,
     VOCABULARIOS_FECHADOS,
 )
@@ -121,36 +122,48 @@ def test_o_teto_de_agendas_esta_num_comentario_na_celula_codigo():
 
 
 def test_o_definedname_de_cada_vocabulario_resolve_para_a_aba_certa():
-    """O QUE ISTO TRAVA: um `DefinedName` mal apontado não dá erro nenhum — o
-    arquivo abre normalmente, a lista suspensa existe, e só se mostra errada
-    quando alguém abre a aba de destino e vê que os valores não batem. Foi
-    assim que a colisão entre o rótulo de `pessoas_aegea` e a aba de
-    preenchimento "Pessoas da Aegea" quase passou despercebida: nenhum outro
-    teste deste arquivo teria acusado o intervalo apontando para a aba
-    errada. Este confere, por vocabulário, que o nome de aba do `DefinedName`
-    é o rótulo esperado e que os valores lidos daquele intervalo são
-    exatamente os que `gerar` recebeu — não o cabeçalho de uma aba de
-    preenchimento que por acaso tem o mesmo nome."""
+    """O QUE ISTO TRAVA: um `DefinedName` mal apontado não dá erro nenhum — o arquivo
+    abre normalmente, a lista suspensa existe, e só se mostra errada quando alguém abre
+    a aba de destino e vê que os valores não batem. Foi assim que a colisão entre o
+    rótulo de `pessoas_aegea` e a aba de preenchimento "Pessoas da Aegea" quase passou
+    despercebida: nenhum outro teste deste arquivo teria acusado o intervalo apontando
+    para a aba errada.
+
+    LÊ A FÓRMULA E NÃO UM INTERVALO, desde que o nome definido virou dinâmico
+    (`OFFSET` com altura de `COUNTA`, para a lista crescer com o que a pessoa
+    acrescenta). O que ele guarda é o mesmo: a aba citada é a do rótulo, e os valores
+    que moram nela são os que `gerar` recebeu — não o cabeçalho de uma aba de
+    preenchimento que por acaso tem o mesmo nome.
+    """
     planilha = _abrir(gerar(VOCABULARIOS))
 
     for chave, valores in VOCABULARIOS.items():
-        (nome_da_aba, intervalo), = planilha.defined_names[chave].destinations
-        assert nome_da_aba == ROTULO_DO_VOCABULARIO[chave], chave
+        rotulo = ROTULO_DO_VOCABULARIO[chave]
+        formula = planilha.defined_names[chave].attr_text
 
+        # A ABA CITADA, e só ela: um `'Pessoas da Aegea'` no lugar de
+        # `'Pessoas da Aegea (lista)'` é exatamente a colisão que este teste pegou.
+        assert f"'{rotulo}'!" in formula, (chave, formula)
+        abas_citadas = {
+            pedaco.split("'!")[0].lstrip("(,").lstrip("'")
+            for pedaco in formula.split("'")[1::2]
+        }
+        assert abas_citadas == {rotulo}, (chave, formula)
+
+        # E os valores que moram naquela aba são os que `gerar` recebeu.
+        primeira = 2 if chave in SEGUNDA_COLUNA_DO_VOCABULARIO else 1
         lidos = [
             celula.value
-            for (celula,) in planilha[nome_da_aba][intervalo]
+            for (celula,) in planilha[rotulo].iter_rows(
+                min_row=primeira, min_col=1, max_col=1
+            )
             if celula.value is not None
         ]
         # A ABA DE INTERLOCUTORES NÃO LISTA `vocabularios`: ela lista os PARES
-        # (pessoa, instituição), que é a relação que o front tem. O nome definido
-        # segue cobrindo a coluna A — é a lista inteira, e é a rede da suspensa
-        # dependente quando o órgão da linha não é reconhecido.
+        # (pessoa, instituição), que é a relação que o front tem. O nome definido segue
+        # cobrindo a coluna A — é a lista inteira, e é a rede da suspensa dependente
+        # quando o órgão da linha não é reconhecido.
         esperados = [] if chave == "interlocutores" else valores
-        # A LISTA É SÓ O VOCABULÁRIO, e mais nada. O marcador `idem` ocupava a
-        # última linha de TODAS as abas de vocabulário, onde nunca foi um valor
-        # daquele vocabulário — quem abria a suspensa de Clima via uma instrução de
-        # preenchimento entre os climas. A instrução virou coluna.
         assert lidos == esperados, chave
 
 
@@ -538,3 +551,70 @@ def test_o_simplificado_tambem_recebe_as_larguras():
         assert agendas.column_dimensions[letra].width == LARGURA_NO_EXCEL[
             tipo_da_coluna(coluna)
         ], coluna.nome
+
+
+# =============================================================================
+# a lista suspensa acompanha o que a pessoa acrescenta
+# =============================================================================
+
+
+def test_o_intervalo_do_vocabulario_CRESCE_com_o_conteudo():
+    """O DEFEITO QUE O DONO DO PRODUTO ACHOU AO USAR: ele acrescentou instituições na
+    aba e elas não apareceram na suspensa da agenda.
+
+    A CAUSA: o nome definido era um intervalo FIXO — as 99 instituições do banco mais
+    UMA linha em branco, o "convite a cadastrar". Quem acrescentava duas via a primeira
+    na lista e a segunda não, sem nenhum aviso. E o pior caso é o silencioso: ela digita
+    o nome na agenda, a suspensa não o tem, e a linha vira pendência de um cadastro que
+    ela acabou de declarar.
+
+    A CORREÇÃO é o intervalo DINÂMICO: `OFFSET` com a altura vindo de `COUNTA`, que é
+    quantas linhas têm conteúdo AGORA — não quantas tinham quando o arquivo foi gerado.
+    """
+    pasta = _abrir(gerar(VOCABULARIOS))
+
+    definido = pasta.defined_names["instituicoes"].attr_text
+
+    assert "OFFSET" in definido, definido
+    assert "COUNTA" in definido, definido
+
+
+def test_o_intervalo_desconta_a_linha_do_CABECALHO():
+    """As abas de duas colunas têm cabeçalho, e `COUNTA` o conta. Sem descontar, a lista
+    teria uma linha de sobra no fim — vazia, oferecida para escolher."""
+    pasta = _abrir(gerar(VOCABULARIOS))
+
+    com_cabecalho = pasta.defined_names["instituicoes"].attr_text
+    sem_cabecalho = pasta.defined_names["climas"].attr_text
+
+    assert "-1" in com_cabecalho, com_cabecalho
+    assert "-1" not in sem_cabecalho, sem_cabecalho
+
+
+def test_o_vocabulario_VAZIO_ainda_da_um_intervalo_valido():
+    """Uma base nova não tem instituição nenhuma. Um intervalo de altura ZERO é inválido
+    e o Excel recusa o arquivo inteiro ao abrir — que é o pior defeito possível, porque
+    acontece antes de a pessoa conseguir fazer qualquer coisa."""
+    vazio = {chave: [] for chave in VOCABULARIOS}
+
+    pasta = _abrir(gerar(vazio))
+
+    assert "MAX(" in pasta.defined_names["instituicoes"].attr_text
+
+
+def test_a_suspensa_dependente_olha_MUITO_alem_das_linhas_de_hoje():
+    """A mesma armadilha na fórmula do interlocutor: ela procurava a instituição num
+    intervalo que terminava na última linha EXISTENTE quando o arquivo foi gerado. Quem
+    acrescentasse um interlocutor abaixo disso não o veria na suspensa da agenda."""
+    from app.casos_de_uso.modelo_de_importacao import _LINHAS_DE_ABAS_FILHAS
+    from app.dominio.importacao_de_agendas import ABA_PRINCIPAL
+
+    agendas = _abrir(gerar(VOCABULARIOS, PARES))[ABA_PRINCIPAL]
+    dependentes = [
+        dv
+        for dv in agendas.data_validations.dataValidation
+        if dv.formula1 and "OFFSET" in dv.formula1
+    ]
+
+    assert dependentes
+    assert f"$B${_LINHAS_DE_ABAS_FILHAS}" in dependentes[0].formula1, dependentes[0].formula1
