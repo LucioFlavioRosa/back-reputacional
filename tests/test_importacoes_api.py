@@ -2437,3 +2437,81 @@ def test_as_colunas_da_conferencia_seguem_o_arquivo_SIMPLIFICADO(
 
     assert criada["colunas"] == list(MODELOS["simplificado"])
     assert criada["pendencias"] == 0, criada["grupos"]
+
+
+# =============================================================================
+# a coluna na divergência: é o que pinta a célula na grade
+# =============================================================================
+
+
+def test_a_divergencia_de_VOCABULARIO_tambem_diz_a_coluna(cliente_admin, sessao, semente):
+    """O CASO MAIS COMUM DE TODOS, e era o que ficava sem cor.
+
+    "Este órgão não existe no cadastro" é a divergência que a conferência mais
+    mostra, e ela nasce de UMA célula. Sem a coluna, a grade não tem onde pintar —
+    e a pessoa recebe "2 pendências" olhando uma tabela sem nada destacado."""
+    conteudo = _com_declaracao(sessao, semente, "Órgão Inventado")
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", conteudo, TIPO_XLSX)}
+    ).json()
+
+    de_instituicao = [
+        divergencia
+        for linha in criada["linhas"]
+        for divergencia in linha["divergencias"]
+        if divergencia["campo"] == "instituicao_id"
+    ]
+
+    assert de_instituicao, criada["linhas"]
+    assert all(d["coluna"] == "Instituição" for d in de_instituicao), de_instituicao
+
+
+def test_TODA_divergencia_de_celula_diz_a_coluna(cliente_admin, sessao, semente):
+    """A GUARDA GERAL. Um arquivo com problemas de tipos diferentes numa linha só:
+    cada divergência que veio de uma célula tem de saber qual é.
+
+    As que NÃO têm coluna são as da linha inteira — a duplicata de agenda —, e
+    essas continuam sem, de propósito: pintar uma célula arbitrária mandaria a
+    pessoa consertar uma coluna que não tem nada de errado.
+    """
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    modelo = modelo_de_importacao.gerar(
+        importar_agendas.vocabularios(sessao),
+        importar_agendas.interlocutores_com_instituicao(sessao),
+    )
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    folha.append(
+        [
+            {
+                "Data": date(2026, 9, 25),
+                "Instituição": "Órgão Que Ninguém Cadastrou",
+                "UF": "SP",
+                "Clima": "eufórico",
+                "Interlocutor 1": "Pessoa Que Ninguém Cadastrou",
+                "Tema 1": "Tema Inexistente",
+            }.get(coluna)
+            for coluna in cabecalho
+        ]
+    )
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+
+    sem_coluna = [
+        (d["campo"], d["mensagem"][:60])
+        for linha in criada["linhas"]
+        for d in linha["divergencias"]
+        # A duplicata é da linha inteira e não tem coluna: ela é a única exceção,
+        # e aqui não há duplicata nenhuma.
+        if not d["coluna"]
+    ]
+
+    assert sem_coluna == []

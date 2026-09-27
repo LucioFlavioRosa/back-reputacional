@@ -468,6 +468,7 @@ def _resolver(
                         f"{texto!r}. Escolha qual na conferência."
                     ),
                     trava=True,
+                    coluna=coluna_nome,
                 )
             )
             return _Resolucao()
@@ -498,6 +499,7 @@ def _resolver(
                         "frente da agenda."
                     ),
                     trava=True,
+                    coluna=coluna_nome,
                 )
             )
             return _Resolucao()
@@ -510,6 +512,7 @@ def _resolver(
                 valor=texto,
                 mensagem=f"{coluna_nome}: vou cadastrar {texto!r}, que você declarou na aba.",
                 trava=False,
+                coluna=coluna_nome,
                 categoria_declarada=categoria,
                 # MARCA A AÇÃO já aqui, e não só quando a pessoa decide na tela:
                 # é assim que a confirmação encontra o que criar sem depender do
@@ -539,7 +542,11 @@ def _resolver(
             f"{coluna_nome}: {texto!r} não existe no cadastro. Se é novo, "
             "escreva-o também na aba de cadastro da planilha."
         )
-    divergencias.append(Divergencia(campo=campo, valor=texto, mensagem=motivo, trava=True))
+    divergencias.append(
+        Divergencia(
+            campo=campo, valor=texto, mensagem=motivo, coluna=coluna_nome, trava=True
+        )
+    )
     return _Resolucao()
 
 
@@ -577,6 +584,7 @@ def _conferir_orgao_declarado(
                 "só — deixe as duas iguais."
             ),
             trava=True,
+            coluna=coluna_nome,
         )
     )
 
@@ -634,6 +642,7 @@ def _interlocutor_da_instituicao(
                 "ou aponte para o cadastro certo na conferência."
             ),
             trava=True,
+            coluna=coluna_nome,
         )
     )
     return _Resolucao()
@@ -782,6 +791,7 @@ def _listas_da_linha(
                         valor=str(do_grupo),
                         mensagem=f"Grupo {numero} de {campo_da_lista}: {erro}",
                         trava=True,
+                        coluna=coluna_nome,
                     )
                 )
 
@@ -952,6 +962,7 @@ def propor_de_linhas(
                             mensagem=f"Data: não consegui ler {str(bruto)!r}. "
                             "Use 25/09/2026 ou 2026-09-25.",
                             trava=True,
+                            coluna=coluna.nome,
                         )
                     )
             elif coluna.campo == "preve_desdobramento":
@@ -963,6 +974,7 @@ def propor_de_linhas(
                             valor=convertido,
                             mensagem=f"{coluna.nome}: responda sim ou não, não {convertido!r}.",
                             trava=True,
+                            coluna=coluna.nome,
                         )
                     )
                     valor = None
@@ -978,6 +990,7 @@ def propor_de_linhas(
                             mensagem=f"UF: {str(bruto)!r} não é sigla de estado. "
                             "Use uma das 27, ou NA/IN.",
                             trava=True,
+                            coluna=coluna.nome,
                         )
                     )
                     valor = None
@@ -1063,6 +1076,7 @@ def propor_de_linhas(
                         valor="",
                         mensagem=f"Linha {linha.numero}: {erro}",
                         trava=True,
+                        coluna=coluna.nome,
                     )
                 )
 
