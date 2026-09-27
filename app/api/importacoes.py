@@ -37,6 +37,7 @@ from app.dominio.importacao_de_agendas import (
     Divergencia,
     aba_de,
     agrupar,
+    coluna_do_campo,
 )
 from app.dominio.texto import normalizar
 
@@ -278,6 +279,25 @@ def _grupos(sessao, linhas) -> list[GrupoSaida]:
     return sorted(saida, key=lambda grupo: (not grupo.trava, -len(grupo.linhas), grupo.valor))
 
 
+def _com_a_coluna(divergencias) -> list[dict]:
+    """As divergências gravadas, com `coluna` preenchida quando o dado antigo não a tem.
+
+    IMPORTAÇÕES CRIADAS ANTES de as divergências ganharem `coluna` estão no banco sem
+    essa chave, e a conferência delas continua aberta. A grade pinta pela coluna e o
+    filtro inicial mostra só as linhas com pendência — então a linha DESAPARECIA da
+    grade enquanto o cabeçalho anunciava a pendência, e não havia onde mexer.
+
+    A COLUNA É DERIVÁVEL DO CAMPO para todo campo de valor único, e é isso que
+    conserta o dado antigo sem migration. `coluna_do_campo` devolve vazio quando o
+    campo tem várias colunas (os grupos numerados), e aí a divergência segue sem
+    coluna — como as da linha inteira, que nunca tiveram.
+    """
+    return [
+        {**bruta, "coluna": bruta.get("coluna") or coluna_do_campo(bruta.get("campo") or "")}
+        for bruta in divergencias or []
+    ]
+
+
 def _colunas_do_arquivo(linhas) -> list[str]:
     """As colunas que AQUELE arquivo tinha, na ordem da descrição.
 
@@ -334,7 +354,7 @@ def _saida(sessao, importacao, linhas) -> ImportacaoSaida:
                 herdado=(linha.dados_brutos or {}).get(CHAVE_DO_HERDADO) or {},
                 corrigido=(linha.dados_brutos or {}).get(CHAVE_DO_CORRIGIDO) or {},
                 proposta=linha.proposta,
-                divergencias=linha.divergencias,
+                divergencias=_com_a_coluna(linha.divergencias),
             )
             for linha in linhas
         ],

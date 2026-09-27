@@ -790,8 +790,15 @@ def _listas_da_linha(
                         campo=campo_da_lista,
                         valor=str(do_grupo),
                         mensagem=f"Grupo {numero} de {campo_da_lista}: {erro}",
+                        # SEM COLUNA, e é de propósito: este `except` não sabe qual
+                        # campo o modelo reprovou. Anotar aqui a última coluna que o
+                        # laço viu faria a grade pintar de vermelho uma célula
+                        # CORRETA — mandando a pessoa consertar o que está certo
+                        # enquanto o problema real fica sem marca nenhuma. Sem
+                        # coluna, o erro aparece na mensagem da linha, que é onde ele
+                        # pertence: o mesmo tratamento que as recusas de comparação
+                        # entre itens já recebem, em `impedimentos`.
                         trava=True,
-                        coluna=coluna_nome,
                     )
                 )
 
@@ -1075,8 +1082,10 @@ def propor_de_linhas(
                         campo="",
                         valor="",
                         mensagem=f"Linha {linha.numero}: {erro}",
+                        # SEM COLUNA, pelo mesmo motivo do `except` dos grupos: o
+                        # erro é da agenda inteira, e `coluna.nome` aqui seria a
+                        # última coluna do laço — uma célula qualquer.
                         trava=True,
-                        coluna=coluna.nome,
                     )
                 )
 

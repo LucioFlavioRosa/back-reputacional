@@ -932,3 +932,44 @@ def test_nenhuma_coluna_de_GRUPO_entra_no_mapa_de_campo_unico():
     # E o mapa prefixado continua lá — a guarda não pode passar por o mapa estar vazio.
     assert _VOCABULARIO_DO_CAMPO["outra_parte.interlocutor_id"] == "interlocutores"
     assert _VOCABULARIO_DO_CAMPO["outra_parte.presenca"] == "presenca"
+
+
+def test_o_erro_GENERICO_de_um_grupo_nao_aponta_uma_coluna_qualquer(
+    sessao, semente, monkeypatch
+):
+    """ACHADO BAIXO DA REVISÃO, e a razão de ele merecer teste apesar de raro.
+
+    Os dois `except Exception` desta máquina existem para que uma regra nova de
+    validação vire PENDÊNCIA em vez de 500 — é o que os mantém. Mas eles não sabem
+    QUAL campo reprovou: anotar ali a última coluna que o laço viu faz a grade
+    pintar de vermelho uma célula correta, mandando a pessoa consertar o que está
+    certo enquanto o problema real fica sem marca.
+
+    EXERCITADO DIRETO, forçando o modelo a recusar, e não por uma entrada torta:
+    todo campo com regra própria é recusado ANTES, com a coluna certa — foi isso
+    que eu descobri ao tentar chegar aqui por entrada. O `except` é a rede para a
+    regra que ainda não existe, e é justamente por isso que o comportamento dele
+    precisa estar fixado antes de alguém acrescentar essa regra.
+
+    Sem coluna, o erro aparece na mensagem da LINHA. É o mesmo tratamento que as
+    recusas de comparação entre itens (`impedimentos`) já recebem, e pelo mesmo
+    motivo: elas não são de uma célula.
+    """
+    from app.casos_de_uso.importar_agendas import GRUPOS_NUMERADOS
+
+    def recusa_tudo(**_):
+        raise ValueError("regra que ainda não existe")
+
+    monkeypatch.setitem(GRUPOS_NUMERADOS["outra_parte"], "modelo", recusa_tudo)
+
+    conteudo = _preenchida(
+        sessao,
+        agendas=[_agenda(semente)],
+        participantes=[{"Pessoa": semente["interlocutor"].nome}],
+    )
+
+    (proposta,) = importar_agendas.propor(sessao, conteudo)
+
+    doGrupo = [d for d in proposta.divergencias if d.campo == "outra_parte"]
+    assert doGrupo, [d.mensagem for d in proposta.divergencias]
+    assert all(d.coluna == "" for d in doGrupo), [(d.coluna, d.mensagem) for d in doGrupo]

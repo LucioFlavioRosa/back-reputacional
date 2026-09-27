@@ -2515,3 +2515,8 @@ def test_TODA_divergencia_de_celula_diz_a_coluna(cliente_admin, sessao, semente)
     ]
 
     assert sem_coluna == []
+
+
+# =============================================================================
+# os dois achados da revisão dos dois modelos
+# =============================================================================
