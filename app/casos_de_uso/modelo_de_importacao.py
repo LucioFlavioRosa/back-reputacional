@@ -45,6 +45,7 @@ from app.dominio.importacao_de_agendas import (
     VOCABULARIOS_EDITAVEIS,
     VOCABULARIOS_FECHADOS,
     colunas_do_modelo,
+    tipo_da_coluna,
 )
 
 #: Linhas de dados que a lista suspensa da aba AGENDAS cobre, além do
@@ -58,6 +59,28 @@ _LINHAS_DE_AGENDAS = 500
 #: A coluna que recebe a data da agenda. Pelo NOME e não pelo índice: a ordem das
 #: colunas segue a sequência dos campos do formulário e já mudou uma vez.
 COLUNA_DA_DATA = "Data"
+
+#: Tipo de coluna → largura no Excel, em CARACTERES (a unidade do openpyxl).
+#:
+#: A MESMA NECESSIDADE QUE A GRADE TEM, no outro lugar onde a pessoa encontra a
+#: planilha: o arquivo saía com todas as colunas do mesmo tamanho, o Relato tão
+#: estreito quanto a UF — e é no Relato que ela digita um parágrafo.
+#:
+#: O TIPO VEM DA MESMA DESCRIÇÃO que a tela usa (`tipo_da_coluna`). Uma tabela de
+#: larguras por NOME de coluna, escrita aqui, envelheceria na primeira coluna nova e
+#: divergiria da tela no dia em que uma das duas mudasse.
+#:
+#: Os números não são os da tela convertidos: o Excel mede em caracteres da fonte
+#: padrão, e a tela em pixels. São duas unidades para a mesma intenção — "cabe uma
+#: sigla", "cabe um nome de órgão", "cabe um parágrafo sem esconder o resto".
+LARGURA_NO_EXCEL: dict[str, float] = {
+    "marca": 22,  # o cabeçalho "Repetir a linha de cima" é mais largo que o valor
+    "data": 12,
+    "sigla": 6,
+    "lista": 28,
+    "prosa": 48,
+    "texto": 18,
+}
 
 #: O formato da célula, em código do Excel. É o formato brasileiro porque é o que
 #: a pessoa digita, e é ele que faz o Excel ler `25/09/2026` como 25 de setembro —
@@ -404,6 +427,16 @@ def gerar(
         # `A2..A501` CRIA as 500 células, o arquivo passa a ter 501 linhas usadas
         # e o `Ctrl+End` de quem abre o modelo vai para o fim do nada.
         agendas.column_dimensions[letra_da_data].number_format = FORMATO_DA_DATA_NA_TELA
+
+    # -- a largura de cada coluna, pelo tipo do dado --------------------------
+    #
+    # SEGUE O RECORTE e não a posição: no simplificado a coluna 17 é o Clima e no
+    # completo é o Relato, e uma largura por posição daria o tamanho do parágrafo
+    # para a lista suspensa.
+    for indice, coluna in enumerate(colunas_da_agenda, start=1):
+        agendas.column_dimensions[get_column_letter(indice)].width = LARGURA_NO_EXCEL[
+            tipo_da_coluna(coluna)
+        ]
 
     saida = io.BytesIO()
     pasta.save(saida)

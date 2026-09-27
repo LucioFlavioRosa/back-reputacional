@@ -482,3 +482,59 @@ def test_no_simplificado_a_suspensa_de_data_segue_na_coluna_certa():
             modelo,
             [str(f) for f in datas[0].sqref.ranges],
         )
+
+
+def test_cada_coluna_do_arquivo_tem_a_LARGURA_do_tipo_dela():
+    """A MESMA NECESSIDADE, NO OUTRO LUGAR. A tela já dimensiona cada coluna pelo tipo
+    do dado; o arquivo que a pessoa PREENCHE saía com todas do mesmo tamanho — o
+    Relato tão estreito quanto a UF, e é nele que ela digita um parágrafo.
+
+    O TIPO É O MESMO da grade, vindo da mesma descrição: uma tabela de larguras
+    escrita à parte aqui divergiria da tela no dia em que uma delas mudasse.
+    """
+    from openpyxl.utils import get_column_letter
+
+    from app.casos_de_uso.modelo_de_importacao import LARGURA_NO_EXCEL
+    from app.dominio.importacao_de_agendas import (
+        ABA_PRINCIPAL,
+        colunas_do_modelo,
+        tipo_da_coluna,
+    )
+
+    agendas = _abrir(gerar(VOCABULARIOS))[ABA_PRINCIPAL]
+
+    for indice, coluna in enumerate(colunas_do_modelo("completo"), start=1):
+        letra = get_column_letter(indice)
+        esperada = LARGURA_NO_EXCEL[tipo_da_coluna(coluna)]
+        assert agendas.column_dimensions[letra].width == esperada, coluna.nome
+
+
+def test_a_coluna_de_PROSA_e_a_mais_larga_do_arquivo():
+    """O contrapeso que prova que a tabela de larguras não é decorativa: se todas
+    fossem iguais, o teste acima passaria e a planilha continuaria ruim."""
+    from app.casos_de_uso.modelo_de_importacao import LARGURA_NO_EXCEL
+
+    for outro in ("marca", "data", "sigla", "lista", "texto"):
+        assert LARGURA_NO_EXCEL["prosa"] > LARGURA_NO_EXCEL[outro], outro
+
+
+def test_o_simplificado_tambem_recebe_as_larguras():
+    """As larguras seguem o RECORTE, como as validações: no simplificado a coluna 17 é
+    o Clima e no completo é o Relato, e uma largura por posição fixa daria o tamanho
+    do parágrafo para a lista suspensa."""
+    from openpyxl.utils import get_column_letter
+
+    from app.casos_de_uso.modelo_de_importacao import LARGURA_NO_EXCEL
+    from app.dominio.importacao_de_agendas import (
+        ABA_PRINCIPAL,
+        colunas_do_modelo,
+        tipo_da_coluna,
+    )
+
+    agendas = _abrir(gerar(VOCABULARIOS, modelo="simplificado"))[ABA_PRINCIPAL]
+
+    for indice, coluna in enumerate(colunas_do_modelo("simplificado"), start=1):
+        letra = get_column_letter(indice)
+        assert agendas.column_dimensions[letra].width == LARGURA_NO_EXCEL[
+            tipo_da_coluna(coluna)
+        ], coluna.nome
