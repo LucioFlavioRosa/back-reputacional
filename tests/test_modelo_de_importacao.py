@@ -131,7 +131,7 @@ def test_o_definedname_de_cada_vocabulario_resolve_para_a_aba_certa():
     para a aba errada.
 
     LÊ A FÓRMULA E NÃO UM INTERVALO, desde que o nome definido virou dinâmico
-    (`OFFSET` com altura de `COUNTA`, para a lista crescer com o que a pessoa
+    (`INDEX` na última linha preenchida, para a lista crescer com o que a pessoa
     acrescenta). O que ele guarda é o mesmo: a aba citada é a do rótulo, e os valores
     que moram nela são os que `gerar` recebeu — não o cabeçalho de uma aba de
     preenchimento que por acaso tem o mesmo nome.
@@ -590,9 +590,14 @@ def test_o_intervalo_do_vocabulario_CRESCE_com_o_conteudo():
     o nome na agenda, a suspensa não o tem, e a linha vira pendência de um cadastro que
     ela acabou de declarar.
 
-    A CORREÇÃO é o intervalo DINÂMICO: o fim dele é `INDEX` na linha que `COUNTA`
-    aponta — quantas linhas têm conteúdo AGORA, e não quantas tinham quando o arquivo foi
-    gerado.
+    A CORREÇÃO é o intervalo DINÂMICO: o fim dele é `INDEX` na ÚLTIMA LINHA PREENCHIDA,
+    calculada pelo Excel na hora de abrir a lista — e não a última que existia quando o
+    arquivo foi gerado.
+
+    O FIM NÃO É MAIS `COUNTA`, e a troca tem motivo (ver
+    `test_o_intervalo_sobrevive_a_uma_linha_em_BRANCO_no_meio`): contagem de linhas
+    preenchidas não é o mesmo que número da última linha preenchida, e a diferença entre
+    as duas é uma linha vazia no meio da coluna.
 
     `INDEX` E NÃO `OFFSET`: `OFFSET` é volátil, e função volátil em validação de dados é
     onde o Excel se recusa a resolver em algumas versões. `INDEX` faz o mesmo sem ser
@@ -604,7 +609,7 @@ def test_o_intervalo_do_vocabulario_CRESCE_com_o_conteudo():
     definido = pasta.defined_names["instituicoes"].attr_text
 
     assert "INDEX" in definido, definido
-    assert "COUNTA" in definido, definido
+    assert "$A:$A" in definido, definido
     assert "OFFSET" not in definido, definido
 
 
@@ -612,8 +617,8 @@ def test_o_intervalo_COMECA_depois_do_cabecalho():
     """As abas de duas colunas têm cabeçalho, e a lista não pode oferecer a palavra
     "Instituição" como se fosse uma instituição.
 
-    O FIM É O MESMO NAS DUAS: numa aba com cabeçalho os valores vão da linha 2 até
-    `COUNTA`; sem cabeçalho, da 1 até `COUNTA`. É a primeira linha que muda."""
+    O FIM É O MESMO NAS DUAS — a última linha preenchida da coluna. É a primeira linha
+    que muda: com cabeçalho os valores começam na 2, sem cabeçalho na 1."""
     pasta = _abrir(gerar(VOCABULARIOS))
 
     assert "$A$2:" in pasta.defined_names["instituicoes"].attr_text
@@ -871,3 +876,85 @@ def test_a_celula_de_reserva_da_suspensa_vazia_esta_SEMPRE_em_branco():
         for linha in range(1, 6):
             celula = folha[f"{COLUNA_DE_RESERVA}{linha}"]
             assert celula.value is None, (chave, celula.coordinate, celula.value)
+
+
+# =============================================================================
+# a largura também nas abas de cadastro
+# =============================================================================
+
+
+def test_TODAS_as_abas_tem_a_largura_de_cada_coluna():
+    """O DONO DO PRODUTO PEDIU O MESMO AJUSTE FORA DA ABA DE AGENDAS: as larguras
+    valiam só para `Agendas`, e as dezenove abas de cadastro continuavam com a
+    coluna padrão do Excel — "Nome completo" do mesmo tamanho de "Relevância",
+    com o nome do órgão cortado ao meio na aba onde ele é declarado.
+
+    O TIPO VEM DA DESCRIÇÃO, como na aba de agendas: é o que impede uma tabela de
+    larguras por nome de coluna, que envelheceria na primeira coluna nova."""
+    from openpyxl.utils import get_column_letter
+
+    from app.casos_de_uso.modelo_de_importacao import LARGURA_NO_EXCEL
+    from app.dominio.importacao_de_agendas import tipo_da_coluna_de_cadastro
+
+    pasta = _abrir(gerar(VOCABULARIOS))
+
+    for chave in VOCABULARIOS_EDITAVEIS | VOCABULARIOS_FECHADOS:
+        planilha = pasta[ROTULO_DO_VOCABULARIO[chave]]
+        for indice, coluna in enumerate(colunas_do_cadastro(chave), start=1):
+            letra = get_column_letter(indice)
+            esperada = LARGURA_NO_EXCEL[tipo_da_coluna_de_cadastro(coluna)]
+            assert planilha.column_dimensions[letra].width == esperada, (
+                f"{ROTULO_DO_VOCABULARIO[chave]} › {coluna.nome}"
+            )
+
+
+def test_o_NOME_COMPLETO_do_orgao_e_mais_largo_que_a_relevancia():
+    """O contrapeso: se todas as colunas de cadastro recebessem a mesma largura, o
+    teste acima passaria e a aba continuaria ilegível. O nome completo do órgão é o
+    texto mais longo que se escreve ali; a relevância é um número."""
+    from app.casos_de_uso.modelo_de_importacao import LARGURA_NO_EXCEL
+    from app.dominio.importacao_de_agendas import (
+        colunas_do_cadastro,
+        tipo_da_coluna_de_cadastro,
+    )
+
+    por_nome = {
+        coluna.nome: LARGURA_NO_EXCEL[tipo_da_coluna_de_cadastro(coluna)]
+        for coluna in colunas_do_cadastro("instituicoes")
+    }
+
+    assert por_nome["Nome completo"] > por_nome["Relevância"]
+    assert por_nome["Nome completo"] > por_nome["Subcategoria"]
+
+
+def test_o_intervalo_sobrevive_a_uma_linha_em_BRANCO_no_meio():
+    """ACHADO DA REVISÃO, e é o mesmo defeito de antes por outro caminho: a pessoa
+    acrescenta instituições deixando uma linha vazia entre elas, e as que estão abaixo
+    do buraco desaparecem da suspensa.
+
+    A CAUSA É `COUNTA`: ele conta as linhas COM conteúdo, não diz qual é a última. Com
+    um buraco, a conta fica menor que o número da última linha preenchida, e o intervalo
+    termina antes dela — silenciosamente, como o defeito original.
+
+    A CORREÇÃO É PERGUNTAR PELA ÚLTIMA LINHA, e não pela quantidade: `MATCH` procurando
+    um valor maior que qualquer texto devolve a posição da última célula de texto, e o
+    mesmo com um número maior que qualquer número cobre os vocabulários numéricos (a
+    Relevância é `1`, `2`, `3`). Buraco no meio deixa de importar."""
+    pasta = _abrir(gerar(VOCABULARIOS))
+
+    definido = pasta.defined_names["instituicoes"].attr_text
+
+    assert "COUNTA" not in definido, definido
+    assert "MATCH(" in definido, definido
+
+
+def test_o_intervalo_acha_a_ultima_linha_tambem_num_vocabulario_de_NUMEROS():
+    """A Relevância sai como número, e o truque do texto (`REPT("z",255)`) não acha
+    célula numérica nenhuma. Sem o segundo braço, a suspensa da Relevância cairia para
+    a primeira linha — uma lista de um item só."""
+    pasta = _abrir(gerar(VOCABULARIOS))
+
+    definido = pasta.defined_names["relevancias"].attr_text
+
+    assert 'REPT("z"' in definido, definido
+    assert "E+307" in definido, definido

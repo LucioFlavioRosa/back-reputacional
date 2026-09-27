@@ -46,6 +46,7 @@ from app.dominio.importacao_de_agendas import (
     colunas_do_cadastro,
     colunas_do_modelo,
     tipo_da_coluna,
+    tipo_da_coluna_de_cadastro,
 )
 
 #: Linhas de dados que a lista suspensa da aba AGENDAS cobre, além do
@@ -122,6 +123,32 @@ def rotulo_singular(chave: str) -> str:
 #: essa célula precisa ser garantidamente branca, senão a suspensa passaria a oferecer
 #: aquele valor em toda linha sem dono escolhido. Um teste confere que ela está vazia.
 COLUNA_DE_RESERVA = "H"
+
+
+def _ultima_linha_preenchida(coluna: str, primeira: int) -> str:
+    """A fórmula que devolve o NÚMERO da última linha com conteúdo numa coluna.
+
+    ERA `COUNTA`, E ISSO ESTAVA ERRADO — a revisão achou, e é o defeito original por
+    outro caminho. `COUNTA` diz QUANTAS linhas têm conteúdo, não QUAL é a última: quem
+    acrescenta instituições deixando uma linha vazia entre elas faz a conta ficar menor
+    que o número da última linha, e o intervalo termina antes dela. As instituições
+    abaixo do buraco desaparecem da suspensa, sem aviso — exatamente o desfecho que o
+    intervalo dinâmico existia para impedir.
+
+    DOIS BRAÇOS PORQUE HÁ DOIS TIPOS DE VALOR. `MATCH` com um valor maior que qualquer
+    texto (`REPT("z",255)`) devolve a posição da última célula de TEXTO; com um número
+    maior que qualquer número, a da última célula NUMÉRICA. A Relevância sai como número,
+    então um braço só deixaria a lista dela com um item.
+
+    `IFERROR` EM CADA BRAÇO porque a coluna pode não ter nenhum valor daquele tipo — o
+    braço que não acha nada vira zero em vez de derrubar a expressão inteira —, e
+    `MAX(..., primeira)` é o caso da base nova, sem valor nenhum: o intervalo tem de
+    existir mesmo apontando para célula vazia, senão o Excel recusa o arquivo ao ABRIR.
+    """
+    return (
+        f'MAX(IFERROR(MATCH(REPT("z",255),{coluna}),0),'
+        f"IFERROR(MATCH(9.99999999999999E+307,{coluna}),0),{primeira})"
+    )
 
 
 def _suspensa_dependente(vocabulario: str, celula_do_dono: str) -> str:
@@ -354,6 +381,19 @@ def gerar(
         # de altura ZERO é inválido — o Excel recusaria o arquivo inteiro ao abrir, que
         # é o pior momento possível para um erro.
         #
+        # A LARGURA TAMBÉM AQUI, e era o pedido do dono do produto: o ajuste valia
+        # só para `Agendas`, e as dezenove abas de cadastro saíam com a coluna padrão
+        # do Excel — "Nome completo" do tamanho de "Relevância", com o nome do órgão
+        # cortado ao meio na única aba onde ele é escrito.
+        #
+        # NA DIMENSÃO DA COLUNA, pelo mesmo motivo da aba de agendas: largura por
+        # célula materializaria as 2000 linhas da suspensa e o `Ctrl+End` de quem abre
+        # a aba iria para o fim do nada.
+        for posicao, coluna in enumerate(colunas, start=1):
+            planilha.column_dimensions[get_column_letter(posicao)].width = (
+                LARGURA_NO_EXCEL[tipo_da_coluna_de_cadastro(coluna)]
+            )
+
         primeira = 2 if tem_cabecalho else 1
         # `INDEX` E NÃO `OFFSET`, e a diferença importa: `OFFSET` é uma função VOLÁTIL, e
         # função volátil em validação de dados é o caso onde o Excel se recusa a resolver
@@ -361,18 +401,16 @@ def gerar(
         # expressão inteira é um INTERVALO — `$A$2:INDEX(...)` —, que é a forma que a
         # validação de dados lê com menos ressalvas.
         #
-        # A CONTA: `COUNTA` conta as linhas com conteúdo, e numa aba com cabeçalho a
-        # última linha de valor É esse número (cabeçalho na 1, valores de 2 a COUNTA).
-        # Sem cabeçalho, também: valores de 1 a COUNTA.
-        #
-        # `MAX(..., primeira)` é o caso da base nova, sem valor nenhum: o intervalo tem
-        # de existir, mesmo que aponte para uma célula vazia. Altura zero é intervalo
-        # inválido, e o Excel recusa o arquivo ao ABRIR — o pior momento para um erro.
+        # O FIM É A ÚLTIMA LINHA PREENCHIDA (ver `_ultima_linha_preenchida`), e não
+        # a CONTAGEM de linhas preenchidas: com uma linha vazia no meio da coluna, a
+        # contagem fica menor que o número da última linha e os valores abaixo do
+        # buraco caem fora da suspensa.
+        coluna_inteira = f"'{rotulo}'!$A:$A"
         pasta.defined_names[chave] = DefinedName(
             chave,
             attr_text=(
-                f"'{rotulo}'!$A${primeira}:"
-                f"INDEX('{rotulo}'!$A:$A,MAX(COUNTA('{rotulo}'!$A:$A),{primeira}))"
+                f"'{rotulo}'!$A${primeira}:INDEX({coluna_inteira},"
+                f"{_ultima_linha_preenchida(coluna_inteira, primeira)})"
             ),
         )
 

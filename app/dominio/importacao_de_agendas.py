@@ -982,6 +982,34 @@ def tipo_da_coluna(coluna: Coluna) -> str:
     return "texto"
 
 
+def tipo_da_coluna_de_cadastro(coluna: ColunaDeCadastro) -> str:
+    """O tipo de uma coluna de ABA DE CADASTRO, nos mesmos termos de `tipo_da_coluna`.
+
+    DUAS REGRAS PORQUE SÃO DUAS COISAS: na aba de agendas a Instituição é uma ESCOLHA
+    numa lista, e aqui ela é o nome que a pessoa ESTÁ DECLARANDO — a mesma palavra em
+    duas situações com necessidades de espaço diferentes. Uma função só teria de
+    perguntar "de que aba é esta coluna?", e quem responde errado descobre pelo
+    arquivo torto.
+
+    OS TIPOS SÃO OS MESMOS SEIS, de propósito: a tabela de larguras é uma só, e um
+    sétimo tipo existindo apenas aqui obrigaria todo consumidor dela — inclusive a
+    grade da tela — a saber de um valor que nunca vai receber.
+
+    O MAPA, e cada linha dele é uma decisão sobre QUANTO SE ESCREVE na célula:
+    o nome completo do órgão é o texto mais longo de todas as abas (`prosa`); sim/não
+    é a coluna estreita que o cabeçalho define (`marca`); nome, cargo e e-mail cabem
+    numa linha curta, do mesmo tamanho de um valor de lista (`lista`); e o que vier
+    depois começa no tamanho médio, que é o padrão menos arriscado para um campo novo.
+    """
+    if coluna.campo == "nome_completo":
+        return "prosa"
+    if coluna.campo == "eh_porta_voz":
+        return "marca"
+    if coluna.vocabulario or coluna.campo in ("nome", "cargo", "email"):
+        return "lista"
+    return "texto"
+
+
 def coluna_do_campo(campo: str) -> str:
     """O rótulo da COLUNA que alimenta um campo, ou vazio se não houver uma só.
 

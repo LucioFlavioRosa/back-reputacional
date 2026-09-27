@@ -467,7 +467,139 @@ class _Resolucao:
     a_criar: tuple[str, str] | None = None
 
 
+def _subcategoria_da_categoria_por_id(
+    sessao: Session, categoria_id: object, nome: str
+) -> int | None:
+    """O id da subcategoria daquele nome, dentro da categoria daquele id.
+
+    SEPARADA DA QUE RECEBE O OBJETO porque a conferência do upload tem o ID (vindo do
+    índice) e a criação tem o objeto (vindo do banco). Uma função só teria de aceitar os
+    dois, e "aceita qualquer coisa" é como o argumento errado passa sem ninguém notar.
+    """
+    from app.banco.tabelas_catalogo import SubcategoriaPublico
+
+    procurado = normalizar(nome)
+    candidatas = sessao.scalars(
+        select(SubcategoriaPublico).where(
+            SubcategoriaPublico.categoria_publico_id == categoria_id,
+            SubcategoriaPublico.ativo.is_(True),
+        )
+    ).all()
+    for candidata in candidatas:
+        if normalizar(candidata.nome) == procurado:
+            return candidata.id
+    return None
+
+
+def _conferir_o_declarado(
+    sessao: Session,
+    vocabulario: str,
+    nome: str,
+    declarado: Mapping[str, object],
+    indice: Mapping,
+    declarados: Mapping[str, frozenset[str]],
+    coluna_nome: str,
+    campo: str,
+    divergencias: list[Divergencia],
+) -> bool:
+    """Confere as colunas da ABA DE CADASTRO, e devolve se está tudo bem.
+
+    ERA O BURACO QUE A REVISÃO ACHOU, e ele tinha três sintomas: a abrangência escrita
+    como "Minas Gerais" estourava a confirmação por violar o domínio da coluna no banco;
+    o tier `999` falhava por chave estrangeira; e a subcategoria de outra categoria era
+    DESCARTADA em silêncio, com o cadastro nascendo sem ela.
+
+    A RAIZ ERA A MESMA: as células da AGENDA passavam por `_resolver`, e as da aba de
+    CADASTRO não passavam por nada. Um vocabulário fechado tem de ser conferido onde
+    todos os outros são — no upload, junto das outras pendências, com a coluna e o valor
+    na mensagem.
+
+    POR QUE NO UPLOAD E NÃO NA CONFIRMAÇÃO: é a diferença entre a pessoa consertar uma
+    célula junto das outras e receber erro interno depois de ter conferido 500 linhas e
+    clicado em subir.
+    """
+    tudo_bem = True
+    for coluna in colunas_do_cadastro(vocabulario):
+        bruto = declarado.get(coluna.campo)
+        if bruto is None or str(bruto).strip() == "":
+            continue
+        texto = str(bruto).strip()
+
+        if coluna.campo == "eh_porta_voz":
+            # A MESMA REGRA DA COLUNA DE SIM/NÃO DA AGENDA: "talvez" lá é pendência, e
+            # aqui virava `False` em silêncio.
+            if _booleano(texto) not in (True, False):
+                divergencias.append(
+                    Divergencia(
+                        campo=campo,
+                        valor=nome,
+                        mensagem=(
+                            f"Na aba de cadastro, {coluna.nome!r} de {nome!r} está "
+                            f"{texto!r}: responda sim ou não."
+                        ),
+                        coluna=coluna_nome,
+                        trava=True,
+                    )
+                )
+                tudo_bem = False
+            continue
+
+        if coluna.campo == "subcategoria_publico_id":
+            # DENTRO DA CATEGORIA DECLARADA, porque o nome só é único ali. Incompatível
+            # é pendência e não descarte: o valor não pertence à categoria escolhida, e
+            # só a pessoa sabe qual dos dois está errado.
+            categoria_nome = normalizar(str(declarado.get("categoria_publico_id") or ""))
+            categoria_id = indice.get("categorias_publico", {}).get(categoria_nome)
+            if categoria_id is None or categoria_id is AMBIGUO:
+                continue
+            if _subcategoria_da_categoria_por_id(sessao, categoria_id, texto) is None:
+                divergencias.append(
+                    Divergencia(
+                        campo=campo,
+                        valor=nome,
+                        mensagem=(
+                            f"Na aba de cadastro, {texto!r} não é uma subcategoria de "
+                            f"{declarado.get('categoria_publico_id')!r}. Escolha uma da "
+                            "lista, que se reduz pela categoria da linha."
+                        ),
+                        coluna=coluna_nome,
+                        trava=True,
+                    )
+                )
+                tudo_bem = False
+            continue
+
+        if not coluna.vocabulario or coluna.campo == "categoria_publico_id":
+            # Texto livre não tem o que conferir, e a categoria já tem a recusa dela.
+            continue
+
+        # O QUE OUTRA ABA DECLAROU TAMBÉM VALE, e este era um defeito meu que dois
+        # testes antigos pegaram: a pessoa cria a instituição na aba Instituições e o
+        # interlocutor dela na aba Interlocutores, no MESMO arquivo. O nome ainda não
+        # está no banco — vai nascer na mesma transação —, e conferir só contra o banco
+        # transformava o uso normal das duas abas em pendência.
+        if (
+            normalizar(texto) not in indice.get(coluna.vocabulario, {})
+            and normalizar(texto) not in declarados.get(coluna.vocabulario, frozenset())
+        ):
+            divergencias.append(
+                Divergencia(
+                    campo=campo,
+                    valor=nome,
+                    mensagem=(
+                        f"Na aba de cadastro, {coluna.nome!r} de {nome!r} está {texto!r}, "
+                        f"que não existe na lista. Escolha um valor da suspensa."
+                    ),
+                    coluna=coluna_nome,
+                    trava=True,
+                )
+            )
+            tudo_bem = False
+    return tudo_bem
+
+
 def _resolver(
+    sessao: Session | None,
     valor: object,
     coluna_nome: str,
     vocabulario: str,
@@ -543,6 +675,22 @@ def _resolver(
                 )
             )
             return _Resolucao()
+        # O QUE ELA DECLAROU NAS OUTRAS COLUNAS é conferido ANTES da promessa: um
+        # valor fora da lista ali estouraria a confirmação, e a conferência teria dito
+        # que estava tudo pronto.
+        if sessao is not None and not _conferir_o_declarado(
+            sessao,
+            vocabulario,
+            texto,
+            declarado,
+            indice,
+            declarados,
+            coluna_nome,
+            campo,
+            divergencias,
+        ):
+            return _Resolucao()
+
         # Declarado na aba editável: não é pendência da pessoa, é trabalho da
         # confirmação. Aparece na conferência como "vou criar", sem travar — e o
         # valor volta em `a_criar` para a confirmação ter o que criar.
@@ -692,6 +840,7 @@ def _interlocutor_da_instituicao(
 
 
 def _listas_da_linha(
+    sessao: Session,
     linha: LinhaBruta,
     indice: dict[str, dict[str, object]],
     declarados: Mapping[str, frozenset[str]],
@@ -763,6 +912,7 @@ def _listas_da_linha(
                             )
                     if resolucao is None:
                         resolucao = _resolver(
+                            sessao,
                             bruto,
                             coluna_nome,
                             coluna.vocabulario,
@@ -986,6 +1136,7 @@ def propor_de_linhas(
 
             if coluna.vocabulario:
                 resolucao = _resolver(
+                    sessao,
                     bruto,
                     coluna.nome,
                     coluna.vocabulario,
@@ -1061,6 +1212,7 @@ def propor_de_linhas(
         # ordem que permite ao interlocutor ser resolvido DENTRO do órgão da agenda,
         # como o formulário do front faz.
         listas_da_linha, das_listas, criar_das_listas, esperando_tuplas = _listas_da_linha(
+            sessao,
             linha,
             indice,
             declarados,
@@ -1383,9 +1535,30 @@ def _declarados_por_nome(linhas) -> dict[str, dict[str, object]]:
         if linha.decisao == "descartada":
             continue
         for bruta in linha.divergencias or []:
-            if bruta.get("acao") == "criar" and bruta.get("declarado"):
-                campos[normalizar(bruta["valor"])] = dict(bruta["declarado"])
+            if bruta.get("acao") != "criar":
+                continue
+            declarado = _o_declarado_da_divergencia(bruta)
+            if declarado:
+                campos[normalizar(bruta["valor"])] = declarado
     return campos
+
+
+def _o_declarado_da_divergencia(bruta: Mapping[str, object]) -> dict[str, object]:
+    """O que foi declarado, lendo o campo novo OU o antigo.
+
+    IMPORTAÇÕES CRIADAS ANTES de `categoria_declarada` virar `declarado` estão no banco
+    com o campo velho, e a conferência delas continua aberta. Sem ler os dois, a
+    confirmação recusa a instituição como "sem categoria" — uma importação que a pessoa
+    já conferiu inteira deixa de poder ser confirmada, e sem nenhuma pista do motivo.
+
+    A leitura do campo velho fica NUM LUGAR SÓ, e é o que permite apagá-la quando não
+    houver mais nenhuma importação antiga aberta.
+    """
+    novo = bruta.get("declarado")
+    if novo:
+        return dict(novo)
+    antigo = bruta.get("categoria_declarada")
+    return {"categoria_publico_id": antigo} if antigo else {}
 
 
 def _reconferir(sessao: Session, a_criar, apontados) -> None:
@@ -1561,19 +1734,7 @@ def _subcategoria_da_categoria(sessao: Session, categoria, nome: object) -> int 
     """
     if not nome:
         return None
-    from app.banco.tabelas_catalogo import SubcategoriaPublico
-
-    candidatas = sessao.scalars(
-        select(SubcategoriaPublico).where(
-            SubcategoriaPublico.categoria_publico_id == categoria.id,
-            SubcategoriaPublico.ativo.is_(True),
-        )
-    ).all()
-    procurado = normalizar(str(nome))
-    for candidata in candidatas:
-        if normalizar(candidata.nome) == procurado:
-            return candidata.id
-    return None
+    return _subcategoria_da_categoria_por_id(sessao, categoria.id, str(nome))
 
 
 def _criar_cadastros(
@@ -1816,6 +1977,35 @@ def corrigir_linha(
     _repropor_uma(sessao, importacao_id, alvo)
 
 
+def _declaracoes_gravadas(
+    linhas,
+) -> tuple[dict[str, frozenset[str]], dict[str, dict[str, dict[str, object]]]]:
+    """O que foi declarado nas abas, reconstruído das divergências gravadas.
+
+    O ARQUIVO NÃO É GUARDADO, então tudo o que sobra da declaração é o que o upload
+    anotou na divergência: o nome, o vocabulário (pelo campo) e os outros campos da aba.
+    Isto devolve as duas formas que a resolução espera — o conjunto de nomes declarados,
+    que `classificar` usa, e o mapa de campos por nome, que a criação usa.
+    """
+    nomes: dict[str, set[str]] = {}
+    campos: dict[str, dict[str, dict[str, object]]] = {}
+    for linha in linhas:
+        if linha.decisao == "descartada":
+            continue
+        for bruta in linha.divergencias or []:
+            if bruta.get("acao") != "criar":
+                continue
+            vocabulario = vocabulario_do_campo(bruta.get("campo") or "")
+            if not vocabulario:
+                continue
+            chave = normalizar(bruta["valor"])
+            nomes.setdefault(vocabulario, set()).add(chave)
+            declarado = _o_declarado_da_divergencia(bruta)
+            if declarado:
+                campos.setdefault(vocabulario, {})[chave] = declarado
+    return {chave: frozenset(valores) for chave, valores in nomes.items()}, campos
+
+
 def _repropor_uma(sessao: Session, importacao_id, alvo) -> None:
     """Recalcula a proposta de UMA linha e regrava proposta e divergências.
 
@@ -1837,7 +2027,23 @@ def _repropor_uma(sessao: Session, importacao_id, alvo) -> None:
             coluna = getattr(fonte.tabela, fonte.resolve_para)
             escolhidos[(campo, valor)] = _no_tipo_da_coluna(coluna, destino)
 
-    (proposta,) = propor_de_linhas(sessao, _linhas_para_reler([alvo]), {}, escolhidos)
+    # A DECLARAÇÃO VEM DA PRÓPRIA DIVERGÊNCIA GRAVADA, e era o achado crítico da
+    # revisão: a pessoa declarava a instituição, o upload prometia criá-la, ela corrigia
+    # QUALQUER célula daquela linha na grade — e a promessa desaparecia, virando pendência
+    # travada.
+    #
+    # A CAUSA: a reproposição não tem o arquivo, então não tinha como saber o que foi
+    # declarado. Mas tem a divergência, que já carrega a declaração inteira — era só ler
+    # de lá. O mesmo vale para os NOMES declarados, que `classificar` usa para separar
+    # "quero cadastrar isto" de "errei a grafia".
+    declarados, cadastros = _declaracoes_gravadas(linhas)
+    (proposta,) = propor_de_linhas(
+        sessao,
+        _linhas_para_reler([alvo]),
+        declarados,
+        escolhidos,
+        cadastros_declarados=cadastros,
+    )
     repositorio_importacao.gravar_proposta(sessao, alvo, proposta)
 
 

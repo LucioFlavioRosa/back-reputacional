@@ -2000,7 +2000,7 @@ def _com_interlocutor(sessao, semente, instituicao_nome, pessoa, declarar=None):
 
     modelo = modelo_de_importacao.gerar(
         importar_agendas.vocabularios(sessao),
-        importar_agendas.interlocutores_com_instituicao(sessao),
+        importar_agendas.pares_de_vocabulario(sessao),
     )
     pasta = load_workbook(io.BytesIO(modelo))
     folha = pasta["Agendas"]
@@ -2195,7 +2195,7 @@ def _sem_data(sessao, semente):
 
     modelo = modelo_de_importacao.gerar(
         importar_agendas.vocabularios(sessao),
-        importar_agendas.interlocutores_com_instituicao(sessao),
+        importar_agendas.pares_de_vocabulario(sessao),
     )
     pasta = load_workbook(io.BytesIO(modelo))
     folha = pasta["Agendas"]
@@ -2447,7 +2447,7 @@ def test_as_colunas_da_conferencia_seguem_o_arquivo_SIMPLIFICADO(
 
     modelo = modelo_de_importacao.gerar(
         importar_agendas.vocabularios(sessao),
-        importar_agendas.interlocutores_com_instituicao(sessao),
+        importar_agendas.pares_de_vocabulario(sessao),
         modelo="simplificado",
     )
     pasta = load_workbook(io.BytesIO(modelo))
@@ -2517,7 +2517,7 @@ def test_TODA_divergencia_de_celula_diz_a_coluna(cliente_admin, sessao, semente)
 
     modelo = modelo_de_importacao.gerar(
         importar_agendas.vocabularios(sessao),
-        importar_agendas.interlocutores_com_instituicao(sessao),
+        importar_agendas.pares_de_vocabulario(sessao),
     )
     pasta = load_workbook(io.BytesIO(modelo))
     folha = pasta["Agendas"]
@@ -2702,7 +2702,7 @@ def test_instituicao_E_interlocutor_NOVOS_no_mesmo_arquivo(cliente_admin, sessao
 
     modelo = modelo_de_importacao.gerar(
         importar_agendas.vocabularios(sessao),
-        importar_agendas.interlocutores_com_instituicao(sessao),
+        importar_agendas.pares_de_vocabulario(sessao),
     )
     pasta = load_workbook(io.BytesIO(modelo))
     folha = pasta["Agendas"]
@@ -2912,3 +2912,245 @@ def test_a_SUBCATEGORIA_declarada_chega_ao_banco(cliente_admin, sessao, semente)
     ).first()
     assert criada_no_banco is not None
     assert criada_no_banco.subcategoria_publico_id == sub.id
+
+
+# =============================================================================
+# os achados da revisão do pente fino
+# =============================================================================
+
+
+def _com_cadastro(sessao, semente, instituicao="Órgão Declarado", **colunas):
+    """Uma agenda com uma instituição nova, declarada com as colunas que o teste quiser."""
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    modelo = modelo_de_importacao.gerar(
+        importar_agendas.vocabularios(sessao),
+        importar_agendas.pares_de_vocabulario(sessao),
+    )
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    folha.append(
+        [
+            {"Data": date(2026, 9, 30), "Instituição": instituicao, "UF": "SP"}.get(coluna)
+            for coluna in cabecalho
+        ]
+    )
+    _declarar(
+        pasta,
+        "instituicoes",
+        **{
+            "Instituição": instituicao,
+            "Categoria de público": "Poder Executivo",
+            **colunas,
+        },
+    )
+    saida = io.BytesIO()
+    pasta.save(saida)
+    return saida.getvalue()
+
+
+def test_abrangencia_INVALIDA_trava_no_upload_e_nao_estoura_na_confirmacao(
+    cliente_admin, sessao, semente
+):
+    """ACHADO CRÍTICO DA REVISÃO. "Minas Gerais" no lugar de "MG": o upload dizia que
+    estava tudo pronto, e a confirmação estourava — `instituicao.uf` tem domínio no
+    banco, e o erro vinha como falha de integridade DEPOIS de a pessoa conferir tudo.
+
+    O PIOR TIPO DE ERRO: ela lê "nada pendente", clica em subir, e recebe erro interno
+    sobre uma célula que ninguém apontou. A resposta certa é pendência no upload, junto
+    das outras, dizendo a coluna e o valor."""
+    conteudo = _com_cadastro(sessao, semente, **{"Abrangência": "Minas Gerais"})
+
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", conteudo, TIPO_XLSX)}
+    ).json()
+
+    assert criada["pendencias"] >= 1, criada["a_criar"]
+    mensagens = " ".join(
+        d["mensagem"] for linha in criada["linhas"] for d in linha["divergencias"]
+    )
+    assert "Minas Gerais" in mensagens
+    assert "Abrangência" in mensagens
+
+
+def test_editar_uma_celula_NAO_perde_o_cadastro_declarado(cliente_admin, sessao, semente):
+    """ACHADO CRÍTICO DA REVISÃO, e é o mais traiçoeiro: a pessoa declara a instituição,
+    o upload promete criá-la, ela corrige QUALQUER célula daquela linha na grade — e a
+    promessa desaparece, virando pendência travada.
+
+    A CAUSA: a reproposição de uma linha só não tinha como saber o que foi declarado,
+    porque o arquivo não é guardado. O que ela tem é a própria divergência gravada, que
+    já carrega a declaração — e é de lá que ela precisa ler."""
+    conteudo = _com_cadastro(sessao, semente)
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", conteudo, TIPO_XLSX)}
+    ).json()
+    assert criada["pendencias"] == 0, criada["grupos"]
+    assert criada["a_criar"], "o upload tinha de prometer criar a instituição"
+    (linha,) = [linha for linha in criada["linhas"] if linha["aba"] == "Agendas"]
+
+    depois = cliente_admin.patch(
+        f"/api/importacoes/{criada['id']}/linhas/{linha['id']}",
+        json={"celulas": {"UF": "RJ"}},
+    ).json()
+
+    assert depois["pendencias"] == 0, [
+        d["mensagem"] for linha in depois["linhas"] for d in linha["divergencias"]
+    ]
+    assert depois["a_criar"], "a promessa de criar a instituição tinha de continuar"
+    confirmacao = cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao")
+    assert confirmacao.status_code == 201, confirmacao.text
+
+
+def test_a_importacao_ANTIGA_com_o_campo_velho_ainda_confirma(cliente_admin, sessao, semente):
+    """ACHADO ALTO DA REVISÃO. Importações criadas antes de `categoria_declarada` virar
+    `declarado` estão no banco com o campo velho, e a conferência delas continua aberta.
+    Sem ler o campo antigo, a confirmação recusa a instituição como "sem categoria" —
+    uma importação que a pessoa já conferiu deixa de poder ser confirmada."""
+    from uuid import UUID
+
+    from app.banco.tabelas_importacao import ImportacaoLinha
+
+    conteudo = _com_cadastro(sessao, semente, instituicao="Órgão Do Passado")
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", conteudo, TIPO_XLSX)}
+    ).json()
+
+    # O QUE O BANCO ANTIGO TEM: o campo velho, e nada do novo.
+    linha = sessao.scalars(
+        select(ImportacaoLinha).where(ImportacaoLinha.importacao_id == UUID(criada["id"]))
+    ).first()
+    linha.divergencias = [
+        {
+            **bruta,
+            "categoria_declarada": (bruta.get("declarado") or {}).get(
+                "categoria_publico_id"
+            ),
+            "declarado": None,
+        }
+        for bruta in linha.divergencias
+    ]
+    sessao.flush()
+
+    confirmacao = cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao")
+
+    assert confirmacao.status_code == 201, confirmacao.text
+    assert confirmacao.json()["cadastros"] == 1
+
+
+def test_subcategoria_de_OUTRA_categoria_trava_em_vez_de_ser_ignorada(
+    cliente_admin, sessao, semente
+):
+    """ACHADO ALTO DA REVISÃO. A subcategoria de outra categoria era DESCARTADA em
+    silêncio: a pessoa preenchia, a confirmação criava o cadastro sem ela, e ninguém
+    ficava sabendo. Dado fechado incompatível é pendência — o valor que ela escolheu não
+    pertence à categoria que ela escolheu, e só ela sabe qual dos dois está errado."""
+    from app.banco.tabelas_catalogo import CategoriaPublico, SubcategoriaPublico
+
+    executivo = sessao.scalars(
+        select(CategoriaPublico).where(CategoriaPublico.nome == "Poder Executivo")
+    ).first()
+    # O NOME NÃO PODE EXISTIR na categoria declarada: "Federal" se repete de propósito
+    # em Poder Executivo, Legislativo e Reguladores, e escolher um repetido faria o teste
+    # passar por ele ser válido ali — provando o contrário do que ele quer.
+    do_executivo = {
+        normalizar(nome)
+        for (nome,) in sessao.execute(
+            select(SubcategoriaPublico.nome).where(
+                SubcategoriaPublico.categoria_publico_id == executivo.id
+            )
+        ).all()
+    }
+    de_outra = next(
+        (
+            sub
+            for sub in sessao.scalars(
+                select(SubcategoriaPublico).where(
+                    SubcategoriaPublico.categoria_publico_id != executivo.id,
+                    SubcategoriaPublico.ativo.is_(True),
+                )
+            ).all()
+            if normalizar(sub.nome) not in do_executivo
+        ),
+        None,
+    )
+    if de_outra is None:
+        import pytest
+
+        pytest.skip("a base não tem subcategoria de outra categoria")
+
+    conteudo = _com_cadastro(sessao, semente, **{"Subcategoria": de_outra.nome})
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", conteudo, TIPO_XLSX)}
+    ).json()
+
+    assert criada["pendencias"] >= 1, criada["a_criar"]
+    mensagens = " ".join(
+        d["mensagem"] for linha in criada["linhas"] for d in linha["divergencias"]
+    )
+    assert de_outra.nome in mensagens
+
+
+def test_a_RELEVANCIA_invalida_trava_no_upload(cliente_admin, sessao, semente):
+    """ACHADO MÉDIO DA REVISÃO: `tier = "999"` era gravado e só falhava por chave
+    estrangeira no fim. Vocabulário fechado na aba de cadastro tem de ser conferido onde
+    todos os outros são — no upload."""
+    conteudo = _com_cadastro(sessao, semente, **{"Relevância": "999"})
+
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", conteudo, TIPO_XLSX)}
+    ).json()
+
+    assert criada["pendencias"] >= 1, criada["a_criar"]
+    mensagens = " ".join(
+        d["mensagem"] for linha in criada["linhas"] for d in linha["divergencias"]
+    )
+    assert "999" in mensagens
+
+
+def test_o_PORTA_VOZ_com_resposta_que_nao_e_sim_nem_nao_trava(cliente_admin, sessao, semente):
+    """ACHADO MÉDIO DA REVISÃO: "talvez" virava `False` em silêncio. É a mesma regra que
+    a coluna de sim/não da agenda já tem — o "talvez" lá vira pendência, e aqui não
+    virava."""
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    modelo = modelo_de_importacao.gerar(
+        importar_agendas.vocabularios(sessao),
+        importar_agendas.pares_de_vocabulario(sessao),
+    )
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    folha.append(
+        [
+            {
+                "Data": date(2026, 9, 30),
+                "Instituição": semente["instituicao"].nome,
+                "UF": "SP",
+                "Pessoa da Aegea 1": "Alguém Novo",
+            }.get(coluna)
+            for coluna in cabecalho
+        ]
+    )
+    _declarar(
+        pasta,
+        "pessoas_aegea",
+        **{"Pessoa da Aegea": "Alguém Novo", "É porta-voz?": "talvez"},
+    )
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+
+    assert criada["pendencias"] >= 1, criada["a_criar"]
+    mensagens = " ".join(
+        d["mensagem"] for linha in criada["linhas"] for d in linha["divergencias"]
+    )
+    assert "talvez" in mensagens
