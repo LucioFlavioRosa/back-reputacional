@@ -135,7 +135,7 @@ def _fonte_da_lista(coluna, colunas: Sequence, quantos_interlocutores: int) -> s
     e a coluna da instituição, fica em torno de 180.
     """
     if coluna.vocabulario != "interlocutores":
-        return f"={coluna.vocabulario}"
+        return coluna.vocabulario
     rotulo = ROTULO_DO_VOCABULARIO["interlocutores"]
     folha = f"'{rotulo}'" if " " in rotulo else rotulo
     # MUITO ALÉM DAS LINHAS DE HOJE, e era a mesma armadilha do nome definido: a
@@ -149,8 +149,10 @@ def _fonte_da_lista(coluna, colunas: Sequence, quantos_interlocutores: int) -> s
     instituicao = f"${_letra_de_coluna(colunas, COLUNA_DA_INSTITUICAO_DA_AGENDA)}2"
     orgaos = f"{folha}!$B$2:$B${ultima}"
     procura = f"MATCH({instituicao},{orgaos},0)"
+    # SEM O `=` NA FRENTE: o conteúdo de `<formula1>` no OOXML é a fórmula, e o
+    # elemento já diz isso. Ver `test_a_fonte_da_suspensa_NAO_LEVA_o_sinal_de_igual`.
     return (
-        f"=IF(ISNA({procura}),interlocutores,"
+        f"IF(ISNA({procura}),interlocutores,"
         f"OFFSET({folha}!$A$2,{procura}-1,0,COUNTIF({orgaos},{instituicao}),1))"
     )
 
@@ -300,12 +302,24 @@ def gerar(
         # O `-1` DAS ABAS DE DUAS COLUNAS desconta o cabeçalho, que `COUNTA` conta.
         # Sem ele a lista teria uma linha vazia no fim, oferecida para escolher.
         primeira = 2 if segunda_coluna else 1
-        desconto = "-1" if segunda_coluna else ""
+        # `INDEX` E NÃO `OFFSET`, e a diferença importa: `OFFSET` é uma função VOLÁTIL, e
+        # função volátil em validação de dados é o caso onde o Excel se recusa a resolver
+        # em algumas versões. `INDEX` devolve uma referência sem ser volátil, e a
+        # expressão inteira é um INTERVALO — `$A$2:INDEX(...)` —, que é a forma que a
+        # validação de dados lê com menos ressalvas.
+        #
+        # A CONTA: `COUNTA` conta as linhas com conteúdo, e numa aba com cabeçalho a
+        # última linha de valor É esse número (cabeçalho na 1, valores de 2 a COUNTA).
+        # Sem cabeçalho, também: valores de 1 a COUNTA.
+        #
+        # `MAX(..., primeira)` é o caso da base nova, sem valor nenhum: o intervalo tem
+        # de existir, mesmo que aponte para uma célula vazia. Altura zero é intervalo
+        # inválido, e o Excel recusa o arquivo ao ABRIR — o pior momento para um erro.
         pasta.defined_names[chave] = DefinedName(
             chave,
             attr_text=(
-                f"OFFSET('{rotulo}'!$A${primeira},0,0,"
-                f"MAX(COUNTA('{rotulo}'!$A:$A){desconto},1),1)"
+                f"'{rotulo}'!$A${primeira}:"
+                f"INDEX('{rotulo}'!$A:$A,MAX(COUNTA('{rotulo}'!$A:$A),{primeira}))"
             ),
         )
 
@@ -321,7 +335,7 @@ def gerar(
         # dez nomes longos, e uma lista literal na fórmula estoura o limite de 255
         # caracteres que o Excel impõe a `formula1`.
         type="list",
-        formula1="=categorias_publico",
+        formula1="categorias_publico",
         allow_blank=True,
         showErrorMessage=True,
         errorTitle="Categoria inválida",
@@ -338,7 +352,7 @@ def gerar(
     # existe para impedir. Sem `showErrorMessage`, como toda coluna de vocabulário
     # editável: o órgão novo, declarado na aba de instituições, também vale aqui.
     aba_dos_interlocutores = pasta[ROTULO_DO_VOCABULARIO["interlocutores"]]
-    de_quem = _DV(type="list", formula1="=instituicoes", allow_blank=True)
+    de_quem = _DV(type="list", formula1="instituicoes", allow_blank=True)
     aba_dos_interlocutores.add_data_validation(de_quem)
     de_quem.add(f"B2:B{_LINHAS_DE_ABAS_FILHAS}")
 

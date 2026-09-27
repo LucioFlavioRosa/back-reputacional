@@ -89,8 +89,9 @@ def test_o_vocabulario_fechado_trava_e_o_editavel_nao():
 
     por_formula = {dv.formula1: dv for dv in agendas.data_validations.dataValidation}
 
-    assert por_formula["=status"].showErrorMessage is True
-    assert por_formula["=instituicoes"].showErrorMessage is False
+    # SEM O `=`: o conteúdo de `<formula1>` é a fórmula, e o elemento já diz isso.
+    assert por_formula["status"].showErrorMessage is True
+    assert por_formula["instituicoes"].showErrorMessage is False
 
 
 def test_a_aba_de_agendas_nao_convida_mais_que_o_teto_de_500():
@@ -369,7 +370,7 @@ def test_a_coluna_de_instituicao_do_interlocutor_TEM_a_suspensa_de_instituicoes(
     aba = _com_pares()[ROTULO_DO_VOCABULARIO["interlocutores"]]
     formulas = {dv.formula1 for dv in aba.data_validations.dataValidation}
 
-    assert "=instituicoes" in formulas
+    assert "instituicoes" in formulas
 
 
 def test_a_suspensa_de_interlocutor_DEPENDE_da_instituicao_da_linha():
@@ -568,27 +569,34 @@ def test_o_intervalo_do_vocabulario_CRESCE_com_o_conteudo():
     o nome na agenda, a suspensa não o tem, e a linha vira pendência de um cadastro que
     ela acabou de declarar.
 
-    A CORREÇÃO é o intervalo DINÂMICO: `OFFSET` com a altura vindo de `COUNTA`, que é
-    quantas linhas têm conteúdo AGORA — não quantas tinham quando o arquivo foi gerado.
+    A CORREÇÃO é o intervalo DINÂMICO: o fim dele é `INDEX` na linha que `COUNTA`
+    aponta — quantas linhas têm conteúdo AGORA, e não quantas tinham quando o arquivo foi
+    gerado.
+
+    `INDEX` E NÃO `OFFSET`: `OFFSET` é volátil, e função volátil em validação de dados é
+    onde o Excel se recusa a resolver em algumas versões. `INDEX` faz o mesmo sem ser
+    volátil, e a expressão fica sendo um intervalo — `$A$2:INDEX(...)` —, que é a forma
+    que a validação lê com menos ressalvas.
     """
     pasta = _abrir(gerar(VOCABULARIOS))
 
     definido = pasta.defined_names["instituicoes"].attr_text
 
-    assert "OFFSET" in definido, definido
+    assert "INDEX" in definido, definido
     assert "COUNTA" in definido, definido
+    assert "OFFSET" not in definido, definido
 
 
-def test_o_intervalo_desconta_a_linha_do_CABECALHO():
-    """As abas de duas colunas têm cabeçalho, e `COUNTA` o conta. Sem descontar, a lista
-    teria uma linha de sobra no fim — vazia, oferecida para escolher."""
+def test_o_intervalo_COMECA_depois_do_cabecalho():
+    """As abas de duas colunas têm cabeçalho, e a lista não pode oferecer a palavra
+    "Instituição" como se fosse uma instituição.
+
+    O FIM É O MESMO NAS DUAS: numa aba com cabeçalho os valores vão da linha 2 até
+    `COUNTA`; sem cabeçalho, da 1 até `COUNTA`. É a primeira linha que muda."""
     pasta = _abrir(gerar(VOCABULARIOS))
 
-    com_cabecalho = pasta.defined_names["instituicoes"].attr_text
-    sem_cabecalho = pasta.defined_names["climas"].attr_text
-
-    assert "-1" in com_cabecalho, com_cabecalho
-    assert "-1" not in sem_cabecalho, sem_cabecalho
+    assert "$A$2:" in pasta.defined_names["instituicoes"].attr_text
+    assert "$A$1:" in pasta.defined_names["climas"].attr_text
 
 
 def test_o_vocabulario_VAZIO_ainda_da_um_intervalo_valido():
@@ -618,3 +626,47 @@ def test_a_suspensa_dependente_olha_MUITO_alem_das_linhas_de_hoje():
 
     assert dependentes
     assert f"$B${_LINHAS_DE_ABAS_FILHAS}" in dependentes[0].formula1, dependentes[0].formula1
+
+
+def test_a_fonte_da_suspensa_NAO_LEVA_o_sinal_de_igual():
+    """O DEFEITO QUE FEZ A LISTA NÃO CRESCER, e ele é de formato.
+
+    O conteúdo de `<formula1>` no OOXML é a fórmula SEM o `=` — o elemento já diz que
+    aquilo é uma fórmula. Nós gravávamos `=instituicoes`, e o Excel tolera isso quando o
+    nome é um INTERVALO estático (foi por isso que as suspensas sempre pareceram
+    funcionar). Quando o nome passou a ser uma FÓRMULA — `OFFSET` com altura de `COUNTA`,
+    para a lista crescer —, essa tolerância acabou: a lista parava no que existia quando
+    o arquivo foi gerado, e o que a pessoa acrescentava na aba não aparecia em lugar
+    nenhum.
+
+    O TESTE OLHA O XML porque é lá que o defeito vive. Ler o objeto do openpyxl não
+    pegaria: ele devolve exatamente a string que recebeu.
+    """
+    import re
+    import zipfile
+
+    conteudo = gerar(VOCABULARIOS, PARES)
+
+    with zipfile.ZipFile(io.BytesIO(conteudo)) as arquivo:
+        folhas = [nome for nome in arquivo.namelist() if nome.startswith("xl/worksheets/")]
+        formulas = []
+        for nome in folhas:
+            xml = arquivo.read(nome).decode("utf-8")
+            formulas.extend(re.findall(r"<formula1>(.*?)</formula1>", xml, re.S))
+
+    assert formulas, "nenhuma validação de lista no arquivo"
+    com_igual = [formula for formula in formulas if formula.startswith("=")]
+    assert com_igual == [], com_igual
+
+
+def test_a_suspensa_de_lista_literal_continua_entre_aspas():
+    """O contrapeso: a coluna de repetição não aponta para nada, ela TEM a lista dentro
+    da fórmula. `"sim"` entre aspas é a forma de uma lista literal, e tirar as aspas a
+    transformaria num nome que não existe."""
+    import re
+    import zipfile
+
+    with zipfile.ZipFile(io.BytesIO(gerar(VOCABULARIOS))) as arquivo:
+        xml = arquivo.read("xl/worksheets/sheet1.xml").decode("utf-8")
+
+    assert '<formula1>"sim"</formula1>' in re.sub(r"\s+", " ", xml)
