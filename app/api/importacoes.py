@@ -504,9 +504,18 @@ class ConfirmacaoSaida(BaseModel):
 
 
 class CorrecaoEntrada(BaseModel):
-    """As células que a pessoa completou numa linha: coluna → valor."""
+    """O que mudou numa linha da conferência: as células, ou a exclusão dela.
 
-    celulas: dict[str, object]
+    A LINHA É O RECURSO, e por isso uma rota só: "mude esta linha" é uma operação,
+    e separá-la em duas faria a tela precisar saber qual chamar para cada gesto.
+    """
+
+    #: Coluna → valor, para o que a pessoa completou na grade.
+    celulas: dict[str, object] = {}
+    #: `True` exclui a linha da importação, `False` a restaura. Reversível até a
+    #: confirmação: o arquivo não fica guardado, então a planilha não é o caminho de
+    #: volta de uma exclusão por engano.
+    descartada: bool | None = None
 
 
 @rotas.patch("/{importacao_id}/linhas/{linha_id}")
@@ -521,7 +530,9 @@ def corrigir_linha(
     novo, ou descartar a linha e perder a agenda.
     """
     importacao = repositorio_importacao.obter(sessao, importacao_id)
-    importar_agendas.corrigir_linha(sessao, importacao_id, linha_id, entrada.celulas)
+    importar_agendas.corrigir_linha(
+        sessao, importacao_id, linha_id, entrada.celulas, entrada.descartada
+    )
     return _saida(sessao, importacao, repositorio_importacao.linhas_de(sessao, importacao_id))
 
 

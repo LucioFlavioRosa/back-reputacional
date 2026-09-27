@@ -2520,3 +2520,107 @@ def test_TODA_divergencia_de_celula_diz_a_coluna(cliente_admin, sessao, semente)
 # =============================================================================
 # os dois achados da revisão dos dois modelos
 # =============================================================================
+
+
+# =============================================================================
+# excluir e restaurar uma linha
+# =============================================================================
+
+
+def test_excluir_UMA_linha_tira_ela_da_confirmacao(cliente_admin, sessao, semente):
+    """O PEDIDO: dois botões por linha, editar e excluir.
+
+    Excluir é a saída para a linha que não deveria estar ali — a duplicata colada
+    por engano, o rascunho no fim do arquivo. Antes só existia "descartar" no nível
+    do GRUPO: descartava todas as linhas que compartilhavam um valor, o que é outra
+    coisa e às vezes é demais.
+    """
+    criada = cliente_admin.post(
+        "/api/importacoes",
+        files={"arquivo": ("a.xlsx", _planilha_de_um_dia(sessao, semente, quantas=3), TIPO_XLSX)},
+    ).json()
+    (primeira, *_) = criada["linhas"]
+
+    resposta = cliente_admin.patch(
+        f"/api/importacoes/{criada['id']}/linhas/{primeira['id']}",
+        json={"descartada": True},
+    )
+
+    assert resposta.status_code == 200, resposta.text
+    depois = resposta.json()
+    excluida = next(linha for linha in depois["linhas"] if linha["id"] == primeira["id"])
+    assert excluida["decisao"] == "descartada"
+
+    confirmacao = cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao")
+    assert confirmacao.status_code == 201, confirmacao.text
+    # Três linhas no arquivo, uma excluída: duas agendas.
+    assert confirmacao.json()["criadas"] == 2
+
+
+def test_a_linha_excluida_pode_ser_RESTAURADA(cliente_admin, sessao, semente):
+    """NADA SE PERDE ANTES DE CONFIRMAR. Excluir por engano numa tela de 54 linhas é
+    fácil, e a planilha não é a fonte de volta — o arquivo não fica guardado.
+
+    A linha excluída continua na grade, marcada, e volta com um clique."""
+    criada = cliente_admin.post(
+        "/api/importacoes",
+        files={"arquivo": ("a.xlsx", _planilha_de_um_dia(sessao, semente, quantas=2), TIPO_XLSX)},
+    ).json()
+    (primeira, *_) = criada["linhas"]
+    cliente_admin.patch(
+        f"/api/importacoes/{criada['id']}/linhas/{primeira['id']}",
+        json={"descartada": True},
+    )
+
+    depois = cliente_admin.patch(
+        f"/api/importacoes/{criada['id']}/linhas/{primeira['id']}",
+        json={"descartada": False},
+    ).json()
+
+    restaurada = next(linha for linha in depois["linhas"] if linha["id"] == primeira["id"])
+    assert restaurada["decisao"] == "pendente"
+    confirmacao = cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao")
+    assert confirmacao.json()["criadas"] == 2
+
+
+def test_excluir_a_linha_TIRA_a_pendencia_dela(cliente_admin, sessao, semente):
+    """É a segunda razão de excluir existir por linha: a linha presa que a pessoa
+    decide não importar não pode continuar segurando a confirmação das outras 53."""
+    criada = cliente_admin.post(
+        "/api/importacoes",
+        files={
+            "arquivo": (
+                "a.xlsx",
+                _com_declaracao(sessao, semente, "Órgão Inventado"),
+                TIPO_XLSX,
+            )
+        },
+    ).json()
+    assert criada["pendencias"] == 1
+    (presa,) = [
+        linha for linha in criada["linhas"] if any(d["trava"] for d in linha["divergencias"])
+    ]
+
+    depois = cliente_admin.patch(
+        f"/api/importacoes/{criada['id']}/linhas/{presa['id']}",
+        json={"descartada": True},
+    ).json()
+
+    assert depois["pendencias"] == 0, depois["grupos"]
+
+
+def test_editar_e_excluir_na_MESMA_chamada_recusa(cliente_admin, sessao, semente):
+    """As duas coisas juntas são contraditórias: preencher uma célula de uma linha
+    que não vai entrar. Recusar é melhor que escolher uma das duas em silêncio."""
+    criada = cliente_admin.post(
+        "/api/importacoes",
+        files={"arquivo": ("a.xlsx", _planilha_de_um_dia(sessao, semente, quantas=1), TIPO_XLSX)},
+    ).json()
+    (primeira, *_) = criada["linhas"]
+
+    resposta = cliente_admin.patch(
+        f"/api/importacoes/{criada['id']}/linhas/{primeira['id']}",
+        json={"descartada": True, "celulas": {"UF": "RJ"}},
+    )
+
+    assert resposta.status_code == 422

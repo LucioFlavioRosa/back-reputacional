@@ -1574,7 +1574,11 @@ def _linhas_para_reler(linhas) -> dict[str, list[LinhaBruta]]:
 
 
 def corrigir_linha(
-    sessao: Session, importacao_id, linha_id: int, celulas: Mapping[str, object]
+    sessao: Session,
+    importacao_id,
+    linha_id: int,
+    celulas: Mapping[str, object] = MAPPING_VAZIO,
+    descartada: bool | None = None,
 ) -> None:
     """Preenche células de UMA linha e repropõe só ela.
 
@@ -1603,6 +1607,15 @@ def corrigir_linha(
             "agenda que se edita."
         )
 
+    if descartada is not None and celulas:
+        # AS DUAS COISAS JUNTAS SÃO CONTRADITÓRIAS: preencher uma célula de uma linha
+        # que não vai entrar. Escolher uma das duas em silêncio deixaria a pessoa com
+        # a impressão de ter feito as duas.
+        raise RegraViolada(
+            "Ou preencha células desta linha, ou exclua a linha — não as duas coisas "
+            "na mesma ação."
+        )
+
     conhecidas = {coluna.nome for coluna in aba_de(ABA_PRINCIPAL).colunas}
     desconhecidas = sorted(set(celulas) - conhecidas)
     if desconhecidas:
@@ -1617,6 +1630,24 @@ def corrigir_linha(
     alvo = next((linha for linha in linhas if linha.id == linha_id), None)
     if alvo is None or alvo.aba != ABA_PRINCIPAL:
         raise RegraViolada("Esta linha não é desta importação.")
+
+    if descartada is not None:
+        # EXCLUIR É REVERSÍVEL ATÉ A CONFIRMAÇÃO, e precisa ser: excluir por engano
+        # numa tela de 54 linhas é fácil, e a planilha não é o caminho de volta —
+        # o arquivo não fica guardado. A linha continua na grade, marcada.
+        alvo.decisao = "descartada" if descartada else "pendente"
+        sessao.flush()
+        # SÓ A RESTAURADA É REPROPOSTA. A excluída não tem o que propor — e a
+        # releitura a PULA de propósito, o que fazia esta chamada estourar em
+        # "not enough values to unpack" quando eu tentei repropor as duas.
+        #
+        # A proposta antiga dela fica gravada e não faz mal: `confirmar`,
+        # `_grupos` e a contagem de pendências todos ignoram linha descartada, e
+        # guardá-la é o que permite restaurar sem reler o arquivo — que não existe
+        # mais.
+        if not descartada:
+            _repropor_uma(sessao, importacao_id, alvo)
+        return
 
     brutos = dict(alvo.dados_brutos or {})
     corrigido = dict(brutos.get(CHAVE_DO_CORRIGIDO) or {})
