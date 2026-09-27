@@ -398,7 +398,7 @@ def baixar_o_modelo(sessao: Sessao, modelo: str = "completo") -> Response:
     # sai a lista suspensa dependente da coluna Interlocutor.
     conteudo = modelo_de_importacao.gerar(
         importar_agendas.vocabularios(sessao),
-        importar_agendas.interlocutores_com_instituicao(sessao),
+        importar_agendas.pares_de_vocabulario(sessao),
         modelo=modelo,
     )
     return Response(
@@ -468,7 +468,7 @@ def subir(sessao: Sessao, usuario: UsuarioLogado, arquivo: Arquivo) -> Importaca
                     # para o bloco "o que vou criar".
                     "acao": divergencia.acao,
                     "alvo": divergencia.alvo,
-                    "categoria_declarada": divergencia.categoria_declarada,
+                    "declarado": divergencia.declarado,
                 }
                 for divergencia in proposta.divergencias
             ],

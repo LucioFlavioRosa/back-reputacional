@@ -25,7 +25,11 @@ from app.banco.tabelas_catalogo import (
 )
 from app.banco.tabelas_stakeholders import Instituicao, Interlocutor, PessoaAegea
 from app.casos_de_uso import importar_agendas, modelo_de_importacao
-from app.dominio.importacao_de_agendas import ROTULO_DO_VOCABULARIO
+from app.dominio.importacao_de_agendas import (
+    COLUNA_DA_CATEGORIA_DE_INSTITUICAO,
+    ROTULO_DO_VOCABULARIO,
+    colunas_do_cadastro,
+)
 from app.dominio.texto import normalizar
 from tests.test_e2e_postgres import URL
 
@@ -143,7 +147,7 @@ def _preenchida(
     participantes: list[dict] = (),
     pessoas_aegea: list[dict] = (),
     materiais: list[dict] = (),
-    declarar: dict[str, list[str]] | None = None,
+    declarar: dict[str, list] | None = None,
 ) -> bytes:
     """O modelo de verdade, preenchido — o caminho que a pessoa faz.
 
@@ -180,18 +184,27 @@ def _preenchida(
         assert not desconhecidas, f"coluna que não existe: {sorted(desconhecidas)}"
         folha.append([completa.get(coluna) for coluna in cabecalho])
 
+    # DECLARA POR NOME DE COLUNA, e não por posição. As abas de cadastro passaram a
+    # ter os campos do formulário da plataforma, então a categoria de público deixou de
+    # ser a segunda coluna — e um helper que escreve por posição grava a categoria no
+    # "Nome completo" sem reclamar de nada.
+    #
+    # `declarar` aceita o nome puro (a categoria entra com um valor válido, porque a
+    # importação recusa instituição sem ela) ou um dicionário coluna → valor, para o
+    # teste que quer dizer exatamente o que foi preenchido.
     for chave, nomes in (declarar or {}).items():
         folha_do_vocabulario = pasta[ROTULO_DO_VOCABULARIO[chave]]
+        colunas = [coluna.nome for coluna in colunas_do_cadastro(chave)]
         for nome in nomes:
-            # A ABA DE INSTITUIÇÕES TEM DUAS COLUNAS: nome e CATEGORIA de público.
-            # É dela que o tipo nasce, e o tipo deriva a frente da agenda — a
-            # importação recusa criar instituição sem categoria válida.
-            if chave == "instituicoes":
-                folha_do_vocabulario.append(
-                    list(nome) if isinstance(nome, tuple) else [nome, "Poder Executivo"]
-                )
+            if isinstance(nome, dict):
+                valores = dict(nome)
             else:
-                folha_do_vocabulario.append([nome])
+                valores = {colunas[0]: nome}
+                if chave == "instituicoes":
+                    valores[COLUNA_DA_CATEGORIA_DE_INSTITUICAO] = "Poder Executivo"
+            desconhecidas = set(valores) - set(colunas)
+            assert not desconhecidas, f"coluna que a aba {chave!r} não tem: {desconhecidas}"
+            folha_do_vocabulario.append([valores.get(coluna) for coluna in colunas])
 
     saida = io.BytesIO()
     pasta.save(saida)

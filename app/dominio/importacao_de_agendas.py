@@ -177,17 +177,114 @@ COLUNA_DA_INSTITUICAO_DO_INTERLOCUTOR = "Instituição"
 #: dependente — nomeá-las separado é o que impede trocar uma pela outra.
 COLUNA_DA_INSTITUICAO_DA_AGENDA = "Instituição"
 
-#: Aba de vocabulário → o rótulo da SEGUNDA coluna dela.
+@dataclass(frozen=True, slots=True)
+class ColunaDeCadastro:
+    """Uma coluna de uma aba de CADASTRO — as abas onde a pessoa declara o que não
+    existe no banco ainda.
+
+    ELAS ERAM UMA LISTA DE NOMES, e o dono do produto pediu o pente fino: a planilha
+    tem de reproduzir os campos que o cadastro da plataforma tem, com os mesmos
+    mecanismos de preenchimento. Cadastro criado pela importação com metade dos
+    campos vazios é cadastro que alguém precisa completar depois na Administração —
+    e "depois" é quando ninguém lembra.
+
+    `campo` é o atributo do MODELO que esta coluna alimenta, e é o que permite a
+    criação ler a descrição em vez de ter uma segunda lista de campos escrita à mão.
+
+    `depende_de` é o nome de outra coluna DA MESMA LINHA que filtra a lista desta —
+    é o mecanismo que a coluna Interlocutor já usa com a Instituição da agenda, e que
+    a Subcategoria precisa ter com a Categoria de público.
+    """
+
+    nome: str
+    campo: str
+    vocabulario: str | None = None
+    depende_de: str | None = None
+    obrigatoria: bool = False
+
+
+#: Aba de cadastro → as colunas dela, na ordem em que saem no arquivo.
 #:
-#: As demais abas são uma coluna de nomes, porque nada mais é preciso para criar
-#: um tema. Estas duas pedem mais: sem a categoria de público, o tipo da
-#: instituição seria chute, e o tipo deriva a frente de toda agenda dela; sem a
-#: instituição do interlocutor, a pessoa nasce solta e a lista suspensa não tem
-#: como se reduzir.
-SEGUNDA_COLUNA_DO_VOCABULARIO: dict[str, str] = {
-    "instituicoes": COLUNA_DA_CATEGORIA_DE_INSTITUICAO,
-    "interlocutores": COLUNA_DA_INSTITUICAO_DO_INTERLOCUTOR,
+#: OS CAMPOS SÃO OS DO FORMULÁRIO DA PLATAFORMA, conferidos um por um em
+#: `CadastroDeInstituicoes.tsx` e `CadastroDePortaVozes.tsx`. O que o formulário não
+#: pergunta não está aqui: `esfera` e `tipo` da instituição são DERIVADOS, e pedi-los
+#: abriria a chance de a planilha contradizer a derivação.
+COLUNAS_DO_CADASTRO: dict[str, tuple[ColunaDeCadastro, ...]] = {
+    "instituicoes": (
+        ColunaDeCadastro("Instituição", "nome", obrigatoria=True),
+        ColunaDeCadastro("Nome completo", "nome_completo"),
+        # A ABRANGÊNCIA DA INSTITUIÇÃO NÃO É A UF DA AGENDA, e o dono do produto foi
+        # explícito: são coisas diferentes. Uma reunião em Brasília com um órgão de
+        # Minas tem UF da agenda `DF` e abrangência do órgão `MG`. Reaproveitar a da
+        # agenda gravaria o lugar da conversa como se fosse o alcance do órgão.
+        ColunaDeCadastro("Abrangência", "uf", vocabulario="abrangencias"),
+        ColunaDeCadastro("Relevância", "tier", vocabulario="relevancias"),
+        ColunaDeCadastro(
+            COLUNA_DA_CATEGORIA_DE_INSTITUICAO,
+            "categoria_publico_id",
+            vocabulario="categorias_publico",
+            obrigatoria=True,
+        ),
+        # DEPENDE DA CATEGORIA, como no formulário: trocar a categoria lá limpa a
+        # subcategoria, porque uma escolhida antes pode não pertencer mais. Aqui o
+        # equivalente é a lista se reduzir à categoria da linha.
+        ColunaDeCadastro(
+            "Subcategoria",
+            "subcategoria_publico_id",
+            vocabulario="subcategorias_publico",
+            depende_de=COLUNA_DA_CATEGORIA_DE_INSTITUICAO,
+        ),
+    ),
+    "interlocutores": (
+        ColunaDeCadastro("Interlocutor", "nome", obrigatoria=True),
+        ColunaDeCadastro(
+            COLUNA_DA_INSTITUICAO_DO_INTERLOCUTOR,
+            "instituicao_id",
+            vocabulario="instituicoes",
+        ),
+        ColunaDeCadastro("Cargo", "cargo"),
+        ColunaDeCadastro("E-mail", "email"),
+    ),
+    "pessoas_aegea": (
+        ColunaDeCadastro("Pessoa da Aegea", "nome", obrigatoria=True),
+        ColunaDeCadastro("Cargo", "cargo"),
+        ColunaDeCadastro("E-mail", "email"),
+        ColunaDeCadastro("Área", "area_id", vocabulario="areas_pessoa"),
+        ColunaDeCadastro("É porta-voz?", "eh_porta_voz"),
+    ),
+    # O TEMA SEGUE SENDO SÓ O NOME, e é decisão antiga que continua valendo: o
+    # `nivel` do tema criado pela importação é `livre`, porque tema ESTRATÉGICO é
+    # vocabulário fechado do modelo — os KPIs dependem dele, e a planilha não o
+    # amplia. Uma coluna "Nível" aqui ofereceria uma escolha que o servidor recusa.
+    "temas": (ColunaDeCadastro("Tema", "nome", obrigatoria=True),),
+    # ESTA ABA NÃO É PARA DECLARAR NADA: subcategoria é taxonomia, e a importação não
+    # cria. Ela está descrita porque a aba precisa das DUAS colunas — o valor e a
+    # categoria dona —, e é a coluna do dono que permite à suspensa da Subcategoria se
+    # reduzir. Sem cabeçalho, os dados começariam na linha 1 e a fórmula, que procura
+    # o dono a partir da linha 2, perderia o primeiro.
+    "subcategorias_publico": (
+        ColunaDeCadastro("Subcategoria", "nome", obrigatoria=True),
+        ColunaDeCadastro(
+            COLUNA_DA_CATEGORIA_DE_INSTITUICAO,
+            "categoria_publico_id",
+            vocabulario="categorias_publico",
+        ),
+    ),
 }
+
+#: Os vocabulários cuja aba sai como PARES — o valor na coluna A e o dono na B.
+#:
+#: É O QUE FAZ A SUSPENSA DEPENDENTE FUNCIONAR, e vale para os dois casos: o
+#: interlocutor com a instituição dele, e a subcategoria com a categoria dona.
+VOCABULARIOS_EM_PARES = frozenset({"interlocutores", "subcategorias_publico"})
+
+
+def colunas_do_cadastro(vocabulario: str) -> tuple[ColunaDeCadastro, ...]:
+    """As colunas da aba daquele cadastro. Uma coluna de nome, para quem não declarou
+    mais nada — é o caso de todo vocabulário que a importação não cria."""
+    return COLUNAS_DO_CADASTRO.get(
+        vocabulario, (ColunaDeCadastro(ROTULO_DO_VOCABULARIO[vocabulario], "nome"),)
+    )
 
 #: Vocabulários fechados: mudar um valor aqui é mudança de regra de negócio
 #: (os KPIs e a taxa de resolutividade dependem deles), então é código e
@@ -212,6 +309,12 @@ VOCABULARIOS_FECHADOS: frozenset[str] = frozenset(
         "iniciativas",
         "modalidade",
         "presenca",
+        # OS TRÊS DOS CAMPOS NOVOS DE CADASTRO. Fechados porque ninguém cria uma
+        # UF, um tier ou uma subcategoria preenchendo planilha: são taxonomia, e
+        # mudá-las é mudar a régua com que o Score agrupa o mundo.
+        "abrangencias",
+        "relevancias",
+        "subcategorias_publico",
         "papel",
         "momento",
         # A taxonomia de públicos é FECHADA (mudá-la é migration, diz o
@@ -258,6 +361,9 @@ ROTULO_DO_VOCABULARIO: dict[str, str] = {
     "iniciativas": "Iniciativa",
     "modalidade": "Modalidade",
     "presenca": "Presença",
+    "abrangencias": "Abrangência",
+    "relevancias": "Relevância",
+    "subcategorias_publico": "Subcategorias de público",
     "categorias_publico": "Categorias de público",
     "papel": "Papel",
     "momento": "Momento",
@@ -836,12 +942,17 @@ class Divergencia:
     acao: str | None = None
     #: O id do cadastro escolhido, quando `acao == "apontar"`.
     alvo: str | None = None
-    #: A categoria de público declarada na aba, quando o cadastro a criar é uma
-    #: instituição. É dela que o tipo nasce.
+    #: O QUE A PESSOA ESCREVEU NA ABA DE CADASTRO, campo → valor, quando o cadastro
+    #: vai ser criado.
     #:
-    #: VIAJA COM A DIVERGÊNCIA porque o ARQUIVO NÃO É GUARDADO: na confirmação é
-    #: daqui que sai a categoria, e sem ela a criação voltaria a chutar o tipo.
-    categoria_declarada: str | None = None
+    #: ERA UM CAMPO SÓ — `categoria_declarada` —, e deixou de bastar quando as abas
+    #: ganharam os campos do formulário da plataforma: a abrangência e a relevância da
+    #: instituição, o cargo e o e-mail do interlocutor.
+    #:
+    #: VIAJA AQUI PORQUE O ARQUIVO NÃO É GUARDADO. A criação acontece na confirmação,
+    #: que não tem mais a planilha — só o que ficou gravado na divergência. Um campo que
+    #: não viaja por aqui é um campo que a pessoa preencheu e que o cadastro nasce sem.
+    declarado: dict[str, object] | None = None
 
 
 #: Os cinco tipos de coluna, e cada um é uma pergunta já respondida pela descrição.

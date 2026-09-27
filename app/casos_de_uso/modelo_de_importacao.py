@@ -40,10 +40,10 @@ from app.dominio.importacao_de_agendas import (
     COLUNA_DE_REPETICAO,
     FORMATO,
     ROTULO_DO_VOCABULARIO,
-    SEGUNDA_COLUNA_DO_VOCABULARIO,
     VALOR_DA_REPETICAO,
     VOCABULARIOS_EDITAVEIS,
     VOCABULARIOS_FECHADOS,
+    colunas_do_cadastro,
     colunas_do_modelo,
     tipo_da_coluna,
 )
@@ -115,45 +115,46 @@ def rotulo_singular(chave: str) -> str:
     )
 
 
-def _fonte_da_lista(coluna, colunas: Sequence, quantos_interlocutores: int) -> str:
-    """A fonte da lista suspensa de uma coluna: o nome definido, ou a fórmula
-    dependente das colunas de interlocutor.
+def _suspensa_dependente(vocabulario: str, celula_do_dono: str) -> str:
+    """A fonte de uma suspensa que se reduz pelo valor de OUTRA célula da mesma linha.
+
+    UMA FÓRMULA PARA OS DOIS CASOS, e eram dois quase iguais: o interlocutor que se
+    reduz pela instituição da agenda, e a subcategoria que se reduz pela categoria de
+    público da linha do cadastro. Duas cópias divergiriam no dia em que uma delas
+    aprendesse algo — e a que não aprendeu é sempre a que ninguém está olhando.
+
+    COMO FUNCIONA: a aba do vocabulário sai com o valor na coluna A e o DONO na coluna
+    B, agrupada por dono. `MATCH` acha a primeira linha daquele dono, `COUNTIF` diz
+    quantas são, e `OFFSET` recorta esse bloco.
+
+    A REDE DO `ISNA` é necessária nos dois: enquanto a célula do dono estiver vazia — e
+    ela está, na linha em que a pessoa começou a escrever —, o `MATCH` não acha nada, e
+    sem a rede a célula ficaria sem suspensa nenhuma. Cair na lista inteira é degradar
+    para o que funcionava antes, que é diferente de quebrar.
+    """
+    rotulo = ROTULO_DO_VOCABULARIO[vocabulario]
+    folha = f"'{rotulo}'" if " " in rotulo else rotulo
+    donos = f"{folha}!$B$2:$B${_LINHAS_DE_ABAS_FILHAS}"
+    procura = f"MATCH({celula_do_dono},{donos},0)"
+    return (
+        f"IF(ISNA({procura}),{vocabulario},"
+        f"OFFSET({folha}!$A$2,{procura}-1,0,COUNTIF({donos},{celula_do_dono}),1))"
+    )
+
+
+def _fonte_da_lista(coluna, colunas: Sequence) -> str:
+    """A fonte da suspensa de uma coluna da AGENDA: o nome do vocabulário, ou a
+    fórmula que se reduz pela instituição da linha.
 
     A RELAÇÃO QUE O FRONT TEM. `interlocutoresDaInstituicao` filtra a lista pelo
-    `instituicao_id` da instituição escolhida; aqui o equivalente é um `OFFSET` no
-    bloco daquele órgão dentro da aba de interlocutores, que sai AGRUPADA por
-    instituição justamente para isto.
-
-    O `IF(ISNA(MATCH(...)))` é a rede, e ela é necessária: órgão NOVO, digitado na
-    célula e declarado na aba, é caminho normal desta funcionalidade — e um
-    `MATCH` que não acha devolveria erro, deixando a célula sem suspensa nenhuma.
-    Nesse caso a lista volta a ser a de todos os interlocutores, que é o
-    comportamento de antes desta mudança. Degradar para o que já funcionava é
-    diferente de quebrar.
-
-    Cabe nos 255 caracteres que o Excel aceita em `formula1` — com o rótulo da aba
-    e a coluna da instituição, fica em torno de 180.
+    `instituicao_id` escolhido; aqui o equivalente é recortar o bloco daquele órgão na
+    aba de interlocutores, que sai agrupada por instituição justamente para isto.
     """
     if coluna.vocabulario != "interlocutores":
         return coluna.vocabulario
-    rotulo = ROTULO_DO_VOCABULARIO["interlocutores"]
-    folha = f"'{rotulo}'" if " " in rotulo else rotulo
-    # MUITO ALÉM DAS LINHAS DE HOJE, e era a mesma armadilha do nome definido: a
-    # fórmula procurava a instituição num intervalo que terminava na última linha
-    # EXISTENTE quando o arquivo foi gerado, então um interlocutor acrescentado abaixo
-    # disso não aparecia na suspensa da agenda.
-    #
-    # Célula em branco nunca casa com um nome de órgão, então olhar além do conteúdo
-    # não custa nada: `MATCH` e `COUNTIF` simplesmente não a encontram.
-    ultima = _LINHAS_DE_ABAS_FILHAS
-    instituicao = f"${_letra_de_coluna(colunas, COLUNA_DA_INSTITUICAO_DA_AGENDA)}2"
-    orgaos = f"{folha}!$B$2:$B${ultima}"
-    procura = f"MATCH({instituicao},{orgaos},0)"
-    # SEM O `=` NA FRENTE: o conteúdo de `<formula1>` no OOXML é a fórmula, e o
-    # elemento já diz isso. Ver `test_a_fonte_da_suspensa_NAO_LEVA_o_sinal_de_igual`.
-    return (
-        f"IF(ISNA({procura}),interlocutores,"
-        f"OFFSET({folha}!$A$2,{procura}-1,0,COUNTIF({orgaos},{instituicao}),1))"
+    return _suspensa_dependente(
+        "interlocutores",
+        f"${_letra_de_coluna(colunas, COLUNA_DA_INSTITUICAO_DA_AGENDA)}2",
     )
 
 
@@ -179,7 +180,7 @@ def _letra_de_coluna(colunas: Sequence, nome: str) -> str:
 
 def gerar(
     vocabularios: Mapping[str, list[str]],
-    interlocutores: Sequence[tuple[str, str]] = (),
+    pares: Mapping[str, Sequence[tuple[str, str]]] | None = None,
     modelo: str = "completo",
 ) -> bytes:
     """O `.xlsx` de cadastro: as quatro abas de preenchimento, vazias, mais
@@ -205,6 +206,10 @@ def gerar(
     # -- abas de preenchimento: só o cabeçalho, quem preenche escreve o resto -
     # AS COLUNAS SAEM DO RECORTE ESCOLHIDO. `colunas_do_modelo` recusa um nome de
     # modelo que não existe, então um erro de digitação aqui não gera arquivo torto.
+    # OS PARES SÃO "VALOR + DONO", e hoje são dois: o interlocutor com a instituição
+    # dele, e a subcategoria de público com a categoria dona. É o que faz a suspensa
+    # dependente funcionar — ela procura o dono na coluna B da aba do vocabulário.
+    os_pares = dict(pares or {})
     colunas_da_agenda = colunas_do_modelo(modelo)
     for aba in FORMATO:
         planilha = pasta.create_sheet(aba.nome)
@@ -253,23 +258,25 @@ def gerar(
         # uma aba de preenchimento já criada, e o nome que a pessoa vê é
         # exatamente `rotulo`, sem desvio.
         planilha = pasta.create_sheet(rotulo)
-        # A ABA DE INSTITUIÇÕES TEM CABEÇALHO E DUAS COLUNAS, e é a única. O tipo
-        # deriva a frente da agenda, então criar uma instituição sem ele obrigaria
-        # o servidor a chutar — e o chute erra a frente de toda agenda daquela
-        # instituição. As outras abas seguem sendo uma lista de nomes, porque nada
-        # mais é preciso para criar um interlocutor ou um tema.
-        segunda_coluna = SEGUNDA_COLUNA_DO_VOCABULARIO.get(chave)
-        if segunda_coluna:
-            planilha.append([rotulo_singular(chave), segunda_coluna])
-        if chave == "interlocutores":
-            # AGRUPADOS E CONTÍGUOS POR INSTITUIÇÃO, e não é estética: a suspensa
-            # dependente é um `OFFSET` a partir da primeira linha do órgão, com
-            # altura igual à contagem dele. Linhas do mesmo órgão separadas fariam
-            # a suspensa daquele órgão mostrar as pessoas do vizinho.
-            for nome, instituicao in sorted(
-                interlocutores, key=lambda par: (par[1] or "", par[0])
+        # AS COLUNAS VÊM DA DESCRIÇÃO, e são as do formulário da plataforma.
+        #
+        # ERAM UMA LISTA DE NOMES: só instituição e interlocutor tinham uma segunda
+        # coluna. Uma aba de cadastro com menos campos que o formulário cria cadastro
+        # pela metade, e quem completa depois é alguém que não estava na reunião. O que
+        # o formulário NÃO pergunta continua fora: a esfera e o tipo da instituição são
+        # derivados, e pedi-los abriria a chance de a planilha contradizer a derivação.
+        colunas = colunas_do_cadastro(chave)
+        tem_cabecalho = len(colunas) > 1
+        if tem_cabecalho:
+            planilha.append([coluna.nome for coluna in colunas])
+        if chave in os_pares:
+            # AGRUPADOS E CONTÍGUOS POR DONO, e não é estética: a suspensa dependente
+            # recorta o bloco daquele dono. Linhas do mesmo dono separadas fariam a
+            # suspensa mostrar os valores do vizinho.
+            for valor, dono in sorted(
+                os_pares[chave], key=lambda par: (par[1] or "", par[0])
             ):
-                planilha.append([nome, instituicao])
+                planilha.append([valor, dono])
         else:
             for valor in valores:
                 planilha.append([valor])
@@ -279,6 +286,34 @@ def gerar(
         # instrução virou a coluna `Repetir a linha de cima`.
         if chave in VOCABULARIOS_FECHADOS:
             planilha.protection.sheet = True
+
+        # UMA SUSPENSA POR COLUNA QUE TEM VOCABULÁRIO, como na aba de agendas. Era aqui
+        # que faltava o pente: os campos novos entrariam como texto livre, e o erro de
+        # grafia viraria cadastro errado em vez de pendência.
+        for posicao, coluna in enumerate(colunas, start=1):
+            if not coluna.vocabulario:
+                continue
+            letra_do_cadastro = get_column_letter(posicao)
+            dono = (
+                f"${get_column_letter(
+                    [outra.nome for outra in colunas].index(coluna.depende_de) + 1
+                )}2"
+                if coluna.depende_de
+                else ""
+            )
+            suspensa = DataValidation(
+                type="list",
+                formula1=(
+                    _suspensa_dependente(coluna.vocabulario, dono)
+                    if dono
+                    else coluna.vocabulario
+                ),
+                allow_blank=True,
+            )
+            planilha.add_data_validation(suspensa)
+            suspensa.add(
+                f"{letra_do_cadastro}2:{letra_do_cadastro}{_LINHAS_DE_ABAS_FILHAS}"
+            )
 
         # O INTERVALO ACOMPANHA O CONTEÚDO, e era aqui o defeito que o dono do
         # produto achou ao usar: ele acrescentou instituições na aba e elas não
@@ -299,9 +334,7 @@ def gerar(
         # de altura ZERO é inválido — o Excel recusaria o arquivo inteiro ao abrir, que
         # é o pior momento possível para um erro.
         #
-        # O `-1` DAS ABAS DE DUAS COLUNAS desconta o cabeçalho, que `COUNTA` conta.
-        # Sem ele a lista teria uma linha vazia no fim, oferecida para escolher.
-        primeira = 2 if segunda_coluna else 1
+        primeira = 2 if tem_cabecalho else 1
         # `INDEX` E NÃO `OFFSET`, e a diferença importa: `OFFSET` é uma função VOLÁTIL, e
         # função volátil em validação de dados é o caso onde o Excel se recusa a resolver
         # em algumas versões. `INDEX` devolve uma referência sem ser volátil, e a
@@ -323,38 +356,7 @@ def gerar(
             ),
         )
 
-    # -- a lista de tipos, na coluna B da aba de instituições -----------------
-    #
-    # Sem ela a pessoa digita "orgão" com acento ou "veículo" e a importação
-    # recusa um tipo que ela acha que escreveu certo.
-    from openpyxl.worksheet.datavalidation import DataValidation as _DV
 
-    aba_das_instituicoes = pasta[ROTULO_DO_VOCABULARIO["instituicoes"]]
-    categorias = _DV(
-        # APONTA PARA A ABA da taxonomia, e não para uma lista escrita aqui: são
-        # dez nomes longos, e uma lista literal na fórmula estoura o limite de 255
-        # caracteres que o Excel impõe a `formula1`.
-        type="list",
-        formula1="categorias_publico",
-        allow_blank=True,
-        showErrorMessage=True,
-        errorTitle="Categoria inválida",
-        error="Escolha uma das categorias da lista.",
-    )
-    aba_das_instituicoes.add_data_validation(categorias)
-    categorias.add(f"B2:B{_LINHAS_DE_ABAS_FILHAS}")
-
-    # -- a suspensa de instituições na coluna B da aba de interlocutores ------
-    #
-    # Quem cadastra alguém novo escreve o nome na coluna A e ESCOLHE o órgão na B.
-    # Digitar o órgão à mão erraria a grafia — e um órgão que não casa com o
-    # cadastro deixa a pessoa nascendo solta, que é exatamente o que esta coluna
-    # existe para impedir. Sem `showErrorMessage`, como toda coluna de vocabulário
-    # editável: o órgão novo, declarado na aba de instituições, também vale aqui.
-    aba_dos_interlocutores = pasta[ROTULO_DO_VOCABULARIO["interlocutores"]]
-    de_quem = _DV(type="list", formula1="instituicoes", allow_blank=True)
-    aba_dos_interlocutores.add_data_validation(de_quem)
-    de_quem.add(f"B2:B{_LINHAS_DE_ABAS_FILHAS}")
 
     # -- listas suspensas: uma DataValidation por coluna com vocabulário ------
     for aba in FORMATO:
@@ -400,7 +402,7 @@ def gerar(
             # que a importação em massa existe para servir.
             validacao = DataValidation(
                 type="list",
-                formula1=_fonte_da_lista(coluna, colunas_da_agenda, len(interlocutores)),
+                formula1=_fonte_da_lista(coluna, colunas_da_agenda),
                 allow_blank=True,
                 showErrorMessage=fechado,
                 errorTitle="Valor fora da lista" if fechado else None,

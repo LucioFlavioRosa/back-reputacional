@@ -111,7 +111,7 @@ def gravar_proposta(sessao: Session, linha: ImportacaoLinha, proposta) -> None:
                 "sugestoes": list(divergencia.sugestoes),
                 "acao": divergencia.acao,
                 "alvo": divergencia.alvo,
-                "categoria_declarada": divergencia.categoria_declarada,
+                "declarado": divergencia.declarado,
             }
             for divergencia in proposta.divergencias
         ]

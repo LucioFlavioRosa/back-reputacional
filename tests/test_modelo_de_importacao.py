@@ -6,9 +6,9 @@ from app.casos_de_uso.modelo_de_importacao import gerar
 from app.dominio.importacao_de_agendas import (
     FORMATO,
     ROTULO_DO_VOCABULARIO,
-    SEGUNDA_COLUNA_DO_VOCABULARIO,
     VOCABULARIOS_EDITAVEIS,
     VOCABULARIOS_FECHADOS,
+    colunas_do_cadastro,
 )
 
 # Montado a partir dos dois conjuntos VIVOS do domínio, não retiptado à mão:
@@ -136,7 +136,9 @@ def test_o_definedname_de_cada_vocabulario_resolve_para_a_aba_certa():
     que moram nela são os que `gerar` recebeu — não o cabeçalho de uma aba de
     preenchimento que por acaso tem o mesmo nome.
     """
-    planilha = _abrir(gerar(VOCABULARIOS))
+    # COM OS PARES, como a rota sempre passa: sem eles as abas em pares listariam o
+    # vocabulário, e o teste conferiria uma situação que a produção não tem.
+    planilha = _abrir(gerar(VOCABULARIOS, PARES))
 
     for chave, valores in VOCABULARIOS.items():
         rotulo = ROTULO_DO_VOCABULARIO[chave]
@@ -152,7 +154,8 @@ def test_o_definedname_de_cada_vocabulario_resolve_para_a_aba_certa():
         assert abas_citadas == {rotulo}, (chave, formula)
 
         # E os valores que moram naquela aba são os que `gerar` recebeu.
-        primeira = 2 if chave in SEGUNDA_COLUNA_DO_VOCABULARIO else 1
+        # A aba com mais de uma coluna tem CABEÇALHO, então os valores começam na 2.
+        primeira = 2 if len(colunas_do_cadastro(chave)) > 1 else 1
         lidos = [
             celula.value
             for (celula,) in planilha[rotulo].iter_rows(
@@ -164,7 +167,13 @@ def test_o_definedname_de_cada_vocabulario_resolve_para_a_aba_certa():
         # (pessoa, instituição), que é a relação que o front tem. O nome definido segue
         # cobrindo a coluna A — é a lista inteira, e é a rede da suspensa dependente
         # quando o órgão da linha não é reconhecido.
-        esperados = [] if chave == "interlocutores" else valores
+        # A ABA EM PARES lista o valor na coluna A, ordenada por dono e depois por
+        # valor — é a contiguidade que a suspensa dependente exige.
+        esperados = (
+            [valor for valor, _ in sorted(PARES[chave], key=lambda par: (par[1], par[0]))]
+            if chave in PARES
+            else valores
+        )
         assert lidos == esperados, chave
 
 
@@ -314,12 +323,20 @@ def test_a_data_aceita_o_passado_e_o_futuro():
 # do outro, sem nada dizendo quem é de quem. Quem preenche 54 agendas escolhia
 # entre TODOS os interlocutores da base, e o erro só aparecia na conferência.
 
-PARES = [
-    ("Ana Prado", "Valor Econômico"),
-    ("Assessoria da liderança", "Câmara Municipal"),
-    ("Assessoria da liderança", "Valor Econômico"),
-    ("Bruno Lima", "Câmara Municipal"),
-]
+#: Os vocabulários que saem em PARES — valor na coluna A, dono na B. Um dicionário
+#: porque são dois hoje, e o mecanismo é o mesmo para os dois.
+PARES = {
+    "interlocutores": [
+        ("Ana Prado", "Valor Econômico"),
+        ("Assessoria da liderança", "Câmara Municipal"),
+        ("Assessoria da liderança", "Valor Econômico"),
+        ("Bruno Lima", "Câmara Municipal"),
+    ],
+    "subcategorias_publico": [
+        ("Federal", "Poder Executivo"),
+        ("Estadual", "Poder Executivo"),
+    ],
+}
 
 
 def _com_pares(conteudo=None):
@@ -670,3 +687,113 @@ def test_a_suspensa_de_lista_literal_continua_entre_aspas():
         xml = arquivo.read("xl/worksheets/sheet1.xml").decode("utf-8")
 
     assert '<formula1>"sim"</formula1>' in re.sub(r"\s+", " ", xml)
+
+
+# =============================================================================
+# o pente fino: as abas de cadastro reproduzem o formulário da plataforma
+# =============================================================================
+
+
+def test_a_aba_de_cadastro_tem_os_campos_do_FORMULARIO():
+    """O PEDIDO DO DONO DO PRODUTO: "garanta que todas as abas reproduzam os campos de
+    cadastro que temos na plataforma, na parte de CRM".
+
+    Os campos foram conferidos um por um em `CadastroDeInstituicoes.tsx` e
+    `CadastroDePortaVozes.tsx`. Uma aba com menos campos que o formulário cria cadastro
+    pela metade, e quem completa depois é alguém que não estava na reunião."""
+    from app.dominio.importacao_de_agendas import ROTULO_DO_VOCABULARIO
+
+    planilha = _abrir(gerar(VOCABULARIOS, PARES))
+
+    def cabecalho(chave):
+        folha = planilha[ROTULO_DO_VOCABULARIO[chave]]
+        return [celula.value for celula in next(folha.iter_rows())]
+
+    assert cabecalho("instituicoes") == [
+        "Instituição",
+        "Nome completo",
+        "Abrangência",
+        "Relevância",
+        "Categoria de público",
+        "Subcategoria",
+    ]
+    assert cabecalho("interlocutores") == ["Interlocutor", "Instituição", "Cargo", "E-mail"]
+    assert cabecalho("pessoas_aegea") == [
+        "Pessoa da Aegea",
+        "Cargo",
+        "E-mail",
+        "Área",
+        "É porta-voz?",
+    ]
+
+
+def test_TODA_coluna_de_cadastro_com_vocabulario_TEM_lista_suspensa():
+    """A GUARDA DO PENTE. "Deve ter os mesmos mecanismos de preenchimento restrito" —
+    uma coluna de vocabulário sem suspensa é texto livre, e aí o erro de grafia vira
+    cadastro errado em vez de pendência."""
+    from openpyxl.utils import get_column_letter
+
+    from app.dominio.importacao_de_agendas import (
+        ROTULO_DO_VOCABULARIO,
+        VOCABULARIOS_EDITAVEIS,
+        VOCABULARIOS_FECHADOS,
+        colunas_do_cadastro,
+    )
+
+    planilha = _abrir(gerar(VOCABULARIOS, PARES))
+
+    sem_suspensa = []
+    for chave in VOCABULARIOS_EDITAVEIS | VOCABULARIOS_FECHADOS:
+        folha = planilha[ROTULO_DO_VOCABULARIO[chave]]
+        faixas = {
+            str(faixa)
+            for dv in folha.data_validations.dataValidation
+            for faixa in dv.sqref.ranges
+        }
+        for posicao, coluna in enumerate(colunas_do_cadastro(chave), start=1):
+            if not coluna.vocabulario:
+                continue
+            letra = get_column_letter(posicao)
+            if not any(faixa.startswith(f"{letra}2:") for faixa in faixas):
+                sem_suspensa.append((chave, coluna.nome))
+
+    assert sem_suspensa == []
+
+
+def test_a_SUBCATEGORIA_se_reduz_pela_categoria_da_linha():
+    """O MESMO MECANISMO DO INTERLOCUTOR, pedido explicitamente: "deve ter os mesmos
+    mecanismos assim como temos em interlocutores quando selecionamos a instituição".
+
+    No formulário da plataforma, trocar a categoria LIMPA a subcategoria escolhida —
+    porque uma subcategoria pertence a uma categoria só. Aqui o equivalente é a lista se
+    reduzir às da categoria daquela linha."""
+    from app.dominio.importacao_de_agendas import ROTULO_DO_VOCABULARIO
+
+    folha = _abrir(gerar(VOCABULARIOS, PARES))[ROTULO_DO_VOCABULARIO["instituicoes"]]
+    dependentes = [
+        dv
+        for dv in folha.data_validations.dataValidation
+        if dv.formula1 and "OFFSET" in dv.formula1
+    ]
+
+    assert len(dependentes) == 1, [dv.formula1 for dv in dependentes]
+    formula = dependentes[0].formula1
+    # Aponta para a COLUNA DA CATEGORIA da mesma linha — a quinta da aba.
+    assert "$E2" in formula, formula
+    assert "Subcategorias de público" in formula
+    # E cai na lista inteira enquanto a categoria estiver vazia.
+    assert ",subcategorias_publico," in formula
+
+
+def test_a_aba_de_subcategorias_sai_com_a_CATEGORIA_dona_ao_lado():
+    """É o que permite o `MATCH` da suspensa dependente — a mesma forma da aba de
+    interlocutores, pelo mesmo motivo."""
+    from app.dominio.importacao_de_agendas import ROTULO_DO_VOCABULARIO
+
+    folha = _abrir(gerar(VOCABULARIOS, PARES))[
+        ROTULO_DO_VOCABULARIO["subcategorias_publico"]
+    ]
+    linhas = [(a, b) for a, b, *_ in folha.iter_rows(min_col=1, max_col=2, values_only=True)]
+
+    assert linhas[0] == ("Subcategoria", "Categoria de público")
+    assert ("Federal", "Poder Executivo") in linhas

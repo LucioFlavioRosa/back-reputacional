@@ -35,10 +35,11 @@ from app.dominio.importacao_de_agendas import (
     COLUNA_DE_REPETICAO,
     FORMATO,
     ROTULO_DO_VOCABULARIO,
-    SEGUNDA_COLUNA_DO_VOCABULARIO,
     VALOR_DA_REPETICAO,
     VOCABULARIOS_EDITAVEIS,
+    VOCABULARIOS_QUE_A_IMPORTACAO_CRIA,
     Aba,
+    colunas_do_cadastro,
 )
 from app.dominio.texto import normalizar
 
@@ -335,72 +336,60 @@ def ler_declarados(conteudo: bytes) -> dict[str, frozenset[str]]:
     # criar. Vale para as duas abas — instituições e interlocutores —, e vem do
     # mapa do domínio em vez de uma linha escrita à mão por aba: a terceira aba de
     # duas colunas já nasceria coberta.
-    for chave, segunda in SEGUNDA_COLUNA_DO_VOCABULARIO.items():
-        if chave in declarados:
+    # O CABEÇALHO NÃO É UM CADASTRO DECLARADO, e o nome dele vem da descrição — não
+    # de uma lista escrita à mão, que envelhecia quando um rótulo mudava e fazia a
+    # palavra "Instituição" virar uma instituição a criar.
+    for chave in declarados:
+        colunas = colunas_do_cadastro(chave)
+        if len(colunas) > 1:
             declarados[chave] = declarados[chave] - {
-                normalizar(segunda),
-                *(normalizar(cabecalho) for cabecalho in _CABECALHOS_POSSIVEIS[chave]),
+                normalizar(coluna.nome) for coluna in colunas
             }
     # O MARCADOR SAIU DAS LISTAS junto com a própria ideia dele: a instrução de
     # repetir virou coluna. Não há mais nada a subtrair aqui.
     return declarados
 
 
-#: Os nomes que podem estar no cabeçalho da coluna A de cada aba de duas colunas.
-#: O rótulo mudou uma vez ("Instituições" → "Instituição") e pode mudar de novo; um
-#: cabeçalho não reconhecido vira cadastro a criar, que é o tipo de defeito que
-#: aparece como "por que ele quer criar uma instituição chamada Instituição?".
-_CABECALHOS_POSSIVEIS: dict[str, tuple[str, ...]] = {
-    "instituicoes": ("Instituição", "Instituições"),
-    "interlocutores": ("Interlocutor", "Interlocutores"),
-}
+def ler_cadastros_declarados(conteudo: bytes) -> dict[str, dict[str, dict[str, object]]]:
+    """Por aba de cadastro: nome normalizado → o que a pessoa escreveu nas outras colunas.
 
+    O PENTE FINO DO DONO DO PRODUTO. As abas de cadastro passaram a ter os campos do
+    formulário da plataforma — a abrangência e a relevância da instituição, o cargo e o
+    e-mail do interlocutor —, e nada disso servia para nada se o leitor continuasse
+    olhando só a coluna B.
 
-def _segunda_coluna(conteudo: bytes, chave: str) -> dict[str, str]:
-    """Nome normalizado da coluna A → valor normalizado da coluna B.
+    LÊ PELA DESCRIÇÃO, coluna por coluna, e é o que faz uma coluna nova passar a ser
+    lida sem nenhuma linha nova aqui. O cabeçalho é reconhecido pelo próprio nome
+    descrito, e não por uma lista de nomes possíveis escrita à mão — que era o que
+    envelhecia quando um rótulo mudava, e fazia a palavra do cabeçalho virar um cadastro
+    a criar.
 
-    UMA LEITURA, DUAS CHAMADORAS: a categoria de público da instituição e a
-    instituição do interlocutor são a mesma pergunta feita a abas diferentes. Duas
-    cópias divergiriam no dia em que uma delas aprendesse a aparar algo novo.
+    O VALOR SAI CRU e não normalizado: o cargo e o e-mail vão para o banco como a pessoa
+    escreveu. Quem precisa comparar — a categoria, a instituição — normaliza na hora.
     """
     pasta = _abrir(conteudo)
-    rotulo = ROTULO_DO_VOCABULARIO[chave]
-    if rotulo not in pasta.sheetnames:
-        return {}
-    cabecalhos = {normalizar(nome) for nome in _CABECALHOS_POSSIVEIS.get(chave, ())}
-    valores: dict[str, str] = {}
-    for nome, ao_lado in pasta[rotulo].iter_rows(min_col=1, max_col=2, values_only=True):
-        aparado = _texto(nome)
-        if not isinstance(aparado, str):
+    declarados: dict[str, dict[str, dict[str, object]]] = {}
+    for chave in VOCABULARIOS_QUE_A_IMPORTACAO_CRIA:
+        rotulo = ROTULO_DO_VOCABULARIO[chave]
+        colunas = colunas_do_cadastro(chave)
+        if rotulo not in pasta.sheetnames or len(colunas) < 2:
+            declarados[chave] = {}
             continue
-        primeira = normalizar(aparado)
-        if primeira in cabecalhos:
-            continue
-        aparado_ao_lado = _texto(ao_lado)
-        if isinstance(aparado_ao_lado, str):
-            valores[primeira] = normalizar(aparado_ao_lado)
-    return valores
+        cabecalho = normalizar(colunas[0].nome)
+        por_nome: dict[str, dict[str, object]] = {}
+        for linha in pasta[rotulo].iter_rows(
+            min_col=1, max_col=len(colunas), values_only=True
+        ):
+            nome = _texto(linha[0])
+            if not isinstance(nome, str) or normalizar(nome) == cabecalho:
+                continue
+            campos: dict[str, object] = {}
+            for coluna, bruto in zip(colunas[1:], linha[1:], strict=False):
+                valor = _texto(bruto)
+                if valor is not None and valor != "":
+                    campos[coluna.campo] = valor
+            por_nome[normalizar(nome)] = campos
+        declarados[chave] = por_nome
+    return declarados
 
 
-def ler_instituicoes_dos_interlocutores(conteudo: bytes) -> dict[str, str]:
-    """Nome normalizado do interlocutor → a instituição escrita ao lado dele.
-
-    A COLUNA B DA ABA DE INTERLOCUTORES, que é a relação que o front tem. Quem
-    declara alguém novo escolhe o órgão na suspensa ao lado do nome, e é isso que
-    permite recusar no UPLOAD a contradição entre o órgão declarado e o da agenda —
-    em vez de deixá-la estourar na confirmação, depois da conferência inteira.
-
-    Devolve o nome da instituição, não o id: quem resolve nome para cadastro é a
-    proposta, com o mesmo `classificar` de todo o resto. Resolver aqui seria uma
-    segunda resolução, com regra própria.
-    """
-    return _segunda_coluna(conteudo, "interlocutores")
-
-
-def ler_categorias_declaradas(conteudo: bytes) -> dict[str, str]:
-    """Nome normalizado → categoria de público, da coluna B da aba de instituições.
-
-    É DELA QUE O TIPO NASCE, e o tipo deriva a frente da agenda. Quem declara o
-    cadastro declara a categoria, como a tela de cadastro também exige.
-    """
-    return _segunda_coluna(conteudo, "instituicoes")

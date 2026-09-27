@@ -35,8 +35,10 @@ from app.banco.tabelas_catalogo import (
     Clima,
     FormatoInteracao,
     Iniciativa,
+    Relevancia,
     Resultado,
     Status,
+    SubcategoriaPublico,
     Tema,
     UnidadeNegocio,
 )
@@ -45,9 +47,8 @@ from app.banco.tabelas_stakeholders import Instituicao, Interlocutor, PessoaAege
 from app.casos_de_uso.ler_planilha_de_agendas import (
     LinhaBruta,
     ler,
-    ler_categorias_declaradas,
+    ler_cadastros_declarados,
     ler_declarados,
-    ler_instituicoes_dos_interlocutores,
 )
 from app.dominio.erros import Conflito, RegraViolada
 from app.dominio.frentes import TIPO_DA_CATEGORIA_DE_PUBLICO
@@ -68,6 +69,7 @@ from app.dominio.importacao_de_agendas import (
     aba_de,
     classificar,
     coluna_do_campo,
+    colunas_do_cadastro,
 )
 from app.dominio.interacao import (
     ABRANGENCIAS_VALIDAS,
@@ -76,6 +78,7 @@ from app.dominio.interacao import (
     PAPEIS,
     PRESENCAS,
 )
+from app.dominio.recorte import INTERNACIONAL, NACIONAL, UFS
 from app.dominio.texto import normalizar
 from app.esquemas.interacoes import (
     InteracaoEntrada,
@@ -112,6 +115,10 @@ NO_BANCO: dict[str, _Fonte] = {
     # Resolve para o `id` porque é ele que vai em `instituicao.categoria_publico_id`;
     # o `codigo`, que deriva o tipo, sai de uma leitura pelo id na criação.
     "categorias_publico": _Fonte(CategoriaPublico, "id"),
+    # O `id` da relevância É o número do tier — a tabela não tem sequência
+    # própria de propósito, porque 1, 2 e 3 já são os códigos estáveis.
+    "relevancias": _Fonte(Relevancia, "id"),
+    "subcategorias_publico": _Fonte(SubcategoriaPublico, "id"),
 }
 
 #: Vocabulário sem tabela: a lista mora em `dominio/interacao.py`, porque mudá-la
@@ -122,6 +129,10 @@ NO_CODIGO: dict[str, tuple[str, ...]] = {
     "presenca": PRESENCAS,
     "papel": PAPEIS,
     "momento": MOMENTOS_DE_MATERIAL,
+    # A ABRANGÊNCIA NÃO TEM TABELA: é o domínio do banco mais os dois de fora do
+    # país. Montada aqui pelo mesmo motivo que `catalogo.py` a monta à mão —
+    # não há de onde ler.
+    "abrangencias": (*sorted(UFS), NACIONAL, INTERNACIONAL),
 }
 
 #: As colunas numeradas que montam cada lista de `InteracaoEntrada`.
@@ -401,6 +412,31 @@ def interlocutores_com_instituicao(sessao: Session) -> list[tuple[str, str]]:
     return [(pessoa, orgao) for pessoa, orgao in linhas if pessoa and orgao]
 
 
+def pares_de_vocabulario(sessao: Session) -> dict[str, list[tuple[str, str]]]:
+    """Os vocabulários que saem em PARES — o valor e o dono dele.
+
+    É O QUE FAZ A SUSPENSA DEPENDENTE FUNCIONAR, e são dois: o interlocutor com a
+    instituição dele, e a subcategoria de público com a categoria dona. A aba sai com o
+    valor na coluna A e o dono na B, agrupada por dono, e a fórmula recorta o bloco.
+
+    UM SÓ LUGAR PARA OS DOIS, porque é um mecanismo só: o dia em que houver um terceiro
+    par, ele entra aqui e a planilha o trata sem nenhuma linha nova no gerador.
+    """
+    from app.banco.tabelas_catalogo import CategoriaPublico as _Categoria
+    from app.banco.tabelas_catalogo import SubcategoriaPublico as _Subcategoria
+
+    subcategorias = sessao.execute(
+        select(_Subcategoria.nome, _Categoria.nome)
+        .join(_Categoria, _Categoria.id == _Subcategoria.categoria_publico_id)
+        .where(_Subcategoria.ativo.is_(True), _Categoria.ativo.is_(True))
+        .order_by(_Categoria.nome, _Subcategoria.ordem)
+    ).all()
+    return {
+        "interlocutores": interlocutores_com_instituicao(sessao),
+        "subcategorias_publico": [(sub, cat) for sub, cat in subcategorias if sub and cat],
+    }
+
+
 def _booleano(valor: object) -> bool | None | str:
     """`sim`/`não` viram booleano; qualquer outra coisa volta como está.
 
@@ -440,7 +476,7 @@ def _resolver(
     declarados: Mapping[str, frozenset[str]],
     divergencias: list[Divergencia],
     apontados: Mapping[tuple[str, str], object] = MAPPING_VAZIO,
-    categorias_declaradas: Mapping[str, str] = MAPPING_VAZIO,
+    cadastros_declarados: Mapping[str, Mapping[str, Mapping[str, object]]] = MAPPING_VAZIO,
 ) -> _Resolucao:
     """O valor resolvido, o cadastro a criar, ou a divergência anotada."""
     if valor is None:
@@ -480,13 +516,17 @@ def _resolver(
         # chute erra a frente de TODA agenda daquela instituição. Recusar agora põe
         # a pendência na tela junto das outras, em vez de fazer a confirmação
         # falhar depois de a pessoa já ter conferido tudo.
-        categoria = (
-            categorias_declaradas.get(normalizar(texto))
-            if vocabulario == "instituicoes"
-            else None
+        # O QUE A PESSOA ESCREVEU NAS OUTRAS COLUNAS daquela aba, para a criação ter
+        # com que nascer. Era só a categoria de público; passou a ser tudo, porque as
+        # abas ganharam os campos do formulário da plataforma — e um campo que não
+        # viaja até aqui é um campo que ela preencheu e que o cadastro nasce sem.
+        declarado = dict(
+            (cadastros_declarados.get(vocabulario) or {}).get(normalizar(texto)) or {}
         )
+        categoria = declarado.get("categoria_publico_id")
         if vocabulario == "instituicoes" and (
-            categoria is None or categoria not in indice.get("categorias_publico", {})
+            categoria is None
+            or normalizar(str(categoria)) not in indice.get("categorias_publico", {})
         ):
             divergencias.append(
                 Divergencia(
@@ -513,7 +553,7 @@ def _resolver(
                 mensagem=f"{coluna_nome}: vou cadastrar {texto!r}, que você declarou na aba.",
                 trava=False,
                 coluna=coluna_nome,
-                categoria_declarada=categoria,
+                declarado=declarado or None,
                 # MARCA A AÇÃO já aqui, e não só quando a pessoa decide na tela:
                 # é assim que a confirmação encontra o que criar sem depender do
                 # arquivo original, que não fica guardado. Declarar na aba e
@@ -555,7 +595,7 @@ def _conferir_orgao_declarado(
     coluna_nome: str,
     campo: str,
     instituicao_escrita: str,
-    instituicoes_dos_interlocutores: Mapping[str, str],
+    cadastros_declarados: Mapping[str, Mapping[str, Mapping[str, object]]],
     divergencias: list[Divergencia],
 ) -> None:
     """A contradição entre o órgão declarado ao lado do nome e o da agenda.
@@ -568,10 +608,13 @@ def _conferir_orgao_declarado(
     Sem órgão declarado não há contradição: a pessoa nasce na instituição da
     agenda, que é o comportamento de antes desta coluna existir.
     """
-    declarado = instituicoes_dos_interlocutores.get(normalizar(texto))
+    do_interlocutor = (cadastros_declarados.get("interlocutores") or {}).get(
+        normalizar(texto)
+    ) or {}
+    declarado = do_interlocutor.get("instituicao_id")
     if not declarado or not instituicao_escrita:
         return
-    if declarado == normalizar(instituicao_escrita):
+    if normalizar(str(declarado)) == normalizar(instituicao_escrita):
         return
     divergencias.append(
         Divergencia(
@@ -653,10 +696,9 @@ def _listas_da_linha(
     indice: dict[str, dict[str, object]],
     declarados: Mapping[str, frozenset[str]],
     apontados: Mapping[tuple[str, str], object] = MAPPING_VAZIO,
-    categorias_declaradas: Mapping[str, str] = MAPPING_VAZIO,
+    cadastros_declarados: Mapping[str, Mapping[str, Mapping[str, object]]] = MAPPING_VAZIO,
     instituicao_id: object = None,
     instituicao_escrita: str = "",
-    instituicoes_dos_interlocutores: Mapping[str, str] = MAPPING_VAZIO,
 ) -> tuple[dict[str, list], list[Divergencia], list[tuple[str, str]], list[Mapping]]:
     """As pessoas e os materiais de UMA linha, montados das colunas numeradas.
 
@@ -716,7 +758,7 @@ def _listas_da_linha(
                                 coluna_nome,
                                 campo_cheio,
                                 instituicao_escrita,
-                                instituicoes_dos_interlocutores,
+                                cadastros_declarados,
                                 do_item,
                             )
                     if resolucao is None:
@@ -729,7 +771,7 @@ def _listas_da_linha(
                             declarados,
                             do_item,
                             apontados,
-                            categorias_declaradas,
+                            cadastros_declarados,
                         )
                     resolvido = resolucao.valor
                     if resolucao.a_criar is not None:
@@ -900,8 +942,7 @@ def propor(sessao: Session, conteudo: bytes) -> list[Proposta]:
         sessao,
         ler(conteudo),
         ler_declarados(conteudo),
-        categorias_declaradas=ler_categorias_declaradas(conteudo),
-        instituicoes_dos_interlocutores=ler_instituicoes_dos_interlocutores(conteudo),
+        cadastros_declarados=ler_cadastros_declarados(conteudo),
     )
 
 
@@ -910,8 +951,7 @@ def propor_de_linhas(
     por_aba: Mapping[str, list[LinhaBruta]],
     declarados: Mapping[str, frozenset[str]],
     apontados: Mapping[tuple[str, str], object] = MAPPING_VAZIO,
-    categorias_declaradas: Mapping[str, str] = MAPPING_VAZIO,
-    instituicoes_dos_interlocutores: Mapping[str, str] = MAPPING_VAZIO,
+    cadastros_declarados: Mapping[str, Mapping[str, Mapping[str, object]]] = MAPPING_VAZIO,
 ) -> list[Proposta]:
     """O mesmo, a partir de linhas JÁ LIDAS.
 
@@ -954,7 +994,7 @@ def propor_de_linhas(
                     declarados,
                     divergencias,
                     apontados,
-                    categorias_declaradas,
+            cadastros_declarados,
                 )
                 valor = resolucao.valor
                 if resolucao.a_criar is not None:
@@ -1025,10 +1065,9 @@ def propor_de_linhas(
             indice,
             declarados,
             apontados,
-            categorias_declaradas,
+            cadastros_declarados=cadastros_declarados,
             instituicao_id=campos.get("instituicao_id"),
             instituicao_escrita=str(linha.celulas.get(COLUNA_DA_INSTITUICAO_DA_AGENDA) or ""),
-            instituicoes_dos_interlocutores=instituicoes_dos_interlocutores,
         )
         divergencias.extend(das_listas)
         a_criar.extend(criar_das_listas)
@@ -1331,20 +1370,22 @@ def _decisoes(linhas) -> tuple[dict[tuple[str, str], str], dict[tuple[str, str],
     return a_criar, apontados
 
 
-def _categorias_declaradas(linhas) -> dict[str, str]:
-    """O tipo de cada instituição a criar, guardado no upload.
+def _declarados_por_nome(linhas) -> dict[str, dict[str, object]]:
+    """Nome normalizado → os campos que a pessoa escreveu na aba de cadastro.
 
-    VEM DA DIVERGÊNCIA e não do arquivo, porque o arquivo não é guardado. O
-    upload anota o tipo declarado em `categoria_declarada` ao marcar `acao="criar"`.
+    VEM DA DIVERGÊNCIA E NÃO DO ARQUIVO, porque o arquivo não é guardado: o upload
+    anota em `declarado` tudo o que ela preencheu ao marcar `acao="criar"`, e a
+    confirmação lê daqui. Era só a categoria de público; passou a ser todos os campos
+    quando as abas ganharam os do formulário da plataforma.
     """
-    tipos: dict[str, str] = {}
+    campos: dict[str, dict[str, object]] = {}
     for linha in linhas:
         if linha.decisao == "descartada":
             continue
         for bruta in linha.divergencias or []:
-            if bruta.get("acao") == "criar" and bruta.get("categoria_declarada"):
-                tipos[normalizar(bruta["valor"])] = bruta["categoria_declarada"]
-    return tipos
+            if bruta.get("acao") == "criar" and bruta.get("declarado"):
+                campos[normalizar(bruta["valor"])] = dict(bruta["declarado"])
+    return campos
 
 
 def _reconferir(sessao: Session, a_criar, apontados) -> None:
@@ -1449,10 +1490,96 @@ def _instituicao_de_cada_interlocutor(
     return de_quem
 
 
+#: Os campos que a criação NÃO grava a partir do declarado, porque já são resolvidos
+#: por outro caminho — e gravá-los duas vezes deixaria as duas verdades discordarem.
+_JA_RESOLVIDOS = frozenset({"nome", "categoria_publico_id", "instituicao_id"})
+
+#: Os campos que guardam `id` de vocabulário: o que a pessoa escreve é o NOME, e o que
+#: a coluna aceita é o id.
+#:
+#: A SUBCATEGORIA NÃO ESTÁ AQUI, e é por um motivo de desenho: o nome dela só é único
+#: DENTRO da categoria — "Federal" existe em Poder Executivo, Poder Legislativo e
+#: Reguladores. Resolvê-la pelo nome sozinho a marcaria como ambígua e o cadastro
+#: nasceria sem ela. Ver `_subcategoria_da_categoria`.
+_CAMPOS_DE_ID = {"area_id": "areas_pessoa"}
+
+#: O que "sim" quer dizer numa coluna de sim/não.
+_AFIRMATIVOS = frozenset({"sim", "s", "x", "true", "1", "porta voz", "porta-voz"})
+
+
+def _campos_do_cadastro(
+    vocabulario: str, declarado: Mapping[str, object], indice: Mapping
+) -> dict[str, object]:
+    """O que a pessoa escreveu, traduzido para o que as colunas do banco aceitam.
+
+    LÊ A DESCRIÇÃO DAS COLUNAS, e é o que faz um campo novo chegar ao banco sem
+    nenhuma linha nova aqui: acrescentar a coluna em `COLUNAS_DO_CADASTRO` basta.
+    Uma lista de campos escrita aqui divergiria da planilha no primeiro campo novo — e
+    o sintoma seria o pior possível: a pessoa preenche, não dá erro, e o cadastro nasce
+    sem aquilo.
+
+    TRÊS TRADUÇÕES, e cada uma é uma diferença real entre o que se escreve e o que a
+    coluna guarda: o NOME de uma subcategoria vira o id dela; "sim" vira booleano; e o
+    tier, que é número, vira número.
+    """
+    campos: dict[str, object] = {}
+    for coluna in colunas_do_cadastro(vocabulario):
+        if coluna.campo in _JA_RESOLVIDOS or coluna.campo == "subcategoria_publico_id":
+            continue
+        bruto = declarado.get(coluna.campo)
+        if bruto is None or str(bruto).strip() == "":
+            continue
+        texto = str(bruto).strip()
+        if coluna.campo in _CAMPOS_DE_ID:
+            achado = indice.get(_CAMPOS_DE_ID[coluna.campo], {}).get(normalizar(texto))
+            if achado is not None and achado is not AMBIGUO:
+                campos[coluna.campo] = achado
+        elif coluna.campo == "eh_porta_voz":
+            campos[coluna.campo] = normalizar(texto) in _AFIRMATIVOS
+        elif coluna.campo == "tier":
+            # O id da relevância É o número do tier, e é o que a coluna guarda.
+            achado = indice.get("relevancias", {}).get(normalizar(texto))
+            if achado is not None and achado is not AMBIGUO:
+                campos[coluna.campo] = achado
+            elif texto.isdigit():
+                campos[coluna.campo] = int(texto)
+        else:
+            campos[coluna.campo] = texto
+    return campos
+
+
+def _subcategoria_da_categoria(sessao: Session, categoria, nome: object) -> int | None:
+    """O id da subcategoria daquele NOME, dentro daquela categoria.
+
+    DENTRO DA CATEGORIA, e não pelo nome solto: "Federal" existe em Poder Executivo, em
+    Poder Legislativo e em Reguladores — a unicidade real é `(categoria, código)`, como
+    a própria migration diz. Pelo nome sozinho, as três seriam ambíguas entre si e o
+    cadastro nasceria sem subcategoria nenhuma.
+
+    É O MESMO PADRÃO do interlocutor resolvido dentro da instituição da agenda, e pela
+    mesma razão: quando o nome não decide, quem decide é o dono.
+    """
+    if not nome:
+        return None
+    from app.banco.tabelas_catalogo import SubcategoriaPublico
+
+    candidatas = sessao.scalars(
+        select(SubcategoriaPublico).where(
+            SubcategoriaPublico.categoria_publico_id == categoria.id,
+            SubcategoriaPublico.ativo.is_(True),
+        )
+    ).all()
+    procurado = normalizar(str(nome))
+    for candidata in candidatas:
+        if normalizar(candidata.nome) == procurado:
+            return candidata.id
+    return None
+
+
 def _criar_cadastros(
     sessao: Session,
     a_criar,
-    categorias: Mapping[str, str],
+    declarados: Mapping[str, Mapping[str, object]],
     indice: Mapping,
     linhas,
     escolhidos: Mapping[tuple[str, str], object] = MAPPING_VAZIO,
@@ -1484,7 +1611,8 @@ def _criar_cadastros(
             # Gravar `categoria_publico_id` é o que mantém a instituição importada
             # visível para a taxonomia de públicos do Score; sem ela, ficaria fora
             # de uma área inteira do produto.
-            categoria_nome = categorias.get(normalizar(valor))
+            do_cadastro = dict(declarados.get(normalizar(valor)) or {})
+            categoria_nome = normalizar(str(do_cadastro.get("categoria_publico_id") or ""))
             categoria = (
                 sessao.scalars(
                     select(CategoriaPublico).where(
@@ -1500,25 +1628,46 @@ def _criar_cadastros(
                     "público válida. Escreva a categoria na coluna ao lado, na aba de "
                     "instituições — é dela que sai o tipo."
                 )
+            # A ABRANGÊNCIA VEM DA PLANILHA e não é a UF da agenda: o dono do
+            # produto foi explícito, são coisas diferentes. Uma reunião em Brasília
+            # com um órgão de Minas tem UF da agenda `DF` e abrangência do órgão
+            # `MG`. Antes disto a instituição nascia com `NA` fixo, e alguém
+            # precisava completar na Administração depois — e "depois" é quando
+            # ninguém lembra.
             sessao.add(
                 Instituicao(
                     nome=valor,
                     nome_normalizado=normalizar(valor),
                     tipo=TIPO_DA_CATEGORIA_DE_PUBLICO[categoria.codigo],
                     categoria_publico_id=categoria.id,
-                    uf="NA",
+                    subcategoria_publico_id=_subcategoria_da_categoria(
+                        sessao, categoria, do_cadastro.get("subcategoria_publico_id")
+                    ),
+                    **_campos_do_cadastro("instituicoes", do_cadastro, indice),
                 )
             )
         elif vocabulario == "interlocutores":
+            do_cadastro = dict(declarados.get(normalizar(valor)) or {})
             sessao.add(
                 Interlocutor(
                     nome=valor,
                     nome_normalizado=normalizar(valor),
+                    # A INSTITUIÇÃO CONTINUA VINDO DA INFERÊNCIA e não do declarado:
+                    # ela já resolve o nome para o id, respeitando a decisão que a
+                    # pessoa tomou na conferência quando o nome era ambíguo.
                     instituicao_id=de_quem.get(normalizar(valor)),
+                    **_campos_do_cadastro("interlocutores", do_cadastro, indice),
                 )
             )
         elif vocabulario == "pessoas_aegea":
-            sessao.add(PessoaAegea(nome=valor, nome_normalizado=normalizar(valor)))
+            do_cadastro = dict(declarados.get(normalizar(valor)) or {})
+            sessao.add(
+                PessoaAegea(
+                    nome=valor,
+                    nome_normalizado=normalizar(valor),
+                    **_campos_do_cadastro("pessoas_aegea", do_cadastro, indice),
+                )
+            )
         elif vocabulario == "temas":
             from app.banco.tabelas_catalogo import Tema
 
@@ -1749,7 +1898,7 @@ def confirmar(sessao: Session, importacao_id, usuario) -> Resumo:
             escolhidos[(campo, valor)] = _no_tipo_da_coluna(coluna, alvo)
 
     cadastros = _criar_cadastros(
-        sessao, a_criar, _categorias_declaradas(linhas), _indice(sessao), linhas, escolhidos
+        sessao, a_criar, _declarados_por_nome(linhas), _indice(sessao), linhas, escolhidos
     )
 
     # A RESOLUÇÃO RODA DE NOVO, contra o banco com os cadastros já criados. É a

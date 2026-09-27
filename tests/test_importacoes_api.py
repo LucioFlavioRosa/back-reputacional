@@ -18,7 +18,12 @@ from app.banco.sessao import obter_sessao
 from app.banco.tabelas_catalogo import Clima, FormatoInteracao
 from app.banco.tabelas_stakeholders import Instituicao, Interlocutor, PessoaAegea
 from app.casos_de_uso import importar_agendas, modelo_de_importacao
-from app.dominio.importacao_de_agendas import COLUNA_DE_REPETICAO, VALOR_DA_REPETICAO
+from app.dominio.importacao_de_agendas import (
+    COLUNA_DE_REPETICAO,
+    ROTULO_DO_VOCABULARIO,
+    VALOR_DA_REPETICAO,
+    colunas_do_cadastro,
+)
 from app.dominio.texto import normalizar
 from main import app
 from tests.test_e2e_postgres import URL
@@ -107,6 +112,20 @@ def semente(sessao):
         "formato": sessao.scalars(select(FormatoInteracao).limit(1)).first(),
         "clima": sessao.scalars(select(Clima).limit(1)).first(),
     }
+
+
+def _declarar(pasta, chave: str, **valores) -> None:
+    """Escreve uma linha na aba de cadastro daquele vocabulário, POR NOME DE COLUNA.
+
+    As abas de cadastro passaram a ter os campos do formulário da plataforma, então a
+    categoria de público deixou de ser a segunda coluna. Um teste que escreve por
+    posição grava a categoria no "Nome completo" e não reclama de nada — e aí falha por
+    um motivo que não é o que ele queria provar.
+    """
+    colunas = [coluna.nome for coluna in colunas_do_cadastro(chave)]
+    desconhecidas = set(valores) - set(colunas)
+    assert not desconhecidas, f"a aba {chave!r} não tem {desconhecidas}; tem {colunas}"
+    pasta[ROTULO_DO_VOCABULARIO[chave]].append([valores.get(coluna) for coluna in colunas])
 
 
 def _planilha_de_um_dia(sessao, semente, quantas: int = 3) -> bytes:
@@ -895,7 +914,6 @@ def com_cadastro_novo(cliente_admin, sessao, semente):
 
     from openpyxl import load_workbook
 
-    from app.dominio.importacao_de_agendas import ROTULO_DO_VOCABULARIO
 
     modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
     pasta = load_workbook(io.BytesIO(modelo))
@@ -909,8 +927,13 @@ def com_cadastro_novo(cliente_admin, sessao, semente):
     folha.append([valores.get(coluna) for coluna in cabecalho])
     # COM O TIPO: ele deriva a frente da agenda, e a importação recusa criar
     # instituição sem ele — chutar erraria a frente de toda agenda dela.
-    pasta[ROTULO_DO_VOCABULARIO["instituicoes"]].append(
-        ["Prefeitura de Campinas", "Poder Executivo"]
+    _declarar(
+        pasta,
+        "instituicoes",
+        **{
+            "Instituição": "Prefeitura de Campinas",
+            "Categoria de público": "Poder Executivo",
+        },
     )
     saida = io.BytesIO()
     pasta.save(saida)
@@ -1203,7 +1226,6 @@ def test_o_declarado_na_aba_ja_aparece_como_a_criar(cliente_admin, sessao, semen
 
     from openpyxl import load_workbook
 
-    from app.dominio.importacao_de_agendas import ROTULO_DO_VOCABULARIO
 
     modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
     pasta = load_workbook(io.BytesIO(modelo))
@@ -1217,8 +1239,13 @@ def test_o_declarado_na_aba_ja_aparece_como_a_criar(cliente_admin, sessao, semen
     folha.append([valores.get(coluna) for coluna in cabecalho])
     # COM O TIPO: ele deriva a frente da agenda, e a importação recusa criar
     # instituição sem ele — chutar erraria a frente de toda agenda dela.
-    pasta[ROTULO_DO_VOCABULARIO["instituicoes"]].append(
-        ["Prefeitura de Campinas", "Poder Executivo"]
+    _declarar(
+        pasta,
+        "instituicoes",
+        **{
+            "Instituição": "Prefeitura de Campinas",
+            "Categoria de público": "Poder Executivo",
+        },
     )
     saida = io.BytesIO()
     pasta.save(saida)
@@ -1397,7 +1424,6 @@ def _com_declaracao(sessao, semente, nome: str, tipo: str | None = None):
 
     from openpyxl import load_workbook
 
-    from app.dominio.importacao_de_agendas import ROTULO_DO_VOCABULARIO
 
     modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
     pasta = load_workbook(io.BytesIO(modelo))
@@ -1405,7 +1431,11 @@ def _com_declaracao(sessao, semente, nome: str, tipo: str | None = None):
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
     valores = {"Data": date(2026, 9, 25), "Instituição": nome, "UF": "SP"}
     folha.append([valores.get(coluna) for coluna in cabecalho])
-    pasta[ROTULO_DO_VOCABULARIO["instituicoes"]].append([nome, tipo] if tipo else [nome])
+    _declarar(
+        pasta,
+        "instituicoes",
+        **({"Instituição": nome, "Categoria de público": tipo} if tipo else {"Instituição": nome}),
+    )
     saida = io.BytesIO()
     pasta.save(saida)
     return saida.getvalue()
@@ -1427,7 +1457,11 @@ def test_a_aba_de_instituicoes_pede_a_CATEGORIA(sessao):
     folha = pasta[ROTULO_DO_VOCABULARIO["instituicoes"]]
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
 
-    assert cabecalho[:2] == ["Instituição", "Categoria de público"]
+    # A CATEGORIA ESTÁ NA ABA, e não numa posição fixa: a aba ganhou os campos do
+    # formulário da plataforma, e fixar a posição faria este teste falhar por uma
+    # coluna nova em vez de por um defeito.
+    assert cabecalho[0] == "Instituição"
+    assert "Categoria de público" in cabecalho
 
 
 def test_a_instituicao_criada_DERIVA_o_tipo_da_categoria(cliente_admin, sessao, semente):
@@ -1820,7 +1854,6 @@ def test_interlocutor_novo_declarado_VIRA_participante_na_confirmacao(
     from openpyxl import load_workbook
 
     from app.banco.tabelas_interacoes import InteracaoInterlocutor
-    from app.dominio.importacao_de_agendas import ROTULO_DO_VOCABULARIO
 
     modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
     pasta = load_workbook(io.BytesIO(modelo))
@@ -1838,7 +1871,7 @@ def test_interlocutor_novo_declarado_VIRA_participante_na_confirmacao(
             for coluna in cabecalho
         ]
     )
-    pasta[ROTULO_DO_VOCABULARIO["interlocutores"]].append(["Carla Nova"])
+    _declarar(pasta, "interlocutores", **{"Interlocutor": "Carla Nova"})
     saida = io.BytesIO()
     pasta.save(saida)
 
@@ -1888,7 +1921,6 @@ def test_a_instituicao_APONTADA_e_a_que_o_interlocutor_novo_recebe(
     from openpyxl import load_workbook
 
     from app.banco.tabelas_stakeholders import Instituicao
-    from app.dominio.importacao_de_agendas import ROTULO_DO_VOCABULARIO
 
     # A HOMÔNIMA: mesmo nome normalizado, outra UF, outro cadastro. O banco
     # permite — `instituicao` é única por `(nome_normalizado, tipo)`.
@@ -1917,7 +1949,7 @@ def test_a_instituicao_APONTADA_e_a_que_o_interlocutor_novo_recebe(
             for coluna in cabecalho
         ]
     )
-    pasta[ROTULO_DO_VOCABULARIO["interlocutores"]].append(["Bruno Novo"])
+    _declarar(pasta, "interlocutores", **{"Interlocutor": "Bruno Novo"})
     saida = io.BytesIO()
     pasta.save(saida)
 
@@ -1965,7 +1997,6 @@ def _com_interlocutor(sessao, semente, instituicao_nome, pessoa, declarar=None):
 
     from openpyxl import load_workbook
 
-    from app.dominio.importacao_de_agendas import ROTULO_DO_VOCABULARIO
 
     modelo = modelo_de_importacao.gerar(
         importar_agendas.vocabularios(sessao),
@@ -1987,7 +2018,11 @@ def _com_interlocutor(sessao, semente, instituicao_nome, pessoa, declarar=None):
         ]
     )
     if declarar:
-        pasta[ROTULO_DO_VOCABULARIO["interlocutores"]].append(list(declarar))
+        _declarar(
+            pasta,
+            "interlocutores",
+            **{"Interlocutor": declarar[0], "Instituição": declarar[1]},
+        )
     saida = io.BytesIO()
     pasta.save(saida)
     return saida.getvalue()
@@ -2664,7 +2699,6 @@ def test_instituicao_E_interlocutor_NOVOS_no_mesmo_arquivo(cliente_admin, sessao
     from openpyxl import load_workbook
 
     from app.banco.tabelas_stakeholders import Instituicao
-    from app.dominio.importacao_de_agendas import ROTULO_DO_VOCABULARIO
 
     modelo = modelo_de_importacao.gerar(
         importar_agendas.vocabularios(sessao),
@@ -2685,8 +2719,16 @@ def test_instituicao_E_interlocutor_NOVOS_no_mesmo_arquivo(cliente_admin, sessao
         ]
     )
     # Declarados nas abas: a instituição com a categoria, e a pessoa com a instituição.
-    pasta[ROTULO_DO_VOCABULARIO["instituicoes"]].append(["Instituto Novo", "Poder Executivo"])
-    pasta[ROTULO_DO_VOCABULARIO["interlocutores"]].append(["Pessoa Nova", "Instituto Novo"])
+    _declarar(
+        pasta,
+        "instituicoes",
+        **{"Instituição": "Instituto Novo", "Categoria de público": "Poder Executivo"},
+    )
+    _declarar(
+        pasta,
+        "interlocutores",
+        **{"Interlocutor": "Pessoa Nova", "Instituição": "Instituto Novo"},
+    )
     saida = io.BytesIO()
     pasta.save(saida)
 
@@ -2711,3 +2753,162 @@ def test_instituicao_E_interlocutor_NOVOS_no_mesmo_arquivo(cliente_admin, sessao
     # ter de digitar duas vezes.
     assert pessoa is not None
     assert pessoa.instituicao_id == instituicao.id
+
+
+def test_o_cadastro_nasce_com_TODOS_os_campos_que_ela_preencheu(
+    cliente_admin, sessao, semente
+):
+    """O PENTE FINO, de ponta a ponta. As abas ganharam os campos do formulário da
+    plataforma, e o que importa é que eles CHEGUEM ao banco — uma aba com colunas
+    bonitas que o servidor ignora é pior que não ter as colunas, porque a pessoa
+    preenche e não desconfia.
+
+    A ABRANGÊNCIA É O CASO QUE O DONO DO PRODUTO LEVANTOU: ela não é a UF da agenda. A
+    reunião é em SP e o órgão é de MG — antes disto a instituição nascia com `NA` fixo,
+    e alguém teria de completar na Administração depois.
+    """
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    from app.banco.tabelas_catalogo import SubcategoriaPublico
+    from app.banco.tabelas_stakeholders import Instituicao
+
+    modelo = modelo_de_importacao.gerar(
+        importar_agendas.vocabularios(sessao),
+        importar_agendas.pares_de_vocabulario(sessao),
+    )
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    folha.append(
+        [
+            {
+                "Data": date(2026, 9, 29),
+                "Instituição": "Secretaria Nova",
+                # A UF DA AGENDA é SP: a reunião aconteceu aqui.
+                "UF": "SP",
+                "Interlocutor 1": "Pessoa Nova",
+            }.get(coluna)
+            for coluna in cabecalho
+        ]
+    )
+    _declarar(
+        pasta,
+        "instituicoes",
+        **{
+            "Instituição": "Secretaria Nova",
+            "Nome completo": "Secretaria Nova de Meio Ambiente",
+            # A ABRANGÊNCIA DO ÓRGÃO é MG: ele é de Minas.
+            "Abrangência": "MG",
+            "Categoria de público": "Poder Executivo",
+        },
+    )
+    _declarar(
+        pasta,
+        "interlocutores",
+        **{
+            "Interlocutor": "Pessoa Nova",
+            "Instituição": "Secretaria Nova",
+            "Cargo": "Secretária adjunta",
+            "E-mail": "pessoa.nova@mg.gov.br",
+        },
+    )
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+    assert criada["pendencias"] == 0, [
+        d["mensagem"] for linha in criada["linhas"] for d in linha["divergencias"]
+    ]
+
+    confirmacao = cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao")
+    assert confirmacao.status_code == 201, confirmacao.text
+
+    instituicao = sessao.scalars(
+        select(Instituicao).where(Instituicao.nome_normalizado == normalizar("Secretaria Nova"))
+    ).first()
+    assert instituicao is not None
+    assert instituicao.nome_completo == "Secretaria Nova de Meio Ambiente"
+    # A ABRANGÊNCIA DO ÓRGÃO, e não a UF da agenda.
+    assert instituicao.uf == "MG"
+    assert instituicao.tipo == "orgao"
+
+    pessoa = sessao.scalars(
+        select(Interlocutor).where(Interlocutor.nome_normalizado == normalizar("Pessoa Nova"))
+    ).first()
+    assert pessoa is not None
+    assert pessoa.cargo == "Secretária adjunta"
+    assert pessoa.email == "pessoa.nova@mg.gov.br"
+    assert pessoa.instituicao_id == instituicao.id
+    assert SubcategoriaPublico is not None  # o modelo existe; a subcategoria é opcional
+
+
+def test_a_SUBCATEGORIA_declarada_chega_ao_banco(cliente_admin, sessao, semente):
+    """A subcategoria é o campo que exige tradução: a pessoa escreve o NOME e a coluna
+    guarda o id. Sem a tradução, o cadastro nasceria sem ela e ninguém veria."""
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    from app.banco.tabelas_catalogo import CategoriaPublico, SubcategoriaPublico
+    from app.banco.tabelas_stakeholders import Instituicao
+
+    sub = sessao.scalars(
+        select(SubcategoriaPublico)
+        .join(CategoriaPublico, CategoriaPublico.id == SubcategoriaPublico.categoria_publico_id)
+        .where(SubcategoriaPublico.ativo.is_(True))
+        .limit(1)
+    ).first()
+    if sub is None:
+        import pytest
+
+        pytest.skip("a base de teste não tem subcategoria cadastrada")
+    categoria = sessao.get(CategoriaPublico, sub.categoria_publico_id)
+
+    modelo = modelo_de_importacao.gerar(
+        importar_agendas.vocabularios(sessao),
+        importar_agendas.pares_de_vocabulario(sessao),
+    )
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    folha.append(
+        [
+            {
+                "Data": date(2026, 9, 29),
+                "Instituição": "Órgão Com Subcategoria",
+                "UF": "SP",
+            }.get(coluna)
+            for coluna in cabecalho
+        ]
+    )
+    _declarar(
+        pasta,
+        "instituicoes",
+        **{
+            "Instituição": "Órgão Com Subcategoria",
+            "Categoria de público": categoria.nome,
+            "Subcategoria": sub.nome,
+        },
+    )
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+    assert criada["pendencias"] == 0, [
+        d["mensagem"] for linha in criada["linhas"] for d in linha["divergencias"]
+    ]
+    cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao")
+
+    criada_no_banco = sessao.scalars(
+        select(Instituicao).where(
+            Instituicao.nome_normalizado == normalizar("Órgão Com Subcategoria")
+        )
+    ).first()
+    assert criada_no_banco is not None
+    assert criada_no_banco.subcategoria_publico_id == sub.id
