@@ -110,6 +110,26 @@ VOCABULARIOS_QUE_A_IMPORTACAO_CRIA: frozenset[str] = frozenset(
 #: dezenas de linhas, e digitar tudo de novo é trabalho e é erro. Daí o marcador.
 MARCADOR_DE_REPETICAO = "idem"
 
+#: As chaves de `importacao_linha.dados_brutos` que NÃO são colunas da planilha.
+#:
+#: A migration 0008 não tem coluna para nenhuma das duas, e acrescentá-las seria
+#: migration para rastro de leitura. Elas viajam dentro do JSONB e a saída da API
+#: as separa de novo. Moram aqui, e não na API, porque quem grava é o caso de uso e
+#: quem lê é a rota: num dos dois lados a constante seria importada de fora para
+#: dentro.
+CHAVE_DO_HERDADO = "__herdado__"
+
+#: O que a pessoa completou NA TELA DE CONFERÊNCIA, coluna → valor.
+#:
+#: A MARCA É A CONTRAPARTIDA HONESTA de editar aqui: o registro passa a divergir
+#: da planilha que ela guardou. Sem ela, abrir o arquivo meses depois para
+#: entender uma agenda mostraria a célula vazia, sem nada explicando de onde veio
+#: o valor que está no painel.
+CHAVE_DO_CORRIGIDO = "__corrigido__"
+
+#: As duas juntas, para quem precisa filtrar "o que não é coluna".
+CHAVES_RESERVADAS = (CHAVE_DO_HERDADO, CHAVE_DO_CORRIGIDO)
+
 COLUNA_DA_CATEGORIA_DE_INSTITUICAO = "Categoria de público"
 
 #: A coluna que diz de qual instituição é cada interlocutor, na aba de
@@ -697,6 +717,14 @@ class Divergencia:
     #: O texto que a pessoa lê.
     mensagem: str
     trava: bool
+    #: A COLUNA DA PLANILHA de onde isto veio, quando há uma.
+    #:
+    #: É COMO A TELA SABE ONDE OFERECER O CAMPO para a pessoa completar. `campo`
+    #: não responde isso: `data_interacao` é nome interno — ela procura "Data" no
+    #: cabeçalho — e `outra_parte.interlocutor_id` corresponde a QUATRO colunas.
+    #: Vazia quando a divergência não é de uma coluna só (uma duplicata de agenda,
+    #: por exemplo, é da linha inteira).
+    coluna: str = ""
     #: Nomes parecidos já cadastrados, para a tela oferecer. Vazio na maioria
     #: das divergências, e por isso tem default — uma tupla, nunca lista, para
     #: não haver default mutável compartilhado entre todas elas.
@@ -718,6 +746,22 @@ class Divergencia:
     #: VIAJA COM A DIVERGÊNCIA porque o ARQUIVO NÃO É GUARDADO: na confirmação é
     #: daqui que sai a categoria, e sem ela a criação voltaria a chutar o tipo.
     categoria_declarada: str | None = None
+
+
+def coluna_do_campo(campo: str) -> str:
+    """O rótulo da COLUNA que alimenta um campo, ou vazio se não houver uma só.
+
+    A MENSAGEM DA FALTA PRECISA DISSO. "Falta data interacao" é o nome do campo no
+    código; quem lê procura "Data" no cabeçalho da planilha, e não acha. Um campo
+    alimentado por várias colunas — os grupos numerados — devolve vazio em vez de
+    escolher uma arbitrariamente.
+    """
+    achadas = [
+        coluna.nome
+        for coluna in aba_de(ABA_PRINCIPAL).colunas
+        if coluna.campo == campo
+    ]
+    return achadas[0] if len(achadas) == 1 else ""
 
 
 def classificar(

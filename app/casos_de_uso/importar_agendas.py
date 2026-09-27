@@ -54,6 +54,8 @@ from app.casos_de_uso.ler_planilha_de_agendas import (
 from app.dominio.erros import Conflito, RegraViolada
 from app.dominio.frentes import TIPO_DA_CATEGORIA_DE_PUBLICO
 from app.dominio.importacao_de_agendas import (
+    CHAVE_DO_CORRIGIDO,
+    CHAVE_DO_HERDADO,
     COLUNA_DA_INSTITUICAO_DA_AGENDA,
     DECISOES_DE_DIVERGENCIA,
     FORMATO,
@@ -66,6 +68,7 @@ from app.dominio.importacao_de_agendas import (
     Divergencia,
     aba_de,
     classificar,
+    coluna_do_campo,
 )
 from app.dominio.interacao import (
     ABRANGENCIAS_VALIDAS,
@@ -743,6 +746,7 @@ def _listas_da_linha(
                             campo=campo_da_lista,
                             valor=coluna_nome,
                             mensagem=f"Falta {coluna_nome}, e o grupo {numero} tem dado.",
+                            coluna=coluna_nome,
                             trava=True,
                         )
                     )
@@ -1035,7 +1039,11 @@ def propor_de_linhas(
                     Divergencia(
                         campo=campo,
                         valor="",
-                        mensagem=f"Falta {campo.replace('_', ' ')}, que toda agenda precisa ter.",
+                        mensagem=(
+                            f"Falta {coluna_do_campo(campo) or campo.replace('_', ' ')}"
+                            ", que toda agenda precisa ter."
+                        ),
+                        coluna=coluna_do_campo(campo),
                         trava=True,
                     )
                 )
@@ -1540,6 +1548,94 @@ def _linhas_para_reler(linhas) -> dict[str, list[LinhaBruta]]:
             LinhaBruta(aba=linha.aba, numero=linha.linha_origem, celulas=celulas)
         )
     return por_aba
+
+
+def corrigir_linha(
+    sessao: Session, importacao_id, linha_id: int, celulas: Mapping[str, object]
+) -> None:
+    """Preenche células de UMA linha e repropõe só ela.
+
+    O QUE ISTO RESOLVE. A conferência sabia resolver o valor ERRADO — "este órgão
+    não existe, aponte ou crie" — e não sabia resolver o valor AUSENTE. A linha sem
+    data gerava um grupo sem valor nenhum: nada para apontar, nada para criar. As
+    saídas eram corrigir a planilha e subir tudo de novo, ou descartar a linha.
+
+    A REPROPOSIÇÃO É A MESMA MÁQUINA, `propor_de_linhas` — a mesma que o upload e a
+    confirmação usam. Uma segunda implementação aqui divergiria das outras duas no
+    primeiro campo que ganhasse regra nova, e a linha corrigida passaria a valer por
+    critério diferente do das vizinhas.
+
+    A CÉLULA CORRIGIDA FICA MARCADA, e é a contrapartida honesta de editar aqui: o
+    registro passa a divergir da planilha que a pessoa guardou. Sem a marca, ela
+    abriria o arquivo meses depois para entender uma agenda e encontraria a célula
+    vazia — sem nada explicando de onde veio o valor.
+    """
+    from app.banco import repositorio_importacao
+
+    importacao = repositorio_importacao.obter(sessao, importacao_id)
+    if importacao.situacao != "aguardando_conferencia":
+        raise RegraViolada(
+            f"Esta importação está {importacao.situacao!r}: as linhas dela já não "
+            "podem ser editadas. Depois de confirmada, a linha virou agenda, e é a "
+            "agenda que se edita."
+        )
+
+    conhecidas = {coluna.nome for coluna in aba_de(ABA_PRINCIPAL).colunas}
+    desconhecidas = sorted(set(celulas) - conhecidas)
+    if desconhecidas:
+        # SEM ISTO A GRAVAÇÃO SERIA MUDA: a chave errada entraria em
+        # `dados_brutos`, ninguém a leria, e a pessoa veria a pendência continuar
+        # depois de clicar em salvar, sem nenhuma pista do motivo.
+        raise RegraViolada(
+            f"A planilha não tem a coluna {', '.join(repr(c) for c in desconhecidas)}."
+        )
+
+    linhas = repositorio_importacao.linhas_de(sessao, importacao_id)
+    alvo = next((linha for linha in linhas if linha.id == linha_id), None)
+    if alvo is None or alvo.aba != ABA_PRINCIPAL:
+        raise RegraViolada("Esta linha não é desta importação.")
+
+    brutos = dict(alvo.dados_brutos or {})
+    corrigido = dict(brutos.get(CHAVE_DO_CORRIGIDO) or {})
+    herdado = dict(brutos.get(CHAVE_DO_HERDADO) or {})
+    for coluna, valor in celulas.items():
+        brutos[coluna] = valor
+        corrigido[coluna] = valor
+        # A CÉLULA EDITADA DEIXA DE SER HERDADA: a pessoa acabou de dizer o que vale
+        # ali, e continuar mostrando "herdado da linha de cima" contaria uma
+        # história que deixou de ser verdade.
+        herdado.pop(coluna, None)
+    brutos[CHAVE_DO_CORRIGIDO] = corrigido
+    brutos[CHAVE_DO_HERDADO] = herdado
+    alvo.dados_brutos = brutos
+    sessao.flush()
+
+    _repropor_uma(sessao, importacao_id, alvo)
+
+
+def _repropor_uma(sessao: Session, importacao_id, alvo) -> None:
+    """Recalcula a proposta de UMA linha e regrava proposta e divergências.
+
+    SÓ ELA, e não a importação inteira: repropor tudo apagaria as decisões que a
+    pessoa já tomou nas outras linhas — o `acao="criar"` que veio da declaração na
+    aba, e cada `apontar` que ela escolheu.
+    """
+    from app.banco import repositorio_importacao
+
+    linhas = repositorio_importacao.linhas_de(sessao, importacao_id)
+    _, apontados = _decisoes(linhas)
+    escolhidos: dict[tuple[str, str], object] = {}
+    for (campo, valor), destino in apontados.items():
+        vocabulario = vocabulario_do_campo(campo)
+        fonte = NO_BANCO.get(vocabulario or "")
+        if fonte is None:
+            escolhidos[(campo, valor)] = destino
+        else:
+            coluna = getattr(fonte.tabela, fonte.resolve_para)
+            escolhidos[(campo, valor)] = _no_tipo_da_coluna(coluna, destino)
+
+    (proposta,) = propor_de_linhas(sessao, _linhas_para_reler([alvo]), {}, escolhidos)
+    repositorio_importacao.gravar_proposta(sessao, alvo, proposta)
 
 
 def confirmar(sessao: Session, importacao_id, usuario) -> Resumo:

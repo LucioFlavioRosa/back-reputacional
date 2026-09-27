@@ -89,6 +89,36 @@ def gravar_linha(
     return linha
 
 
+def gravar_proposta(sessao: Session, linha: ImportacaoLinha, proposta) -> None:
+    """Regrava proposta e divergências de uma linha JÁ EXISTENTE.
+
+    Usado quando a pessoa completa uma célula na conferência: a linha é reproposta
+    e o resultado substitui o anterior. `gravar_linha` cria; esta atualiza.
+    """
+    linha.proposta = (
+        para_json(proposta.entrada.model_dump(mode="json"))
+        if proposta.entrada is not None
+        else None
+    )
+    linha.divergencias = para_json(
+        [
+            {
+                "campo": divergencia.campo,
+                "valor": divergencia.valor,
+                "mensagem": divergencia.mensagem,
+                "trava": divergencia.trava,
+                "coluna": divergencia.coluna,
+                "sugestoes": list(divergencia.sugestoes),
+                "acao": divergencia.acao,
+                "alvo": divergencia.alvo,
+                "categoria_declarada": divergencia.categoria_declarada,
+            }
+            for divergencia in proposta.divergencias
+        ]
+    )
+    sessao.flush()
+
+
 def marcar_aguardando_conferencia(sessao: Session, importacao: Importacao) -> None:
     """Só depois de as linhas estarem gravadas — ver `criar`."""
     importacao.situacao = "aguardando_conferencia"

@@ -2163,3 +2163,198 @@ def test_a_instituicao_declarada_IGUAL_a_da_agenda_cria_a_pessoa_nela(
         select(Interlocutor).where(Interlocutor.nome_normalizado == normalizar("Carla Nova"))
     ).first()
     assert nova.instituicao_id == semente["instituicao"].id
+
+
+# =============================================================================
+# completar na tela a informação que falta na linha
+# =============================================================================
+
+
+def _sem_data(sessao, semente):
+    """Uma agenda completa e uma SEM A DATA — a falta que nenhuma decisão resolve.
+
+    O grupo de divergência de uma AUSÊNCIA não tem valor: não há nome errado para
+    apontar nem cadastro para criar. Antes desta rota, a única saída era corrigir a
+    planilha e subir de novo, ou descartar a linha.
+    """
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    modelo = modelo_de_importacao.gerar(
+        importar_agendas.vocabularios(sessao),
+        importar_agendas.interlocutores_com_instituicao(sessao),
+    )
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    for valores in (
+        {
+            "Código": "A1",
+            "Data": date(2026, 9, 25),
+            "Instituição": semente["instituicao"].nome,
+            "UF": "SP",
+        },
+        {"Código": "A2", "Instituição": semente["instituicao"].nome, "UF": "SP"},
+    ):
+        folha.append([valores.get(coluna) for coluna in cabecalho])
+    saida = io.BytesIO()
+    pasta.save(saida)
+    return saida.getvalue()
+
+
+def test_a_divergencia_diz_QUAL_COLUNA_a_pessoa_tem_de_preencher():
+    """A tela precisa saber onde oferecer o campo, e `campo` não responde isso:
+    `data_interacao` é o nome interno, e a pessoa procura "Data" na planilha.
+
+    Sem a coluna na divergência, a tela teria de adivinhar a partir do texto da
+    mensagem — e `outra_parte.interlocutor_id` corresponde a QUATRO colunas."""
+    from app.dominio.importacao_de_agendas import Divergencia
+
+    assert Divergencia(campo="x", valor="y", mensagem="z", trava=True).coluna == ""
+
+
+def test_a_mensagem_da_falta_usa_o_ROTULO_da_coluna(cliente_admin, sessao, semente):
+    """"Falta data interacao" é o nome do campo no código. A pessoa lê "Data" no
+    cabeçalho da planilha, e é esse nome que ela procura para consertar."""
+    criada = cliente_admin.post(
+        "/api/importacoes",
+        files={"arquivo": ("a.xlsx", _sem_data(sessao, semente), TIPO_XLSX)},
+    ).json()
+
+    (faltando,) = [
+        divergencia
+        for linha in criada["linhas"]
+        for divergencia in linha["divergencias"]
+        if divergencia["trava"]
+    ]
+
+    assert "Data" in faltando["mensagem"]
+    assert "data interacao" not in faltando["mensagem"]
+    # E a coluna vem separada, para a tela saber onde pôr o campo.
+    assert faltando["coluna"] == "Data"
+
+
+def test_preencher_a_celula_na_tela_RESOLVE_a_linha(cliente_admin, sessao, semente):
+    """O PEDIDO: completar a informação sem voltar à planilha.
+
+    A linha é reproposta com o valor novo — pela MESMA máquina do upload, não por
+    uma segunda implementação —, e a pendência desaparece."""
+    criada = cliente_admin.post(
+        "/api/importacoes",
+        files={"arquivo": ("a.xlsx", _sem_data(sessao, semente), TIPO_XLSX)},
+    ).json()
+    assert criada["pendencias"] == 1
+    presa = next(
+        linha for linha in criada["linhas"] if any(d["trava"] for d in linha["divergencias"])
+    )
+
+    resposta = cliente_admin.patch(
+        f"/api/importacoes/{criada['id']}/linhas/{presa['id']}",
+        json={"celulas": {"Data": "26/09/2026"}},
+    )
+
+    assert resposta.status_code == 200, resposta.text
+    depois = resposta.json()
+    assert depois["pendencias"] == 0, [
+        d["mensagem"] for linha in depois["linhas"] for d in linha["divergencias"]
+    ]
+    # E confirma: a agenda nasce com a data que a pessoa digitou na tela.
+    confirmacao = cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao")
+    assert confirmacao.status_code == 201, confirmacao.text
+    assert confirmacao.json()["criadas"] == 2
+
+
+def test_a_celula_corrigida_FICA_MARCADA_como_editada(cliente_admin, sessao, semente):
+    """A TELA TEM DE DIZER, e é a contrapartida honesta de editar aqui: o registro
+    passa a divergir da planilha que a pessoa guardou. Sem a marca, ela abriria o
+    arquivo meses depois para entender uma agenda e encontraria a célula vazia."""
+    criada = cliente_admin.post(
+        "/api/importacoes",
+        files={"arquivo": ("a.xlsx", _sem_data(sessao, semente), TIPO_XLSX)},
+    ).json()
+    presa = next(
+        linha for linha in criada["linhas"] if any(d["trava"] for d in linha["divergencias"])
+    )
+
+    depois = cliente_admin.patch(
+        f"/api/importacoes/{criada['id']}/linhas/{presa['id']}",
+        json={"celulas": {"Data": "26/09/2026"}},
+    ).json()
+
+    editada = next(linha for linha in depois["linhas"] if linha["id"] == presa["id"])
+    assert editada["corrigido"] == {"Data": "26/09/2026"}
+    # A linha que ninguém tocou não ganha marca nenhuma.
+    outra = next(linha for linha in depois["linhas"] if linha["id"] != presa["id"])
+    assert outra["corrigido"] == {}
+
+
+def test_coluna_que_nao_existe_RECUSA_em_vez_de_nao_fazer_nada(
+    cliente_admin, sessao, semente
+):
+    """Uma coluna escrita errado gravaria uma chave que ninguém lê: a pessoa
+    clicaria em salvar, veria a pendência continuar e não teria como saber por quê.
+    """
+    criada = cliente_admin.post(
+        "/api/importacoes",
+        files={"arquivo": ("a.xlsx", _sem_data(sessao, semente), TIPO_XLSX)},
+    ).json()
+    presa = next(
+        linha for linha in criada["linhas"] if any(d["trava"] for d in linha["divergencias"])
+    )
+
+    resposta = cliente_admin.patch(
+        f"/api/importacoes/{criada['id']}/linhas/{presa['id']}",
+        json={"celulas": {"Datta": "26/09/2026"}},
+    )
+
+    assert resposta.status_code == 422
+    assert "Datta" in resposta.json()["detalhe"]
+
+
+def test_nao_se_edita_linha_de_importacao_ja_CONFIRMADA(cliente_admin, sessao, semente):
+    """Depois de confirmada, a linha já virou agenda: editá-la aqui não mudaria a
+    agenda nenhuma, e daria à pessoa a impressão de ter corrigido algo."""
+    criada = cliente_admin.post(
+        "/api/importacoes",
+        files={"arquivo": ("a.xlsx", _sem_data(sessao, semente), TIPO_XLSX)},
+    ).json()
+    presa = next(
+        linha for linha in criada["linhas"] if any(d["trava"] for d in linha["divergencias"])
+    )
+    cliente_admin.patch(
+        f"/api/importacoes/{criada['id']}/linhas/{presa['id']}",
+        json={"celulas": {"Data": "26/09/2026"}},
+    )
+    cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao")
+
+    resposta = cliente_admin.patch(
+        f"/api/importacoes/{criada['id']}/linhas/{presa['id']}",
+        json={"celulas": {"Data": "27/09/2026"}},
+    )
+
+    assert resposta.status_code == 422
+
+
+def test_TODO_campo_da_divergencia_atravessa_a_gravacao():
+    """A GRAVAÇÃO É ESCRITA À MÃO, campo por campo, e é onde um campo novo se perde.
+
+    Já aconteceu: `acao` e `alvo` faltavam, e a declaração feita na aba editável
+    reaparecia como pendência em vez de ir para "o que vou criar". O defeito é
+    silencioso — nada quebra, o valor simplesmente não chega à tela.
+
+    Esta guarda compara a lista gravada com os campos VIVOS da dataclass, então um
+    campo novo em `Divergencia` falha aqui em vez de desaparecer em produção."""
+    import re
+    from dataclasses import fields
+    from pathlib import Path
+
+    from app.dominio.importacao_de_agendas import Divergencia
+
+    fonte = Path("app/api/importacoes.py").read_text(encoding="utf-8")
+    trecho = fonte[fonte.index("divergencias=[") : fonte.index("for divergencia in proposta")]
+    # `sugestoes` é gravado como `list(divergencia.sugestoes)`: o padrão aceita
+    # qualquer envelope em volta, e não só a referência nua.
+    gravados = set(re.findall(r'"(\w+)":[^,\n]*divergencia\.', trecho))
+
+    assert {campo.name for campo in fields(Divergencia)} == gravados

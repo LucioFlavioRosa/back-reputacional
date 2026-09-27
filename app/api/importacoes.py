@@ -29,14 +29,21 @@ from app.api.dependencias import (
 from app.banco import repositorio_importacao
 from app.banco.sessao import SessaoDoPedido
 from app.casos_de_uso import importar_agendas, modelo_de_importacao
-from app.dominio.importacao_de_agendas import Divergencia, agrupar
+from app.dominio.importacao_de_agendas import (
+    CHAVE_DO_CORRIGIDO,
+    CHAVE_DO_HERDADO,
+    CHAVES_RESERVADAS,
+    Divergencia,
+    agrupar,
+)
 from app.dominio.texto import normalizar
 
 TIPO_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 #: A chave sob a qual o herdado viaja dentro de `dados_brutos`. Começa e termina
 #: com dois sublinhados para não colidir com nome de coluna da planilha.
-CHAVE_DO_HERDADO = "__herdado__"
+# As chaves reservadas de `dados_brutos` vêm do domínio: quem grava é o caso de
+# uso e quem lê é esta rota.
 
 #: O nome que a pessoa vê na pasta de downloads.
 NOME_DO_MODELO = "modelo-de-agendas.xlsx"
@@ -74,6 +81,9 @@ class LinhaSaida(BaseModel):
     #: entre a planilha e o registro.
     interacao_id: str | None
     dados_brutos: dict
+    #: O que a pessoa COMPLETOU na tela, coluna → valor. A tela marca a célula,
+    #: porque a partir daí o registro difere da planilha que ela guardou.
+    corrigido: dict = {}
     #: O que esta linha herdou da de cima por `idem`, coluna → valor.
     #:
     #: A TELA MOSTRA ISTO porque a herança é invisível na planilha: a célula fica
@@ -292,9 +302,10 @@ def _saida(sessao, importacao, linhas) -> ImportacaoSaida:
                 dados_brutos={
                     chave: valor
                     for chave, valor in (linha.dados_brutos or {}).items()
-                    if chave != CHAVE_DO_HERDADO
+                    if chave not in CHAVES_RESERVADAS
                 },
                 herdado=(linha.dados_brutos or {}).get(CHAVE_DO_HERDADO) or {},
+                corrigido=(linha.dados_brutos or {}).get(CHAVE_DO_CORRIGIDO) or {},
                 proposta=linha.proposta,
                 divergencias=linha.divergencias,
             )
@@ -372,6 +383,9 @@ def subir(sessao: Sessao, usuario: UsuarioLogado, arquivo: Arquivo) -> Importaca
                     "valor": divergencia.valor,
                     "mensagem": divergencia.mensagem,
                     "trava": divergencia.trava,
+                    # A COLUNA DA PLANILHA: é por ela que a tela sabe onde
+                    # oferecer o campo para a pessoa completar o que falta.
+                    "coluna": divergencia.coluna,
                     "sugestoes": list(divergencia.sugestoes),
                     # `acao` E `alvo` TAMBÉM. O `cria` do upload já nasce com
                     # `acao="criar"`, e perdê-los aqui fazia a declaração na aba
@@ -431,6 +445,28 @@ class ConfirmacaoSaida(BaseModel):
     criadas: int
     cadastros: int
     situacao: str
+
+
+class CorrecaoEntrada(BaseModel):
+    """As células que a pessoa completou numa linha: coluna → valor."""
+
+    celulas: dict[str, object]
+
+
+@rotas.patch("/{importacao_id}/linhas/{linha_id}")
+def corrigir_linha(
+    sessao: Sessao, importacao_id: UUID, linha_id: int, entrada: CorrecaoEntrada
+) -> ImportacaoSaida:
+    """Completa na tela o que faltou na planilha, e repropõe a linha.
+
+    A CONFERÊNCIA SABIA RESOLVER O VALOR ERRADO e não o AUSENTE. "Este órgão não
+    existe" vem com apontar e criar; a data em branco vinha com um grupo sem valor
+    nenhum — nada para clicar. As saídas eram corrigir a planilha e subir tudo de
+    novo, ou descartar a linha e perder a agenda.
+    """
+    importacao = repositorio_importacao.obter(sessao, importacao_id)
+    importar_agendas.corrigir_linha(sessao, importacao_id, linha_id, entrada.celulas)
+    return _saida(sessao, importacao, repositorio_importacao.linhas_de(sessao, importacao_id))
 
 
 @rotas.post("/{importacao_id}/confirmacao", status_code=status.HTTP_201_CREATED)
