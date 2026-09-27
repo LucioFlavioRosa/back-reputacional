@@ -592,3 +592,76 @@ def test_modelo_que_nao_existe_recusa_dizendo_os_que_existem():
         assert "simplificado" in str(erro) and "completo" in str(erro)
     else:
         raise AssertionError("aceitou um modelo que não existe")
+
+
+# =============================================================================
+# o tipo de cada coluna: é dele que saem largura e alinhamento
+# =============================================================================
+
+
+def test_a_coluna_de_PROSA_e_marcada_no_formato():
+    """LARGURA NÃO SE CHUTA. "Relato" guarda um parágrafo e "UF" guarda duas letras;
+    dar a mesma largura às duas é desperdiçar a tela numa e truncar a outra.
+
+    O FORMATO É QUEM SABE, e é o mesmo princípio de sempre: uma descrição, vários
+    consumidores. A tela usa para dimensionar a coluna, e o gerador usa para a
+    largura da coluna no próprio Excel — a mesma necessidade, nos dois lugares onde
+    a pessoa encontra a planilha."""
+    from app.dominio.importacao_de_agendas import aba_de
+
+    por_nome = {coluna.nome: coluna for coluna in aba_de("Agendas").colunas}
+
+    assert por_nome["Relato"].longa is True
+    assert por_nome["Repercussão e encaminhamentos"].longa is True
+    assert por_nome["Observações"].longa is True
+    # E o que NÃO é prosa não pode estar marcado.
+    assert por_nome["UF"].longa is False
+    assert por_nome["Data"].longa is False
+    assert por_nome["Instituição"].longa is False
+
+
+def test_nenhuma_coluna_de_LISTA_e_longa():
+    """Seria contradição: o valor vem de uma lista suspensa, então tem o tamanho do
+    nome mais comprido do vocabulário — não de um parágrafo."""
+    from app.dominio.importacao_de_agendas import aba_de
+
+    contraditorias = [
+        coluna.nome
+        for coluna in aba_de("Agendas").colunas
+        if coluna.longa and coluna.vocabulario
+    ]
+
+    assert contraditorias == []
+
+
+def test_o_tipo_da_coluna_sai_do_que_o_formato_JA_SABE():
+    """Cinco tipos, e cada um é uma pergunta já respondida pela descrição: é a marca
+    de repetição? é data? é sigla? vem de lista? é prosa? O resto é texto curto.
+
+    DERIVADO E NÃO DIGITADO: uma lista de 59 nomes com o tipo de cada um
+    envelheceria na primeira coluna nova — e o erro seria silencioso, porque uma
+    coluna sem tipo simplesmente ganharia a largura padrão."""
+    from app.dominio.importacao_de_agendas import COLUNA_DE_REPETICAO, aba_de, tipo_da_coluna
+
+    por_nome = {coluna.nome: coluna for coluna in aba_de("Agendas").colunas}
+
+    assert tipo_da_coluna(por_nome[COLUNA_DE_REPETICAO]) == "marca"
+    assert tipo_da_coluna(por_nome["Data"]) == "data"
+    assert tipo_da_coluna(por_nome["UF"]) == "sigla"
+    assert tipo_da_coluna(por_nome["Instituição"]) == "lista"
+    assert tipo_da_coluna(por_nome["Relato"]) == "prosa"
+    assert tipo_da_coluna(por_nome["Local"]) == "texto"
+
+
+def test_TODA_coluna_tem_um_tipo_conhecido():
+    """A guarda: uma coluna nova que não caia em nenhum dos cinco receberia largura
+    padrão sem ninguém perceber."""
+    from app.dominio.importacao_de_agendas import TIPOS_DE_COLUNA, aba_de, tipo_da_coluna
+
+    fora = [
+        (coluna.nome, tipo_da_coluna(coluna))
+        for coluna in aba_de("Agendas").colunas
+        if tipo_da_coluna(coluna) not in TIPOS_DE_COLUNA
+    ]
+
+    assert fora == []

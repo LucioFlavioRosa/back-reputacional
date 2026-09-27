@@ -38,6 +38,7 @@ from app.dominio.importacao_de_agendas import (
     aba_de,
     agrupar,
     coluna_do_campo,
+    tipo_da_coluna,
 )
 from app.dominio.texto import normalizar
 
@@ -139,6 +140,20 @@ class ACriarSaida(BaseModel):
     linhas: list[int]
 
 
+class ColunaSaida(BaseModel):
+    """Uma coluna do arquivo, com o que a tela precisa para desenhá-la.
+
+    O TIPO VEM DO FORMATO e não de uma lista no front: 59 nomes com o tipo de cada
+    um, escritos do outro lado, envelheceriam na primeira coluna nova — e o erro
+    seria silencioso, porque a coluna sem tipo receberia a largura padrão.
+    """
+
+    nome: str
+    #: `marca`, `data`, `sigla`, `lista`, `prosa` ou `texto`. É dele que a grade tira
+    #: largura e alinhamento.
+    tipo: str
+
+
 class ImportacaoSaida(BaseModel):
     id: str
     arquivo_nome: str
@@ -148,7 +163,7 @@ class ImportacaoSaida(BaseModel):
     confirmado_em: str | None
     #: As colunas daquele arquivo, NA ORDEM — o cabeçalho da grade de conferência.
     #: Quem subiu o modelo simplificado vê as 22 dele, não as 58 do completo.
-    colunas: list[str] = []
+    colunas: list[ColunaSaida] = []
     #: As divergências agrupadas por valor, ordenadas pelo que destrava mais.
     #: É a vista principal da conferência: uma decisão, doze linhas. SÓ AS NÃO
     #: RESOLVIDAS — uma decisão já tomada não é pendência, e deixá-la aqui fazia
@@ -298,7 +313,7 @@ def _com_a_coluna(divergencias) -> list[dict]:
     ]
 
 
-def _colunas_do_arquivo(linhas) -> list[str]:
+def _colunas_do_arquivo(linhas) -> list[ColunaSaida]:
     """As colunas que AQUELE arquivo tinha, na ordem da descrição.
 
     A GRADE DA CONFERÊNCIA PRECISA DA ORDEM, e `dados_brutos` é um objeto JSON —
@@ -316,7 +331,11 @@ def _colunas_do_arquivo(linhas) -> list[str]:
             for chave in (linha.dados_brutos or {})
             if chave not in CHAVES_RESERVADAS
         )
-    return [coluna.nome for coluna in aba_de(ABA_PRINCIPAL).colunas if coluna.nome in presentes]
+    return [
+        ColunaSaida(nome=coluna.nome, tipo=tipo_da_coluna(coluna))
+        for coluna in aba_de(ABA_PRINCIPAL).colunas
+        if coluna.nome in presentes
+    ]
 
 
 def _saida(sessao, importacao, linhas) -> ImportacaoSaida:

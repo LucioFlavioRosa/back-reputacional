@@ -50,6 +50,15 @@ class Coluna:
     campo: str | None = None
     vocabulario: str | None = None
     obrigatoria: bool = False
+    #: Esta coluna guarda PROSA — um parágrafo, não um nome nem um código.
+    #:
+    #: LARGURA NÃO SE CHUTA, e é para isto que serve. "Relato" guarda um parágrafo e
+    #: "UF" guarda duas letras: dar a mesma largura às duas desperdiça a tela numa e
+    #: trunca a outra. A descrição é quem sabe, e os dois consumidores usam — a tela
+    #: para dimensionar a coluna da grade, o gerador para a largura da coluna no
+    #: próprio Excel. A mesma necessidade, nos dois lugares onde a pessoa encontra a
+    #: planilha.
+    longa: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -337,16 +346,16 @@ _AGENDAS = Aba(
         # -- 6. Situação e expectativa -------------------------------------
         Coluna(nome="Iniciativa", campo="iniciativa", vocabulario="iniciativas"),
         Coluna(nome="Situação", campo="status", vocabulario="status"),
-        Coluna(nome="Nota sobre o aceite", campo="nota_situacao"),
+        Coluna(nome="Nota sobre o aceite", campo="nota_situacao", longa=True),
         Coluna(nome="Quem negou", campo="declinado_por"),
-        Coluna(nome="Por que foi negado", campo="motivo_declinio"),
+        Coluna(nome="Por que foi negado", campo="motivo_declinio", longa=True),
         Coluna(nome="Clima esperado", campo="clima_esperado", vocabulario="climas"),
-        Coluna(nome="Expectativa", campo="expectativa"),
+        Coluna(nome="Expectativa", campo="expectativa", longa=True),
         # -- 8. Outputs da interação ---------------------------------------
-        Coluna(nome="Relato", campo="relato"),
-        Coluna(nome="Repercussão e encaminhamentos", campo="encaminhamentos"),
-        Coluna(nome="Pendências", campo="pendencias"),
-        Coluna(nome="Observações", campo="observacoes"),
+        Coluna(nome="Relato", campo="relato", longa=True),
+        Coluna(nome="Repercussão e encaminhamentos", campo="encaminhamentos", longa=True),
+        Coluna(nome="Pendências", campo="pendencias", longa=True),
+        Coluna(nome="Observações", campo="observacoes", longa=True),
         # -- 9. Desfecho da interação --------------------------------------
         Coluna(nome="Clima", campo="clima", vocabulario="climas"),
         Coluna(nome="Desfecho", campo="resultado", vocabulario="resultados"),
@@ -833,6 +842,33 @@ class Divergencia:
     #: VIAJA COM A DIVERGÊNCIA porque o ARQUIVO NÃO É GUARDADO: na confirmação é
     #: daqui que sai a categoria, e sem ela a criação voltaria a chutar o tipo.
     categoria_declarada: str | None = None
+
+
+#: Os cinco tipos de coluna, e cada um é uma pergunta já respondida pela descrição.
+#:
+#: DERIVADOS E NÃO DIGITADOS: uma lista de 59 nomes com o tipo de cada um
+#: envelheceria na primeira coluna nova, e o erro seria silencioso — a coluna sem
+#: tipo simplesmente receberia a largura padrão, e ninguém saberia por quê.
+TIPOS_DE_COLUNA = ("marca", "data", "sigla", "lista", "prosa", "texto")
+
+
+def tipo_da_coluna(coluna: Coluna) -> str:
+    """O tipo de uma coluna, para quem precisa dimensioná-la ou alinhá-la.
+
+    A ORDEM DAS PERGUNTAS IMPORTA: a marca de repetição também não tem vocabulário,
+    e a UF tem duas letras mas não é lista. Do mais específico para o mais geral.
+    """
+    if coluna.nome == COLUNA_DE_REPETICAO:
+        return "marca"
+    if coluna.campo == "data_interacao":
+        return "data"
+    if coluna.campo == "uf":
+        return "sigla"
+    if coluna.vocabulario:
+        return "lista"
+    if coluna.longa:
+        return "prosa"
+    return "texto"
 
 
 def coluna_do_campo(campo: str) -> str:

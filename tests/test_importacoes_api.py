@@ -2398,7 +2398,7 @@ def test_a_conferencia_diz_as_COLUNAS_daquele_arquivo(cliente_admin, sessao, sem
     assert resposta.status_code == 201, resposta.text
     criada = resposta.json()
 
-    assert criada["colunas"] == list(MODELOS["completo"])
+    assert [coluna["nome"] for coluna in criada["colunas"]] == list(MODELOS["completo"])
 
 
 def test_as_colunas_da_conferencia_seguem_o_arquivo_SIMPLIFICADO(
@@ -2435,7 +2435,9 @@ def test_as_colunas_da_conferencia_seguem_o_arquivo_SIMPLIFICADO(
         "/api/importacoes", files={"arquivo": ("s.xlsx", saida.getvalue(), TIPO_XLSX)}
     ).json()
 
-    assert criada["colunas"] == list(MODELOS["simplificado"])
+    assert [coluna["nome"] for coluna in criada["colunas"]] == list(
+        MODELOS["simplificado"]
+    )
     assert criada["pendencias"] == 0, criada["grupos"]
 
 
@@ -2624,3 +2626,26 @@ def test_editar_e_excluir_na_MESMA_chamada_recusa(cliente_admin, sessao, semente
     )
 
     assert resposta.status_code == 422
+
+
+def test_a_conferencia_diz_o_TIPO_de_cada_coluna(cliente_admin, sessao, semente):
+    """A TELA NÃO PODE CHUTAR LARGURA. "Relato" guarda um parágrafo e "UF" guarda
+    duas letras: a mesma largura nas duas desperdiça a tela numa e trunca a outra.
+
+    O tipo vem do FORMATO, que é quem sabe — e não de uma lista de 59 nomes no
+    front, que envelheceria na primeira coluna nova sem ninguém perceber."""
+    criada = cliente_admin.post(
+        "/api/importacoes",
+        files={
+            "arquivo": ("a.xlsx", _planilha_de_um_dia(sessao, semente, quantas=1), TIPO_XLSX)
+        },
+    ).json()
+
+    tipos = {coluna["nome"]: coluna["tipo"] for coluna in criada["colunas"]}
+
+    assert tipos["Repetir a linha de cima"] == "marca"
+    assert tipos["Data"] == "data"
+    assert tipos["UF"] == "sigla"
+    assert tipos["Instituição"] == "lista"
+    assert tipos["Relato"] == "prosa"
+    assert tipos["Local"] == "texto"
