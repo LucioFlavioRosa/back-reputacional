@@ -37,13 +37,14 @@ from app.dominio.erros import RegraViolada
 from app.dominio.importacao_de_agendas import (
     ABA_PRINCIPAL,
     COLUNA_DA_INSTITUICAO_DA_AGENDA,
+    COLUNA_DE_REPETICAO,
     FORMATO,
-    MARCADOR_DE_REPETICAO,
     ROTULO_DO_VOCABULARIO,
     SEGUNDA_COLUNA_DO_VOCABULARIO,
+    VALOR_DA_REPETICAO,
     VOCABULARIOS_EDITAVEIS,
     VOCABULARIOS_FECHADOS,
-    aba_de,
+    colunas_do_modelo,
 )
 
 #: Linhas de dados que a lista suspensa da aba AGENDAS cobre, além do
@@ -91,7 +92,7 @@ def rotulo_singular(chave: str) -> str:
     )
 
 
-def _fonte_da_lista(coluna, aba, quantos_interlocutores: int) -> str:
+def _fonte_da_lista(coluna, colunas: Sequence, quantos_interlocutores: int) -> str:
     """A fonte da lista suspensa de uma coluna: o nome definido, ou a fórmula
     dependente das colunas de interlocutor.
 
@@ -110,14 +111,14 @@ def _fonte_da_lista(coluna, aba, quantos_interlocutores: int) -> str:
     Cabe nos 255 caracteres que o Excel aceita em `formula1` — com o rótulo da aba
     e a coluna da instituição, fica em torno de 180.
     """
-    if coluna.vocabulario != "interlocutores" or aba.nome != ABA_PRINCIPAL:
+    if coluna.vocabulario != "interlocutores":
         return f"={coluna.vocabulario}"
     rotulo = ROTULO_DO_VOCABULARIO["interlocutores"]
     folha = f"'{rotulo}'" if " " in rotulo else rotulo
     # A última linha do bloco de dados: o cabeçalho, os pares, o marcador e a
     # linha em branco do convite a cadastrar.
     ultima = quantos_interlocutores + 3
-    instituicao = f"${_letra_de_coluna(aba, COLUNA_DA_INSTITUICAO_DA_AGENDA)}2"
+    instituicao = f"${_letra_de_coluna(colunas, COLUNA_DA_INSTITUICAO_DA_AGENDA)}2"
     orgaos = f"{folha}!$B$2:$B${ultima}"
     procura = f"MATCH({instituicao},{orgaos},0)"
     return (
@@ -126,20 +127,30 @@ def _fonte_da_lista(coluna, aba, quantos_interlocutores: int) -> str:
     )
 
 
-def _letra_de_coluna(aba, nome: str) -> str:
-    """A letra da coluna `nome` na aba. PÚBLICA porque a fórmula da suspensa
-    dependente precisa dela, e um teste confere que é a coluna certa."""
+def _letra_de_coluna(colunas: Sequence, nome: str) -> str:
+    """A letra da coluna `nome` DENTRO DAQUELE RECORTE.
+
+    RECEBE AS COLUNAS E NÃO A ABA porque a letra depende do modelo: a Instituição é
+    a sexta no completo e a sexta no simplificado, mas o Clima é a vigésima quinta
+    num e a décima sétima no outro. Uma letra calculada sobre a descrição inteira
+    validaria a coluna errada no simplificado — em silêncio, que é o pior defeito
+    possível numa planilha.
+
+    PÚBLICA porque a fórmula da suspensa dependente precisa dela, e um teste
+    confere que é a coluna certa nos dois modelos.
+    """
     from openpyxl.utils import get_column_letter
 
-    for indice, coluna in enumerate(aba.colunas, start=1):
+    for indice, coluna in enumerate(colunas, start=1):
         if coluna.nome == nome:
             return get_column_letter(indice)
-    raise RegraViolada(f"A aba {aba.nome!r} não tem a coluna {nome!r}.")
+    raise RegraViolada(f"Este modelo não tem a coluna {nome!r}.")
 
 
 def gerar(
     vocabularios: Mapping[str, list[str]],
     interlocutores: Sequence[tuple[str, str]] = (),
+    modelo: str = "completo",
 ) -> bytes:
     """O `.xlsx` de cadastro: as quatro abas de preenchimento, vazias, mais
     uma aba por vocabulário com a lista suspensa já ligada à coluna certa.
@@ -162,9 +173,12 @@ def gerar(
     pasta.remove(pasta.active)  # a Workbook nasce com uma aba "Sheet" que ninguém pediu
 
     # -- abas de preenchimento: só o cabeçalho, quem preenche escreve o resto -
+    # AS COLUNAS SAEM DO RECORTE ESCOLHIDO. `colunas_do_modelo` recusa um nome de
+    # modelo que não existe, então um erro de digitação aqui não gera arquivo torto.
+    colunas_da_agenda = colunas_do_modelo(modelo)
     for aba in FORMATO:
         planilha = pasta.create_sheet(aba.nome)
-        planilha.append([coluna.nome for coluna in aba.colunas])
+        planilha.append([coluna.nome for coluna in colunas_da_agenda])
         if aba.nome == "Agendas":
             # O teto de 500 agendas por arquivo não aparece em NENHUMA tela
             # até o upload recusar o arquivo inteiro na linha 501, sem dizer
@@ -229,14 +243,12 @@ def gerar(
         else:
             for valor in valores:
                 planilha.append([valor])
-        # O MARCADOR ENTRA NA LISTA, e precisa entrar: a validação de vocabulário
-        # FECHADO bloqueia valor fora da lista, então `idem` digitado em Clima
-        # seria recusado pelo próprio Excel antes de chegar ao servidor. Na lista,
-        # ele ainda ganha a vantagem de ser escolhido em vez de digitado.
-        planilha.append([MARCADOR_DE_REPETICAO])
-
+        # A LISTA É SÓ O VOCABULÁRIO. O marcador `idem` ocupava a última linha de
+        # TODAS estas abas, onde nunca foi um valor daquele vocabulário: quem abria
+        # a suspensa de Clima via uma instrução de preenchimento entre os climas. A
+        # instrução virou a coluna `Repetir a linha de cima`.
         quantos = len(interlocutores) if chave == "interlocutores" else len(valores)
-        ultima_linha = quantos + 1 + (1 if segunda_coluna else 0)
+        ultima_linha = quantos + (1 if segunda_coluna else 0)
         if chave in VOCABULARIOS_FECHADOS:
             planilha.protection.sheet = True
         else:
@@ -289,11 +301,25 @@ def gerar(
     # -- listas suspensas: uma DataValidation por coluna com vocabulário ------
     for aba in FORMATO:
         planilha = pasta[aba.nome]
-        teto = _LINHAS_DE_AGENDAS if aba.nome == "Agendas" else _LINHAS_DE_ABAS_FILHAS
-        for indice, coluna in enumerate(aba.colunas, start=1):
+        teto = _LINHAS_DE_AGENDAS
+        for indice, coluna in enumerate(colunas_da_agenda, start=1):
+            letra = get_column_letter(indice)
+            if coluna.nome == COLUNA_DE_REPETICAO:
+                # UMA SUSPENSA DE UM VALOR SÓ, escrita na própria fórmula: é mais
+                # rápida de preencher que um sim/não, e não deixa dúvida sobre o
+                # que significa a célula vazia.
+                #
+                # NÃO TRAVA, como as outras colunas editáveis: travar transformaria
+                # um engano de digitação nesta coluna em arquivo recusado, quando o
+                # leitor simplesmente ignora o que não reconhece.
+                repetir = DataValidation(
+                    type="list", formula1=f'"{VALOR_DA_REPETICAO}"', allow_blank=True
+                )
+                planilha.add_data_validation(repetir)
+                repetir.add(f"{letra}2:{letra}{teto + 1}")
+                continue
             if coluna.vocabulario is None:
                 continue
-            letra = get_column_letter(indice)
             fechado = coluna.vocabulario in VOCABULARIOS_FECHADOS
             # A ASSIMETRIA ABAIXO É DE PROPÓSITO — as duas metades existem
             # por motivos opostos, e trocar uma pela outra quebra algo:
@@ -316,7 +342,7 @@ def gerar(
             # que a importação em massa existe para servir.
             validacao = DataValidation(
                 type="list",
-                formula1=_fonte_da_lista(coluna, aba, len(interlocutores)),
+                formula1=_fonte_da_lista(coluna, colunas_da_agenda, len(interlocutores)),
                 allow_blank=True,
                 showErrorMessage=fechado,
                 errorTitle="Valor fora da lista" if fechado else None,
@@ -348,7 +374,7 @@ def gerar(
     indice_da_data = next(
         (
             indice
-            for indice, coluna in enumerate(aba_de(ABA_PRINCIPAL).colunas, start=1)
+            for indice, coluna in enumerate(colunas_da_agenda, start=1)
             if coluna.nome == COLUNA_DA_DATA
         ),
         None,

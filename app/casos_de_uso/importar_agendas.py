@@ -43,8 +43,6 @@ from app.banco.tabelas_catalogo import (
 from app.banco.tabelas_interacoes import InteracaoRegistro
 from app.banco.tabelas_stakeholders import Instituicao, Interlocutor, PessoaAegea
 from app.casos_de_uso.ler_planilha_de_agendas import (
-    ABA_PRINCIPAL,
-    COLUNA_DO_CODIGO,
     LinhaBruta,
     ler,
     ler_categorias_declaradas,
@@ -54,6 +52,7 @@ from app.casos_de_uso.ler_planilha_de_agendas import (
 from app.dominio.erros import Conflito, RegraViolada
 from app.dominio.frentes import TIPO_DA_CATEGORIA_DE_PUBLICO
 from app.dominio.importacao_de_agendas import (
+    ABA_PRINCIPAL,
     CHAVE_DO_CORRIGIDO,
     CHAVE_DO_HERDADO,
     COLUNA_DA_INSTITUICAO_DA_AGENDA,
@@ -1524,8 +1523,12 @@ def _linhas_para_reler(linhas) -> dict[str, list[LinhaBruta]]:
     from app.casos_de_uso.ler_planilha_de_agendas import data_de_celula
 
     por_aba: dict[str, list[LinhaBruta]] = {aba.nome: [] for aba in FORMATO}
-    descartados: set[str] = {
-        str((linha.dados_brutos or {}).get(COLUNA_DO_CODIGO))
+    # PELO NÚMERO DA LINHA NO ARQUIVO, e não mais por um `Código` que a pessoa
+    # inventava: é o mesmo número que a conferência mostra e por onde ela volta à
+    # planilha para conferir. O `Código` existia para ligar as abas filhas, que já
+    # não existem.
+    descartados: set[int] = {
+        linha.linha_origem
         for linha in linhas
         if linha.aba == ABA_PRINCIPAL and linha.decisao == "descartada"
     }
@@ -1533,10 +1536,7 @@ def _linhas_para_reler(linhas) -> dict[str, list[LinhaBruta]]:
         if linha.aba not in por_aba:
             continue
         celulas = dict(linha.dados_brutos or {})
-        if str(celulas.get(COLUNA_DO_CODIGO)) in descartados:
-            # A linha descartada sai, e as filhas dela com ela: manter um
-            # participante de uma agenda descartada faria o leitor recusar o
-            # conjunto por código órfão.
+        if linha.linha_origem in descartados:
             continue
         for aba in FORMATO:
             if aba.nome != linha.aba:

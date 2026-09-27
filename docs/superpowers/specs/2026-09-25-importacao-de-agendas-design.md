@@ -400,3 +400,82 @@ Cada fase é verificável ao fim de si mesma, e é essa a ordem em que o risco c
 **O perfil real das 54 reuniões.** Se a maioria for de frentes com campos
 próprios (Imprensa, Legislativo, Investidores) ou consultas recebidas, o recorte
 de "fora da primeira versão" precisa ser revisto antes da implementação.
+
+---
+
+## Emenda de 26/09: dois modelos, e o fim do `Código` e do `idem`
+
+Pedido do dono do produto depois de usar o modelo de aba única. Três mudanças,
+todas com a mesma origem: **o caso real é um evento**, onde 54 agendas do mesmo
+dia repetem quase tudo.
+
+### Dois modelos, um formato
+
+A planilha de 59 colunas descreve a agenda inteira — os campos de antes e os de
+depois da reunião, os quatro interlocutores, os três materiais. Num evento, isso
+é uma tela de rolagem horizontal para preencher quatro coisas por linha.
+
+Passam a existir **dois modelos do MESMO formato**, e a escolha é no download:
+
+| Modelo | Para quê | Colunas |
+|---|---|---|
+| **Completo** | a agenda que merece registro inteiro | as 59 (menos o `Código`) |
+| **Simplificado** | o evento com muitas conversas curtas | 22 |
+
+O simplificado tem: `Repetir a linha de cima` · Tipo de interação · Área 1–2 ·
+Data · Instituição · UF · Unidade de negócio · Tema 1–3 · Modalidade · Local ·
+Relato · Repercussão e encaminhamentos · Observações · Clima · Desfecho ·
+Interlocutor 1–2 · Pessoa da Aegea 1–2.
+
+**UMA descrição, dois recortes.** O modelo simplificado é um SUBCONJUNTO ORDENADO
+da descrição única, nomeado por colunas — não uma segunda descrição. Duas
+descrições divergiriam na primeira coluna nova, e o leitor passaria a aceitar de
+um modelo o que recusa do outro.
+
+**O leitor aceita os dois sem perguntar qual é.** Ele não recebe o nome do modelo:
+confere que (a) nenhuma coluna é desconhecida e (b) as obrigatórias estão todas
+lá. Isso também acolhe o arquivo de quem apagou colunas que não ia usar, que é
+comportamento normal de quem trabalha em planilha. Exigir o cabeçalho exato de um
+dos dois recusaria o arquivo inteiro por uma coluna apagada — o pior erro possível
+num arquivo de 500 linhas.
+
+**Sem Presença e sem Papel, o simplificado não perde nada que o domínio exija:**
+`papel` nasce `porta_voz` por padrão e `presenca` é anulável ("não informado").
+
+### O `Código` sai
+
+Ele existia para ligar a aba de agendas às três abas filhas. As abas filhas
+morreram na mudança para aba única, e ele ficou sendo uma coluna que a pessoa
+preenchia para nada — quando não a deixava em branco e recebia `linha 3` gerado
+pelo servidor.
+
+O que ele ainda fazia, e para onde foi: identificar a agenda nas mensagens e no
+descarte de linha passou a ser o **número da linha no arquivo**, que é o que a
+pessoa usa para voltar à planilha e conferir.
+
+### O `idem` sai, e no lugar dele entra uma coluna
+
+O marcador `idem` era escolhido DENTRO de qualquer lista suspensa, e a linha toda
+herdava. Funcionava, e era difícil de descobrir: ninguém abre a suspensa de Clima
+esperando encontrar ali uma instrução sobre a linha.
+
+Entra, na primeira coluna — o lugar que era do `Código` —, **`Repetir a linha de
+cima`**, com uma suspensa de um valor só: `sim`. Marcar significa que a linha
+repete tudo o que a de cima tinha, e **o que a pessoa escrever na própria linha
+vence a herança**. É o caso do evento: marca `sim`, troca só a instituição.
+
+O `idem` deixa de existir nas duas planilhas, e sai de todas as listas de
+vocabulário — onde ele nunca foi um valor daquele vocabulário.
+
+### A conferência vira a planilha
+
+Depois de subir, a conferência passa a mostrar **a planilha como a pessoa a
+preencheu**, em grade, com a cor dizendo o que falta:
+
+- **vermelho** na célula que TRAVA a confirmação;
+- **amarelo** na que só avisa;
+- a célula vermelha é **editável ali mesmo**, e a linha é reproposta ao salvar.
+
+A grade SUBSTITUI a tabela de linhas anterior, que mostrava "linha 3 · falta a
+Data" sem mostrar a linha. Duas vistas das mesmas linhas — uma em grade e uma em
+lista — obrigariam a pessoa a cruzar as duas para entender uma pendência.

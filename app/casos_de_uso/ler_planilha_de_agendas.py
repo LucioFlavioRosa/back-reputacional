@@ -32,10 +32,11 @@ from datetime import date, datetime
 from app.dominio.erros import RegraViolada
 from app.dominio.importacao_de_agendas import (
     ABA_PRINCIPAL,
+    COLUNA_DE_REPETICAO,
     FORMATO,
-    MARCADOR_DE_REPETICAO,
     ROTULO_DO_VOCABULARIO,
     SEGUNDA_COLUNA_DO_VOCABULARIO,
+    VALOR_DA_REPETICAO,
     VOCABULARIOS_EDITAVEIS,
     Aba,
 )
@@ -50,33 +51,6 @@ ASSINATURA_ZIP = b"PK\x03\x04"
 #: o caso que originou esta funcionalidade — cabe dez vezes.
 TETO_DE_AGENDAS = 500
 
-#: A aba que manda: é dela que saem os códigos que as outras três referenciam.
-# `ABA_PRINCIPAL` vem do domínio (ver o import acima): é fato do formato, não
-# decisão do leitor. Reexportado aqui porque este módulo era a origem dele e há
-# quem o importe por este caminho.
-
-#: A coluna que liga as abas. Vive em todas as quatro.
-COLUNA_DO_CODIGO = "Código"
-
-#: O prefixo do código que o SERVIDOR gera para uma agenda sem código.
-#:
-#: O CÓDIGO NÃO É IDENTIDADE DA AGENDA — é só o vínculo com as abas filhas, e a
-#: linha já se identifica por `linha_origem`. Quem tem 54 reuniões para registrar
-#: não deve preencher uma coluna que não serve para nada nas linhas sem
-#: participante nem material.
-#:
-#: Ele existe de qualquer forma porque o agrupamento das filhas trabalha por
-#: código, e um `None` no meio disso viraria um caso especial em cada passo.
-PREFIXO_DO_CODIGO_GERADO = "linha "
-
-
-def codigo_da_linha(numero: int) -> str:
-    """O código que o servidor dá a uma agenda que não tem um.
-
-    CITA A LINHA para a pessoa reconhecer de qual agenda ele fala quando ele
-    aparecer numa mensagem — "linha 7" ela encontra na planilha; um uuid, não.
-    """
-    return f"{PREFIXO_DO_CODIGO_GERADO}{numero}"
 
 
 #: Formatos de data que uma planilha de verdade entrega quando a célula é
@@ -172,17 +146,31 @@ def _indices(aba: Aba, cabecalho: tuple) -> dict[str, int]:
         for posicao, valor in enumerate(cabecalho)
         if isinstance(valor, str) and _texto(valor)
     }
-    faltando = [coluna.nome for coluna in aba.colunas if coluna.nome not in lidos]
+    # SÓ AS OBRIGATÓRIAS SÃO EXIGIDAS, e é o que faz os dois modelos coexistirem
+    # sem o leitor precisar saber qual deles chegou: o simplificado tem 22 das 59
+    # colunas, e exigir o cabeçalho inteiro recusaria o arquivo do próprio modelo.
+    #
+    # Isso também acolhe o arquivo de quem apagou as colunas que não ia usar — que
+    # é o que se faz numa planilha. Recusar por coluna apagada é o pior erro
+    # possível num arquivo de 500 linhas: nada aproveitado, e nada a consertar
+    # linha a linha.
+    faltando = [
+        coluna.nome
+        for coluna in aba.colunas
+        if coluna.obrigatoria and coluna.nome not in lidos
+    ]
     if faltando:
         raise RegraViolada(
-            f"A aba {aba.nome!r} está sem a coluna {', '.join(repr(n) for n in faltando)}. "
-            "Baixe o modelo de novo e transfira o que já preencheu — o cabeçalho "
-            "precisa ser o mesmo."
+            f"A aba {aba.nome!r} está sem a coluna "
+            f"{', '.join(repr(n) for n in faltando)}, que toda agenda precisa ter. "
+            "Baixe o modelo de novo e transfira o que já preencheu."
         )
     # Colunas que não conhecemos ficam de fora, e é de propósito: alguém
     # acrescenta uma coluna de rascunho para se organizar, e recusar por causa
     # dela seria proibir a pessoa de anotar na própria planilha.
-    return {coluna.nome: lidos[coluna.nome] for coluna in aba.colunas}
+    return {
+        coluna.nome: lidos[coluna.nome] for coluna in aba.colunas if coluna.nome in lidos
+    }
 
 
 def _linhas_da_aba(aba: Aba, folha) -> list[LinhaBruta]:
@@ -213,46 +201,45 @@ def _linhas_da_aba(aba: Aba, folha) -> list[LinhaBruta]:
         if all(valor is None for valor in celulas.values()):
             continue
 
-        # UM `idem` VALE PARA A LINHA TODA, e é isso que faz o marcador economizar
-        # trabalho: escrevê-lo em cada uma das 27 colunas trocaria digitar 27
-        # valores por digitar 27 marcadores, e não pouparia nada.
+        # UMA COLUNA DECIDE PELA LINHA TODA, e é aí que está a economia: escrever a
+        # instrução em cada uma das 22 colunas trocaria digitar 22 valores por
+        # digitar 22 instruções, e não pouparia nada.
         #
-        # A linha OPTA por herdar, uma de cada vez. Quem não escreveu `idem` não
-        # herda nada — vazio continua vazio, e um esquecimento continua virando
-        # pendência em vez de dado inventado. É a diferença entre isto e "vazio
-        # herda", que tiraria a possibilidade de deixar um campo vazio de propósito.
-        repete = any(
-            isinstance(valor, str) and normalizar(valor) == MARCADOR_DE_REPETICAO
-            for valor in celulas.values()
+        # A LINHA OPTA POR HERDAR. Quem não marcou não herda: vazio continua vazio,
+        # e um esquecimento continua virando pendência em vez de dado inventado. É a
+        # diferença entre isto e "vazio herda", que tiraria a possibilidade de
+        # deixar um campo vazio de propósito.
+        #
+        # ANTES ERA O MARCADOR `idem`, escolhido dentro de qualquer lista suspensa:
+        # funcionava e era indescobrível. A instrução virou coluna, e a palavra
+        # `idem` numa célula voltou a ser só texto.
+        marca = celulas.get(COLUNA_DE_REPETICAO)
+        repete = isinstance(marca, str) and normalizar(marca) == normalizar(
+            VALOR_DA_REPETICAO
         )
+        if repete and not ultimo:
+            raise RegraViolada(
+                f"Na linha {numero} da aba {aba.nome!r} está marcado "
+                f"{VALOR_DA_REPETICAO!r} em {COLUNA_DE_REPETICAO!r}, mas não há linha "
+                "acima para repetir. Preencha esta linha por inteiro."
+            )
 
         herdado: dict[str, object] = {}
         for nome, valor in celulas.items():
-            marcado = isinstance(valor, str) and normalizar(valor) == MARCADOR_DE_REPETICAO
-
-            if marcado and nome not in ultimo:
-                raise RegraViolada(
-                    f"Na linha {numero} da aba {aba.nome!r}, a coluna {nome!r} "
-                    f"tem {MARCADOR_DE_REPETICAO!r} mas não há linha acima com "
-                    "valor para repetir. Escreva o valor nesta linha."
-                )
-
-            # O CÓDIGO DA AGENDA NUNCA HERDA por tabela — duas agendas com o mesmo
-            # código fariam o arquivo ser recusado por código repetido, e a herança
-            # derrubaria o arquivo que ela existe para facilitar. Na aba Agendas o
-            # código IDENTIFICA a linha; nas filhas ele REFERENCIA outra, e lá
-            # herdar é justamente o que serve — dez participantes da mesma reunião.
-            if nome == COLUNA_DO_CODIGO and aba.nome == ABA_PRINCIPAL and not marcado:
+            # A PRÓPRIA COLUNA DE REPETIÇÃO NÃO HERDA: herdá-la faria uma linha
+            # marcada contaminar todas as de baixo, e a pessoa perderia o controle
+            # de onde a cadeia começa.
+            if nome == COLUNA_DE_REPETICAO:
                 continue
-
-            if marcado or (repete and valor is None and nome in ultimo):
+            if repete and valor is None and nome in ultimo:
                 celulas[nome] = ultimo[nome]
                 herdado[nome] = ultimo[nome]
 
-        # `ultimo` guarda o valor FINAL da linha, para uma cadeia de `idem` repetir
-        # o dado original e nunca o marcador.
+        # `ultimo` guarda o valor FINAL da linha — o que a pessoa escreveu ou o que
+        # esta linha herdou —, para que uma CADEIA de repetições propague o dado
+        # original por todas elas.
         for nome, valor in celulas.items():
-            if valor is not None:
+            if valor is not None and nome != COLUNA_DE_REPETICAO:
                 ultimo[nome] = valor
 
         for nome in e_data:
@@ -268,44 +255,6 @@ def _linhas_da_aba(aba: Aba, folha) -> list[LinhaBruta]:
     return lidas
 
 
-def _codigos_das_agendas(linhas: list[LinhaBruta]) -> set[str]:
-    """Os códigos da aba Agendas, recusando o que não dá para referenciar."""
-    if len(linhas) > TETO_DE_AGENDAS:
-        raise RegraViolada(
-            f"A planilha tem {len(linhas)} agendas e o limite é {TETO_DE_AGENDAS} "
-            "por arquivo. Divida em dois envios."
-        )
-
-    vistos: set[str] = set()
-    for linha in linhas:
-        codigo = linha.celulas.get(COLUNA_DO_CODIGO)
-        if codigo is None:
-            # SEM CÓDIGO, O SERVIDOR PÕE UM. A coluna só serve para ligar as abas
-            # filhas, e uma agenda que não tem filha não tem o que ligar — exigir
-            # o preenchimento seria trabalho manual sem função, em cada uma das 54
-            # linhas de um dia cheio.
-            codigo = codigo_da_linha(linha.numero)
-            linha.celulas[COLUNA_DO_CODIGO] = codigo  # type: ignore[index]
-        codigo = str(codigo)
-        if codigo.startswith(PREFIXO_DO_CODIGO_GERADO) and codigo != codigo_da_linha(
-            linha.numero
-        ):
-            # Escrever à mão o que o servidor geraria para OUTRA linha faria o
-            # código deixar de ser único, e a filha ligaria na agenda errada. Só
-            # quem escreveu sabe o que quis dizer.
-            raise RegraViolada(
-                f"O Código {codigo!r} é reservado: o servidor usa {PREFIXO_DO_CODIGO_GERADO!r} "
-                "seguido do número da linha para as agendas que deixam a coluna em "
-                "branco. Escolha outro código."
-            )
-        if codigo in vistos:
-            raise RegraViolada(
-                f"O Código {codigo!r} aparece em duas agendas. Com o código "
-                "repetido não há como saber a qual delas cada participante "
-                "pertence."
-            )
-        vistos.add(codigo)
-    return vistos
 
 
 def ler(conteudo: bytes) -> dict[str, list[LinhaBruta]]:
@@ -327,8 +276,19 @@ def ler(conteudo: bytes) -> dict[str, list[LinhaBruta]]:
     # inteira de erro que o vínculo produzia — código órfão, código repetido,
     # participante na agenda errada. O código segue sendo checado por ser único,
     # porque ele ainda identifica a linha nas mensagens.
-    _codigos_das_agendas(por_aba[ABA_PRINCIPAL])
 
+    # O TETO É CONFERIDO AQUI desde que o `Código` saiu: ele morava dentro da
+    # função que conferia a unicidade dos códigos, e teria ido embora com ela — o
+    # teste do teto foi o que pegou.
+    #
+    # Acima de 500 a tela de conferência deixa de ser conferível e a transação fica
+    # longa demais para uma requisição. Um dia de 54 cabe dez vezes.
+    agendas = por_aba.get(ABA_PRINCIPAL, [])
+    if len(agendas) > TETO_DE_AGENDAS:
+        raise RegraViolada(
+            f"A planilha tem {len(agendas)} agendas e o limite é {TETO_DE_AGENDAS} "
+            "por arquivo. Divida em dois envios."
+        )
     return por_aba
 
 
@@ -381,13 +341,9 @@ def ler_declarados(conteudo: bytes) -> dict[str, frozenset[str]]:
                 normalizar(segunda),
                 *(normalizar(cabecalho) for cabecalho in _CABECALHOS_POSSIVEIS[chave]),
             }
-    # O MARCADOR ESTÁ NA LISTA de todas as abas de vocabulário, para poder ser
-    # escolhido na suspensa — mas ele é instrução, não cadastro. Sem esta
-    # subtração, `idem` viraria uma instituição a criar.
-    return {
-        chave: nomes - {MARCADOR_DE_REPETICAO}
-        for chave, nomes in declarados.items()
-    }
+    # O MARCADOR SAIU DAS LISTAS junto com a própria ideia dele: a instrução de
+    # repetir virou coluna. Não há mais nada a subtrair aqui.
+    return declarados
 
 
 #: Os nomes que podem estar no cabeçalho da coluna A de cada aba de duas colunas.

@@ -6,6 +6,7 @@ ninguém lê — sem erro nenhum.
 """
 
 from app.dominio.importacao_de_agendas import (
+    COLUNA_DE_REPETICAO,
     FORMATO,
     ROTULO_DO_VOCABULARIO,
     VOCABULARIOS_EDITAVEIS,
@@ -19,12 +20,6 @@ def test_o_formato_tem_uma_aba_de_preenchimento_so():
     entre abas, e o vínculo por `Código` entre elas era a parte que mais
     confundia. As pessoas e os materiais viraram colunas numeradas."""
     assert [aba.nome for aba in FORMATO] == ["Agendas"]
-
-
-def test_a_aba_de_agendas_comeca_pelo_codigo():
-    """Primeira coluna porque é a referência da linha: é por ele que a conferência
-    e as mensagens de erro chamam a agenda de que estão falando."""
-    assert aba_de("Agendas").colunas[0].nome == "Código"
 
 
 def test_nenhum_vocabulario_e_editavel_e_fechado_ao_mesmo_tempo():
@@ -392,7 +387,8 @@ def test_a_ordem_das_colunas_segue_o_FORMULARIO():
     ]
 
     assert da_agenda == [
-        "Código",
+        # A decisão que vem ANTES de preencher a linha, e por isso antes de tudo.
+        COLUNA_DE_REPETICAO,
         # 1. Tipo de interação
         "Tipo de interação",
         # 2. Área(s)
@@ -465,3 +461,134 @@ def test_o_que_o_formulario_deriva_nao_e_coluna():
 
     assert "Público" not in nomes
     assert "Relevância" not in nomes
+
+
+# =============================================================================
+# os dois modelos do MESMO formato
+# =============================================================================
+
+
+def test_o_formato_NAO_TEM_MAIS_a_coluna_de_codigo():
+    """O `Código` existia para ligar a aba de agendas às três abas filhas. As abas
+    filhas morreram na mudança para aba única, e ele ficou sendo uma coluna que a
+    pessoa preenchia para nada.
+
+    O que ele ainda fazia — identificar a agenda nas mensagens e no descarte —
+    passou a ser o NÚMERO DA LINHA, que é o que ela usa para voltar à planilha."""
+    nomes = {coluna.nome for coluna in aba_de("Agendas").colunas}
+
+    assert "Código" not in nomes
+
+
+def test_a_PRIMEIRA_coluna_e_a_de_repetir_a_linha_de_cima():
+    """No lugar do `Código`, e primeira de propósito: é a decisão que a pessoa toma
+    ANTES de preencher o resto da linha — "esta é igual à de cima?"."""
+    from app.dominio.importacao_de_agendas import COLUNA_DE_REPETICAO
+
+    primeira = aba_de("Agendas").colunas[0]
+
+    assert primeira.nome == COLUNA_DE_REPETICAO == "Repetir a linha de cima"
+    # SEM CAMPO: ela não vira dado da agenda, é instrução de preenchimento.
+    assert primeira.campo is None
+
+
+def test_o_marcador_idem_NAO_EXISTE_MAIS():
+    """`idem` era escolhido DENTRO de qualquer lista suspensa, e a linha toda
+    herdava. Funcionava e era indescobrível: ninguém abre a suspensa de Clima
+    esperando encontrar ali uma instrução sobre a linha.
+
+    A instrução virou coluna, e saiu das listas de vocabulário — onde ela nunca
+    foi um valor daquele vocabulário."""
+    import app.dominio.importacao_de_agendas as dominio
+
+    assert not hasattr(dominio, "MARCADOR_DE_REPETICAO")
+
+
+def test_os_dois_modelos_recortam_a_MESMA_descricao():
+    """UMA DESCRIÇÃO, DOIS RECORTES. O simplificado é um subconjunto ORDENADO,
+    nomeado por colunas — não uma segunda descrição do formato.
+
+    Duas descrições divergiriam na primeira coluna nova, e o leitor passaria a
+    aceitar de um modelo o que recusa do outro."""
+    from app.dominio.importacao_de_agendas import MODELOS
+
+    todas = {coluna.nome for coluna in aba_de("Agendas").colunas}
+
+    assert set(MODELOS) == {"completo", "simplificado"}
+    for nome_do_modelo, colunas in MODELOS.items():
+        desconhecidas = set(colunas) - todas
+        assert desconhecidas == set(), (nome_do_modelo, desconhecidas)
+
+
+def test_o_modelo_completo_e_a_descricao_inteira_na_ordem_dela():
+    from app.dominio.importacao_de_agendas import MODELOS
+
+    assert list(MODELOS["completo"]) == [coluna.nome for coluna in aba_de("Agendas").colunas]
+
+
+def test_o_simplificado_tem_as_22_colunas_do_evento():
+    """AS COLUNAS QUE O DONO DO PRODUTO PEDIU, e a razão: 54 agendas do mesmo dia
+    são um evento, com muitas conversas curtas. As 59 colunas do completo viram
+    rolagem horizontal para preencher quatro coisas por linha."""
+    from app.dominio.importacao_de_agendas import COLUNA_DE_REPETICAO, MODELOS
+
+    assert list(MODELOS["simplificado"]) == [
+        COLUNA_DE_REPETICAO,
+        "Tipo de interação",
+        "Área 1",
+        "Área 2",
+        "Data",
+        "Instituição",
+        "UF",
+        "Unidade de negócio",
+        "Tema 1",
+        "Tema 2",
+        "Tema 3",
+        "Modalidade",
+        "Local",
+        "Relato",
+        "Repercussão e encaminhamentos",
+        "Observações",
+        "Clima",
+        "Desfecho",
+        "Interlocutor 1",
+        "Interlocutor 2",
+        "Pessoa da Aegea 1",
+        "Pessoa da Aegea 2",
+    ]
+
+
+def test_TODO_modelo_carrega_as_colunas_OBRIGATORIAS():
+    """A GUARDA QUE IMPORTA. Um modelo sem a Data geraria um arquivo que o próprio
+    servidor recusa inteiro — a pessoa baixaria o modelo, preencheria 54 linhas e
+    receberia "falta a coluna Data" sobre um arquivo que ela não escolheu."""
+    from app.dominio.importacao_de_agendas import MODELOS
+
+    obrigatorias = {
+        coluna.nome for coluna in aba_de("Agendas").colunas if coluna.obrigatoria
+    }
+
+    for nome_do_modelo, colunas in MODELOS.items():
+        faltando = obrigatorias - set(colunas)
+        assert faltando == set(), (nome_do_modelo, faltando)
+
+
+def test_colunas_do_modelo_devolve_os_OBJETOS_na_ordem_do_modelo():
+    """A ordem é a do modelo, não a da descrição: é ela que vira o cabeçalho."""
+    from app.dominio.importacao_de_agendas import MODELOS, colunas_do_modelo
+
+    colunas = colunas_do_modelo("simplificado")
+
+    assert [coluna.nome for coluna in colunas] == list(MODELOS["simplificado"])
+
+
+def test_modelo_que_nao_existe_recusa_dizendo_os_que_existem():
+    from app.dominio.erros import RegraViolada
+    from app.dominio.importacao_de_agendas import colunas_do_modelo
+
+    try:
+        colunas_do_modelo("resumido")
+    except RegraViolada as erro:
+        assert "simplificado" in str(erro) and "completo" in str(erro)
+    else:
+        raise AssertionError("aceitou um modelo que não existe")

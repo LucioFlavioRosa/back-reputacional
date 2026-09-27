@@ -201,7 +201,6 @@ def _preenchida(
 def _agenda(semente, **mudancas) -> dict:
     """Uma agenda que resolve inteira: os três campos que `InteracaoEntrada` exige."""
     base = {
-        "Código": "A1",
         "Data": date(2026, 9, 25),
         "Instituição": semente["instituicao"].nome,
         "UF": "SP",
@@ -324,7 +323,7 @@ def test_o_participante_da_outra_parte_entra_na_proposta(sessao, semente):
         sessao,
         agendas=[_agenda(semente)],
         participantes=[
-            {"Código": "A1", "Pessoa": semente["interlocutor"].nome, "Principal": "sim"}
+            {"Pessoa": semente["interlocutor"].nome, "Principal": "sim"}
         ],
     )
 
@@ -339,7 +338,7 @@ def test_a_pessoa_da_aegea_entra_na_proposta(sessao, semente):
     conteudo = _preenchida(
         sessao,
         agendas=[_agenda(semente)],
-        pessoas_aegea=[{"Código": "A1", "Pessoa": semente["pessoa"].nome, "Papel": "porta_voz"}],
+        pessoas_aegea=[{"Pessoa": semente["pessoa"].nome, "Papel": "porta_voz"}],
     )
 
     (proposta,) = importar_agendas.propor(sessao, conteudo)
@@ -354,7 +353,6 @@ def test_o_material_entra_na_proposta(sessao, semente):
         agendas=[_agenda(semente)],
         materiais=[
             {
-                "Código": "A1",
                 "Momento": "apoio",
                 "Título": "Nota técnica",
                 "Link": "https://acervo/nota",
@@ -368,18 +366,6 @@ def test_o_material_entra_na_proposta(sessao, semente):
     assert proposta.entrada.materiais[0].titulo == "Nota técnica"
 
 
-def test_a_linha_filha_vai_para_a_AGENDA_do_codigo_dela(sessao, semente):
-    """Com duas agendas, o participante não pode cair na errada."""
-    conteudo = _preenchida(
-        sessao,
-        agendas=[_agenda(semente, **{"Código": "A1"}), _agenda(semente, **{"Código": "A2"})],
-        participantes=[{"Código": "A2", "Pessoa": semente["interlocutor"].nome}],
-    )
-
-    primeira, segunda = importar_agendas.propor(sessao, conteudo)
-
-    assert primeira.entrada.outra_parte == []
-    assert len(segunda.entrada.outra_parte) == 1
 
 
 # =============================================================================
@@ -457,8 +443,8 @@ def test_valor_fora_de_vocabulario_FECHADO_trava(sessao, semente):
 def test_a_mesma_instituicao_desconhecida_em_doze_linhas_e_UMA_divergencia(sessao, semente):
     """É o que faz a conferência escalar: uma decisão, doze linhas."""
     agendas = [
-        _agenda(semente, **{"Código": f"A{i}", "Instituição": "Prefeitura de Campinas"})
-        for i in range(12)
+        _agenda(semente, **{"Instituição": "Prefeitura de Campinas"})
+        for _ in range(12)
     ]
 
     propostas = importar_agendas.propor(sessao, _preenchida(sessao, agendas=agendas))
@@ -472,9 +458,9 @@ def test_uma_agenda_torta_nao_derruba_as_outras(sessao, semente):
     conteudo = _preenchida(
         sessao,
         agendas=[
-            _agenda(semente, **{"Código": "A1"}),
-            _agenda(semente, **{"Código": "A2"}, Data=None),
-            _agenda(semente, **{"Código": "A3"}),
+            _agenda(semente),
+            _agenda(semente, Data=None),
+            _agenda(semente),
         ],
     )
 
@@ -523,7 +509,7 @@ def test_o_custo_nao_cresce_com_o_numero_de_agendas(sessao, semente):
 
     def arquivo(quantas: int) -> bytes:
         return _preenchida(
-            sessao, agendas=[_agenda(semente, **{"Código": f"A{i}"}) for i in range(quantas)]
+            sessao, agendas=[_agenda(semente) for _ in range(quantas)]
         )
 
     tres, trinta = arquivo(3), arquivo(30)
@@ -598,7 +584,7 @@ def test_material_com_titulo_e_sem_link_e_recusado(sessao, semente):
     conteudo = _preenchida(
         sessao,
         agendas=[_agenda(semente)],
-        materiais=[{"Código": "A1", "Momento": "apoio", "Título": "Nota técnica"}],
+        materiais=[{"Momento": "apoio", "Título": "Nota técnica"}],
     )
 
     (proposta,) = importar_agendas.propor(sessao, conteudo)
@@ -613,7 +599,7 @@ def test_material_com_link_e_sem_titulo_e_recusado(sessao, semente):
     conteudo = _preenchida(
         sessao,
         agendas=[_agenda(semente)],
-        materiais=[{"Código": "A1", "Momento": "apoio", "Link": "https://acervo/x"}],
+        materiais=[{"Momento": "apoio", "Link": "https://acervo/x"}],
     )
 
     (proposta,) = importar_agendas.propor(sessao, conteudo)
@@ -627,7 +613,7 @@ def test_participante_da_outra_parte_sem_pessoa_e_recusado(sessao, semente):
     nome, ou apaga o nome e deixa o resto. O grupo tem dado, então o vazio é
     omissão e não espaço sobrando."""
     conteudo = _preenchida(
-        sessao, agendas=[_agenda(semente)], participantes=[{"Código": "A1", "Presença": "presente"}]
+        sessao, agendas=[_agenda(semente)], participantes=[{"Presença": "presente"}]
     )
 
     (proposta,) = importar_agendas.propor(sessao, conteudo)
@@ -656,7 +642,7 @@ def test_participante_que_nao_pertence_a_instituicao_e_recusado(sessao, semente)
     conteudo = _preenchida(
         sessao,
         agendas=[_agenda(semente)],
-        participantes=[{"Código": "A1", "Pessoa": de_outra.nome}],
+        participantes=[{"Pessoa": de_outra.nome}],
     )
 
     (proposta,) = importar_agendas.propor(sessao, conteudo)
@@ -680,7 +666,7 @@ def test_participante_da_propria_instituicao_passa(sessao, semente):
     conteudo = _preenchida(
         sessao,
         agendas=[_agenda(semente)],
-        participantes=[{"Código": "A1", "Pessoa": semente["interlocutor"].nome}],
+        participantes=[{"Pessoa": semente["interlocutor"].nome}],
     )
 
     (proposta,) = importar_agendas.propor(sessao, conteudo)
@@ -691,7 +677,7 @@ def test_participante_da_propria_instituicao_passa(sessao, semente):
 def test_pessoa_da_aegea_sem_pessoa_e_recusada(sessao, semente):
     """Regra 5, o mesmo argumento da 3 do outro lado da mesa."""
     conteudo = _preenchida(
-        sessao, agendas=[_agenda(semente)], pessoas_aegea=[{"Código": "A1", "Papel": "porta_voz"}]
+        sessao, agendas=[_agenda(semente)], pessoas_aegea=[{"Papel": "porta_voz"}]
     )
 
     (proposta,) = importar_agendas.propor(sessao, conteudo)
@@ -707,8 +693,8 @@ def test_a_mesma_pessoa_no_mesmo_papel_e_recusada(sessao, semente):
         sessao,
         agendas=[_agenda(semente)],
         pessoas_aegea=[
-            {"Código": "A1", "Pessoa": semente["pessoa"].nome, "Papel": "porta_voz"},
-            {"Código": "A1", "Pessoa": semente["pessoa"].nome, "Papel": "porta_voz"},
+            {"Pessoa": semente["pessoa"].nome, "Papel": "porta_voz"},
+            {"Pessoa": semente["pessoa"].nome, "Papel": "porta_voz"},
         ],
     )
 
@@ -726,8 +712,8 @@ def test_a_mesma_pessoa_em_papeis_DIFERENTES_passa(sessao, semente):
         sessao,
         agendas=[_agenda(semente)],
         pessoas_aegea=[
-            {"Código": "A1", "Pessoa": semente["pessoa"].nome, "Papel": "porta_voz"},
-            {"Código": "A1", "Pessoa": semente["pessoa"].nome, "Papel": "equipe"},
+            {"Pessoa": semente["pessoa"].nome, "Papel": "porta_voz"},
+            {"Pessoa": semente["pessoa"].nome, "Papel": "equipe"},
         ],
     )
 
@@ -802,7 +788,7 @@ def test_linha_filha_com_cadastro_declarado_NAO_perde_os_outros_campos(sessao, s
         sessao,
         agendas=[_agenda(semente)],
         participantes=[
-            {"Código": "A1", "Pessoa": "Bruno Novo", "Presença": "presente", "Principal": "sim"}
+            {"Pessoa": "Bruno Novo", "Presença": "presente", "Principal": "sim"}
         ],
         declarar={"interlocutores": ["Bruno Novo"]},
     )
@@ -875,7 +861,7 @@ def test_interlocutor_homonimo_RESOLVE_pela_instituicao_da_linha(sessao, semente
     conteudo = _preenchida(
         sessao,
         agendas=[_agenda(semente)],
-        participantes=[{"Código": "A1", "Pessoa": semente["interlocutor"].nome}],
+        participantes=[{"Pessoa": semente["interlocutor"].nome}],
     )
 
     (proposta,) = importar_agendas.propor(sessao, conteudo)
@@ -915,7 +901,7 @@ def test_o_homonimo_ainda_e_ambiguo_quando_a_instituicao_nao_resolve(sessao, sem
     conteudo = _preenchida(
         sessao,
         agendas=[agenda],
-        participantes=[{"Código": "A1", "Pessoa": semente["interlocutor"].nome}],
+        participantes=[{"Pessoa": semente["interlocutor"].nome}],
     )
 
     (proposta,) = importar_agendas.propor(sessao, conteudo)

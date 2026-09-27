@@ -5,7 +5,6 @@ import io
 from app.casos_de_uso.modelo_de_importacao import gerar
 from app.dominio.importacao_de_agendas import (
     FORMATO,
-    MARCADOR_DE_REPETICAO,
     ROTULO_DO_VOCABULARIO,
     VOCABULARIOS_EDITAVEIS,
     VOCABULARIOS_FECHADOS,
@@ -143,16 +142,16 @@ def test_o_definedname_de_cada_vocabulario_resolve_para_a_aba_certa():
             for (celula,) in planilha[nome_da_aba][intervalo]
             if celula.value is not None
         ]
-        # O MARCADOR DE REPETIÇÃO FECHA A LISTA, e está dentro do intervalo de
-        # propósito: a validação de vocabulário fechado bloqueia valor fora da
-        # lista, então `idem` precisa estar nela para poder ser escrito — e
-        # ficando na lista, é escolhido em vez de digitado.
         # A ABA DE INTERLOCUTORES NÃO LISTA `vocabularios`: ela lista os PARES
         # (pessoa, instituição), que é a relação que o front tem. O nome definido
         # segue cobrindo a coluna A — é a lista inteira, e é a rede da suspensa
         # dependente quando o órgão da linha não é reconhecido.
         esperados = [] if chave == "interlocutores" else valores
-        assert lidos == [*esperados, MARCADOR_DE_REPETICAO], chave
+        # A LISTA É SÓ O VOCABULÁRIO, e mais nada. O marcador `idem` ocupava a
+        # última linha de TODAS as abas de vocabulário, onde nunca foi um valor
+        # daquele vocabulário — quem abria a suspensa de Clima via uma instrução de
+        # preenchimento entre os climas. A instrução virou coluna.
+        assert lidos == esperados, chave
 
 
 def test_o_vocabulario_vazio_nao_quebra_o_arquivo():
@@ -368,10 +367,10 @@ def test_a_suspensa_de_interlocutor_DEPENDE_da_instituicao_da_linha():
     porque o órgão novo, digitado, é caminho normal, e uma suspensa vazia ali
     pareceria defeito."""
     from app.casos_de_uso.modelo_de_importacao import _letra_de_coluna
-    from app.dominio.importacao_de_agendas import ABA_PRINCIPAL, aba_de
+    from app.dominio.importacao_de_agendas import ABA_PRINCIPAL, colunas_do_modelo
 
     agendas = _com_pares()[ABA_PRINCIPAL]
-    letra_da_instituicao = _letra_de_coluna(aba_de(ABA_PRINCIPAL), "Instituição")
+    letra_da_instituicao = _letra_de_coluna(colunas_do_modelo("completo"), "Instituição")
     dependentes = [
         dv
         for dv in agendas.data_validations.dataValidation
@@ -387,3 +386,99 @@ def test_a_suspensa_de_interlocutor_DEPENDE_da_instituicao_da_linha():
     # E não trava, pelo mesmo motivo de sempre: digitar nome novo é como se
     # cadastra alguém.
     assert dependentes[0].showErrorMessage is False
+
+
+# =============================================================================
+# os dois modelos, e a coluna que substituiu o `idem`
+# =============================================================================
+
+
+def _cabecalho_de(conteudo: bytes) -> list[str]:
+    from app.dominio.importacao_de_agendas import ABA_PRINCIPAL
+
+    folha = _abrir(conteudo)[ABA_PRINCIPAL]
+    return [celula.value for celula in next(folha.iter_rows())]
+
+
+def test_o_gerador_faz_o_COMPLETO_por_padrao():
+    """Quem não escolhe recebe o formato inteiro: perder colunas por omissão seria
+    perder dado sem ninguém ter decidido isso."""
+    from app.dominio.importacao_de_agendas import MODELOS
+
+    assert _cabecalho_de(gerar(VOCABULARIOS)) == list(MODELOS["completo"])
+
+
+def test_o_gerador_faz_o_SIMPLIFICADO_quando_pedido():
+    """O modelo do evento: 22 colunas, na ordem do formulário."""
+    from app.dominio.importacao_de_agendas import MODELOS
+
+    conteudo = gerar(VOCABULARIOS, modelo="simplificado")
+
+    assert _cabecalho_de(conteudo) == list(MODELOS["simplificado"])
+
+
+def test_os_dois_modelos_tem_a_coluna_de_repetir_na_frente():
+    from app.dominio.importacao_de_agendas import COLUNA_DE_REPETICAO
+
+    for modelo in ("completo", "simplificado"):
+        assert _cabecalho_de(gerar(VOCABULARIOS, modelo=modelo))[0] == COLUNA_DE_REPETICAO
+
+
+def test_a_coluna_de_repetir_tem_suspensa_de_UM_valor():
+    """Uma suspensa de um valor só é mais rápida de preencher do que um sim/não, e
+    não deixa dúvida sobre o que significa a célula vazia."""
+    from app.dominio.importacao_de_agendas import ABA_PRINCIPAL, VALOR_DA_REPETICAO
+
+    agendas = _abrir(gerar(VOCABULARIOS))[ABA_PRINCIPAL]
+    daquela_coluna = [
+        dv
+        for dv in agendas.data_validations.dataValidation
+        if any(str(faixa).startswith("A2:") for faixa in dv.sqref.ranges)
+    ]
+
+    assert len(daquela_coluna) == 1
+    assert daquela_coluna[0].formula1 == f'"{VALOR_DA_REPETICAO}"'
+    # NÃO TRAVA: a coluna é conveniência, e travar o que a pessoa digita nela
+    # transformaria um engano de digitação em arquivo recusado.
+    assert daquela_coluna[0].showErrorMessage is False
+
+
+def test_NENHUMA_aba_de_vocabulario_oferece_idem():
+    """O marcador saiu junto com a própria ideia dele. Deixá-lo nas listas seria
+    oferecer uma instrução que o servidor já não obedece."""
+    planilha = _abrir(gerar(VOCABULARIOS))
+
+    for aba in planilha.worksheets:
+        valores = [
+            str(celula.value).lower()
+            for linha in aba.iter_rows()
+            for celula in linha
+            if celula.value is not None
+        ]
+        assert "idem" not in valores, aba.title
+
+
+def test_no_simplificado_a_suspensa_de_data_segue_na_coluna_certa():
+    """AS VALIDAÇÕES SEGUEM A COLUNA PELO NOME, e não pela letra: no simplificado a
+    Data é a quinta coluna e no completo também, mas a Instituição muda de lugar
+    entre eles — e a suspensa dependente do interlocutor cita a coluna dela.
+
+    Se alguma validação usasse posição fixa, o simplificado validaria a coluna
+    errada em silêncio, que é o pior defeito possível numa planilha."""
+    from openpyxl.utils import get_column_letter
+
+    from app.casos_de_uso.modelo_de_importacao import COLUNA_DA_DATA
+    from app.dominio.importacao_de_agendas import ABA_PRINCIPAL, colunas_do_modelo
+
+    for modelo in ("completo", "simplificado"):
+        colunas = [coluna.nome for coluna in colunas_do_modelo(modelo)]
+        letra = get_column_letter(colunas.index(COLUNA_DA_DATA) + 1)
+        agendas = _abrir(gerar(VOCABULARIOS, modelo=modelo))[ABA_PRINCIPAL]
+        datas = [
+            dv for dv in agendas.data_validations.dataValidation if dv.type == "date"
+        ]
+        assert len(datas) == 1, modelo
+        assert any(str(faixa).startswith(f"{letra}2:") for faixa in datas[0].sqref.ranges), (
+            modelo,
+            [str(f) for f in datas[0].sqref.ranges],
+        )

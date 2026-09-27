@@ -30,12 +30,16 @@ from app.dominio.texto import normalizar
 class Coluna:
     """Uma coluna de uma aba de preenchimento.
 
-    `campo` é o nome do campo em `InteracaoEntrada` que esta coluna alimenta —
-    vazio quando a coluna não vira campo da interação (é o caso de `Código`,
-    que só liga as abas entre si, e das colunas das abas filhas, que viram
-    participante/pessoa/material, não campo da agenda). A Tarefa 2 usa este
-    campo para provar que todo campo de `InteracaoEntrada` tem destino
-    declarado.
+    `campo` é o nome do campo em `InteracaoEntrada` que esta coluna alimenta.
+    `None` quando a coluna não vira campo da interação — hoje só
+    `COLUNA_DE_REPETICAO`, que é instrução de preenchimento e é consumida pelo
+    leitor. As colunas dos grupos numerados TÊM campo (`outra_parte`,
+    `participacoes`, `materiais`): elas alimentam listas, não valores únicos.
+
+    `None` E NÃO STRING VAZIA: "esta coluna não tem campo" é ausência, e um `""`
+    entre nomes de campo é um nome de campo que por acaso não tem letras. Todos os
+    guardas já perguntam por veracidade (`if coluna.campo`), então a diferença é de
+    honestidade do tipo, não de comportamento.
 
     `vocabulario` é a chave em `VOCABULARIOS_EDITAVEIS` ou
     `VOCABULARIOS_FECHADOS` contra a qual o valor da célula é validado —
@@ -43,7 +47,7 @@ class Coluna:
     """
 
     nome: str
-    campo: str
+    campo: str | None = None
     vocabulario: str | None = None
     obrigatoria: bool = False
 
@@ -108,7 +112,21 @@ VOCABULARIOS_QUE_A_IMPORTACAO_CRIA: frozenset[str] = frozenset(
 #:
 #: Um dia de 54 reuniões repete a mesma instituição, a mesma UF e a mesma data em
 #: dezenas de linhas, e digitar tudo de novo é trabalho e é erro. Daí o marcador.
-MARCADOR_DE_REPETICAO = "idem"
+#: A coluna que diz "esta linha repete a de cima".
+#:
+#: ELA SUBSTITUIU O MARCADOR `idem`, que era escolhido DENTRO de qualquer lista
+#: suspensa. Funcionava e era indescobrível: ninguém abre a suspensa de Clima
+#: esperando encontrar ali uma instrução sobre a linha inteira. E o `idem` ocupava
+#: um lugar nas listas de vocabulário onde nunca foi um valor daquele vocabulário.
+#:
+#: O QUE A PESSOA ESCREVEU NA PRÓPRIA LINHA VENCE A HERANÇA: é o caso do evento —
+#: marca `sim`, troca só a instituição.
+COLUNA_DE_REPETICAO = "Repetir a linha de cima"
+
+#: O único valor que a coluna de repetição aceita. Uma suspensa de um valor só é
+#: mais rápida de preencher do que um `sim`/`não`, e não deixa dúvida sobre o que
+#: significa a célula vazia.
+VALOR_DA_REPETICAO = "sim"
 
 #: As chaves de `importacao_linha.dados_brutos` que NÃO são colunas da planilha.
 #:
@@ -276,7 +294,14 @@ _AGENDAS = Aba(
         # `Código` é inventado por quem preenche (A1, A2…) e repetido nas abas
         # filhas — é o único conceito novo que a planilha introduz, e por isso
         # vem primeiro: quem preenche precisa vê-lo antes de tudo.
-        Coluna(nome="Código", campo=""),
+            # A PRIMEIRA COLUNA É A DECISÃO QUE VEM ANTES DAS OUTRAS: "esta linha é
+            # igual à de cima?". Era o lugar do `Código`, que existia para ligar a
+            # aba de agendas às três abas filhas — elas morreram na mudança para
+            # aba única, e ele ficou sendo uma coluna preenchida para nada.
+            #
+            # SEM CAMPO de propósito: ela não vira dado da agenda, é instrução de
+            # preenchimento. O leitor a consome e ela não chega à interação.
+            Coluna(nome=COLUNA_DE_REPETICAO),
         # -- 1. Tipo de interação ------------------------------------------
         Coluna(
             nome="Tipo de interação", campo="formato_interacao_id", vocabulario="formatos_interacao"
@@ -404,6 +429,68 @@ _AGENDAS = Aba(
 #: O QUE SE PERDEU: o teto. Participante além do teto não cabe na planilha, e
 #: entra editando a agenda pela tela.
 FORMATO: tuple[Aba, ...] = (_AGENDAS,)
+
+#: As colunas do modelo SIMPLIFICADO, na ordem em que saem no arquivo.
+#:
+#: POR QUE ELE EXISTE: 54 agendas do mesmo dia são um evento, com muitas conversas
+#: curtas. As 59 colunas do completo viram rolagem horizontal para preencher quatro
+#: coisas por linha, e a rolagem é onde o preenchimento erra de coluna.
+#:
+#: O QUE FICA DE FORA e não faz falta: `Presença` e `Papel` — `papel` nasce
+#: `porta_voz` por padrão e `presenca` é anulável ("não informado") —, os campos do
+#: aceite e do declínio, os de expectativa, as Pendências, o terceiro e o quarto
+#: interlocutor, e os materiais.
+_SIMPLIFICADO: tuple[str, ...] = (
+    COLUNA_DE_REPETICAO,
+    "Tipo de interação",
+    "Área 1",
+    "Área 2",
+    "Data",
+    "Instituição",
+    "UF",
+    "Unidade de negócio",
+    "Tema 1",
+    "Tema 2",
+    "Tema 3",
+    "Modalidade",
+    "Local",
+    "Relato",
+    "Repercussão e encaminhamentos",
+    "Observações",
+    "Clima",
+    "Desfecho",
+    "Interlocutor 1",
+    "Interlocutor 2",
+    "Pessoa da Aegea 1",
+    "Pessoa da Aegea 2",
+)
+
+#: Os recortes da descrição que o download oferece: nome → colunas, na ordem.
+#:
+#: UMA DESCRIÇÃO, DOIS RECORTES. O simplificado é um subconjunto ORDENADO nomeado
+#: por colunas, nunca uma segunda descrição do formato: duas descrições
+#: divergiriam na primeira coluna nova, e o leitor passaria a aceitar de um modelo
+#: o que recusa do outro.
+MODELOS: dict[str, tuple[str, ...]] = {
+    "completo": tuple(coluna.nome for coluna in _AGENDAS.colunas),
+    "simplificado": _SIMPLIFICADO,
+}
+
+
+def colunas_do_modelo(nome: str) -> tuple[Coluna, ...]:
+    """As colunas de um modelo, como objetos, na ordem DO MODELO.
+
+    A ordem é a do modelo e não a da descrição: é ela que vira o cabeçalho do
+    arquivo, e é por ela que quem preenche encontra a coluna seguinte.
+    """
+    if nome not in MODELOS:
+        raise RegraViolada(
+            f"Não existe o modelo {nome!r}. Os que existem: "
+            f"{', '.join(sorted(MODELOS))}."
+        )
+    por_nome = {coluna.nome: coluna for coluna in _AGENDAS.colunas}
+    return tuple(por_nome[coluna] for coluna in MODELOS[nome])
+
 
 #: A aba que a pessoa preenche. Os vocabulários têm abas próprias, geradas a
 #: partir do banco; esta é a única que recebe dado.

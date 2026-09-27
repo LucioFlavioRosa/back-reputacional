@@ -20,7 +20,12 @@ import pytest
 
 from app.casos_de_uso.ler_planilha_de_agendas import ler
 from app.dominio.erros import RegraViolada
-from app.dominio.importacao_de_agendas import FORMATO, aba_de
+from app.dominio.importacao_de_agendas import (
+    COLUNA_DE_REPETICAO,
+    FORMATO,
+    VALOR_DA_REPETICAO,
+    aba_de,
+)
 
 
 def _cabecalho(aba: str) -> list[str]:
@@ -71,8 +76,13 @@ def _completa(agendas: list[Mapping[str, object]] = ()) -> bytes:
 
 #: A agenda mais simples que o leitor aceita: as três colunas que identificam
 #: uma reunião. O resto é assunto da Tarefa 5 (o que falta vira divergência).
-def _agenda(codigo: str = "A1", quando: object = date(2026, 9, 25), onde: str = "Valor Econômico"):
-    return {"Código": codigo, "Data": quando, "Instituição": onde}
+def _agenda(quando=date(2026, 9, 25), onde: str = "Valor Econômico"):
+    return {"Data": quando, "Instituição": onde}
+
+
+def _repete(**valores):
+    """Uma linha que repete a de cima, com o que ela sobrescreve."""
+    return {COLUNA_DE_REPETICAO: VALOR_DA_REPETICAO, **valores}
 
 
 # =============================================================================
@@ -90,7 +100,7 @@ def test_guarda_de_que_linha_do_arquivo_a_agenda_veio():
     """`linha_origem` é o que deixa a pessoa voltar à planilha e conferir, e o
     que a `importacao_linha` grava. A primeira agenda está na linha 2, porque a
     1 é o cabeçalho — off-by-one aqui manda a pessoa olhar a linha errada."""
-    lido = ler(_completa(agendas=[_agenda("A1"), _agenda("A2")]))
+    lido = ler(_completa(agendas=[_agenda(), _agenda()]))
 
     assert [linha.numero for linha in lido["Agendas"]] == [2, 3]
 
@@ -225,14 +235,6 @@ def test_coluna_faltando_recusa_e_diz_qual():
         ler(_livro(abas))
 
 
-def test_codigo_repetido_recusa_o_arquivo():
-    """Dois códigos iguais tornam impossível saber a qual agenda o participante
-    pertence — e adivinhar seria pior que recusar."""
-    with pytest.raises(RegraViolada, match="A1"):
-        ler(_completa(agendas=[_agenda("A1"), _agenda("A1", date(2026, 9, 26), "Outro")]))
-
-
-
 
 def test_arquivo_que_nao_e_xlsx_recusa_com_mensagem_util():
     with pytest.raises(RegraViolada, match="xlsx"):
@@ -266,95 +268,41 @@ def test_exatamente_no_teto_passa():
     assert len(lido["Agendas"]) == 500
 
 
-# =============================================================================
-# o Código é opcional quando a agenda não tem filhas
-# =============================================================================
 
 
-def test_agenda_sem_codigo_e_sem_filhas_e_aceita():
-    """O CÓDIGO NÃO É IDENTIDADE DA AGENDA, é só o vínculo com as abas filhas.
-
-    Quem tem 54 reuniões para registrar não deve preencher uma coluna que não
-    serve para nada nas linhas que não têm participante nem material. A linha já
-    se identifica por `linha_origem`, que o servidor grava sozinho.
-    """
-    lido = ler(_completa(agendas=[_agenda(codigo=None)]))
-
-    assert len(lido["Agendas"]) == 1
-
-
-def test_a_agenda_sem_codigo_ganha_um_do_servidor():
-    """Ela precisa de UM código internamente, para o agrupamento das filhas
-    funcionar sem um caso especial em cada passo — mas é o servidor que o põe."""
-    lido = ler(_completa(agendas=[_agenda(codigo=None)]))
-
-    assert lido["Agendas"][0].celulas["Código"]
-
-
-def test_o_codigo_gerado_cita_a_linha_de_onde_veio():
-    """Para a pessoa reconhecer de qual linha ele fala, se ele aparecer numa
-    mensagem de erro."""
-    lido = ler(_completa(agendas=[_agenda(codigo=None)]))
-
-    assert "2" in str(lido["Agendas"][0].celulas["Código"])
-
-
-def test_duas_agendas_sem_codigo_nao_colidem():
-    """Sem isto, o servidor geraria o mesmo código duas vezes e a própria recusa
-    de código repetido derrubaria um arquivo perfeitamente válido."""
-    lido = ler(_completa(agendas=[_agenda(codigo=None), _agenda(codigo=None)]))
-
-    codigos = {linha.celulas["Código"] for linha in lido["Agendas"]}
-    assert len(codigos) == 2
-
-
-
-
-
-def test_um_codigo_escrito_que_imita_o_gerado_e_recusado():
-    """Se alguém escrever exatamente o que o servidor geraria, o código deixaria
-    de ser único e a filha ligaria na agenda errada. Recusar é a saída honesta:
-    só quem escreveu sabe o que quis dizer."""
-    from app.casos_de_uso.ler_planilha_de_agendas import codigo_da_linha
-
-    with pytest.raises(RegraViolada, match="reservado"):
-        ler(_completa(agendas=[_agenda(codigo=codigo_da_linha(3)), _agenda(codigo=None)]))
 
 
 # =============================================================================
-# `idem`: repetir o valor da linha de cima, dizendo que repete
+# `Repetir a linha de cima`: a coluna que substituiu o marcador `idem`
 # =============================================================================
 
 
-def test_idem_repete_o_valor_da_linha_de_cima():
+def test_repetir_traz_o_valor_da_linha_de_cima():
     """UM DIA DE 54 REUNIÕES tem a mesma instituição, a mesma UF e a mesma data em
     dezenas de linhas, e digitar tudo de novo é trabalho e é erro.
 
-    O MARCADOR É EXPLÍCITO, e não "vazio herda": vazio continua significando
-    vazio. Sem isso, deixar um campo em branco de propósito passaria a copiar o de
-    cima, e um esquecimento viraria dado errado em silêncio — o oposto do que esta
+    A COLUNA É EXPLÍCITA, e não "vazio herda": vazio continua significando vazio.
+    Sem isso, deixar um campo em branco de propósito passaria a copiar o de cima, e
+    um esquecimento viraria dado errado em silêncio — o oposto do que esta
     funcionalidade inteira defende.
+
+    ANTES ERA O MARCADOR `idem`, escolhido dentro de qualquer lista suspensa.
+    Funcionava e era indescobrível: ninguém abre a suspensa de Clima esperando
+    encontrar ali uma instrução sobre a linha inteira.
     """
-    lido = ler(
-        _completa(
-            agendas=[
-                _agenda("A1", onde="Valor Econômico"),
-                _agenda("A2", onde="idem"),
-            ]
-        )
-    )
+    lido = ler(_completa(agendas=[_agenda(onde="Valor Econômico"), _repete()]))
 
     assert lido["Agendas"][1].celulas["Instituição"] == "Valor Econômico"
 
 
-def test_idem_nao_se_confunde_com_vazio():
-    """O contrapeso, e o motivo de o marcador existir: a célula em branco continua
-    em branco, mesmo com valor na linha de cima."""
+def test_sem_marcar_a_celula_vazia_continua_vazia():
+    """O contrapeso, e o motivo de a coluna existir: a célula em branco continua em
+    branco, mesmo com valor na linha de cima."""
     lido = ler(
         _completa(
             agendas=[
-                _agenda("A1", onde="Valor Econômico"),
-                {"Código": "A2", "Data": date(2026, 9, 26), "UF": "SP"},
+                _agenda(onde="Valor Econômico"),
+                {"Data": date(2026, 9, 26), "UF": "SP"},
             ]
         )
     )
@@ -362,30 +310,33 @@ def test_idem_nao_se_confunde_com_vazio():
     assert lido["Agendas"][1].celulas["Instituição"] is None
 
 
-def test_idem_vale_para_qualquer_coluna():
+def test_repetir_vale_para_TODAS_as_colunas_de_uma_vez():
+    """É AQUI QUE ESTÁ A ECONOMIA. Marcar coluna por coluna trocaria digitar 22
+    valores por digitar 22 marcas, e não pouparia nada — era a crítica do dono do
+    produto ao desenho anterior."""
     lido = ler(
-        _completa(
-            agendas=[
-                {**_agenda("A1"), "UF": "RJ", "Local": "Sede"},
-                {**_agenda("A2"), "UF": "idem", "Local": "idem"},
-            ]
-        )
+        _completa(agendas=[{**_agenda(), "UF": "RJ", "Local": "Sede"}, _repete()])
     )
 
     assert lido["Agendas"][1].celulas["UF"] == "RJ"
     assert lido["Agendas"][1].celulas["Local"] == "Sede"
 
 
-def test_idem_em_cadeia_repete_o_ULTIMO_valor_de_verdade():
-    """Três linhas com `idem` seguem repetindo o valor original, e não o marcador."""
+def test_o_que_a_linha_ESCREVE_vence_a_heranca():
+    """O caso do evento: marca, e troca só o órgão. Sem isto a coluna só serviria
+    para clonar a linha de cima, que não é o que ninguém precisa."""
+    lido = ler(_completa(agendas=[_agenda(onde="ABDIB"), _repete(**{"Instituição": "ABIQUIM"})]))
+
+    assert lido["Agendas"][1].celulas["Instituição"] == "ABIQUIM"
+    assert lido["Agendas"][1].celulas["Data"] == date(2026, 9, 25)
+    assert "Instituição" not in lido["Agendas"][1].herdado
+
+
+def test_repetir_em_cadeia_propaga_o_valor_original():
+    """Cinco reuniões no mesmo evento: cada linha herda da de cima, e o valor que
+    chega à quinta é o que a primeira tinha."""
     lido = ler(
-        _completa(
-            agendas=[
-                _agenda("A1", onde="Valor Econômico"),
-                _agenda("A2", onde="idem"),
-                _agenda("A3", onde="idem"),
-            ]
-        )
+        _completa(agendas=[_agenda(onde="Valor Econômico"), _repete(), _repete()])
     )
 
     assert [linha.celulas["Instituição"] for linha in lido["Agendas"]] == [
@@ -395,38 +346,47 @@ def test_idem_em_cadeia_repete_o_ULTIMO_valor_de_verdade():
     ]
 
 
-def test_idem_ignora_caixa_e_acento():
-    """A pessoa digita "Idem", "IDEM" ou escolhe da lista suspensa."""
+def test_a_marca_ignora_caixa_e_acento():
+    """A pessoa escolhe da suspensa, mas também digita "Sim" ou "SIM"."""
     lido = ler(
         _completa(
-            agendas=[_agenda("A1", onde="Valor Econômico"), _agenda("A2", onde="IDEM")]
+            agendas=[
+                _agenda(onde="Valor Econômico"),
+                {COLUNA_DE_REPETICAO: "SIM"},
+            ]
         )
     )
 
     assert lido["Agendas"][1].celulas["Instituição"] == "Valor Econômico"
 
 
-def test_idem_repete_a_DATA_como_data_e_nao_como_texto():
-    """A conversão de data roda DEPOIS da herança, senão a linha herdaria o texto
-    "idem" e a data viraria divergência numa linha que a pessoa preencheu certo."""
+def test_repetir_traz_a_DATA_como_data_e_nao_como_texto():
+    """A conversão de data roda DEPOIS da herança. Se rodasse antes, a linha
+    herdaria texto e a data viraria divergência numa linha preenchida certo."""
+    lido = ler(_completa(agendas=[_agenda(quando=date(2026, 9, 25)), _repete()]))
+
+    assert lido["Agendas"][1].celulas["Data"] == date(2026, 9, 25)
+    assert lido["Agendas"][1].herdado["Data"] == date(2026, 9, 25)
+
+
+def test_a_propria_coluna_de_repeticao_NAO_herda():
+    """Herdá-la faria uma linha marcada contaminar todas as de baixo, e a pessoa
+    perderia o controle de onde a cadeia começa: uma marca no meio do arquivo
+    transformaria o resto dele em cópias."""
     lido = ler(
         _completa(
             agendas=[
-                _agenda("A1", quando=date(2026, 9, 25)),
-                _agenda("A2", quando="idem"),
+                _agenda(onde="ABDIB"),
+                _repete(),
+                {"Data": date(2026, 9, 27), "Instituição": "ABIQUIM"},
             ]
         )
     )
 
-    assert lido["Agendas"][1].celulas["Data"] == date(2026, 9, 25)
+    terceira = lido["Agendas"][2].celulas
+    assert terceira["Instituição"] == "ABIQUIM"
+    assert lido["Agendas"][2].herdado == {}
 
-
-def test_idem_sem_nada_acima_recusa_e_diz_onde():
-    """`idem` é uma instrução ao leitor, e uma instrução que ele não pode cumprir é
-    problema de estrutura — como um cabeçalho que não bate. A mensagem cita a
-    linha e a coluna porque a correção é de uma célula."""
-    with pytest.raises(RegraViolada, match="[Ii]dem"):
-        ler(_completa(agendas=[_agenda("A1", onde="idem")]))
 
 
 def test_a_linha_em_branco_continua_sendo_ignorada():
@@ -436,7 +396,7 @@ def test_a_linha_em_branco_continua_sendo_ignorada():
         {
             "Agendas": [
                 _cabecalho("Agendas"),
-                _linha("Agendas", _agenda("A1")),
+                _linha("Agendas", _agenda()),
                 [None for _ in _cabecalho("Agendas")],
             ],
         }
@@ -448,124 +408,152 @@ def test_a_linha_em_branco_continua_sendo_ignorada():
 
 
 
-def test_o_marcador_esta_na_lista_suspensa_de_um_vocabulario_fechado():
-    """SEM ISSO O MARCADOR NÃO SERVE nas colunas que mais se repetem: a validação
-    de vocabulário fechado BLOQUEIA valor fora da lista, então `idem` digitado em
-    Clima seria recusado pelo próprio Excel antes de chegar ao servidor."""
-    import io as _io
-
-    from openpyxl import load_workbook
-
-    from app.casos_de_uso.modelo_de_importacao import gerar
-    from app.dominio.importacao_de_agendas import MARCADOR_DE_REPETICAO, ROTULO_DO_VOCABULARIO
-
-    vocabularios = {
-        chave: ["Um", "Outro"]
-        for chave in ROTULO_DO_VOCABULARIO
-    }
-    pasta = load_workbook(_io.BytesIO(gerar(vocabularios)))
-    folha = pasta[ROTULO_DO_VOCABULARIO["climas"]]
-    valores = [celula.value for (celula,) in folha.iter_rows(min_col=1, max_col=1)]
-
-    assert MARCADOR_DE_REPETICAO in valores
 
 
 # =============================================================================
-# um `idem` vale para a linha toda
+# o cabeçalho dos DOIS modelos, e a herança pela coluna
 # =============================================================================
 
 
-def test_um_idem_faz_a_linha_INTEIRA_herdar():
-    """O PONTO QUE FAZ O MARCADOR VALER A PENA.
+def _com_cabecalho(nomes, *linhas):
+    """Um arquivo com exatamente essas colunas, nessa ordem."""
+    return _livro({"Agendas": [list(nomes), *[list(linha) for linha in linhas]]})
 
-    Escrever `idem` em cada uma das 27 colunas não economiza nada — troca digitar
-    27 valores por digitar 27 marcadores. Um `idem` em qualquer célula declara
-    "esta linha repete a de cima", e o resto vem de graça.
-    """
-    lido = ler(
-        _completa(
-            agendas=[
-                {**_agenda("A1"), "UF": "RJ", "Local": "Sede", "Expectativa": "Destravar"},
-                {"Código": "A2", "Data": "idem"},
-            ]
+
+def test_o_cabecalho_do_SIMPLIFICADO_e_aceito():
+    """O modelo simplificado tem 22 das 59 colunas. Antes desta mudança o leitor
+    exigia TODAS as colunas da descrição, então o arquivo do próprio modelo
+    simplificado seria recusado inteiro."""
+    from datetime import date
+
+    from app.dominio.importacao_de_agendas import MODELOS
+
+    nomes = list(MODELOS["simplificado"])
+    valores = [None] * len(nomes)
+    valores[nomes.index("Data")] = date(2026, 9, 25)
+    valores[nomes.index("Instituição")] = "ABDIB"
+
+    (linha,) = ler(_com_cabecalho(nomes, valores))["Agendas"]
+
+    assert linha.celulas["Instituição"] == "ABDIB"
+    # A coluna que o modelo não tem simplesmente não existe na linha — e quem a
+    # consulta usa `.get`, então ela vale como vazia.
+    assert "Pendências" not in linha.celulas
+
+
+def test_faltar_coluna_OBRIGATORIA_recusa_e_diz_qual():
+    """A tolerância tem limite: sem a Data não há agenda, e descobrir isso linha por
+    linha daria 500 pendências idênticas sobre um arquivo que está errado no
+    cabeçalho."""
+    with pytest.raises(RegraViolada, match="Data"):
+        ler(_com_cabecalho(["Instituição", "UF"], ["ABDIB", "SP"]))
+
+
+def test_faltar_coluna_OPCIONAL_e_aceito():
+    """É o que faz os dois modelos coexistirem — e também acolhe o arquivo de quem
+    apagou as colunas que não ia usar, que é o que se faz numa planilha."""
+    from datetime import date
+
+    (linha,) = ler(
+        _com_cabecalho(["Data", "Instituição"], [date(2026, 9, 25), "ABDIB"])
+    )["Agendas"]
+
+    assert linha.celulas["Data"] == date(2026, 9, 25)
+
+
+def test_coluna_desconhecida_continua_sendo_ignorada():
+    """Alguém acrescenta uma coluna de rascunho para se organizar. Recusar por causa
+    dela seria proibir a pessoa de anotar na própria planilha."""
+    from datetime import date
+
+    (linha,) = ler(
+        _com_cabecalho(
+            ["Data", "Instituição", "meu rascunho"], [date(2026, 9, 25), "ABDIB", "ver depois"]
         )
-    )
+    )["Agendas"]
 
-    segunda = lido["Agendas"][1].celulas
-    assert segunda["Data"] == date(2026, 9, 25)
-    assert segunda["Instituição"] == "Valor Econômico"
-    assert segunda["UF"] == "RJ"
-    assert segunda["Local"] == "Sede"
-    assert segunda["Expectativa"] == "Destravar"
+    assert "meu rascunho" not in linha.celulas
 
 
-def test_o_que_a_pessoa_PREENCHEU_prevalece_sobre_a_heranca():
-    """É o caso de uso real: o dia é o mesmo, a instituição é outra. Ela escreve
-    `idem` uma vez e só o que muda."""
-    lido = ler(
-        _completa(
-            agendas=[
-                {**_agenda("A1"), "UF": "RJ"},
-                {"Código": "A2", "Data": "idem", "Instituição": "Outro Órgão"},
-            ]
+def test_a_coluna_de_REPETIR_herda_a_linha_de_cima_inteira():
+    """O CASO DO EVENTO: 54 agendas do mesmo dia, e a pessoa troca só o órgão.
+
+    Marca `sim` e a linha repete tudo o que a de cima tinha. O que ela escreveu na
+    PRÓPRIA linha vence a herança — senão a coluna serviria apenas para clonar."""
+    from datetime import date
+
+    from app.dominio.importacao_de_agendas import COLUNA_DE_REPETICAO, VALOR_DA_REPETICAO
+
+    nomes = [COLUNA_DE_REPETICAO, "Data", "Instituição", "Local"]
+    primeira, segunda = ler(
+        _com_cabecalho(
+            nomes,
+            [None, date(2026, 9, 25), "ABDIB", "Brasília"],
+            [VALOR_DA_REPETICAO, None, "ABIQUIM", None],
         )
-    )
+    )["Agendas"]
 
-    segunda = lido["Agendas"][1].celulas
-    assert segunda["Instituição"] == "Outro Órgão"
-    assert segunda["UF"] == "RJ"
+    assert primeira.celulas["Instituição"] == "ABDIB"
+    assert segunda.celulas["Data"] == date(2026, 9, 25)
+    assert segunda.celulas["Local"] == "Brasília"
+    # O que ela escreveu vence.
+    assert segunda.celulas["Instituição"] == "ABIQUIM"
+    # E a tela precisa saber o que foi herdado: a célula está vazia na planilha.
+    assert segunda.herdado["Local"] == "Brasília"
+    assert "Instituição" not in segunda.herdado
 
 
-def test_a_linha_SEM_idem_nao_herda_nada():
-    """A GARANTIA QUE NÃO SE PERDE: quem não pediu herança não recebe. Vazio
-    continua vazio, e um esquecimento continua virando pendência em vez de dado
-    inventado — a linha opta por herdar, uma linha de cada vez."""
-    lido = ler(
-        _completa(
-            agendas=[
-                {**_agenda("A1"), "UF": "RJ", "Local": "Sede"},
-                {"Código": "A2", "Data": date(2026, 9, 26), "Instituição": "Outro"},
-            ]
+def test_SEM_marcar_a_coluna_o_vazio_continua_vazio():
+    """A linha OPTA por herdar. "Vazio herda" tiraria a possibilidade de deixar um
+    campo vazio de propósito, e transformaria todo esquecimento em dado inventado."""
+    from datetime import date
+
+    from app.dominio.importacao_de_agendas import COLUNA_DE_REPETICAO
+
+    nomes = [COLUNA_DE_REPETICAO, "Data", "Instituição", "Local"]
+    _, segunda = ler(
+        _com_cabecalho(
+            nomes,
+            [None, date(2026, 9, 25), "ABDIB", "Brasília"],
+            [None, date(2026, 9, 26), "ABIQUIM", None],
         )
-    )
+    )["Agendas"]
 
-    segunda = lido["Agendas"][1].celulas
-    assert segunda["UF"] is None
-    assert segunda["Local"] is None
+    assert segunda.celulas["Local"] is None
+    assert segunda.herdado == {}
 
 
-def test_o_CODIGO_da_agenda_nunca_herda():
-    """Herdar o código faria duas agendas terem o mesmo, e o arquivo seria
-    recusado por código repetido — a herança derrubaria o arquivo que ela deveria
-    facilitar. Na aba Agendas o código IDENTIFICA a linha; nas filhas ele
-    REFERENCIA outra, e é por isso que lá ele herda."""
-    lido = ler(
-        _completa(
-            agendas=[
-                _agenda("A1"),
-                {"Data": "idem"},
-            ]
+def test_marcar_repetir_na_PRIMEIRA_linha_recusa_dizendo_o_que_fazer():
+    from app.dominio.importacao_de_agendas import COLUNA_DE_REPETICAO, VALOR_DA_REPETICAO
+
+    with pytest.raises(RegraViolada, match="linha 2"):
+        ler(
+            _com_cabecalho(
+                [COLUNA_DE_REPETICAO, "Data", "Instituição"],
+                [VALOR_DA_REPETICAO, None, None],
+            )
         )
-    )
-
-    codigos = [linha.celulas["Código"] for linha in lido["Agendas"]]
-    assert codigos[0] == "A1"
-    assert codigos[1] != "A1"
 
 
+def test_a_palavra_idem_numa_celula_DEIXOU_de_ser_instrucao():
+    """O `idem` saiu. Escrito numa célula, ele é só texto — e texto num campo de
+    vocabulário vira divergência, que é o correto: a pessoa escreveu algo que não
+    existe no cadastro.
 
-def test_a_heranca_de_linha_segue_valendo_em_cadeia():
-    """Cinco reuniões no mesmo dia: `idem` em cada linha, e todas herdam o
-    original — não o marcador."""
-    lido = ler(
-        _completa(
-            agendas=[
-                {**_agenda("A1"), "UF": "RJ"},
-                {"Código": "A2", "Data": "idem", "Instituição": "B"},
-                {"Código": "A3", "Data": "idem", "Instituição": "C"},
-            ]
+    SE CONTINUASSE FUNCIONANDO EM SILÊNCIO teríamos duas instruções para a mesma
+    coisa, e a planilha nova ensinando uma enquanto o servidor obedece a outra."""
+    from datetime import date
+
+    from app.dominio.importacao_de_agendas import COLUNA_DE_REPETICAO
+
+    nomes = [COLUNA_DE_REPETICAO, "Data", "Instituição", "Local"]
+    _, segunda = ler(
+        _com_cabecalho(
+            nomes,
+            [None, date(2026, 9, 25), "ABDIB", "Brasília"],
+            [None, date(2026, 9, 26), "idem", None],
         )
-    )
+    )["Agendas"]
 
-    assert [linha.celulas["UF"] for linha in lido["Agendas"]] == ["RJ", "RJ", "RJ"]
-    assert [linha.celulas["Data"] for linha in lido["Agendas"]] == [date(2026, 9, 25)] * 3
+    assert segunda.celulas["Instituição"] == "idem"
+    assert segunda.herdado == {}

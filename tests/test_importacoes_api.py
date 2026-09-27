@@ -18,6 +18,7 @@ from app.banco.sessao import obter_sessao
 from app.banco.tabelas_catalogo import Clima, FormatoInteracao
 from app.banco.tabelas_stakeholders import Instituicao, Interlocutor, PessoaAegea
 from app.casos_de_uso import importar_agendas, modelo_de_importacao
+from app.dominio.importacao_de_agendas import COLUNA_DE_REPETICAO, VALOR_DA_REPETICAO
 from app.dominio.texto import normalizar
 from main import app
 from tests.test_e2e_postgres import URL
@@ -120,7 +121,6 @@ def _planilha_de_um_dia(sessao, semente, quantas: int = 3) -> bytes:
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
     for i in range(quantas):
         valores = {
-            "Código": f"A{i}",
             # DATAS DIFERENTES de propósito: com a mesma instituição e a mesma
             # data, as linhas 2, 3 e 4 seriam duplicatas uma da outra, e todo
             # teste que usa este helper passaria a carregar um aviso que não tem
@@ -246,7 +246,10 @@ def test_o_modelo_vem_como_anexo_com_nome(cliente_admin):
     resposta = cliente_admin.get("/api/importacoes/modelo")
 
     assert "attachment" in resposta.headers["content-disposition"]
-    assert "modelo-de-agendas.xlsx" in resposta.headers["content-disposition"]
+    # O NOME DIZ O RECORTE: dois arquivos de mesmo nome na pasta de downloads viram
+    # "modelo (1).xlsx", e a pessoa abre o errado — descobrindo só ao procurar uma
+    # coluna que aquele recorte não tem.
+    assert "modelo-de-agendas-completo.xlsx" in resposta.headers["content-disposition"]
 
 
 # =============================================================================
@@ -386,9 +389,8 @@ def test_a_mesma_agenda_repetida_DENTRO_do_arquivo_tambem_avisa(cliente_admin, s
     pasta = load_workbook(io.BytesIO(modelo))
     folha = pasta["Agendas"]
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
-    for codigo in ("A1", "A2"):
+    for _ in range(2):
         valores = {
-            "Código": codigo,
             "Data": date(2026, 9, 25),
             "Instituição": semente["instituicao"].nome,
             "UF": "SP",
@@ -439,9 +441,8 @@ def test_a_mesma_instituicao_desconhecida_vira_UM_grupo_com_as_linhas(
     pasta = load_workbook(io.BytesIO(modelo))
     folha = pasta["Agendas"]
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
-    for i in range(4):
+    for _ in range(4):
         valores = {
-            "Código": f"A{i}",
             "Data": date(2026, 9, 25),
             "Instituição": "Prefeitura de Campinas",
             "UF": "SP",
@@ -490,7 +491,6 @@ def test_o_grupo_oferece_o_nome_parecido_que_JA_existe(cliente_admin, sessao, se
     folha = pasta["Agendas"]
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
     valores = {
-        "Código": "A1",
         "Data": date(2026, 9, 25),
         "Instituição": "Prefeitura de Campinas",
         "UF": "SP",
@@ -523,12 +523,8 @@ def test_o_que_trava_vem_ANTES_do_que_so_avisa(cliente_admin, sessao, semente):
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
     # A primeira resolve inteira e é duplicata (avisa); a segunda tem
     # instituição desconhecida (trava).
-    for codigo, instituicao in (
-        ("A1", semente["instituicao"].nome),
-        ("A2", "Prefeitura de Campinas"),
-    ):
+    for instituicao in (semente["instituicao"].nome, "Prefeitura de Campinas"):
         valores = {
-            "Código": codigo,
             "Data": date(2026, 9, 25),
             "Instituição": instituicao,
             "UF": "SP",
@@ -576,7 +572,6 @@ def test_pendencias_conta_LINHAS_e_nao_grupos(cliente_admin, sessao, semente):
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
     for i in range(4):
         valores = {
-            "Código": f"A{i}",
             "Data": date(2026, 9, 21 + i),
             "Instituição": "Prefeitura de Campinas",
             "UF": "SP",
@@ -605,7 +600,6 @@ def test_celula_de_HORA_nao_estoura_no_commit(cliente_admin, sessao, semente):
     folha = pasta["Agendas"]
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
     valores = {
-        "Código": "A1",
         "Data": date(2026, 9, 25),
         "Instituição": semente["instituicao"].nome,
         "UF": "SP",
@@ -645,7 +639,6 @@ def importacao_com_quatro(cliente_admin, sessao, semente):
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
     for i in range(4):
         valores = {
-            "Código": f"A{i}",
             "Data": date(2026, 9, 21 + i),
             "Instituição": "Prefeitura de Campinas",
             "UF": "SP",
@@ -836,9 +829,8 @@ def test_resolver_nao_mexe_em_linha_de_outro_valor(cliente_admin, sessao, sement
     pasta = load_workbook(io.BytesIO(modelo))
     folha = pasta["Agendas"]
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
-    for codigo, instituicao in (("A1", "Prefeitura de Campinas"), ("A2", "Prefeitura de Campos")):
+    for instituicao in ("Prefeitura de Campinas", "Prefeitura de Campos"):
         valores = {
-            "Código": codigo,
             "Data": date(2026, 9, 25),
             "Instituição": instituicao,
             "UF": "SP",
@@ -910,7 +902,6 @@ def com_cadastro_novo(cliente_admin, sessao, semente):
     folha = pasta["Agendas"]
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
     valores = {
-        "Código": "A1",
         "Data": date(2026, 9, 25),
         "Instituição": "Prefeitura de Campinas",
         "UF": "SP",
@@ -1029,7 +1020,6 @@ def test_confirmar_com_pendencia_que_trava_recusa(cliente_admin, sessao, semente
     folha = pasta["Agendas"]
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
     valores = {
-        "Código": "A1",
         "Data": date(2026, 9, 25),
         "Instituição": "Orgao Que Ninguem Cadastrou",
         "UF": "SP",
@@ -1220,7 +1210,6 @@ def test_o_declarado_na_aba_ja_aparece_como_a_criar(cliente_admin, sessao, semen
     folha = pasta["Agendas"]
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
     valores = {
-        "Código": "A1",
         "Data": date(2026, 9, 25),
         "Instituição": "Prefeitura de Campinas",
         "UF": "SP",
@@ -1255,7 +1244,6 @@ def test_apontar_para_um_vocabulario_DE_CODIGO_funciona(cliente_admin, sessao, s
     folha = pasta["Agendas"]
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
     valores = {
-        "Código": "A1",
         "Data": date(2026, 9, 25),
         "Instituição": semente["instituicao"].nome,
         "UF": "SP",
@@ -1297,7 +1285,6 @@ def test_criar_num_vocabulario_FECHADO_recusa(cliente_admin, sessao, semente):
     folha = pasta["Agendas"]
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
     valores = {
-        "Código": "A1",
         "Data": date(2026, 9, 25),
         "Instituição": semente["instituicao"].nome,
         "UF": "SP",
@@ -1348,7 +1335,6 @@ def test_alvo_nao_numerico_num_campo_de_id_inteiro_recusa(cliente_admin, sessao,
     folha = pasta["Agendas"]
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
     valores = {
-        "Código": "A1",
         "Data": date(2026, 9, 25),
         "Instituição": semente["instituicao"].nome,
         "UF": "SP",
@@ -1417,7 +1403,7 @@ def _com_declaracao(sessao, semente, nome: str, tipo: str | None = None):
     pasta = load_workbook(io.BytesIO(modelo))
     folha = pasta["Agendas"]
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
-    valores = {"Código": "A1", "Data": date(2026, 9, 25), "Instituição": nome, "UF": "SP"}
+    valores = {"Data": date(2026, 9, 25), "Instituição": nome, "UF": "SP"}
     folha.append([valores.get(coluna) for coluna in cabecalho])
     pasta[ROTULO_DO_VOCABULARIO["instituicoes"]].append([nome, tipo] if tipo else [nome])
     saida = io.BytesIO()
@@ -1523,7 +1509,6 @@ def test_cadastro_INATIVO_nao_resolve(cliente_admin, sessao, semente):
     folha = pasta["Agendas"]
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
     valores = {
-        "Código": "A1",
         "Data": date(2026, 9, 25),
         "Instituição": "Jornal Extinto",
         "UF": "SP",
@@ -1602,7 +1587,6 @@ def test_dicionario_administrado_nao_promete_criar_e_trava_na_hora(
     folha = pasta["Agendas"]
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
     valores = {
-        "Código": "A1",
         "Data": date(2026, 9, 25),
         "Instituição": semente["instituicao"].nome,
         "UF": "SP",
@@ -1681,7 +1665,6 @@ def test_o_grupo_diz_se_da_para_CRIAR(cliente_admin, sessao, semente):
     folha = pasta["Agendas"]
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
     valores = {
-        "Código": "A1",
         "Data": date(2026, 9, 25),
         "Instituição": "Orgao Novo",
         "UF": "SP",
@@ -1714,7 +1697,6 @@ def test_criar_num_campo_SEM_vocabulario_recusa(cliente_admin, sessao, semente):
     folha = pasta["Agendas"]
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
     valores = {
-        "Código": "A1",
         "Data": "25 de setembro",
         "Instituição": semente["instituicao"].nome,
         "UF": "SP",
@@ -1758,13 +1740,12 @@ def test_a_conferencia_mostra_o_que_foi_HERDADO(cliente_admin, sessao, semente):
     folha = pasta["Agendas"]
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
     primeira = {
-        "Código": "A1",
         "Data": date(2026, 9, 25),
         "Instituição": semente["instituicao"].nome,
         "UF": "SP",
         "Local": "Sede, sala 3",
     }
-    segunda = {"Código": "A2", "Data": "idem"}
+    segunda = {COLUNA_DE_REPETICAO: VALOR_DA_REPETICAO}
     for valores in (primeira, segunda):
         folha.append([valores.get(coluna) for coluna in cabecalho])
     saida = io.BytesIO()
@@ -1801,12 +1782,11 @@ def test_o_que_a_pessoa_digitou_nao_entra_no_herdado(cliente_admin, sessao, seme
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
     for valores in (
         {
-            "Código": "A1",
             "Data": date(2026, 9, 25),
             "Instituição": semente["instituicao"].nome,
             "UF": "SP",
         },
-        {"Código": "A2", "Data": "idem", "UF": "RJ"},
+        {COLUNA_DE_REPETICAO: VALOR_DA_REPETICAO, "UF": "RJ"},
     ):
         folha.append([valores.get(coluna) for coluna in cabecalho])
     saida = io.BytesIO()
@@ -1849,7 +1829,6 @@ def test_interlocutor_novo_declarado_VIRA_participante_na_confirmacao(
     folha.append(
         [
             {
-                "Código": "A1",
                 "Data": date(2026, 9, 25),
                 "Instituição": semente["instituicao"].nome,
                 "UF": "SP",
@@ -1929,7 +1908,6 @@ def test_a_instituicao_APONTADA_e_a_que_o_interlocutor_novo_recebe(
     folha.append(
         [
             {
-                "Código": "A1",
                 "Data": date(2026, 9, 25),
                 "Instituição": semente["instituicao"].nome,
                 "UF": "SP",
@@ -1999,7 +1977,6 @@ def _com_interlocutor(sessao, semente, instituicao_nome, pessoa, declarar=None):
     folha.append(
         [
             {
-                "Código": "A1",
                 "Data": date(2026, 9, 25),
                 "Instituição": instituicao_nome,
                 "UF": "SP",
@@ -2190,12 +2167,11 @@ def _sem_data(sessao, semente):
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
     for valores in (
         {
-            "Código": "A1",
             "Data": date(2026, 9, 25),
             "Instituição": semente["instituicao"].nome,
             "UF": "SP",
         },
-        {"Código": "A2", "Instituição": semente["instituicao"].nome, "UF": "SP"},
+        {"Instituição": semente["instituicao"].nome, "UF": "SP"},
     ):
         folha.append([valores.get(coluna) for coluna in cabecalho])
     saida = io.BytesIO()
@@ -2358,3 +2334,106 @@ def test_TODO_campo_da_divergencia_atravessa_a_gravacao():
     gravados = set(re.findall(r'"(\w+)":[^,\n]*divergencia\.', trecho))
 
     assert {campo.name for campo in fields(Divergencia)} == gravados
+
+
+# =============================================================================
+# escolher o modelo no download, e as colunas na saída
+# =============================================================================
+
+
+def test_o_download_entrega_o_COMPLETO_por_padrao(cliente_admin, sessao):
+    from openpyxl import load_workbook
+
+    from app.dominio.importacao_de_agendas import MODELOS
+
+    resposta = cliente_admin.get("/api/importacoes/modelo")
+
+    assert resposta.status_code == 200
+    folha = load_workbook(io.BytesIO(resposta.content))["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    assert cabecalho == list(MODELOS["completo"])
+
+
+def test_o_download_entrega_o_SIMPLIFICADO_quando_pedido(cliente_admin, sessao):
+    """O modelo do evento: 54 agendas no mesmo dia, 22 colunas em vez de 58."""
+    from openpyxl import load_workbook
+
+    from app.dominio.importacao_de_agendas import MODELOS
+
+    resposta = cliente_admin.get("/api/importacoes/modelo?modelo=simplificado")
+
+    assert resposta.status_code == 200
+    folha = load_workbook(io.BytesIO(resposta.content))["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    assert cabecalho == list(MODELOS["simplificado"])
+
+
+def test_o_nome_do_arquivo_baixado_diz_QUAL_modelo(cliente_admin, sessao):
+    """Duas planilhas na pasta de downloads com o mesmo nome viram
+    "modelo (1).xlsx", e a pessoa abre a errada."""
+    resposta = cliente_admin.get("/api/importacoes/modelo?modelo=simplificado")
+
+    assert "simplificado" in resposta.headers["content-disposition"]
+
+
+def test_modelo_invalido_no_download_recusa_dizendo_os_validos(cliente_admin, sessao):
+    resposta = cliente_admin.get("/api/importacoes/modelo?modelo=resumido")
+
+    assert resposta.status_code == 422
+    assert "simplificado" in resposta.json()["detalhe"]
+
+
+def test_a_conferencia_diz_as_COLUNAS_daquele_arquivo(cliente_admin, sessao, semente):
+    """A GRADE PRECISA DA ORDEM. `dados_brutos` é um objeto, e a tela não pode
+    depender da ordem de um objeto JSON para montar o cabeçalho de uma tabela.
+
+    E as colunas são as DAQUELE arquivo: quem subiu o simplificado não deve ver 58
+    colunas vazias na conferência."""
+    from app.dominio.importacao_de_agendas import MODELOS
+
+    conteudo = _planilha_de_um_dia(sessao, semente, quantas=1)
+    resposta = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", conteudo, TIPO_XLSX)}
+    )
+    assert resposta.status_code == 201, resposta.text
+    criada = resposta.json()
+
+    assert criada["colunas"] == list(MODELOS["completo"])
+
+
+def test_as_colunas_da_conferencia_seguem_o_arquivo_SIMPLIFICADO(
+    cliente_admin, sessao, semente
+):
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    from app.dominio.importacao_de_agendas import MODELOS
+
+    modelo = modelo_de_importacao.gerar(
+        importar_agendas.vocabularios(sessao),
+        importar_agendas.interlocutores_com_instituicao(sessao),
+        modelo="simplificado",
+    )
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    folha.append(
+        [
+            {
+                "Data": date(2026, 9, 25),
+                "Instituição": semente["instituicao"].nome,
+                "UF": "SP",
+            }.get(coluna)
+            for coluna in cabecalho
+        ]
+    )
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("s.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+
+    assert criada["colunas"] == list(MODELOS["simplificado"])
+    assert criada["pendencias"] == 0, criada["grupos"]

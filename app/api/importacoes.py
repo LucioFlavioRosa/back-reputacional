@@ -30,10 +30,12 @@ from app.banco import repositorio_importacao
 from app.banco.sessao import SessaoDoPedido
 from app.casos_de_uso import importar_agendas, modelo_de_importacao
 from app.dominio.importacao_de_agendas import (
+    ABA_PRINCIPAL,
     CHAVE_DO_CORRIGIDO,
     CHAVE_DO_HERDADO,
     CHAVES_RESERVADAS,
     Divergencia,
+    aba_de,
     agrupar,
 )
 from app.dominio.texto import normalizar
@@ -143,6 +145,9 @@ class ImportacaoSaida(BaseModel):
     criado_em: str
     #: Quando a pessoa confirmou. Nulo enquanto não confirmou.
     confirmado_em: str | None
+    #: As colunas daquele arquivo, NA ORDEM — o cabeçalho da grade de conferência.
+    #: Quem subiu o modelo simplificado vê as 22 dele, não as 58 do completo.
+    colunas: list[str] = []
     #: As divergências agrupadas por valor, ordenadas pelo que destrava mais.
     #: É a vista principal da conferência: uma decisão, doze linhas. SÓ AS NÃO
     #: RESOLVIDAS — uma decisão já tomada não é pendência, e deixá-la aqui fazia
@@ -273,6 +278,27 @@ def _grupos(sessao, linhas) -> list[GrupoSaida]:
     return sorted(saida, key=lambda grupo: (not grupo.trava, -len(grupo.linhas), grupo.valor))
 
 
+def _colunas_do_arquivo(linhas) -> list[str]:
+    """As colunas que AQUELE arquivo tinha, na ordem da descrição.
+
+    A GRADE DA CONFERÊNCIA PRECISA DA ORDEM, e `dados_brutos` é um objeto JSON —
+    depender da ordem de um objeto para montar o cabeçalho de uma tabela é
+    depender de um detalhe que nenhum contrato promete.
+
+    SÃO AS DAQUELE ARQUIVO e não as do formato inteiro: quem subiu o modelo
+    simplificado não deve conferir 58 colunas, das quais 36 ele nunca viu. A ordem
+    vem da descrição, que é a mesma nos dois recortes.
+    """
+    presentes: set[str] = set()
+    for linha in linhas:
+        presentes.update(
+            chave
+            for chave in (linha.dados_brutos or {})
+            if chave not in CHAVES_RESERVADAS
+        )
+    return [coluna.nome for coluna in aba_de(ABA_PRINCIPAL).colunas if coluna.nome in presentes]
+
+
 def _saida(sessao, importacao, linhas) -> ImportacaoSaida:
     grupos = _grupos(sessao, linhas)
     # As linhas, e não os grupos: uma linha presa por duas decisões diferentes
@@ -282,6 +308,7 @@ def _saida(sessao, importacao, linhas) -> ImportacaoSaida:
     }
     return ImportacaoSaida(
         id=str(importacao.id),
+        colunas=_colunas_do_arquivo(linhas),
         arquivo_nome=importacao.arquivo_nome,
         situacao=importacao.situacao,
         criado_em=importacao.criado_em.isoformat(),
@@ -314,8 +341,13 @@ def _saida(sessao, importacao, linhas) -> ImportacaoSaida:
     )
 
 
+def _nome_do_arquivo(modelo: str) -> str:
+    """O nome que o arquivo recebe na pasta de downloads, dizendo o recorte."""
+    return NOME_DO_MODELO.replace(".xlsx", f"-{modelo}.xlsx")
+
+
 @rotas.get("/modelo")
-def baixar_o_modelo(sessao: Sessao) -> Response:
+def baixar_o_modelo(sessao: Sessao, modelo: str = "completo") -> Response:
     """A planilha em branco, com o cadastro atual nas listas suspensas.
 
     É GERADA A CADA PEDIDO, e não guardada: um arquivo em cache teria a lista de
@@ -328,6 +360,7 @@ def baixar_o_modelo(sessao: Sessao) -> Response:
     conteudo = modelo_de_importacao.gerar(
         importar_agendas.vocabularios(sessao),
         importar_agendas.interlocutores_com_instituicao(sessao),
+        modelo=modelo,
     )
     return Response(
         content=conteudo,
@@ -336,7 +369,10 @@ def baixar_o_modelo(sessao: Sessao) -> Response:
             # `filename*=UTF-8''` com `quote()`, e não interpolação crua: o nome
             # é fixo hoje, mas a interpolação crua é o que quebra no dia em que
             # ele ganhar acento ou espaço.
-            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(NOME_DO_MODELO)}"
+            # O NOME DIZ QUAL MODELO É. Dois arquivos com o mesmo nome na pasta
+            # de downloads viram "modelo (1).xlsx", e a pessoa abre o errado —
+            # descobrindo só ao procurar uma coluna que aquele recorte não tem.
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(_nome_do_arquivo(modelo))}"
         },
     )
 
