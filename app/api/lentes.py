@@ -110,6 +110,11 @@ class BlocoSaida(BaseModel):
     #: clima (propositivo/neutro/tenso) e as outras medem sentimento — e a tela
     #: não pode descobrir isso adivinhando pelo título.
     legenda: list[str] = Field(default_factory=list)
+    #: A cor de cada faixa de `legenda`, na mesma ordem — só a lente
+    #: institucional manda isto hoje, com `clima.cor_hex` (a mesma cor do
+    #: Painel). Vazio quando ausente: a tela cai nos tons genéricos de
+    #: positivo/neutro/negativo do próprio design system.
+    cores: list[str] = Field(default_factory=list)
     #: Só nas tabelas.
     colunas: list[ColunaSaida] = Field(default_factory=list)
     ficha: FichaSaida
@@ -262,7 +267,19 @@ def _saida_da_ficha(ficha: Ficha) -> FichaSaida:
 
 
 SENTIMENTO = ["Positivo", "Neutro", "Negativo"]
-CLIMA = ["Propositivo", "Neutro", "Tenso"]
+
+#: A ORDEM pos/neu/neg dos códigos — e só a ordem. `codigo` nunca muda (ver
+#: `SENTIMENTO_DO_CLIMA`); NOME e COR vêm sempre do dicionário a cada leitura,
+#: por `_legenda_e_cores_do_clima`, para não repetir o defeito que fez este
+#: bloco continuar dizendo "Propositivo"/"Tenso" duas renomeações depois.
+CODIGOS_DO_CLIMA = ("propositivo", "neutro", "tenso")
+
+
+def _legenda_e_cores_do_clima(sessao) -> tuple[list[str], list[str]]:
+    """Nome e cor de cada faixa pos/neu/neg, direto do dicionário de clima."""
+    dicionario = repositorio_lentes.climas_por_codigo(sessao)
+    climas = [dicionario[codigo] for codigo in CODIGOS_DO_CLIMA]
+    return [c.nome for c in climas], [c.cor_hex for c in climas]
 
 
 def _bloco(
@@ -274,6 +291,7 @@ def _bloco(
     legenda: list[str] | None = None,
     subtipo: str | None = None,
     colunas: list[ColunaSaida] | None = None,
+    cores: list[str] | None = None,
 ) -> BlocoSaida:
     return BlocoSaida(
         tipo=tipo,
@@ -282,6 +300,7 @@ def _bloco(
         conclusao=conclusao,
         dados=dados,
         legenda=legenda or [],
+        cores=cores or [],
         colunas=colunas or [],
         ficha=_saida_da_ficha(ficha),
     )
@@ -410,6 +429,7 @@ def _evolucao(sessao, lente, meses, calibracao: Calibracao, conclusao: str | Non
         )
 
     interna = lente.codigo == "institucional"
+    legenda, cores = _legenda_e_cores_do_clima(sessao) if interna else (SENTIMENTO, [])
     return _bloco(
         "barras_empilhadas",
         "Evolução mensal" if not interna else "Clima das agendas, mês a mês",
@@ -421,7 +441,8 @@ def _evolucao(sessao, lente, meses, calibracao: Calibracao, conclusao: str | Non
             conceitos=(CONCEITO_NS,),
         ),
         conclusao,
-        CLIMA if interna else SENTIMENTO,
+        legenda,
+        cores=cores,
     )
 
 
@@ -615,9 +636,11 @@ def _paineis(sessao, lente, mes: date, meses, calibracao: Calibracao) -> list[Bl
     if interna:
         temas = repositorio_lentes.temas_do_crm(sessao, meses)
         unidades = repositorio_lentes.orgaos_do_crm(sessao, meses)
+        legenda_do_clima, cores_do_clima = _legenda_e_cores_do_clima(sessao)
     else:
         temas = repositorio_lentes.temas_por_sentimento(sessao, lente.id, mes, calibracao)
         unidades = repositorio_lentes.unidades_da_lente(sessao, lente.id, meses, calibracao)
+        legenda_do_clima, cores_do_clima = SENTIMENTO, []
     return [
         _bloco(
             "barras_100",
@@ -637,7 +660,8 @@ def _paineis(sessao, lente, mes: date, meses, calibracao: Calibracao) -> list[Bl
                 ),
             ),
             titulo_a,
-            CLIMA if interna else SENTIMENTO,
+            legenda_do_clima,
+            cores=cores_do_clima,
         ),
         _bloco(
             "barras_horizontais",
