@@ -82,6 +82,26 @@ entrypoint = "main:app"
 pythonpath = ["."]
 testpaths = ["tests"]
 
+# Os avisos que NÃO são nossos, calados UM POR UM pela mensagem.
+#
+# POR QUE CALAR: os dois nascem dentro de `starlette.testclient`, no momento em que ele é
+# importado. Nenhuma linha de código nosso os provoca e nenhuma os evita — o primeiro é o
+# Starlette avisando que prefere `httpx2` ao `httpx`, e o segundo é um alias do `anyio`
+# que o próprio Starlette usa na assinatura de um tipo interno.
+#
+# UM POR UM, E PELA MENSAGEM, e é isso que separa isto de esconder problema: um
+# `ignore::DeprecationWarning` calaria também o aviso que a nossa próxima atualização de
+# biblioteca fosse gerar, e esse é justamente o que precisa aparecer. Cada linha aqui
+# morre quando a dependência resolver a dela.
+#
+# A SAÍDA DE VERDADE do primeiro é trocar `httpx` por `httpx2` nos testes, o que
+# significa recompilar `requirements-dev.txt` com hashes e mudar o cliente HTTP que o
+# `TestClient` usa. É decisão de dependência, não de teste.
+filterwarnings = [
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+    "ignore:The anyio.abc.BlockingPortal alias is deprecated",
+]
+
 [tool.ruff]
 line-length = 100
 src = ["."]
