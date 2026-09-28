@@ -939,13 +939,19 @@ def test_o_intervalo_sobrevive_a_uma_linha_em_BRANCO_no_meio():
     A CORREÇÃO É PERGUNTAR PELA ÚLTIMA LINHA, e não pela quantidade: `MATCH` procurando
     um valor maior que qualquer texto devolve a posição da última célula de texto, e o
     mesmo com um número maior que qualquer número cobre os vocabulários numéricos (a
-    Relevância é `1`, `2`, `3`). Buraco no meio deixa de importar."""
+    Relevância é `1`, `2`, `3`). Buraco no meio deixa de importar.
+
+    `COUNTA` FICA COMO PISO DENTRO DO `MAX`, e não como o fim do intervalo — a revisão
+    lembrou que o modo aproximado do `MATCH` é documentado para intervalo ordenado, e
+    esta aba é editada à mão. Os dois juntos num `MAX` não pioram nada: nenhum dos
+    braços pode passar da última linha preenchida, e o pior caso de um é o
+    comportamento do outro."""
     pasta = _abrir(gerar(VOCABULARIOS))
 
     definido = pasta.defined_names["instituicoes"].attr_text
 
-    assert "COUNTA" not in definido, definido
     assert "MATCH(" in definido, definido
+    assert "MAX(COUNTA(" in definido, definido
 
 
 def test_o_intervalo_acha_a_ultima_linha_tambem_num_vocabulario_de_NUMEROS():

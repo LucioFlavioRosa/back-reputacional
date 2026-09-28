@@ -144,9 +144,24 @@ def _ultima_linha_preenchida(coluna: str, primeira: int) -> str:
     braço que não acha nada vira zero em vez de derrubar a expressão inteira —, e
     `MAX(..., primeira)` é o caso da base nova, sem valor nenhum: o intervalo tem de
     existir mesmo apontando para célula vazia, senão o Excel recusa o arquivo ao ABRIR.
+
+    `COUNTA` CONTINUA NO `MAX`, COMO PISO, e isto responde a uma ressalva da revisão:
+    `MATCH` sem o terceiro argumento usa o modo aproximado, que a documentação da
+    Microsoft e do LibreOffice descreve para intervalo ORDENADO. O truque funciona em
+    coluna desordenada porque o valor procurado é maior que qualquer texto (ou qualquer
+    número) e a busca nunca tem para onde descer — mas é garantia de implementação, não
+    de documentação, e o arquivo abre no Excel de outra pessoa.
+    
+    ENTÃO NÃO SE APOSTA NUM SÓ. `MAX` de todos os braços nunca fica abaixo do melhor
+    deles, e nenhum deles pode passar da última linha preenchida — `COUNTA` conta
+    células com conteúdo e `MATCH` devolve a posição de uma célula que existe. O pior
+    caso de cada braço é o comportamento do outro: com um buraco no meio, `MATCH`
+    cobre o que `COUNTA` perde; se `MATCH` falhar por qualquer motivo, a lista volta a
+    ser o que era antes desta correção, e não uma lista vazia.
     """
     return (
-        f'MAX(IFERROR(MATCH(REPT("z",255),{coluna}),0),'
+        f"MAX(COUNTA({coluna}),"
+        f'IFERROR(MATCH(REPT("z",255),{coluna}),0),'
         f"IFERROR(MATCH(9.99999999999999E+307,{coluna}),0),{primeira})"
     )
 

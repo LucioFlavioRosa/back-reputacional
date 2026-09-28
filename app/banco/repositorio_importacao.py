@@ -24,6 +24,11 @@ from sqlalchemy.orm import Session
 
 from app.banco.tabelas_importacao import Importacao, ImportacaoLinha
 from app.dominio.erros import NaoEncontrado
+from app.dominio.importacao_de_agendas import (
+    ABA_DAS_DECLARACOES,
+    CHAVE_DOS_CAMPOS_DECLARADOS,
+    CHAVE_DOS_NOMES_DECLARADOS,
+)
 
 
 def para_json(valor: Any) -> Any:
@@ -180,7 +185,78 @@ def linhas_de(sessao: Session, importacao_id: uuid.UUID) -> list[ImportacaoLinha
     return list(
         sessao.scalars(
             select(ImportacaoLinha)
-            .where(ImportacaoLinha.importacao_id == importacao_id)
+            .where(
+                ImportacaoLinha.importacao_id == importacao_id,
+                # A LINHA DAS DECLARAÇÕES FICA DE FORA, e o filtro é AQUI porque este é
+                # o único lugar por onde as linhas saem do banco: oito chamadores as
+                # pedem — a tela, o PATCH, a confirmação —, e nenhum deles quer uma
+                # linha que não é agenda. Filtrar em cada um seria oito chances de
+                # esquecer, e o esquecimento apareceria como linha vazia na conferência
+                # ou como uma agenda a mais na contagem. Quem quer as declarações chama
+                # `declaracoes_de`.
+                ImportacaoLinha.aba != ABA_DAS_DECLARACOES,
+            )
             .order_by(ImportacaoLinha.aba, ImportacaoLinha.linha_origem)
         ).all()
+    )
+
+
+def gravar_declaracoes(
+    sessao: Session,
+    *,
+    importacao_id: uuid.UUID,
+    nomes: Mapping[str, Any],
+    campos: Mapping[str, Any],
+) -> None:
+    """Guarda o que a pessoa declarou nas abas de cadastro, para depois do upload.
+
+    UMA LINHA RESERVADA e não uma coluna nova: a 0008 não tem coluna para isto, e
+    acrescentá-la seria migration para um dado que é rastro do arquivo — a mesma decisão
+    que a herança do `idem` já tomou ao viver dentro de `dados_brutos`.
+
+    OS CONJUNTOS VIRAM LISTAS porque `frozenset` não é JSON. `declaracoes_de` os devolve
+    como conjunto de novo, e é o único lugar que precisa saber disso.
+    """
+    sessao.add(
+        ImportacaoLinha(
+            importacao_id=importacao_id,
+            aba=ABA_DAS_DECLARACOES,
+            linha_origem=0,
+            dados_brutos=para_json(
+                {
+                    CHAVE_DOS_NOMES_DECLARADOS: {
+                        chave: sorted(valores) for chave, valores in nomes.items()
+                    },
+                    CHAVE_DOS_CAMPOS_DECLARADOS: campos,
+                }
+            ),
+            proposta=None,
+            divergencias=[],
+        )
+    )
+
+
+def declaracoes_de(
+    sessao: Session, importacao_id: uuid.UUID
+) -> tuple[dict[str, frozenset[str]], dict[str, dict[str, dict[str, Any]]]]:
+    """As declarações guardadas no upload: (nomes por vocabulário, campos por nome).
+
+    VAZIO PARA IMPORTAÇÃO ANTIGA, e não erro: as que foram criadas antes desta linha
+    existir continuam abertas para conferência, e quem chama já sabe se virar sem —
+    reconstruindo o que puder das divergências. Vazio é a resposta honesta.
+    """
+    linha = sessao.scalars(
+        select(ImportacaoLinha).where(
+            ImportacaoLinha.importacao_id == importacao_id,
+            ImportacaoLinha.aba == ABA_DAS_DECLARACOES,
+        )
+    ).first()
+    if linha is None:
+        return {}, {}
+    guardado = linha.dados_brutos or {}
+    nomes = guardado.get(CHAVE_DOS_NOMES_DECLARADOS) or {}
+    campos = guardado.get(CHAVE_DOS_CAMPOS_DECLARADOS) or {}
+    return (
+        {chave: frozenset(valores) for chave, valores in nomes.items()},
+        dict(campos),
     )

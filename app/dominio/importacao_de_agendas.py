@@ -982,6 +982,32 @@ def tipo_da_coluna(coluna: Coluna) -> str:
     return "texto"
 
 
+#: A "aba" sob a qual as DECLARAÇÕES do arquivo são guardadas como uma linha da
+#: importação. Não é uma aba de verdade: é uma chave reservada, do mesmo jeito que
+#: `CHAVE_DO_HERDADO` guarda a herança dentro de `dados_brutos`.
+#:
+#: POR QUE GUARDAR. O arquivo não é preservado, e as declarações — "quero cadastrar
+#: este órgão" — só existiam enquanto o upload estava rodando. Depois disso, quem
+#: precisava delas tentava reconstruí-las das divergências gravadas, e uma declaração
+#: que NENHUMA linha usou não deixa divergência nenhuma: ela desaparecia. A pessoa que
+#: declarasse um órgão e só depois o usasse, corrigindo uma célula na conferência,
+#: recebia "não existe no cadastro; escreva-o também na aba de cadastro" — tendo
+#: escrito.
+#:
+#: O NOME COMEÇA E TERMINA COM `__` para não colidir com nome de aba: o Excel não
+#: proíbe, mas o gerador nunca emite um assim, e `linhas_de` filtra por ele.
+ABA_DAS_DECLARACOES = "__declaracoes__"
+
+#: As duas metades da declaração, dentro de `dados_brutos` da linha reservada.
+#:
+#: SÃO DUAS PORQUE RESPONDEM A PERGUNTAS DIFERENTES: os NOMES são a metade da
+#: classificação que não vem do banco (ver `classificar`) e cobrem toda aba editável,
+#: inclusive as de uma coluna só; os CAMPOS são o que a criação precisa escrever, e só
+#: existem para as abas com mais de uma coluna.
+CHAVE_DOS_NOMES_DECLARADOS = "nomes"
+CHAVE_DOS_CAMPOS_DECLARADOS = "campos"
+
+
 def tipo_da_coluna_de_cadastro(coluna: ColunaDeCadastro) -> str:
     """O tipo de uma coluna de ABA DE CADASTRO, nos mesmos termos de `tipo_da_coluna`.
 

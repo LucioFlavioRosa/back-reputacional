@@ -578,9 +578,21 @@ def _conferir_o_declarado(
         # interlocutor dela na aba Interlocutores, no MESMO arquivo. O nome ainda não
         # está no banco — vai nascer na mesma transação —, e conferir só contra o banco
         # transformava o uso normal das duas abas em pendência.
+        #
+        # MAS SÓ PARA O QUE A IMPORTAÇÃO REALMENTE CRIA, e este era o achado da revisão
+        # seguinte: `areas_pessoa` tem aba e lista suspensa, mas é dicionário
+        # administrado na plataforma — a importação não cria área nenhuma. Aceitar a
+        # área "declarada" fazia a conferência dizer que estava tudo certo e a criação
+        # omitir o campo, porque ela só grava `area_id` do que achou no banco. A pessoa
+        # preenchia a área e o cadastro nascia sem ela, sem nada reclamar.
+        declarados_que_valem = (
+            declarados.get(coluna.vocabulario, frozenset())
+            if coluna.vocabulario in VOCABULARIOS_QUE_A_IMPORTACAO_CRIA
+            else frozenset()
+        )
         if (
             normalizar(texto) not in indice.get(coluna.vocabulario, {})
-            and normalizar(texto) not in declarados.get(coluna.vocabulario, frozenset())
+            and normalizar(texto) not in declarados_que_valem
         ):
             divergencias.append(
                 Divergencia(
@@ -1088,11 +1100,30 @@ def impedimentos(entrada: InteracaoEntrada, podem_representar: frozenset) -> lis
 
 def propor(sessao: Session, conteudo: bytes) -> list[Proposta]:
     """Uma proposta por linha da aba Agendas, a partir do arquivo."""
-    return propor_de_linhas(
-        sessao,
-        ler(conteudo),
-        ler_declarados(conteudo),
-        cadastros_declarados=ler_cadastros_declarados(conteudo),
+    propostas, _, _ = propor_com_as_declaracoes(sessao, conteudo)
+    return propostas
+
+
+def propor_com_as_declaracoes(
+    sessao: Session, conteudo: bytes
+) -> tuple[list[Proposta], dict[str, frozenset[str]], dict[str, dict[str, dict[str, object]]]]:
+    """As propostas E o que a pessoa declarou nas abas de cadastro.
+
+    QUEM SOBE PRECISA DAS DUAS COISAS: as propostas para gravar as linhas, e as
+    declarações para GUARDAR — o arquivo não é preservado, e sem isso uma declaração que
+    nenhuma linha usou desaparece no fim do upload (ver `ABA_DAS_DECLARACOES`).
+
+    DEVOLVE EM VEZ DE DEIXAR RELER. `propor` já abre o arquivo três vezes — a estrutura,
+    os nomes declarados, os campos declarados —, e pedir a quem chama que releia daria
+    uma quarta e uma quinta leitura do mesmo bytes para um dado que acabou de ser lido.
+    """
+    linhas = ler(conteudo)
+    nomes = ler_declarados(conteudo)
+    campos = ler_cadastros_declarados(conteudo)
+    return (
+        propor_de_linhas(sessao, linhas, nomes, cadastros_declarados=campos),
+        nomes,
+        campos,
     )
 
 
@@ -1977,6 +2008,43 @@ def corrigir_linha(
     _repropor_uma(sessao, importacao_id, alvo)
 
 
+def _declaracoes_da_importacao(
+    sessao: Session, importacao_id, linhas
+) -> tuple[dict[str, frozenset[str]], dict[str, dict[str, dict[str, object]]]]:
+    """O que a pessoa declarou no arquivo, para repropor uma linha depois do upload.
+
+    DUAS FONTES, E A ORDEM IMPORTA. A primeira é a linha reservada que o upload gravou
+    (`ABA_DAS_DECLARACOES`): ela tem a declaração INTEIRA, inclusive a que nenhuma linha
+    usou — foi o achado da revisão, e o caso era a pessoa declarar um órgão, não usá-lo
+    em nenhuma linha, e passar a usá-lo corrigindo uma célula na conferência.
+
+    A SEGUNDA É AS DIVERGÊNCIAS GRAVADAS, e ela existe para as importações ANTIGAS: as
+    que foram criadas antes de a linha reservada existir continuam abertas para
+    conferência, e para elas a reconstrução parcial é tudo o que há. Some quando não
+    houver mais nenhuma conferência antiga aberta.
+
+    UNIÃO E NÃO ESCOLHA: as duas descrevem o mesmo arquivo, e o que a linha reservada
+    tem a mais é justamente o que a reconstrução não alcança. Onde as duas têm o mesmo
+    nome, a gravada manda — ela é o que a pessoa escreveu, não o que foi inferido.
+    """
+    from app.banco import repositorio_importacao
+
+    nomes, campos = repositorio_importacao.declaracoes_de(sessao, importacao_id)
+    nomes_reconstruidos, campos_reconstruidos = _declaracoes_gravadas(linhas)
+
+    juntos_nomes = {
+        chave: nomes.get(chave, frozenset()) | nomes_reconstruidos.get(chave, frozenset())
+        for chave in set(nomes) | set(nomes_reconstruidos)
+    }
+    juntos_campos: dict[str, dict[str, dict[str, object]]] = {}
+    for chave in set(campos) | set(campos_reconstruidos):
+        juntos_campos[chave] = {
+            **dict(campos_reconstruidos.get(chave, {})),
+            **dict(campos.get(chave, {})),
+        }
+    return juntos_nomes, juntos_campos
+
+
 def _declaracoes_gravadas(
     linhas,
 ) -> tuple[dict[str, frozenset[str]], dict[str, dict[str, dict[str, object]]]]:
@@ -2036,7 +2104,7 @@ def _repropor_uma(sessao: Session, importacao_id, alvo) -> None:
     # declarado. Mas tem a divergência, que já carrega a declaração inteira — era só ler
     # de lá. O mesmo vale para os NOMES declarados, que `classificar` usa para separar
     # "quero cadastrar isto" de "errei a grafia".
-    declarados, cadastros = _declaracoes_gravadas(linhas)
+    declarados, cadastros = _declaracoes_da_importacao(sessao, importacao_id, linhas)
     (proposta,) = propor_de_linhas(
         sessao,
         _linhas_para_reler([alvo]),

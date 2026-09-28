@@ -3154,3 +3154,122 @@ def test_o_PORTA_VOZ_com_resposta_que_nao_e_sim_nem_nao_trava(cliente_admin, ses
         d["mensagem"] for linha in criada["linhas"] for d in linha["divergencias"]
     )
     assert "talvez" in mensagens
+
+
+def test_a_AREA_que_a_importacao_nao_cria_trava_em_vez_de_sumir(cliente_admin, sessao, semente):
+    """ACHADO DA REVISÃO, e é perda silenciosa: a pessoa declara a área na aba Áreas e
+    usa na linha da Pessoa da Aegea. A conferência aceitava — o nome estava declarado —,
+    mas a criação só grava `area_id` se achar a área no BANCO, e a importação não cria
+    área: `areas_pessoa` é dicionário administrado, editável na plataforma e fora de
+    `VOCABULARIOS_QUE_A_IMPORTACAO_CRIA`.
+
+    O RESULTADO ERA O PIOR: a pessoa preenchia a área, nada reclamava, e o cadastro
+    nascia sem ela — alguém descobre depois, na Administração, sem saber que foi
+    preenchida. Declarar só vale para o que a importação REALMENTE cria; o resto é
+    pendência, que ela resolve escolhendo uma área que existe."""
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    modelo = modelo_de_importacao.gerar(
+        importar_agendas.vocabularios(sessao),
+        importar_agendas.pares_de_vocabulario(sessao),
+    )
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    folha.append(
+        [
+            {
+                "Data": date(2026, 9, 30),
+                "Instituição": semente["instituicao"].nome,
+                "UF": "SP",
+                "Pessoa da Aegea 1": "Fulana Nova",
+            }.get(coluna)
+            for coluna in cabecalho
+        ]
+    )
+    _declarar(
+        pasta,
+        "pessoas_aegea",
+        **{"Pessoa da Aegea": "Fulana Nova", "Área": "Área Que Não Existe"},
+    )
+    # O CENÁRIO EXATO DA REVISÃO: ela também escreve a área na aba Áreas, achando que
+    # com isso a está cadastrando.
+    pasta["Áreas"].append(["Área Que Não Existe"])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+
+    assert criada["pendencias"] >= 1, criada["a_criar"]
+    mensagens = " ".join(
+        d["mensagem"] for linha in criada["linhas"] for d in linha["divergencias"]
+    )
+    assert "Área Que Não Existe" in mensagens, mensagens
+
+
+def test_a_declaracao_que_NENHUMA_linha_usou_sobrevive_a_edicao(cliente_admin, sessao, semente):
+    """ACHADO DA REVISÃO. A pessoa declara `Órgão Reservado` na aba Instituições e
+    nenhuma linha do arquivo o usa — ela ia usar, e esqueceu. Na conferência ela troca a
+    instituição de uma linha para ele.
+
+    O QUE ACONTECIA: a reproposição reconstrói as declarações das divergências gravadas,
+    e uma declaração que nenhuma linha usou não gerou divergência nenhuma — ela não
+    existe em lugar nenhum depois do upload, porque o arquivo não é guardado. A linha
+    virava pendência travada de um cadastro que ela declarou, e a única saída era subir
+    a planilha de novo.
+
+    A CORREÇÃO É GUARDAR A DECLARAÇÃO NO UPLOAD, e não tentar adivinhá-la depois."""
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    modelo = modelo_de_importacao.gerar(
+        importar_agendas.vocabularios(sessao),
+        importar_agendas.pares_de_vocabulario(sessao),
+    )
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    folha.append(
+        [
+            {
+                "Data": date(2026, 9, 30),
+                "Instituição": semente["instituicao"].nome,
+                "UF": "SP",
+            }.get(coluna)
+            for coluna in cabecalho
+        ]
+    )
+    _declarar(
+        pasta,
+        "instituicoes",
+        **{
+            "Instituição": "Órgão Reservado",
+            "Categoria de público": "Poder Executivo",
+            "Abrangência": "SP",
+        },
+    )
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+    assert criada["pendencias"] == 0, criada["grupos"]
+    (linha,) = [linha for linha in criada["linhas"] if linha["aba"] == "Agendas"]
+
+    depois = cliente_admin.patch(
+        f"/api/importacoes/{criada['id']}/linhas/{linha['id']}",
+        json={"celulas": {"Instituição": "Órgão Reservado"}},
+    ).json()
+
+    assert depois["pendencias"] == 0, [
+        d["mensagem"] for linha in depois["linhas"] for d in linha["divergencias"]
+    ]
+    assert depois["a_criar"], "a instituição declarada tinha de continuar prometida"
+    confirmacao = cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao")
+    assert confirmacao.status_code == 201, confirmacao.text

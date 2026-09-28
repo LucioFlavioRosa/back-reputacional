@@ -429,7 +429,9 @@ def subir(sessao: Sessao, usuario: UsuarioLogado, arquivo: Arquivo) -> Importaca
     # As recusas estruturais levantam `RegraViolada` ANTES de qualquer escrita —
     # `app/api/erros.py` a traduz para 422. Sem isso, um `.xls` renomeado daria
     # 500 e a pessoa leria "erro interno" para um arquivo que ela pode trocar.
-    propostas = importar_agendas.propor(sessao, conteudo)
+    propostas, nomes_declarados, campos_declarados = (
+        importar_agendas.propor_com_as_declaracoes(sessao, conteudo)
+    )
 
     importacao = repositorio_importacao.criar(
         sessao,
@@ -473,6 +475,17 @@ def subir(sessao: Sessao, usuario: UsuarioLogado, arquivo: Arquivo) -> Importaca
                 for divergencia in proposta.divergencias
             ],
         )
+    # AS DECLARAÇÕES VÃO PARA O BANCO JUNTO DAS LINHAS, porque o arquivo não é
+    # guardado: sem isto, uma instituição declarada na aba e não usada em nenhuma linha
+    # deixa de existir no instante em que o upload termina, e a pessoa que a usasse
+    # depois — corrigindo uma célula na conferência — lia "escreva-a também na aba de
+    # cadastro" tendo escrito.
+    repositorio_importacao.gravar_declaracoes(
+        sessao,
+        importacao_id=importacao.id,
+        nomes=nomes_declarados,
+        campos=campos_declarados,
+    )
     repositorio_importacao.marcar_aguardando_conferencia(sessao, importacao)
 
     return _saida(sessao, importacao, repositorio_importacao.linhas_de(sessao, importacao.id))
