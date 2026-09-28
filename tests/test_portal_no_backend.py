@@ -235,6 +235,7 @@ PREFIXOS_DO_CRM = (
     "/api/instituicoes",
     "/api/interlocutores",
     "/api/pessoas-aegea",
+    "/api/importacoes",
 )
 
 

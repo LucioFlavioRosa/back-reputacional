@@ -23,6 +23,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.dominio.erros import (
+    Conflito,
     ErroDeDominio,
     NaoAutorizado,
     NaoEncontrado,
@@ -39,6 +40,10 @@ logger = obter_logger("erros")
 _STATUS_POR_ERRO: list[tuple[type[ErroDeDominio], int]] = [
     (NaoEncontrado, 404),
     (NaoAutorizado, 403),
+    # ANTES de `RegraViolada` não precisa: `Conflito` desce de
+    # `ErroDeDominio` direto, justamente para a ordem desta lista não
+    # virar uma armadilha silenciosa.
+    (Conflito, 409),
     (RegraViolada, 422),
 ]
 
