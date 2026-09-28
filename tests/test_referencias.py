@@ -35,7 +35,21 @@ PDF = b"%PDF-1.7\nconteudo de teste\n%%EOF\n"
 def sessao():
     conexao = _engine.connect()
     transacao = conexao.begin()
-    sessao = Session(bind=conexao, expire_on_commit=False)
+    #: NUM SAVEPOINT, e é o que apaga o aviso `transaction already deassociated from
+    #: connection` que esta suíte era a única a emitir.
+    #:
+    #: A CAUSA: um teste daqui exercita uma recusa — título repetido, que volta 422 —, e
+    #: no caminho de erro a rota desfaz a sessão. Sem savepoint, esse `rollback` interno
+    #: desfaz a transação EXTERNA junto (a sessão participa dela sem fronteira própria),
+    #: e o `transacao.rollback()` do teardown chega numa transação que já não existe.
+    #:
+    #: O AVISO ERA O SINTOMA BARATO. O caro é o isolamento: uma transação externa
+    #: encerrada no meio do teste deixa de proteger o banco do teste seguinte, e é assim
+    #: que nasce a suíte que só passa na ordem certa. Com `create_savepoint`, o rollback
+    #: da rota volta ao savepoint e a transação externa continua sendo quem limpa tudo.
+    sessao = Session(
+        bind=conexao, expire_on_commit=False, join_transaction_mode="create_savepoint"
+    )
     try:
         yield sessao
     finally:
