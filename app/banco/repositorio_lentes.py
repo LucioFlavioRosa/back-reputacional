@@ -158,6 +158,18 @@ def _nao_classificadas(
     return {mes: int(total or 0) for mes, total in sessao.execute(consulta)}
 
 
+def climas_por_codigo(sessao: Session) -> dict[str, Clima]:
+    """O dicionário de clima inteiro, por código.
+
+    NOME E COR SEMPRE SAEM DAQUI, nunca de texto fixo no código: o rótulo já
+    mudou duas vezes (Proativo/Reativo na 0030, Positivo/Negativo na 0047) e a
+    cor é a mesma que pinta o Painel (`clima.cor_hex`) — ver `dicionarios.py`.
+    Repetir qualquer um dos dois como string solta é como `SENTIMENTO_DO_CLIMA`
+    já evita: o próximo rótulo trocado exigiria caçar mais um lugar.
+    """
+    return {c.codigo: c for c in sessao.scalars(select(Clima))}
+
+
 def _serie_do_crm(sessao: Session, meses: Sequence[date]) -> list[dict]:
     """A lente institucional: o clima das interações, mês a mês."""
     mes_da_interacao = func.date_trunc(

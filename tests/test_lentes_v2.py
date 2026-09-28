@@ -297,14 +297,22 @@ def test_a_tabela_manda_as_proprias_colunas_e_o_subtipo(sessao):
         assert tabela.colunas, tabela.titulo
 
 
-def test_a_legenda_da_institucional_fala_de_clima(sessao):
-    """A institucional mede clima, e as outras medem sentimento — e a tela não
-    pode descobrir isso adivinhando pelo título do bloco."""
+def test_a_legenda_e_a_cor_da_institucional_vem_do_dicionario_de_clima(sessao):
+    """O rótulo de clima já mudou duas vezes (Propositivo/Tenso na fundação,
+    Proativo/Reativo na 0030, Positivo/Negativo na 0047) sem o `codigo` nunca
+    mudar — e a lente institucional não pode repetir o rótulo velho num texto
+    fixo, tem de ler o dicionário a cada vez, a mesma fonte que pinta o Painel
+    (`clima.cor_hex`)."""
     institucional = _dossie(sessao, "institucional")
-    assert institucional.evolucao.legenda == ["Propositivo", "Neutro", "Tenso"]
+    assert institucional.evolucao.legenda == ["Positivo", "Neutro", "Negativo"]
+    assert institucional.evolucao.cores == ["#17E3CB", "#8C91A4", "#FF5C60"]
 
+    # A imprensa mede sentimento de mídia, não clima — mesma palavra hoje
+    # (as duas renomeações convergiram), mas de uma lista fixa, e sem cor
+    # própria: a tela cai nos tons genéricos de positivo/neutro/negativo.
     imprensa = _dossie(sessao, "imprensa")
     assert imprensa.evolucao.legenda == ["Positivo", "Neutro", "Negativo"]
+    assert imprensa.evolucao.cores == []
 
 
 def test_a_serie_separa_mes_sem_base_de_mes_sem_classificacao(sessao):
