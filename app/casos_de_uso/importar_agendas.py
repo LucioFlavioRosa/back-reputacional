@@ -29,6 +29,7 @@ from types import MappingProxyType
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.banco.gravar import gravar
 from app.banco.tabelas_catalogo import (
     AreaPessoa,
     CategoriaPublico,
@@ -1826,7 +1827,15 @@ def _criar_cadastros(
             # `MG`. Antes disto a instituição nascia com `NA` fixo, e alguém
             # precisava completar na Administração depois — e "depois" é quando
             # ninguém lembra.
-            sessao.add(
+            # PELO `gravar`, e não `sessao.add` pelado: sem ele, declarar um
+            # nome+tipo que já existe DESATIVADO sai como 500 — o índice
+            # único (nome_normalizado, tipo) da 0002 não é parcial em
+            # `ativo`, e `_indice`/`_so_ativos` só enxergam o que está ativo,
+            # então a divergência nunca aparece antes do `INSERT` bater na
+            # colisão. Mesmo defeito que `api/stakeholders.py` já evita nas
+            # mesmas três tabelas.
+            gravar(
+                sessao,
                 Instituicao(
                     nome=valor,
                     nome_normalizado=normalizar(valor),
@@ -1836,11 +1845,18 @@ def _criar_cadastros(
                         sessao, categoria, do_cadastro.get("subcategoria_publico_id")
                     ),
                     **_campos_do_cadastro("instituicoes", do_cadastro, indice),
-                )
+                ),
+                novo=True,
+                ao_colidir=(
+                    f"Já existe uma instituição chamada {valor!r} deste mesmo "
+                    "tipo — pode estar desativada. Reative-a pela Administração "
+                    "em vez de declarar de novo na planilha."
+                ),
             )
         elif vocabulario == "interlocutores":
             do_cadastro = dict(declarados.get(normalizar(valor)) or {})
-            sessao.add(
+            gravar(
+                sessao,
                 Interlocutor(
                     nome=valor,
                     nome_normalizado=normalizar(valor),
@@ -1849,23 +1865,45 @@ def _criar_cadastros(
                     # pessoa tomou na conferência quando o nome era ambíguo.
                     instituicao_id=de_quem.get(normalizar(valor)),
                     **_campos_do_cadastro("interlocutores", do_cadastro, indice),
-                )
+                ),
+                novo=True,
+                ao_colidir=(
+                    f"Já existe uma pessoa chamada {valor!r} nesta instituição — "
+                    "pode estar desativada. Reative-a pela Administração em vez de "
+                    "declarar de novo na planilha."
+                ),
             )
         elif vocabulario == "pessoas_aegea":
             do_cadastro = dict(declarados.get(normalizar(valor)) or {})
-            sessao.add(
+            gravar(
+                sessao,
                 PessoaAegea(
                     nome=valor,
                     nome_normalizado=normalizar(valor),
                     **_campos_do_cadastro("pessoas_aegea", do_cadastro, indice),
-                )
+                ),
+                novo=True,
+                ao_colidir=(
+                    f"Já existe uma pessoa da Aegea chamada {valor!r} — pode "
+                    "estar desativada. Reative-a pela Administração em vez de "
+                    "declarar de novo na planilha."
+                ),
             )
         elif vocabulario == "temas":
             from app.banco.tabelas_catalogo import Tema
 
             # `livre` e não `estrategico`: tema estratégico é vocabulário fechado
             # do modelo, e a planilha não o amplia.
-            sessao.add(Tema(nome=valor, nivel="livre"))
+            gravar(
+                sessao,
+                Tema(nome=valor, nivel="livre"),
+                novo=True,
+                ao_colidir=(
+                    f"Já existe um tema chamado {valor!r} — pode estar "
+                    "desativado. Reative-o pela Administração em vez de "
+                    "declarar de novo na planilha."
+                ),
+            )
         else:  # pragma: no cover - `classificar` já não deixa chegar aqui
             raise RegraViolada(
                 f"Não sei criar um cadastro em {vocabulario!r} pela importação. "
