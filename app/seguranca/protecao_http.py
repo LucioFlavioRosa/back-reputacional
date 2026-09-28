@@ -148,22 +148,29 @@ class CabecalhosDeSegurancaMiddleware:
 #: decidir isso. Cada expressao aqui descreve uma rota que existe, e uma rota
 #: nova precisa ser acrescentada de proposito.
 #:
-#: SAO QUATRO, e nao uma: o material da agenda, o cadastro de referencia — que
-#: nasce COM a primeira versao —, cada versao seguinte, e a planilha do
-#: fornecedor do Score. Todas recebem arquivo, e todas precisam de teto proprio.
-#: Faltando qualquer uma, o middleware recusa com 413 generico ANTES de a rota
-#: rodar, e a mensagem que diz o tamanho aceito nunca chega a quem subiu.
+#: SAO CINCO, e nao uma: o material da agenda, o cadastro de referencia — que
+#: nasce COM a primeira versao —, cada versao seguinte, a planilha do
+#: fornecedor do Score, e a planilha de importacao de agendas. Todas recebem
+#: arquivo, e todas precisam de teto proprio. Faltando qualquer uma, o
+#: middleware recusa com 413 generico ANTES de a rota rodar, e a mensagem que
+#: diz o tamanho aceito nunca chega a quem subiu.
 #:
 #: A PLANILHA DO SCORE entrou depois, e a falta dela era exatamente o erro que
 #: este comentario preve: o export da Clipei tem 1,4 MB, e pela tela o upload
 #: morria em 413 antes de qualquer validacao — enquanto a ingestao, chamada
 #: direto, funcionava. O teto dela e o de `ingerir_mencoes.TAMANHO_MAXIMO`.
+#:
+#: A PLANILHA DE IMPORTACAO DE AGENDAS repetiu o mesmo erro: 500 agendas
+#: preenchidas no modelo completo passam de 1 MiB (medido) — acima do teto
+#: generico de 1 MB. O teto dela e o de `blob.exigir_tamanho_aceito`, chamado
+#: em `app/api/importacoes.py::subir` logo apos ler o arquivo.
 _UUID = "[0-9a-fA-F-]{36}"
 _CAMINHOS_DE_UPLOAD = (
     re.compile(rf"^/api/interacoes/{_UUID}/materiais/arquivo$"),
     re.compile(r"^/api/referencias$"),
     re.compile(rf"^/api/referencias/{_UUID}/versoes$"),
     re.compile(r"^/api/score/fontes/[^/]+/planilha$"),
+    re.compile(r"^/api/importacoes$"),
 )
 
 

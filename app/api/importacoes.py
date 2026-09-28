@@ -26,6 +26,7 @@ from app.api.dependencias import (
     exigir_administracao_de_cadastros,
     exigir_portal_crm,
 )
+from app.armazenamento import blob
 from app.banco import repositorio_importacao
 from app.banco.sessao import SessaoDoPedido
 from app.casos_de_uso import importar_agendas, modelo_de_importacao
@@ -426,6 +427,12 @@ def subir(sessao: Sessao, usuario: UsuarioLogado, arquivo: Arquivo) -> Importaca
     não uma falha.
     """
     conteudo = arquivo.file.read()
+    # MESMO TETO DAS OUTRAS ROTAS DE UPLOAD (`blob.exigir_tamanho_aceito`) — e
+    # a mesma isenção do limite global de 1 MB em `protecao_http.py`, sem a
+    # qual esta chamada nunca seria alcançada: uma planilha de 500 agendas
+    # preenchidas passa de 1 MiB (medido), e o middleware devolveria 413 antes
+    # da rota rodar.
+    blob.exigir_tamanho_aceito(len(conteudo))
     # As recusas estruturais levantam `RegraViolada` ANTES de qualquer escrita —
     # `app/api/erros.py` a traduz para 422. Sem isso, um `.xls` renomeado daria
     # 500 e a pessoa leria "erro interno" para um arquivo que ela pode trocar.
