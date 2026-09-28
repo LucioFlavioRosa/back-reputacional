@@ -3273,3 +3273,63 @@ def test_a_declaracao_que_NENHUMA_linha_usou_sobrevive_a_edicao(cliente_admin, s
     assert depois["a_criar"], "a instituição declarada tinha de continuar prometida"
     confirmacao = cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao")
     assert confirmacao.status_code == 201, confirmacao.text
+
+
+def test_a_linha_SEM_DATA_NEM_UF_da_para_consertar_na_tela(cliente_admin, sessao, semente):
+    """O RELATO DO DONO DO PRODUTO: ele subiu uma agenda sem data e sem UF e não
+    conseguiu editar esses dois campos na conferência.
+
+    O DEFEITO ERA NA TELA — o sinal de atenção empurrava o campo para fora da célula nas
+    colunas estreitas —, mas o servidor é o que sustenta a correção, e é isto que este
+    teste trava: a coluna vazia CONTINUA VINDO na lista de colunas (senão a tela não tem
+    onde desenhar o campo), a célula vazia vem como nula em `dados_brutos` (e não
+    ausente), a divergência aponta a coluna pelo nome, e o PATCH aceita a data escrita
+    como a pessoa escreve — `30/09/2026`.
+
+    SEM A COLUNA NA LISTA não existe conserto possível na tela: a grade desenha uma
+    coluna por item de `colunas`, e o que não está lá não tem célula para clicar."""
+    from openpyxl import load_workbook
+
+    modelo = modelo_de_importacao.gerar(
+        importar_agendas.vocabularios(sessao),
+        importar_agendas.pares_de_vocabulario(sessao),
+    )
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    folha.append(
+        [{"Instituição": semente["instituicao"].nome}.get(coluna) for coluna in cabecalho]
+    )
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+
+    colunas = [coluna["nome"] for coluna in criada["colunas"]]
+    assert "Data" in colunas, colunas
+    assert "UF" in colunas, colunas
+    (linha,) = criada["linhas"]
+    # NULO E NÃO AUSENTE: a tela distingue "a planilha não tinha valor aqui" de "esta
+    # coluna não existe no arquivo", e é a segunda que a deixa sem onde editar.
+    assert linha["dados_brutos"]["Data"] is None
+    assert linha["dados_brutos"]["UF"] is None
+    por_coluna = {
+        divergencia["coluna"]: divergencia for divergencia in linha["divergencias"]
+    }
+    assert por_coluna["Data"]["trava"] is True
+    assert por_coluna["UF"]["trava"] is True
+
+    depois = cliente_admin.patch(
+        f"/api/importacoes/{criada['id']}/linhas/{linha['id']}",
+        # COMO A PESSOA ESCREVE, e não em ISO: é o formato que a coluna da planilha pede
+        # e o que o campo da tela oferece como exemplo.
+        json={"celulas": {"Data": "30/09/2026", "UF": "SP"}},
+    ).json()
+
+    assert depois["pendencias"] == 0, [
+        d["mensagem"] for linha in depois["linhas"] for d in linha["divergencias"]
+    ]
+    confirmacao = cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao")
+    assert confirmacao.status_code == 201, confirmacao.text
