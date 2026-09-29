@@ -268,6 +268,13 @@ def _saida_da_ficha(ficha: Ficha) -> FichaSaida:
 
 SENTIMENTO = ["Positivo", "Neutro", "Negativo"]
 
+#: MESMO VALOR DE `clima.cor_hex` (Turquesa Rio, Cinza 2, Vermelho Pitanga da
+#: paleta da Aegea) — sentimento de mídia e clima institucional são a mesma
+#: pergunta (positivo/neutro/negativo) por fontes diferentes, e não há por
+#: que a mesma resposta ter duas cores. Fixo, e não lido de dicionário: ao
+#: contrário de `clima`, não existe uma tabela `sentimento` para ler.
+CORES_DO_SENTIMENTO = ["#17E3CB", "#8C91A4", "#FF5C60"]
+
 #: A ORDEM pos/neu/neg dos códigos — e só a ordem. `codigo` nunca muda (ver
 #: `SENTIMENTO_DO_CLIMA`); NOME e COR vêm sempre do dicionário a cada leitura,
 #: por `_legenda_e_cores_do_clima`, para não repetir o defeito que fez este
@@ -429,7 +436,9 @@ def _evolucao(sessao, lente, meses, calibracao: Calibracao, conclusao: str | Non
         )
 
     interna = lente.codigo == "institucional"
-    legenda, cores = _legenda_e_cores_do_clima(sessao) if interna else (SENTIMENTO, [])
+    legenda, cores = (
+        _legenda_e_cores_do_clima(sessao) if interna else (SENTIMENTO, CORES_DO_SENTIMENTO)
+    )
     return _bloco(
         "barras_empilhadas",
         "Evolução mensal" if not interna else "Clima das agendas, mês a mês",
@@ -496,6 +505,7 @@ def _paineis(sessao, lente, mes: date, meses, calibracao: Calibracao) -> list[Bl
                 ),
                 titulo_a,
                 SENTIMENTO,
+                cores=CORES_DO_SENTIMENTO,
             ),
             _bloco(
                 "matriz_prioridade",
@@ -610,6 +620,7 @@ def _paineis(sessao, lente, mes: date, meses, calibracao: Calibracao) -> list[Bl
                 _ficha_da_base(_nomes_das_fontes(sessao, lente.id), ("Data", "Sentimento")),
                 titulo_a,
                 SENTIMENTO,
+                cores=CORES_DO_SENTIMENTO,
             ),
             _bloco(
                 "tabela",
@@ -640,7 +651,7 @@ def _paineis(sessao, lente, mes: date, meses, calibracao: Calibracao) -> list[Bl
     else:
         temas = repositorio_lentes.temas_por_sentimento(sessao, lente.id, mes, calibracao)
         unidades = repositorio_lentes.unidades_da_lente(sessao, lente.id, meses, calibracao)
-        legenda_do_clima, cores_do_clima = SENTIMENTO, []
+        legenda_do_clima, cores_do_clima = SENTIMENTO, CORES_DO_SENTIMENTO
     return [
         _bloco(
             "barras_100",

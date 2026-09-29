@@ -308,11 +308,13 @@ def test_a_legenda_e_a_cor_da_institucional_vem_do_dicionario_de_clima(sessao):
     assert institucional.evolucao.cores == ["#17E3CB", "#8C91A4", "#FF5C60"]
 
     # A imprensa mede sentimento de mídia, não clima — mesma palavra hoje
-    # (as duas renomeações convergiram), mas de uma lista fixa, e sem cor
-    # própria: a tela cai nos tons genéricos de positivo/neutro/negativo.
+    # (as duas renomeações convergiram) e a MESMA cor: positivo/neutro/
+    # negativo é a mesma pergunta por fonte diferente, e a resposta visual
+    # não muda por isso. Só que fixa (CORES_DO_SENTIMENTO), e não lida de um
+    # dicionário — não existe uma tabela "sentimento" como existe "clima".
     imprensa = _dossie(sessao, "imprensa")
     assert imprensa.evolucao.legenda == ["Positivo", "Neutro", "Negativo"]
-    assert imprensa.evolucao.cores == []
+    assert imprensa.evolucao.cores == ["#17E3CB", "#8C91A4", "#FF5C60"]
 
 
 def test_a_serie_separa_mes_sem_base_de_mes_sem_classificacao(sessao):
