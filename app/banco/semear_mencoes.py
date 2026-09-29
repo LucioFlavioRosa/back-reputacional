@@ -161,7 +161,11 @@ def principal() -> None:
         total += _gravar(sessao, "clipei_investidores", _imprensa_ou_mercado(8))
         total += _gravar(sessao, "approach_sl", _sociedade(15))
         total += _gravar(sessao, "bites", _sociedade(12))
-        total += _gravar(sessao, "approach_cm", _clientes(30))
+        # 500, e não os 30 das outras fontes: "respondidas" vem do relatório de
+        # verdade (semear_lentes.py, 383-607/mês) e "recebidas" precisa ficar
+        # na mesma ordem de grandeza, ou a taxa de resposta estoura para mais
+        # de 1000% — mock demais para até parecer erro de conta.
+        total += _gravar(sessao, "approach_cm", _clientes(500))
         sessao.commit()
         logger.info("Menções de mentira: %s linhas gravadas.", total)
         print(f"Menções de mentira: {total} linhas gravadas (Jan-Ago 2026, 4 lentes).")
