@@ -1280,6 +1280,40 @@ def test_cadastrar_pessoa_ligada_a_instituicao(cliente_admin, semente):
     assert any(p["id"] == resposta.json()["id"] for p in listagem)
 
 
+def test_area_do_interlocutor_e_a_dela_na_instituicao_nao_a_da_aegea(cliente_admin, semente):
+    """`area` é texto livre sobre ONDE A PESSOA DE FORA trabalha (ex.:
+    "Research" num banco) — não o dicionário `area_pessoa`, que é a área da
+    própria Aegea. Cadastra, edita, e confere que o valor sobrevive aos dois
+    caminhos sem se confundir com nenhum outro campo."""
+    instituicao = cliente_admin.post(
+        "/api/instituicoes", json={"nome": "Banco XP", "tipo": "investidor"}
+    ).json()
+
+    criada = cliente_admin.post(
+        "/api/interlocutores",
+        json={
+            "nome": "Maria Souza",
+            "instituicao_id": instituicao["id"],
+            "cargo": "Diretora de Regulação",
+            "area": "Research",
+        },
+    ).json()
+    assert criada["area"] == "Research"
+
+    editada = cliente_admin.put(
+        f"/api/interlocutores/{criada['id']}",
+        json={"nome": "Maria Souza", "instituicao_id": instituicao["id"], "area": "Compliance"},
+    ).json()
+    assert editada["area"] == "Compliance"
+
+
+def test_area_do_interlocutor_e_opcional(cliente_admin, semente):
+    pessoa = cliente_admin.post(
+        "/api/interlocutores", json={"nome": "Sem Área Nenhuma"}
+    ).json()
+    assert pessoa["area"] is None
+
+
 def test_mudar_a_pessoa_de_instituicao(cliente_admin, semente):
     """Alguem troca de emprego, e a agenda antiga nao pode perder o nome.
 
