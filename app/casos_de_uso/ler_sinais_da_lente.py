@@ -312,9 +312,9 @@ def _serie(sessao, lente, meses, calibracao, filtro=None) -> list[Ponto]:
 
 def _tiers(sessao, lente, mes, calibracao, filtro=None) -> list[Item]:
     nomes = {
-        "muito_relevante": "Muito Relevante",
-        "relevante": "Relevante",
-        "menos_relevante": "Menos Relevante",
+        "muito_relevante": "Tier 1",
+        "relevante": "Tier 2",
+        "menos_relevante": "Tier 3",
     }
     return [
         Item(

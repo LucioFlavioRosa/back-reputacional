@@ -744,9 +744,8 @@ def _formula(lente: str, calibracao: Calibracao) -> str:
     if lente in ("imprensa", "mercado"):
         pesos = REGUAS_DE_TIER[calibracao.regua_tier]
         return (
-            f"{base} Cada matéria vale {pesos['muito_relevante']:g} (Muito "
-            f"Relevante), {pesos['relevante']:g} (Relevante) ou "
-            f"{pesos['menos_relevante']:g} (Menos Relevante)."
+            f"{base} Cada matéria vale {pesos['muito_relevante']:g} (Tier 1), "
+            f"{pesos['relevante']:g} (Tier 2) ou {pesos['menos_relevante']:g} (Tier 3)."
         )
     if lente in ("sociedade", "clientes"):
         comoR = {

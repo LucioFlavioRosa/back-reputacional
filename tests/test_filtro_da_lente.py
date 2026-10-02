@@ -166,7 +166,7 @@ def test_painel_a_so_mostra_o_tier_filtrado(sessao, imprensa_de_junho):
 
     (painel_a,) = (p for p in dossie.paineis if p.tipo == "barras_100")
     rotulos = {linha["rotulo"] for linha in painel_a.dados}
-    assert rotulos == {"Relevante"}
+    assert rotulos == {"Tier 2"}
 
 
 def test_filtro_de_veiculo_nao_afeta_tier_nem_atributo(sessao, imprensa_de_junho):
@@ -177,7 +177,7 @@ def test_filtro_de_veiculo_nao_afeta_tier_nem_atributo(sessao, imprensa_de_junho
     (painel_a,) = (p for p in dossie.paineis if p.tipo == "barras_100")
     rotulos = {linha["rotulo"] for linha in painel_a.dados}
     # Veículo A tem matérias em DOIS tiers (muito_relevante e menos_relevante).
-    assert rotulos == {"Muito Relevante", "Menos Relevante"}
+    assert rotulos == {"Tier 1", "Tier 3"}
 
 
 def test_opcoes_de_filtro_lista_so_o_que_existe_no_mes(sessao, imprensa_de_junho):
@@ -223,7 +223,7 @@ def test_materias_recentes_respeita_o_mesmo_filtro_da_tela(sessao, imprensa_de_j
 
     linhas = dossie.materias_recentes.dados
     assert len(linhas) == 2
-    assert {linha["tier"] for linha in linhas} == {"Muito Relevante"}
+    assert {linha["tier"] for linha in linhas} == {"Tier 1"}
     assert {linha["veiculo"] for linha in linhas} == {"Veículo A"}
 
 
