@@ -26,6 +26,7 @@ from app.banco.sessao import SessaoDoPedido
 from app.banco.tabelas_catalogo import (
     AreaPessoa,
     CategoriaPublico,
+    MacroTema,
     Relevancia,
     SubcategoriaPublico,
     Tema,
@@ -708,6 +709,14 @@ class TemaEntrada(BaseModel):
     #: que aparece sem ter sido planejado. A distincao ja existia no dicionario.
     nivel: str = "gerais"
     ativo: bool = True
+    #: A hierarquia da taxonomia v1.3 (Peers/Comms), ainda em validacao por
+    #: area. Nulo em quem nao foi reconciliado com ela. Ver `migrations/0053`.
+    macro_tema_id: int | None = None
+    #: legitimidade | credibilidade | confianca | nao_se_aplica. Ver `migrations/0053`.
+    camada_lso: str | None = None
+    #: `references area_pessoa`. Nulo ate a validacao por area decidir o dono
+    #: unico onde a planilha de origem sugere mais de uma. Ver `migrations/0053`.
+    area_dona_id: int | None = None
 
 
 class TemaSaida(BaseModel):
@@ -715,6 +724,10 @@ class TemaSaida(BaseModel):
     nome: str
     nivel: str
     ativo: bool
+    tipo: str | None
+    macro_tema_id: int | None
+    camada_lso: str | None
+    area_dona_id: int | None
 
 
 #: OS TRÊS NÍVEIS, na ordem do mais restrito ao mais aberto.
@@ -725,6 +738,19 @@ class TemaSaida(BaseModel):
 #: `gerais` se chamava `livre` até a 0022. A migração trocou o código junto com
 #: o rótulo: rótulo novo sobre código velho vira duas escritas da mesma coisa.
 NIVEIS_DE_TEMA = ("sensivel", "estrategico", "gerais")
+
+#: Legitimidade / Credibilidade / Confiança / Não se aplica — a dimensão nova
+#: da taxonomia v1.3, distinta de `tipo` (0048). Ver `migrations/0053`.
+CAMADAS_DE_LSO = ("legitimidade", "credibilidade", "confianca", "nao_se_aplica")
+
+
+def _validar_hierarquia_de_tema(sessao, entrada: TemaEntrada) -> None:
+    if entrada.camada_lso is not None and entrada.camada_lso not in CAMADAS_DE_LSO:
+        raise RegraViolada(
+            f"Camada de LSO invalida: {entrada.camada_lso!r}. Use uma de {CAMADAS_DE_LSO}."
+        )
+    if entrada.macro_tema_id is not None and sessao.get(MacroTema, entrada.macro_tema_id) is None:
+        raise RegraViolada(f"Macro tema {entrada.macro_tema_id} nao encontrado.")
 
 
 @rotas.get("/temas", response_model=list[TemaSaida])
@@ -746,7 +772,15 @@ def criar_tema(
         raise RegraViolada(
             f"Nivel invalido: {entrada.nivel!r}. Use {' ou '.join(NIVEIS_DE_TEMA)}."
         )
-    registro = Tema(nome=entrada.nome.strip(), nivel=entrada.nivel, ativo=entrada.ativo)
+    _validar_hierarquia_de_tema(sessao, entrada)
+    registro = Tema(
+        nome=entrada.nome.strip(),
+        nivel=entrada.nivel,
+        ativo=entrada.ativo,
+        macro_tema_id=entrada.macro_tema_id,
+        camada_lso=entrada.camada_lso,
+        area_dona_id=entrada.area_dona_id,
+    )
     return gravar(
         sessao,
         registro,
@@ -769,9 +803,25 @@ def editar_tema(
         raise RegraViolada(
             f"Nivel invalido: {entrada.nivel!r}. Use {' ou '.join(NIVEIS_DE_TEMA)}."
         )
+    _validar_hierarquia_de_tema(sessao, entrada)
     registro.nome = entrada.nome.strip()
     registro.nivel = entrada.nivel
     registro.ativo = entrada.ativo
+    # OS TRÊS CAMPOS DA TAXONOMIA V1.3 SÓ MUDAM SE A CHAMADA OS MENCIONAR.
+    #
+    # A tela de "Aba Temas" de hoje não os conhece e manda só nome/nivel/ativo
+    # — se `editar_tema` os sobrescrevesse sempre com o default `None`, o
+    # primeiro reativar/renomear feito por essa tela apagaria calado a
+    # reconciliação com a hierarquia nova (ex.: "Inclusão sanitária", ligada
+    # em `migrations/0053`). `model_fields_set` distingue "não mandou o campo"
+    # de "mandou `null` de propósito", e só o segundo caso apaga.
+    campos_enviados = entrada.model_fields_set
+    if "macro_tema_id" in campos_enviados:
+        registro.macro_tema_id = entrada.macro_tema_id
+    if "camada_lso" in campos_enviados:
+        registro.camada_lso = entrada.camada_lso
+    if "area_dona_id" in campos_enviados:
+        registro.area_dona_id = entrada.area_dona_id
     return gravar(
         sessao,
         registro,

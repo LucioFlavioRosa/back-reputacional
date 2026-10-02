@@ -149,11 +149,49 @@ class Tema(Tabela):
     #: a dia). CADASTRO, e não derivação — nada no dado diz qual é qual. Nulo
     #: até alguém classificar. Ver `migrations/0048`.
     tipo: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: A hierarquia bloco > macro tema > tema da taxonomia v1.3 (Peers/Comms,
+    #: ainda em validação por área). Nulo em quem não foi reconciliado com a
+    #: taxonomia nova. Ver `migrations/0053`.
+    macro_tema_id: Mapped[int | None] = mapped_column(
+        SmallInteger, ForeignKey("macro_tema.id"), nullable=True
+    )
+    #: legitimidade | credibilidade | confianca | nao_se_aplica — dimensão da
+    #: taxonomia v1.3, distinta de `tipo`. Cadastro, não derivação. Ver `migrations/0053`.
+    camada_lso: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Nulo em toda a carga inicial da taxonomia v1.3: a planilha de origem
+    #: sugere mais de uma área em várias linhas, e a decisão de qual
+    #: prevalece ainda não foi tomada. Ver `migrations/0053`.
+    area_dona_id: Mapped[int | None] = mapped_column(
+        SmallInteger, ForeignKey("area_pessoa.id"), nullable=True
+    )
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
     #: Tag livre nasce datada — é o rastro de quando o vocabulário cresceu.
     criado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class BlocoTema(_Dicionario, Tabela):
+    """O nível mais alto da taxonomia de temas v1.3 (Peers/Comms) — 4 blocos.
+    Ainda em validação por área; não exposto em `GET /api/dicionarios`
+    enquanto a hierarquia não estiver pronta para uso. Ver `migrations/0053`."""
+
+    __tablename__ = "bloco_tema"
+
+
+class MacroTema(Tabela):
+    """O nível intermediário entre `BlocoTema` e `Tema` — 20 macro temas.
+    Mesmo raciocínio de `SubcategoriaPublico`: existe só para agrupar `Tema`
+    dentro de um `BlocoTema`. Ver `migrations/0053`."""
+
+    __tablename__ = "macro_tema"
+
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, autoincrement=True)
+    bloco_tema_id: Mapped[int] = mapped_column(SmallInteger, ForeignKey("bloco_tema.id"))
+    codigo: Mapped[str] = mapped_column(Text, unique=True)
+    nome: Mapped[str] = mapped_column(Text)
+    ordem: Mapped[int] = mapped_column(SmallInteger)
+    ativo: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
 class AreaPessoa(_Dicionario, Tabela):
@@ -221,6 +259,8 @@ DICIONARIOS: dict[str, type[Tabela]] = {
     "stakeholders": Stakeholder,
     "unidades_negocio": UnidadeNegocio,
     "temas": Tema,
+    "blocos_tema": BlocoTema,
+    "macro_temas": MacroTema,
     "areas_pessoa": AreaPessoa,
     "categorias_publico": CategoriaPublico,
     "subcategorias_publico": SubcategoriaPublico,
