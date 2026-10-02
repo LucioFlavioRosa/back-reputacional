@@ -58,8 +58,24 @@ TEMAS = [
 VEICULOS_IMPRENSA = ["Valor Econômico", "Folha de S.Paulo", "O Globo", "InfoMoney", "Estadão"]
 TIERS = ["muito_relevante", "relevante", "menos_relevante"]
 CONCESSIONARIAS = ["Aegea Norte", "Aegea Sul", "Aegea Centro-Oeste", "Prolagos", "Saneágua"]
+#: OS 7 PILARES REPUTACIONAIS (slide Peers/Comms, 29/09/2026) — "Transversal
+#: aos pilares" não entra: é regra de classificação ("conta no pilar que o
+#: prêmio reconhece"), não um pilar que uma matéria possa pertencer. ESTE
+#: AINDA É UM CHUTE: a Clipei nunca mandou pilar nenhum pra gente — os 4
+#: valores que estavam aqui antes (Governança, Qualidade do serviço,
+#: Responsabilidade ambiental, Solidez financeira) também eram inventados,
+#: só que sem ligação com taxonomia nenhuma. Trocar para os 7 é só para o
+#: ambiente de demonstração já nascer coerente com a estrutura nova — vale
+#: confirmar com quem administra a conta da Clipei se ela classifica por
+#: pilar de verdade, e qual o vocabulário real, antes disto significar algo.
 ATRIBUTOS = [
-    "Governança", "Qualidade do serviço", "Responsabilidade ambiental", "Solidez financeira",
+    "Governança",
+    "Eficiência Operacional e Qualidade",
+    "Crescimento e Solidez Financeira",
+    "Responsabilidade Social",
+    "Responsabilidade Ambiental",
+    "Inovação e Tecnologia",
+    "Prosperidade Compartilhada",
 ]
 TEORES_CLIENTES = ["Reclamação", "Dúvida", "Elogio", "Informação"]
 

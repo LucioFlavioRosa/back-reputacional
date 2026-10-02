@@ -243,6 +243,9 @@ Os assuntos, com nível de classificação.
 | `ativo` | `boolean` | Sim | `default true` |
 | `criado_em` | `timestamptz` | Sim | `default now()` |
 | `tipo` | `text` | Não | (acrescentada em 0048) `estruturante` (afeta a tese da companhia) ou `operacional` (afeta o dia a dia). Cadastro, e não derivação: o mesmo assunto pode ser um ou outro conforme a companhia — quem decide é quem administra o dicionário |
+| `macro_tema_id` | `smallint` | Não | (acrescentada em 0053) `references macro_tema(id)`; a hierarquia bloco > macro tema > tema da taxonomia v1.3 (Peers/Comms), ainda em validação por área. Nulo em quem não foi reconciliado com a taxonomia nova — hoje só "Inclusão sanitária", dos 17 temas de fundação, tem sucessor de nome idêntico |
+| `camada_lso` | `text` | Não | (acrescentada em 0053) `check (camada_lso in ('legitimidade','credibilidade','confianca','nao_se_aplica'))`; dimensão da taxonomia v1.3, distinta de `tipo` — as duas convivem porque `tipo` nunca foi escrito por código nenhum e não responde à mesma pergunta |
+| `area_dona_id` | `smallint` | Não | (acrescentada em 0053) `references area_pessoa(id)`; nula em toda a carga inicial da taxonomia v1.3 — a planilha de origem sugere mais de uma área em várias linhas, e ainda não existe decisão de qual prevalece |
 
 ---
 
@@ -1092,5 +1095,32 @@ O que explica a curva do mês — texto de gente, e não derivação.
 | `efeito` | `text` | Sim | `sustenta`, `pressiona` ou `misto` |
 | `criado_por` | `uuid` | Não | `references usuario(id)` |
 | `criado_em` | `timestamptz` | Sim | `default now()` |
+
+---
+
+## 0053 — Taxonomia de temas (blocos e macro temas)
+
+A hierarquia nova proposta pela Peers/Comms para `tema`: 4 blocos → 20 macro temas → 38 temas (planilha "Taxonomia de temas Aegea", v1.3). Ainda em validação por área — a coluna "Área concorda?" da planilha de origem está vazia em todas as linhas —, por isso os 38 temas desta carga entram com `tema.ativo = false` (não aparecem em `GET /api/dicionarios`) e `tema.area_dona_id` fica nulo em todos eles. Dos 17 temas de fundação (0001), só "Inclusão sanitária" tem nome idêntico na lista nova e foi reconciliado no lugar; os outros 16 não têm sucessor óbvio e permanecem sem `macro_tema_id` até uma decisão editorial.
+
+### `bloco_tema`
+
+| Coluna | Tipo | Obrigatória | Observações |
+|---|---|---|---|
+| `id` | `smallserial` | Sim | chave primária |
+| `codigo` | `text` | Sim | único |
+| `nome` | `text` | Sim | |
+| `ordem` | `smallint` | Sim | |
+| `ativo` | `boolean` | Sim | `default true` |
+
+### `macro_tema`
+
+| Coluna | Tipo | Obrigatória | Observações |
+|---|---|---|---|
+| `id` | `smallserial` | Sim | chave primária |
+| `bloco_tema_id` | `smallint` | Sim | `references bloco_tema(id)` |
+| `codigo` | `text` | Sim | único globalmente (diferente de `subcategoria_publico`: aqui os 20 nomes não se repetem entre blocos) |
+| `nome` | `text` | Sim | |
+| `ordem` | `smallint` | Sim | local ao bloco (1..N dentro de cada um) |
+| `ativo` | `boolean` | Sim | `default true` |
 
 > `delete` concedido a `painel_app` nas sete tabelas. A aplicação só apaga em quatro delas hoje (a ingestão troca `mencao` e `score_mes_fonte` por mês, a API apaga `score_fato`, o semeador refaz `score_estimativa`); as outras três recebem o `grant` para que um caminho de exclusão futuro falhe na revisão, e não em produção com erro de permissão.

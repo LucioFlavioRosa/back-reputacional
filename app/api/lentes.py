@@ -43,7 +43,7 @@ from app.dominio.lentes import (
     TaxaDeResposta,
     prioridade_do_jornalista,
 )
-from app.dominio.score import Calibracao
+from app.dominio.score import Calibracao, FiltroDeMencoes
 from app.dominio.sinais_da_lente import Secao
 
 rotas = APIRouter(
@@ -156,6 +156,15 @@ class DossieSaida(BaseModel):
     nota: int | None
     ns: float | None
     delta: int | None
+    #: `mes_anterior` (o normal) ou `sem_filtro` — com um recorte ativo, "vs.
+    #: mês anterior" compararia maçã com laranja (o mês passado não tem o
+    #: mesmo filtro), então o delta vira "nota filtrada vs. nota do mês
+    #: inteiro", e o front troca a legenda.
+    delta_versus: str = "mes_anterior"
+    #: Verdadeiro quando `tier`/`veiculo`/`atributo`/`tema` veio preenchido na
+    #: chamada. A tela usa isto para o selo "recorte filtrado" — esta nota NÃO
+    #: é a nota oficial do mês, é só o que esse recorte mostraria.
+    recorte_filtrado: bool = False
     peso: int
     estimado: bool
     ausencia: str | None
@@ -175,6 +184,21 @@ class DossieSaida(BaseModel):
     evolucao: BlocoSaida
     #: O quadro ao lado da evolução — até três sinais da série, mais as lacunas.
     sinais_da_evolucao: list[str] = Field(default_factory=list)
+    #: A rosca de volume por tier, ao lado do Top 5 veículos — ver
+    #: `_volume_por_tier`/`_veiculos`. Vazios na Institucional.
+    volume_por_tier: BlocoSaida
+    top_veiculos: BlocoSaida
+    #: O placar de clima por veículo — ver `_veiculos`. Vazio na Institucional.
+    clima_por_veiculos: BlocoSaida
+    #: O que está puxando a lente pra cima ou pra baixo, por atributo
+    #: reputacional — ver `_drivers_e_riscos`. Vazio na Institucional.
+    drivers_e_riscos: BlocoSaida
+    #: Os temas (Subcategoria da Clipei) mais falados do mês — ver
+    #: `_temas_mais_falados`. Vazio na Institucional.
+    temas_mais_falados: BlocoSaida
+    #: O drill-down até a linha: as matérias mais recentes por trás da nota —
+    #: ver `_materias_recentes`. Vazio na Institucional (não vem de clipping).
+    materias_recentes: BlocoSaida
     fatos: list[FatoSaida] = Field(default_factory=list)
     #: DOIS para quem alcança a lente inteira — e UM para quem não alcança o
     #: diretório. O piso desceu de 2 para 1 porque o painel que NOMEIA gente de
@@ -244,6 +268,14 @@ LACUNA_RESPOSTA = (
     "O fornecedor não informa se a mensagem foi respondida. Os números de "
     "respondidas vêm do relatório mensal, transcritos."
 )
+COLUNAS_DAS_MATERIAS = [
+    ColunaSaida(chave="quando", titulo="Quando"),
+    ColunaSaida(chave="veiculo", titulo="Veículo"),
+    ColunaSaida(chave="sentimento", titulo="Classificação"),
+    ColunaSaida(chave="tier", titulo="Tier"),
+    ColunaSaida(chave="atributo", titulo="Atributo"),
+    ColunaSaida(chave="tema", titulo="Tema"),
+]
 
 
 def _ficha_da_base(fonte: str, colunas: tuple[str, ...], conceitos=()) -> Ficha:
@@ -368,7 +400,14 @@ def _serie_em_blocos(serie: list[dict]) -> list[dict]:
     ]
 
 
-def _evolucao(sessao, lente, meses, calibracao: Calibracao, conclusao: str | None) -> BlocoSaida:
+def _evolucao(
+    sessao,
+    lente,
+    meses,
+    calibracao: Calibracao,
+    conclusao: str | None,
+    filtro: FiltroDeMencoes | None = None,
+) -> BlocoSaida:
     """A série mensal. Para Mercado é a linha do tempo de eventos, não barras."""
     if lente.codigo == "mercado":
         eventos = repositorio_lentes.eventos_de_mercado(sessao, meses)
@@ -405,7 +444,7 @@ def _evolucao(sessao, lente, meses, calibracao: Calibracao, conclusao: str | Non
             conclusao,
         )
 
-    serie = repositorio_lentes.serie_da_lente(sessao, lente.id, meses, calibracao)
+    serie = repositorio_lentes.serie_da_lente(sessao, lente.id, meses, calibracao, filtro)
     if lente.codigo == "clientes":
         recebidas = repositorio_lentes.recebidas_por_mes(sessao, lente.id, meses, calibracao)
         respondidas = repositorio_lentes.respondidas_por_mes(sessao, meses)
@@ -455,7 +494,9 @@ def _evolucao(sessao, lente, meses, calibracao: Calibracao, conclusao: str | Non
     )
 
 
-def _paineis(sessao, lente, mes: date, meses, calibracao: Calibracao) -> list[BlocoSaida]:
+def _paineis(
+    sessao, lente, mes: date, meses, calibracao: Calibracao, filtro: FiltroDeMencoes | None = None
+) -> list[BlocoSaida]:
     """Os dois painéis de cada lente, na ordem da especificação."""
     # OS TÍTULOS PASSAM A VIR DOS DETECTORES, e não de texto salvo. Nulos
     # aqui, preenchidos quando `sinais_da_lente` entrar — a tela já sabe cair no
@@ -463,8 +504,10 @@ def _paineis(sessao, lente, mes: date, meses, calibracao: Calibracao) -> list[Bl
     titulo_a = titulo_b = None
 
     if lente.codigo == "imprensa":
-        tiers = repositorio_lentes.composicao_por_tier(sessao, lente.id, mes, calibracao)
-        matriz = repositorio_lentes.matriz_de_jornalistas(sessao)
+        tiers = repositorio_lentes.composicao_por_tier(sessao, lente.id, mes, calibracao, filtro)
+        matriz = repositorio_lentes.matriz_de_jornalistas(
+            sessao, veiculo=filtro.veiculo if filtro else None
+        )
         linhas = []
         for pessoa in matriz:
             prioridade = prioridade_do_jornalista(
@@ -649,7 +692,7 @@ def _paineis(sessao, lente, mes: date, meses, calibracao: Calibracao) -> list[Bl
         unidades = repositorio_lentes.orgaos_do_crm(sessao, meses)
         legenda_do_clima, cores_do_clima = _legenda_e_cores_do_clima(sessao)
     else:
-        temas = repositorio_lentes.temas_por_sentimento(sessao, lente.id, mes, calibracao)
+        temas = repositorio_lentes.temas_por_sentimento(sessao, lente.id, mes, calibracao, filtro)
         unidades = repositorio_lentes.unidades_da_lente(sessao, lente.id, meses, calibracao)
         legenda_do_clima, cores_do_clima = SENTIMENTO, CORES_DO_SENTIMENTO
     return [
@@ -722,7 +765,321 @@ def _nomeia_o_diretorio(codigo_da_lente: str, bloco: BlocoSaida) -> bool:
     return codigo_da_lente == "institucional" and bloco.tipo == "barras_horizontais"
 
 
-def _kpis(sessao, lente, mes: date, meses, calibracao: Calibracao, medida) -> list[KpiSaida]:
+#: As cores do tier, na mesma paleta oficial da Aegea que o resto do produto
+#: usa — nunca uma cor inventada para preencher uma fatia da rosca.
+_CORES_DO_TIER = {
+    "muito_relevante": "#0027BD",  # Azul Mar
+    "relevante": "#17E3CB",  # Turquesa Rio
+    "menos_relevante": "#A11FFF",  # Roxo Açaí
+}
+
+
+def _volume_por_tier(
+    sessao, lente, mes: date, calibracao: Calibracao, filtro: FiltroDeMencoes | None = None
+) -> BlocoSaida:
+    """A rosca de volume por tier — mesmo desenho de "% Interações por tier"
+    do Painel (CRM), com matéria no lugar de interação.
+
+    REAPROVEITA `composicao_por_tier`, a mesma consulta do painel "Tier do
+    veículo × sentimento": a rosca só soma os três sentimentos de cada tier,
+    não pede nada que aquela consulta já não traga.
+
+    SÓ NA IMPRENSA — POR HORA (decisão do Jones, 2026-10-02), e NÃO por o dado
+    do Mercado ser inválido: a migration 0048 já define Mercado como "o mesmo
+    clipping da Clipei, recortado por público-alvo Investidores" — tier e
+    veículo são tão reais ali quanto na Imprensa, e é por isso que o semeador
+    de desenvolvimento usa a mesma função para as duas (`_imprensa_ou_mercado`
+    em `semear_mencoes.py`). A restrição é só a tela: olhando os dois gráficos
+    lado a lado nas lentes ainda não fazia sentido PRA ELE ver os mesmos
+    veículos/tiers repetidos em Imprensa e Mercado — Sociedade/Clientes nunca
+    tiveram o campo, então para elas o bloco já saía vazio de qualquer jeito.
+    Se um dia o recorte por público-alvo virar outro veículo/tier na prática
+    (ex.: fontes econômicas específicas), vale revisitar.
+    """
+    if lente.codigo != "imprensa":
+        vazio_ficha = (
+            Ficha(
+                origem=Procedencia.CRM,
+                fonte="Esta lente não vem de clipping",
+                lacunas=("A lente Institucional não tem tier — ela lê o CRM.",),
+            )
+            if repositorio_lentes.lente_e_interna(sessao, lente.id)
+            else Ficha(
+                origem=Procedencia.PLANILHA,
+                fonte=_nomes_das_fontes(sessao, lente.id),
+                lacunas=(
+                    "Por ora esta tela só mostra tier na lente Imprensa.",
+                ),
+            )
+        )
+        return _bloco("rosca", "Volume por tier", [], vazio_ficha, None)
+
+    tiers = repositorio_lentes.composicao_por_tier(sessao, lente.id, mes, calibracao, filtro)
+    return _bloco(
+        "rosca",
+        "Volume por tier",
+        [
+            {
+                "chave": linha["tier"],
+                "rotulo": _ROTULO_DO_TIER_DA_MATERIA.get(linha["tier"], linha["tier"]),
+                "total": linha["positivo"] + linha["neutro"] + linha["negativo"],
+                "cor": _CORES_DO_TIER.get(linha["tier"]),
+            }
+            for linha in tiers
+        ],
+        Ficha(
+            origem=Procedencia.PLANILHA,
+            fonte=_nomes_das_fontes(sessao, lente.id),
+            colunas=("Aegea Tier",),
+        ),
+        None,
+    )
+
+
+def _veiculos(
+    sessao, lente, mes: date, calibracao: Calibracao, filtro: FiltroDeMencoes | None = None
+) -> tuple[BlocoSaida, BlocoSaida]:
+    """Top veículos por volume, e o placar de clima de cada um — mesmo par
+    de "Top 5 instituições" + "Clima por Instituições" do Painel (CRM), por
+    veículo em vez de instituição.
+
+    UMA CONSULTA SÓ alimenta os dois blocos: top-por-volume e o saldo de
+    sentimento são a mesma soma lida de dois jeitos.
+
+    SÓ NA IMPRENSA — POR HORA: mesma ressalva de `_volume_por_tier` — é
+    restrição de TELA, pedida pelo Jones, e não um juízo de que o dado do
+    Mercado seja inválido (ver o motivo completo lá).
+    """
+    if lente.codigo != "imprensa":
+        vazio_ficha = (
+            Ficha(
+                origem=Procedencia.CRM,
+                fonte="Esta lente não vem de clipping",
+                lacunas=("A lente Institucional não tem veículo — ela lê o CRM.",),
+            )
+            if repositorio_lentes.lente_e_interna(sessao, lente.id)
+            else Ficha(
+                origem=Procedencia.PLANILHA,
+                fonte=_nomes_das_fontes(sessao, lente.id),
+                lacunas=(
+                    "Por ora esta tela só mostra veículo na lente Imprensa.",
+                ),
+            )
+        )
+        return (
+            _bloco("barras_horizontais", "Top veículos", [], vazio_ficha, None),
+            _bloco("divergente_por_item", "Clima por veículos", [], vazio_ficha, None),
+        )
+
+    veiculos = repositorio_lentes.veiculos_por_sentimento(sessao, lente.id, mes, calibracao, filtro)
+    ficha = Ficha(
+        origem=Procedencia.PLANILHA,
+        fonte=_nomes_das_fontes(sessao, lente.id),
+        colunas=("Veículo", "Classificação"),
+    )
+    top_veiculos = _bloco(
+        "barras_horizontais",
+        "Top veículos",
+        [{"rotulo": linha["veiculo"], "valor": linha["total"]} for linha in veiculos],
+        ficha,
+        None,
+    )
+    # MESMO CÁLCULO DO PAINEL (CRM): (positivas − negativas) ÷ total × 100,
+    # de −100 a 100 — não é o NS oficial do Score (que pondera por tier e vai
+    # de 0 a 100). É o placar simples que a diretoria já conhece de lá.
+    clima_por_veiculos = _bloco(
+        "divergente_por_item",
+        "Clima por veículos",
+        [
+            {
+                "chave": linha["veiculo"],
+                "rotulo": linha["veiculo"],
+                "total": linha["total"],
+                "score": round((linha["positivo"] - linha["negativo"]) / linha["total"] * 100),
+            }
+            for linha in veiculos
+        ],
+        ficha,
+        None,
+    )
+    return top_veiculos, clima_por_veiculos
+
+
+def _drivers_e_riscos(
+    sessao, lente, mes: date, calibracao: Calibracao, filtro: FiltroDeMencoes | None = None
+) -> BlocoSaida:
+    """"Drivers e riscos": os atributos reputacionais que mais puxam a lente,
+    em volume e sentimento — não só o saldo final que a nota resume.
+
+    SÓ NAS LENTES DE CLIPPING, pelo mesmo motivo de `_materias_recentes`: a
+    institucional não tem `atributo` nenhum, porque não vem de `mencao`.
+    """
+    if repositorio_lentes.lente_e_interna(sessao, lente.id):
+        return _bloco(
+            "barras_100",
+            "Drivers e riscos",
+            [],
+            Ficha(
+                origem=Procedencia.CRM,
+                fonte="Esta lente não vem de clipping",
+                lacunas=("A lente Institucional não tem atributo — ela lê o CRM.",),
+            ),
+            None,
+            SENTIMENTO,
+            cores=CORES_DO_SENTIMENTO,
+        )
+
+    atributos = repositorio_lentes.atributos_por_sentimento(
+        sessao, lente.id, mes, calibracao, filtro
+    )
+    return _bloco(
+        "barras_100",
+        "Drivers e riscos",
+        [{"rotulo": linha.pop("atributo"), **linha} for linha in atributos],
+        Ficha(
+            origem=Procedencia.PLANILHA,
+            fonte=_nomes_das_fontes(sessao, lente.id),
+            colunas=("Atributo", "Classificação"),
+        ),
+        None,
+        SENTIMENTO,
+        cores=CORES_DO_SENTIMENTO,
+    )
+
+
+def _temas_mais_falados(
+    sessao, lente, mes: date, calibracao: Calibracao, filtro: FiltroDeMencoes | None = None
+) -> BlocoSaida:
+    """Os temas (Subcategoria da Clipei) mais falados do mês, por sentimento.
+
+    SÓ NAS LENTES DE CLIPPING — mesma ressalva de `_drivers_e_riscos`.
+    """
+    if repositorio_lentes.lente_e_interna(sessao, lente.id):
+        return _bloco(
+            "barras_100",
+            "Temas mais falados",
+            [],
+            Ficha(
+                origem=Procedencia.CRM,
+                fonte="Esta lente não vem de clipping",
+                lacunas=("A lente Institucional tem seu próprio bloco de temas, lido do CRM.",),
+            ),
+            None,
+            SENTIMENTO,
+            cores=CORES_DO_SENTIMENTO,
+        )
+
+    temas = repositorio_lentes.temas_por_sentimento(sessao, lente.id, mes, calibracao, filtro)
+    return _bloco(
+        "barras_100",
+        "Temas mais falados",
+        [{"rotulo": linha.pop("tema"), **linha} for linha in temas],
+        Ficha(
+            origem=Procedencia.PLANILHA,
+            fonte=_nomes_das_fontes(sessao, lente.id),
+            colunas=("Tags (tema)", "Sentimento"),
+            lacunas=(
+                "Os temas vêm do vocabulário de cada fornecedor, ainda não "
+                "casado com o dicionário de assuntos do CRM.",
+            ),
+        ),
+        None,
+        SENTIMENTO,
+        cores=CORES_DO_SENTIMENTO,
+    )
+
+
+_ROTULO_DO_SENTIMENTO = {"pos": "Positivo", "neu": "Neutro", "neg": "Negativo"}
+_ROTULO_DO_TIER_DA_MATERIA = {
+    "muito_relevante": "Muito Relevante",
+    "relevante": "Relevante",
+    "menos_relevante": "Menos Relevante",
+}
+
+
+#: Sem recorte: só uma amostra do mês inteiro. Com recorte (um veículo, um
+#: tier...): o universo já é pequeno, então sobe para "praticamente tudo".
+TETO_DE_MATERIAS = 5
+TETO_DE_MATERIAS_FILTRADO = 30
+
+
+def _materias_recentes(
+    sessao, lente, mes: date, calibracao: Calibracao, filtro: FiltroDeMencoes | None = None
+) -> BlocoSaida:
+    """O drill-down até a linha: as matérias mais recentes por trás da nota.
+
+    SÓ NA IMPRENSA — POR HORA: mesma ressalva de `_volume_por_tier` — é
+    restrição de TELA, pedida pelo Jones (2026-10-02), e não um juízo de que
+    o dado do Mercado seja inválido. As colunas desta tabela ("Veículo",
+    "Aegea Tier") são as mesmas duas que motivaram a restrição lá.
+    """
+    if lente.codigo != "imprensa":
+        vazio_ficha = (
+            Ficha(
+                origem=Procedencia.CRM,
+                fonte="Esta lente não vem de clipping",
+                lacunas=("A lente Institucional não tem matéria — ela lê o CRM.",),
+            )
+            if repositorio_lentes.lente_e_interna(sessao, lente.id)
+            else Ficha(
+                origem=Procedencia.PLANILHA,
+                fonte=_nomes_das_fontes(sessao, lente.id),
+                lacunas=("Por ora esta tela só mostra matérias na lente Imprensa.",),
+            )
+        )
+        return _bloco(
+            "tabela",
+            "Últimas matérias",
+            [],
+            vazio_ficha,
+            None,
+            subtipo="materias",
+            colunas=COLUNAS_DAS_MATERIAS,
+        )
+
+    # COM RECORTE ATIVO, O TETO SOBE. Cinco bastam para "o que aconteceu no
+    # mês nesta lente" — mas quem clicou num veículo no placar de clima quer
+    # ver AS matérias que formaram aquele saldo, não uma amostra delas. Um
+    # veículo com recorte já é um universo pequeno (dezenas, não milhares),
+    # então um teto mais alto continua seguro.
+    quantas = TETO_DE_MATERIAS_FILTRADO if filtro and filtro.ativo else TETO_DE_MATERIAS
+    linhas = [
+        {
+            "quando": f"{linha['data']:%d/%m}" if linha["data"] else None,
+            "veiculo": linha["veiculo"],
+            "sentimento": _ROTULO_DO_SENTIMENTO.get(linha["sentimento"], linha["sentimento"]),
+            "tier": _ROTULO_DO_TIER_DA_MATERIA.get(linha["tier"], linha["tier"]),
+            "atributo": linha["atributo"],
+            "tema": linha["tema"],
+        }
+        for linha in repositorio_lentes.materias_recentes(
+            sessao, lente.id, mes, calibracao, filtro, quantas=quantas
+        )
+    ]
+    return _bloco(
+        "tabela",
+        "Últimas matérias",
+        linhas,
+        Ficha(
+            origem=Procedencia.PLANILHA,
+            fonte=_nomes_das_fontes(sessao, lente.id),
+            colunas=("Data", "Veículo", "Classificação", "Aegea Tier", "Atributo", "Subcategoria"),
+        ),
+        None,
+        subtipo="materias",
+        colunas=COLUNAS_DAS_MATERIAS,
+    )
+
+
+def _kpis(
+    sessao,
+    lente,
+    mes: date,
+    meses,
+    calibracao: Calibracao,
+    medida,
+    filtro: FiltroDeMencoes | None = None,
+) -> list[KpiSaida]:
     """Os quatro números do destaque — e eles são DIFERENTES em cada lente.
 
     A §3 dá a lista de cada uma, e não é capricho: "matérias no ano" responde a
@@ -733,13 +1090,15 @@ def _kpis(sessao, lente, mes: date, meses, calibracao: Calibracao, medida) -> li
     encher o quadrante é pior do que deixar a lacuna à vista.
     """
     alvo = repositorio_score.primeiro_dia(mes)
-    serie = repositorio_lentes.serie_da_lente(sessao, lente.id, meses, calibracao)
+    serie = repositorio_lentes.serie_da_lente(sessao, lente.id, meses, calibracao, filtro)
     do_mes = next((linha for linha in serie if linha["mes"] == alvo), None)
     total = sum(linha["pos"] + linha["neu"] + linha["neg"] for linha in serie)
     com_base = [linha for linha in serie if not linha["sem_base"]]
 
     if lente.codigo == "imprensa":
-        return _kpis_da_imprensa(sessao, serie, com_base, do_mes, total)
+        return _kpis_da_imprensa(
+            sessao, lente, meses, calibracao, serie, com_base, do_mes, total, filtro
+        )
     if lente.codigo == "mercado":
         return _kpis_do_mercado(sessao, mes, meses)
     if lente.codigo == "clientes":
@@ -749,16 +1108,16 @@ def _kpis(sessao, lente, mes: date, meses, calibracao: Calibracao, medida) -> li
     return _kpis_da_sociedade(sessao, lente, alvo, meses, calibracao, serie, do_mes, total)
 
 
-def _kpis_da_imprensa(sessao, serie, com_base, do_mes, total) -> list[KpiSaida]:
+def _kpis_da_imprensa(
+    sessao, lente, meses, calibracao, serie, com_base, do_mes, total,
+    filtro: FiltroDeMencoes | None = None,
+) -> list[KpiSaida]:
     pico = max(serie, key=lambda linha: linha["neg"], default=None)
     positivas = sum(linha["pos"] for linha in serie)
     neutras = sum(linha["neu"] for linha in serie)
-    p1 = [
-        pessoa
-        for pessoa in repositorio_lentes.matriz_de_jornalistas(sessao)
-        if prioridade_do_jornalista(pessoa.relevancia, pessoa.exposicao, pessoa.proximidade).nivel
-        == 1
-    ]
+    veiculos_tier1 = repositorio_lentes.veiculos_tier1_do_periodo(
+        sessao, lente.id, meses, calibracao, filtro
+    )
     return [
         KpiSaida(
             rotulo="Matérias no período",
@@ -780,9 +1139,9 @@ def _kpis_da_imprensa(sessao, serie, com_base, do_mes, total) -> list[KpiSaida]:
             detalhe=f"{pico['mes']:%Y-%m}" if pico and pico["neg"] else "sem negativa",
         ),
         KpiSaida(
-            rotulo="Jornalistas P1",
-            valor=str(len(p1)),
-            detalhe="relacionamento contínuo",
+            rotulo="Veículos Tier 1",
+            valor=str(veiculos_tier1),
+            detalhe="cobertura do período",
         ),
     ]
 
@@ -963,35 +1322,69 @@ def obter_dossie(
     usuario: UsuarioLogado,
     codigo: str,
     mes: Annotated[str, Query(description="AAAA-MM")],
+    tier: Annotated[str | None, Query()] = None,
+    veiculo: Annotated[str | None, Query()] = None,
+    atributo: Annotated[str | None, Query()] = None,
+    tema: Annotated[str | None, Query()] = None,
 ) -> DossieSaida:
-    """A lente inteira: nota, KPIs, evolução, dois painéis, texto e ações."""
+    """A lente inteira: nota, KPIs, evolução, dois painéis, texto e ações.
+
+    OS QUATRO PARÂMETROS SÃO UM RECORTE DE TELA, não a Calibração: ver
+    `FiltroDeMencoes`. Ativo, ele recalcula nota, KPIs, evolução e os dois
+    painéis sobre o subconjunto de menções que casa com ele — mas NUNCA entra
+    no ISR nem é comparado com o mês anterior como se fosse a nota oficial.
+    """
     alvo = _mes_de(mes)
     lente = repositorio_lentes.lente_por_codigo(sessao, codigo)
     if lente is None:
         raise NaoEncontrado("Lente não encontrada.")
 
+    filtro = FiltroDeMencoes(tier=tier, veiculo=veiculo, atributo=atributo, tema_texto=tema)
     calibracao = repositorio_score.calibracao_vigente(sessao)
     meses = repositorio_lentes.meses_ate(alvo, MESES_DA_EVOLUCAO)
 
     medidas = {
         medida.codigo: medida for medida in repositorio_score.medir_lentes(sessao, alvo, calibracao)
     }
-    anteriores = {
-        medida.codigo: medida
-        for medida in repositorio_score.medir_lentes(
-            sessao, meses[-2] if len(meses) > 1 else alvo, calibracao
-        )
-    }
-    medida = medidas[lente.codigo]
-    antes = anteriores.get(lente.codigo)
-    delta = (
-        medida.score - antes.score
-        if medida.score is not None and antes and antes.score is not None
-        else None
-    )
+    medida_sem_filtro = medidas[lente.codigo]
 
-    evolucao = _evolucao(sessao, lente, meses, calibracao, None)
-    paineis = _paineis(sessao, lente, alvo, meses, calibracao)
+    if filtro.ativo:
+        # A NOTA FILTRADA NÃO VEM DO LOTE DAS CINCO: `medir_lentes` só lê
+        # `score_mes_fonte`, que não tem veículo/atributo/tema — ver
+        # `repositorio_score.medir_uma_lente`.
+        medida = repositorio_score.medir_uma_lente(sessao, lente, alvo, calibracao, filtro)
+        # "VS. MÊS ANTERIOR" NÃO FAZ SENTIDO AQUI: o mês passado não tem o
+        # mesmo recorte. A comparação vira "este recorte vs. o mês inteiro",
+        # que é a pergunta que o filtro está mesmo respondendo.
+        delta = (
+            medida.score - medida_sem_filtro.score
+            if medida.score is not None and medida_sem_filtro.score is not None
+            else None
+        )
+        delta_versus = "sem_filtro"
+    else:
+        anteriores = {
+            medida.codigo: medida
+            for medida in repositorio_score.medir_lentes(
+                sessao, meses[-2] if len(meses) > 1 else alvo, calibracao
+            )
+        }
+        medida = medida_sem_filtro
+        antes = anteriores.get(lente.codigo)
+        delta = (
+            medida.score - antes.score
+            if medida.score is not None and antes and antes.score is not None
+            else None
+        )
+        delta_versus = "mes_anterior"
+
+    evolucao = _evolucao(sessao, lente, meses, calibracao, None, filtro)
+    paineis = _paineis(sessao, lente, alvo, meses, calibracao, filtro)
+    volume_por_tier = _volume_por_tier(sessao, lente, alvo, calibracao, filtro)
+    top_veiculos, clima_por_veiculos = _veiculos(sessao, lente, alvo, calibracao, filtro)
+    drivers = _drivers_e_riscos(sessao, lente, alvo, calibracao, filtro)
+    temas_falados = _temas_mais_falados(sessao, lente, alvo, calibracao, filtro)
+    materias = _materias_recentes(sessao, lente, alvo, calibracao, filtro)
 
     #: O QUE ESTE PAPEL NÃO ALCANÇA. `score_leitura` e `score_edicao` têm
     #: `acessa_score` e NÃO têm `ve_diretorio` — e levam 403 em
@@ -1021,6 +1414,7 @@ def obter_dossie(
         nome_do_painel_a=paineis[0].titulo,
         nome_do_painel_b=paineis[1].titulo,
         secoes_a_omitir=escondidos,
+        filtro=filtro,
     )
     onde = {
         Secao.EVOLUCAO: "Evolução",
@@ -1037,16 +1431,24 @@ def obter_dossie(
         nota=medida.score,
         ns=round(medida.ns, 4) if medida.ns is not None else None,
         delta=delta,
+        delta_versus=delta_versus,
+        recorte_filtrado=filtro.ativo,
         peso=medida.peso,
         estimado=medida.estimado,
         ausencia=medida.ausencia,
         fontes=list(medida.fontes),
         formula=_formula(lente.codigo, calibracao),
-        kpis=_kpis(sessao, lente, alvo, meses, calibracao, medida),
+        kpis=_kpis(sessao, lente, alvo, meses, calibracao, medida, filtro),
         ficha_do_destaque=_saida_da_ficha(FICHA_DO_DESTAQUE),
         manchete=leitura.manchete,
         evolucao=_com_conclusao(evolucao, leitura.titulo_da_evolucao),
         sinais_da_evolucao=leitura.sinais_da_evolucao,
+        volume_por_tier=volume_por_tier,
+        top_veiculos=top_veiculos,
+        clima_por_veiculos=clima_por_veiculos,
+        drivers_e_riscos=drivers,
+        temas_mais_falados=temas_falados,
+        materias_recentes=materias,
         fatos=[
             FatoSaida(mes=f"{fato.mes:%Y-%m}", texto=fato.texto, efeito=fato.efeito)
             for fato in repositorio_score.fatos_do_periodo(sessao, meses)
@@ -1075,3 +1477,29 @@ def obter_dossie(
             if sinal.secao not in escondidos
         ],
     )
+
+
+class OpcoesDeFiltroSaida(BaseModel):
+    tiers: list[str]
+    veiculos: list[str]
+    atributos: list[str]
+    temas: list[str]
+
+
+@rotas.get("/{codigo}/dossie/opcoes-de-filtro")
+def obter_opcoes_de_filtro(
+    sessao: Sessao,
+    usuario: UsuarioLogado,
+    codigo: str,
+    mes: Annotated[str, Query(description="AAAA-MM")],
+) -> OpcoesDeFiltroSaida:
+    """Os valores que o recorte da tela pode oferecer NESTE mês.
+
+    NÃO É DICIONÁRIO: tier é fechado, mas veículo/atributo/tema são texto
+    livre de cada fornecedor — ver `repositorio_lentes.opcoes_de_filtro`.
+    """
+    alvo = _mes_de(mes)
+    lente = repositorio_lentes.lente_por_codigo(sessao, codigo)
+    if lente is None:
+        raise NaoEncontrado("Lente não encontrada.")
+    return OpcoesDeFiltroSaida(**repositorio_lentes.opcoes_de_filtro(sessao, lente.id, alvo))

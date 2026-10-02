@@ -2812,9 +2812,21 @@ def _registro(
 
 
 def _uma_solta(
-    frente: Frente, indice: int, elenco: dict, autor: UUID, sorte: random.Random
+    frente: Frente,
+    indice: int,
+    elenco: dict,
+    autor: UUID,
+    sorte: random.Random,
+    *,
+    temas_forcados: tuple[int, ...] | None = None,
+    origem_aba: str | None = None,
 ) -> Interacao:
-    """Uma agenda sem linhagem, com texto plausível da frente."""
+    """Uma agenda sem linhagem, com texto plausível da frente.
+
+    `temas_forcados` e `origem_aba` existem só para `semear_taxonomia_de_temas`
+    reaproveitar esta função sem duplicá-la: por padrão (`None`) o comportamento
+    é idêntico ao de sempre — tema sorteado do elenco, origem deste módulo.
+    """
     pauta, relato, encaminhamento = SOLTAS_POR_FRENTE[frente][
         indice % len(SOLTAS_POR_FRENTE[frente])
     ]
@@ -2824,7 +2836,7 @@ def _uma_solta(
 
     # Espalhadas pelo ano corrente, e não amontoadas: o painel mostra série
     # mensal, e nove meses com o mesmo número não se distinguem de um erro.
-    temas_da_agenda = tuple(
+    temas_da_agenda = temas_forcados or tuple(
         elenco["temas"][nome]
         for nome in sorte.sample(list(elenco["temas"]), sorte.choice([1, 2, 2, 3]))
     )
@@ -2871,7 +2883,7 @@ def _uma_solta(
         status=status,
         criado_por=autor,
         fonte=FONTE,
-        origem_aba=ORIGEM,
+        origem_aba=origem_aba or ORIGEM,
         pauta=pauta,
         expectativa=_expectativa(frente, pauta),
         relato=relato if not aberta else None,
@@ -3067,7 +3079,16 @@ def _elenco(sessao: Session) -> dict:
                 PESSOAS_AEGEA, pessoas.values(), strict=True
             )
         },
-        "temas": {t.nome: t.id for t in sessao.scalars(select(Tema))},
+        # SÓ OS ATIVOS: `_uma_solta` sorteia um tema qualquer deste dicionário
+        # (ver linha ~2828) — sem este filtro, a partir da 0053 esse sorteio
+        # passaria a gravar `interacao_tema` apontando para um dos temas
+        # rascunho da taxonomia v1.3, que `GET /api/dicionarios` não oferece
+        # (só devolve `ativo = true`). O vínculo por NOME em `_do_passo`
+        # continua funcionando igual: os 17 temas de fundação citados nos
+        # enredos estão todos ativos.
+        "temas": {
+            t.nome: t.id for t in sessao.scalars(select(Tema).where(Tema.ativo.is_(True)))
+        },
         "esferas": {e.codigo: e.id for e in sessao.scalars(select(Esfera))},
         "unidades": {u.nome: u.id for u in sessao.scalars(select(UnidadeNegocio))},
     }

@@ -20,6 +20,7 @@ from app.dominio.tema_do_mes import (
     contribuicao_no_ns,
     pontos_no_indice,
     temas_que_pesaram,
+    temas_que_pesaram_na_lente,
 )
 
 
@@ -229,3 +230,76 @@ class TestPontosSemAssunto:
         """Quem não passa o total não recebe uma lacuna calculada do nada."""
         dos_lados = temas_que_pesaram([peso("X", neg=200)], {"sociedade": 20})
         assert dos_lados.pontos_sem_tema == 0
+
+
+class TestAssuntosQuePesaramNaLente:
+    """A mesma pergunta, dentro de uma lente só — sem peso efetivo, sem
+    comparar lente com lente. É o que explica a coluna da Jornada de UMA
+    lente."""
+
+    def test_pontos_saem_na_escala_da_própria_nota_e_não_do_índice(self):
+        # −0,5 de NS, ×50: −25 pontos DA LENTE. Sem ×peso_efetivo/100 — essa é
+        # a diferença para `pontos_no_indice`.
+        dos_lados = temas_que_pesaram_na_lente(
+            [peso("Privatização", lente="imprensa", neg=500)], "imprensa", -25
+        )
+        assert dos_lados.pressionou is not None
+        assert dos_lados.pressionou.pontos == pytest.approx(-25)
+
+    def test_ignora_pesos_de_OUTRA_lente(self):
+        """O mesmo tema, pesado em duas lentes: só a lente pedida concorre —
+        misturar as duas inventaria um "mais falado" que nenhuma lente sozinha
+        sustenta."""
+        dos_lados = temas_que_pesaram_na_lente(
+            [
+                peso("Universalização", lente="imprensa", pos=500, total=1000),
+                peso("Privatização", lente="mercado", neg=900, total=1000),
+            ],
+            "imprensa",
+            25,
+        )
+        assert dos_lados.sustentou is not None
+        assert dos_lados.sustentou.tema == "Universalização"
+        assert dos_lados.pressionou is None
+
+    def test_o_mesmo_assunto_em_duas_fontes_da_lente_conta_JUNTO(self):
+        dos_lados = temas_que_pesaram_na_lente(
+            [
+                peso(
+                    "Privatização", lente="imprensa", fonte="clipei",
+                    neg=300, fontes=2, cruas_neg=300,
+                ),
+                peso(
+                    "Privatização", lente="imprensa", fonte="clipei_investidores",
+                    neg=200, fontes=2, cruas_neg=200,
+                ),
+            ],
+            "imprensa",
+            -25,
+        )
+        assert dos_lados.pressionou is not None
+        assert dos_lados.pressionou.negativas == 500
+
+    def test_diz_quanto_da_própria_nota_ficou_sem_explicação(self):
+        # O tema conhecido explica −10 (−0,2 de NS × 50); a lente pôs −13 na
+        # própria nota — os −3 que sobram são o que nenhum tema respondeu.
+        dos_lados = temas_que_pesaram_na_lente(
+            [peso("Conhecido", lente="imprensa", neg=200, total=1000)], "imprensa", -13.0
+        )
+        assert dos_lados.pressionou is not None
+        assert dos_lados.pressionou.pontos == pytest.approx(-10)
+        assert dos_lados.pontos_sem_tema == pytest.approx(-3)
+
+    def test_sem_assunto_nenhum_da_lente_não_inventa_lado(self):
+        vazio = temas_que_pesaram_na_lente([], "imprensa", 0)
+        assert vazio.sustentou is None and vazio.pressionou is None
+
+    def test_o_empate_devolve_sempre_a_mesma_resposta(self):
+        empatados = [
+            peso("Zebra", lente="imprensa", neg=100),
+            peso("Abelha", lente="imprensa", neg=100),
+        ]
+        primeiro = temas_que_pesaram_na_lente(empatados, "imprensa", -10)
+        segundo = temas_que_pesaram_na_lente(list(reversed(empatados)), "imprensa", -10)
+        assert primeiro.pressionou is not None and segundo.pressionou is not None
+        assert primeiro.pressionou.tema == segundo.pressionou.tema == "Abelha"

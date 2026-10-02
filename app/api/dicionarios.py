@@ -95,6 +95,11 @@ FECHADOS: dict[str, str] = {
         "mudar é migration."
     ),
     "subcategorias_publico": "Subdivisão da taxonomia de públicos; mudar é migration.",
+    "blocos_tema": (
+        "O nível mais alto da taxonomia de temas v1.3, ainda em validação por área; "
+        "mudar é migration."
+    ),
+    "macro_temas": "Subdivisão da taxonomia de temas v1.3; mudar é migration.",
 }
 
 #: Administrados em OUTRA aba da Administração: não repetem aqui.
@@ -127,6 +132,8 @@ ROTULOS: dict[str, str] = {
     "iniciativas": "Iniciativas",
     "categorias_publico": "Categorias de público",
     "subcategorias_publico": "Subcategorias de público",
+    "blocos_tema": "Blocos de tema",
+    "macro_temas": "Macro temas",
     "naturezas_orgao": "Natureza do órgão (aposentado)",
     "stakeholders": "Stakeholder (aposentado)",
 }

@@ -40,6 +40,7 @@ from app.dominio.score import (
     REGUAS_DE_TIER,
     Calibracao,
     Contagem,
+    FiltroDeMencoes,
     Indice,
     LenteMedida,
     SomasDaFonte,
@@ -292,6 +293,38 @@ def medir_lentes(
     return medidas
 
 
+def medir_uma_lente(
+    sessao: Session,
+    lente: Lente,
+    mes: date,
+    calibracao: Calibracao,
+    filtro: FiltroDeMencoes | None = None,
+) -> LenteMedida:
+    """O score de uma lente sozinha — para o dossiê com filtro ativo.
+
+    `medir_lentes` mede as cinco de uma vez por cima de `score_mes_fonte`, e é
+    o caminho certo sem filtro. Mas um filtro de veículo/atributo/tema só
+    existe por `somas_da_lente_filtradas`, que já é por lente — reaproveitar o
+    lote das cinco aqui custaria ler as outras quatro à toa. A ESTIMATIVA FICA
+    DE FORA DE PROPÓSITO: `score_estimativa` é um NS do resumo semestral, sem
+    nenhuma das quatro dimensões do filtro — cair nela com um filtro ativo
+    responderia a pergunta errada com a aparência de ter respondido a certa.
+    """
+    fontes_cadastradas = tuple(
+        sessao.scalars(select(ScoreFonte.codigo).where(ScoreFonte.lente_id == lente.id))
+    )
+    somas = _somas_da_lente(sessao, lente.id, mes, filtro)
+    return medir_lente(
+        codigo=lente.codigo,
+        nome=lente.nome,
+        peso=calibracao.peso(lente.codigo, lente.peso_padrao),
+        somas_por_fonte=somas,
+        calibracao=calibracao,
+        estimativa=None,
+        fontes_cadastradas=fontes_cadastradas,
+    )
+
+
 def _tem_fonte_interna(sessao: Session, lente_id: int) -> bool:
     return (
         sessao.scalar(
@@ -303,8 +336,88 @@ def _tem_fonte_interna(sessao: Session, lente_id: int) -> bool:
     )
 
 
-def _somas_da_lente(sessao: Session, lente_id: int, mes: date) -> dict[str, list[SomasDaFonte]]:
-    """As somas de uma lente, por fonte — incluindo a interna."""
+def condicoes_do_filtro(filtro: FiltroDeMencoes | None) -> list:
+    """As condições de um `FiltroDeMencoes`, prontas para um `.where(...)` em `Mencao`.
+
+    Vazia quando não há filtro — mesma convenção de `so_fontes_ligadas`: lista,
+    não sentinela, para não depender de um valor mágico "sem filtro".
+    """
+    if filtro is None:
+        return []
+    condicoes = []
+    if filtro.tier:
+        condicoes.append(Mencao.tier == filtro.tier)
+    if filtro.veiculo:
+        condicoes.append(Mencao.veiculo == filtro.veiculo)
+    if filtro.atributo:
+        condicoes.append(Mencao.atributo == filtro.atributo)
+    if filtro.tema_texto:
+        condicoes.append(Mencao.tema_texto == filtro.tema_texto)
+    return condicoes
+
+
+def somas_da_lente_filtradas(
+    sessao: Session, lente_id: int, mes: date, filtro: FiltroDeMencoes
+) -> dict[str, list[SomasDaFonte]]:
+    """Como `_somas_da_lente`, mas agregando `mencao` ao vivo.
+
+    `score_mes_fonte` (o que a ingestão grava) só tem grão de (fonte, mês,
+    sentimento, tier) — sem dimensão de veículo, atributo ou tema, não tem
+    como responder a um filtro desses. Este caminho lê `mencao` linha a linha
+    e soma na mão, com as MESMAS fórmulas da ingestão (`peso_do_engajamento`,
+    `peso_do_cargo`) — para a nota filtrada nunca divergir da fórmula de
+    sempre, só do CONJUNTO de menções que entra nela.
+
+    Só a fonte interna (CRM) fica de fora: ela não vem de `mencao`, e nenhum
+    dos quatro campos do filtro existe numa interação — ver `_somas_do_crm`.
+    """
+    consulta = (
+        select(
+            ScoreFonte.codigo,
+            Mencao.sentimento,
+            Mencao.tier,
+            Mencao.engajamento,
+            Mencao.cargo,
+        )
+        .select_from(Mencao)
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .where(
+            ScoreFonte.lente_id == lente_id,
+            Mencao.mes == primeiro_dia(mes),
+            *condicoes_do_filtro(filtro),
+        )
+    )
+    linhas_por_grupo: dict[tuple[str, str, str], list[tuple[int | None, str | None]]] = {}
+    for fonte_codigo, sentimento, tier, engajamento, cargo in sessao.execute(consulta):
+        chave = (fonte_codigo, sentimento, tier or "")
+        linhas_por_grupo.setdefault(chave, []).append((engajamento, cargo))
+
+    por_fonte: dict[str, list[SomasDaFonte]] = {}
+    for (fonte_codigo, sentimento, tier), linhas in linhas_por_grupo.items():
+        por_fonte.setdefault(fonte_codigo, []).append(
+            SomasDaFonte(
+                fonte=fonte_codigo,
+                sentimento=sentimento,
+                tier=tier,
+                mencoes=len(linhas),
+                soma_log=sum(peso_do_engajamento(engajamento) for engajamento, _ in linhas),
+                soma_engajamento=sum(engajamento or 0 for engajamento, _ in linhas),
+                soma_cargo=sum(peso_do_cargo(cargo) for _, cargo in linhas),
+            )
+        )
+    return por_fonte
+
+
+def _somas_da_lente(
+    sessao: Session, lente_id: int, mes: date, filtro: FiltroDeMencoes | None = None
+) -> dict[str, list[SomasDaFonte]]:
+    """As somas de uma lente, por fonte — incluindo a interna.
+
+    `filtro` ativo desvia para `somas_da_lente_filtradas`, que não passa pela
+    fonte interna (sem filtro, o comportamento de sempre continua idêntico).
+    """
+    if filtro is not None and filtro.ativo:
+        return somas_da_lente_filtradas(sessao, lente_id, mes, filtro)
     lente = sessao.get(Lente, lente_id)
     das_planilhas = _somas_das_planilhas(sessao, primeiro_dia(mes)).get(
         lente.codigo if lente else "", {}
@@ -318,7 +431,11 @@ def _somas_da_lente(sessao: Session, lente_id: int, mes: date) -> dict[str, list
 
 
 def composicao_da_lente(
-    sessao: Session, lente_id: int, mes: date, calibracao: Calibracao
+    sessao: Session,
+    lente_id: int,
+    mes: date,
+    calibracao: Calibracao,
+    filtro: FiltroDeMencoes | None = None,
 ) -> Contagem:
     """Os três números da fórmula, já ponderados — o que a barra desenha.
 
@@ -326,14 +443,18 @@ def composicao_da_lente(
     lente sai (§2.4), mas a barra mostra volume, e volume se soma.
     """
     total = Contagem()
-    for fonte, linhas in _somas_da_lente(sessao, lente_id, mes).items():
+    for fonte, linhas in _somas_da_lente(sessao, lente_id, mes, filtro).items():
         if calibracao.ligada(fonte):
             total = total + ponderar(linhas, calibracao)
     return total
 
 
 def fontes_da_lente(
-    sessao: Session, lente_id: int, mes: date, calibracao: Calibracao
+    sessao: Session,
+    lente_id: int,
+    mes: date,
+    calibracao: Calibracao,
+    filtro: FiltroDeMencoes | None = None,
 ) -> list[tuple[ScoreFonte, float | None, int]]:
     """Cada fonte da lente com o seu próprio NS e o volume do mês.
 
@@ -346,7 +467,7 @@ def fontes_da_lente(
     tela precisa mostrar os dois juntos, senão o número vira explicação de um
     score do qual não participou.
     """
-    somas = _somas_da_lente(sessao, lente_id, mes)
+    somas = _somas_da_lente(sessao, lente_id, mes, filtro)
     saida = []
     for fonte in sessao.scalars(
         select(ScoreFonte).where(ScoreFonte.lente_id == lente_id).order_by(ScoreFonte.ordem)
