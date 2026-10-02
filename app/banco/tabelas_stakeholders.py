@@ -76,6 +76,10 @@ class Interlocutor(Tabela):
         PG_UUID(as_uuid=True), ForeignKey("instituicao.id"), nullable=True
     )
     cargo: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: A área DENTRO DA INSTITUIÇÃO dele (ex.: "Research" num banco) — texto
+    #: livre, não o dicionário `area_pessoa` (que é a área da Aegea). Ver
+    #: migrations/0054.
+    area: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: Como se chega na pessoa. Marcar agenda comeca por escrever para alguem, e
     #: este endereco vivia fora do sistema.
     email: Mapped[str | None] = mapped_column(Text, nullable=True)

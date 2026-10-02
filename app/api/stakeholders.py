@@ -83,6 +83,9 @@ class InterlocutorSaida(BaseModel):
     nome: str
     instituicao_id: UUID | None
     cargo: str | None
+    #: A área do contato DENTRO da instituição dele — não confundir com
+    #: `area_pessoa` (a área da Aegea). Ver migrations/0054.
+    area: str | None
     email: str | None
     tipo: str | None
     ativo: bool
@@ -215,6 +218,9 @@ class InterlocutorEntrada(BaseModel):
     #: "Pela outra parte" de uma agenda.
     instituicao_id: UUID | None = None
     cargo: str | None = None
+    #: A área do contato DENTRO da instituição dele (ex.: "Research") — texto
+    #: livre, não o dicionário `area_pessoa` (a área da Aegea). Ver 0054.
+    area: str | None = None
     #: Como se chega na pessoa para marcar a agenda.
     email: str | None = None
     tipo: str | None = None
@@ -448,6 +454,7 @@ def criar_interlocutor(
         nome_normalizado=_normalizar(entrada.nome),
         instituicao_id=entrada.instituicao_id,
         cargo=entrada.cargo,
+        area=entrada.area,
         email=entrada.email,
         tipo=entrada.tipo,
         ativo=entrada.ativo,
@@ -480,6 +487,7 @@ def editar_interlocutor(
     registro.nome_normalizado = _normalizar(entrada.nome)
     registro.instituicao_id = entrada.instituicao_id
     registro.cargo = entrada.cargo
+    registro.area = entrada.area
     registro.email = entrada.email
     registro.tipo = entrada.tipo
     registro.ativo = entrada.ativo
