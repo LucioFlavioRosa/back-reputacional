@@ -138,6 +138,33 @@ def deslocamento(pico_fatia: float, quando_pico: date, ultima: float, quando: da
     )
 
 
+def volume_de_materias(pos: int, neu: int, neg: int, sem_classificacao: int, quando: date) -> str:
+    """Quantas matérias o mês teve, e como elas se dividem entre as três
+    classificações — a legenda que falta ao lado de uma barra empilhada que,
+    sozinha, só desenha altura: sem esta frase, nada na tela diz que aquilo é
+    CONTAGEM de matéria, e não a nota (que pondera por tier e vai de 0 a 100).
+
+    A FRAÇÃO É SOBRE AS CLASSIFICADAS, igual a `fatia_do_negativo` em
+    `sinais_da_lente.py` — sem_classificacao entra como número à parte, não
+    no denominador, porque ela não tem lado nenhum para contar fatia.
+    """
+    classificadas = pos + neu + neg
+    if not classificadas:
+        return f"Nenhuma matéria classificada em {mes_de(quando)}."
+    materias = f"{inteiro(classificadas)} {plural(classificadas, 'matéria', 'matérias')}"
+    divisao = (
+        f"{porcento(pos / classificadas)} positivas, "
+        f"{porcento(neu / classificadas)} neutras, "
+        f"{porcento(neg / classificadas)} negativas"
+    )
+    if sem_classificacao:
+        return (
+            f"{materias} em {mes_de(quando)}: {divisao} — mais "
+            f"{inteiro(sem_classificacao)} sem classificação."
+        )
+    return f"{materias} em {mes_de(quando)}: {divisao}."
+
+
 def lacuna_de_dado(sem_sentimento: list[date], sem_base: list[date]) -> str:
     partes = []
     if sem_sentimento:
