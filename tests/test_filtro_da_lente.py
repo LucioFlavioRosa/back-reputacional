@@ -117,6 +117,19 @@ def test_sem_filtro_usa_todas_as_mencoes_e_nao_se_marca_como_recorte(sessao, imp
     assert dossie.nota == 66
 
 
+def test_evolucao_fala_de_materia_e_nao_repete_a_manchete_da_nota(sessao, imprensa_de_junho):
+    """A conclusão do gráfico de Evolução precisa bater com o que ele desenha
+    (contagem de matéria) — e não repetir a manchete do Destaque, que fala da
+    nota. 2 positivas, 2 neutras, 2 negativas: 33% cada."""
+    dossie = _dossie(sessao)
+
+    assert dossie.evolucao.titulo == "Evolução das matérias"
+    assert dossie.evolucao.conclusao == (
+        "6 matérias em junho: 33% positivas, 33% neutras, 33% negativas."
+    )
+    assert dossie.evolucao.conclusao != dossie.manchete
+
+
 def test_filtrar_por_tier_muda_a_nota_e_marca_o_recorte(sessao, imprensa_de_junho):
     """Só o tier muito_relevante: as duas matérias positivas do Veículo A."""
     dossie = _dossie(sessao, tier="muito_relevante")

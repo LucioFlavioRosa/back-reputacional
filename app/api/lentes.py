@@ -35,6 +35,7 @@ from app.api.score import _formula, _mes_de
 from app.banco import repositorio_lentes, repositorio_score
 from app.banco.sessao import SessaoDoPedido
 from app.casos_de_uso.ler_sinais_da_lente import ler_sinais, regua_dos_sinais
+from app.dominio import frases_de_sinais as frases
 from app.dominio.erros import NaoEncontrado
 from app.dominio.lentes import (
     Conceito,
@@ -403,6 +404,7 @@ def _serie_em_blocos(serie: list[dict]) -> list[dict]:
 def _evolucao(
     sessao,
     lente,
+    alvo: date,
     meses,
     calibracao: Calibracao,
     conclusao: str | None,
@@ -478,9 +480,28 @@ def _evolucao(
     legenda, cores = (
         _legenda_e_cores_do_clima(sessao) if interna else (SENTIMENTO, CORES_DO_SENTIMENTO)
     )
+    # A CONCLUSÃO DESTE GRÁFICO FALA DE MATÉRIA, E NÃO DE NOTA. Antes, este
+    # bloco herdava `leitura.titulo_da_evolucao` — o mesmo sinal que já é a
+    # manchete do Destaque E a primeira linha de `sinais_da_evolucao` logo
+    # abaixo (a frase chegava a aparecer três vezes na tela). Era sempre sobre
+    # a NOTA ("a nota subiu 21 pontos... o negativo foi de 38% para 24%"), em
+    # cima de um gráfico que desenha CONTAGEM de matéria — duas unidades
+    # diferentes sem nada dizendo que são diferentes. Aqui embaixo a frase
+    # nova descreve só o que o gráfico desenha; o sinal mais rico continua
+    # visível no Destaque e no quadro de sinais, sem repetição a mais.
+    if not interna:
+        do_mes = next((linha for linha in serie if linha["mes"] == alvo), None)
+        conclusao = (
+            frases.volume_de_materias(
+                do_mes["pos"], do_mes["neu"], do_mes["neg"],
+                do_mes.get("sem_classificacao", 0), alvo,
+            )
+            if do_mes and not do_mes["sem_base"]
+            else None
+        )
     return _bloco(
         "barras_empilhadas",
-        "Evolução mensal" if not interna else "Clima das agendas, mês a mês",
+        "Evolução das matérias" if not interna else "Clima das agendas, mês a mês",
         _serie_em_blocos(serie),
         Ficha(
             origem=Procedencia.CRM if interna else Procedencia.PLANILHA,
@@ -1378,7 +1399,7 @@ def obter_dossie(
         )
         delta_versus = "mes_anterior"
 
-    evolucao = _evolucao(sessao, lente, meses, calibracao, None, filtro)
+    evolucao = _evolucao(sessao, lente, alvo, meses, calibracao, None, filtro)
     paineis = _paineis(sessao, lente, alvo, meses, calibracao, filtro)
     volume_por_tier = _volume_por_tier(sessao, lente, alvo, calibracao, filtro)
     top_veiculos, clima_por_veiculos = _veiculos(sessao, lente, alvo, calibracao, filtro)
@@ -1441,7 +1462,16 @@ def obter_dossie(
         kpis=_kpis(sessao, lente, alvo, meses, calibracao, medida, filtro),
         ficha_do_destaque=_saida_da_ficha(FICHA_DO_DESTAQUE),
         manchete=leitura.manchete,
-        evolucao=_com_conclusao(evolucao, leitura.titulo_da_evolucao),
+        # IMPRENSA E SOCIEDADE JÁ SAEM COM A PRÓPRIA CONCLUSÃO (sobre matéria,
+        # não sobre nota) — ver o comentário em `_evolucao`. Sobrescrevê-la
+        # aqui reintroduziria a mesma frase da manchete em cima do gráfico de
+        # contagem. Mercado, Clientes e Institucional continuam herdando o
+        # sinal mais forte do período, como sempre.
+        evolucao=(
+            evolucao
+            if lente.codigo in ("imprensa", "sociedade")
+            else _com_conclusao(evolucao, leitura.titulo_da_evolucao)
+        ),
         sinais_da_evolucao=leitura.sinais_da_evolucao,
         volume_por_tier=volume_por_tier,
         top_veiculos=top_veiculos,
