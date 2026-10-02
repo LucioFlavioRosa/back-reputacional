@@ -111,6 +111,70 @@ class TemasDoMes:
     pontos_sem_tema: float = 0.0
 
 
+def temas_que_pesaram_na_lente(
+    pesos: list[PesosDoTema], lente: str, pontos_da_lente: float
+) -> TemasDoMes:
+    """O tema que mais sustentou e o que mais pressionou, DENTRO DE UMA LENTE só.
+
+    A MESMA PERGUNTA DE `temas_que_pesaram`, com um recorte a menos. Ali a
+    pergunta atravessa as cinco lentes, e por isso o resultado sai em pontos DO
+    ÍNDICE — multiplicado pelo peso efetivo da lente. Aqui a pergunta já nasce
+    dentro de uma lente só (a Jornada de uma lente não compara lente com
+    lente), e o resultado sai em pontos DA PRÓPRIA NOTA dela: sem peso efetivo
+    nenhum, porque `contribuicao_no_ns` já é a fração que o tema pôs no NS da
+    lente, e ×50 converte isso para a mesma escala 0–100 da nota.
+
+    `pontos_da_lente` é quanto a lente pôs de nota no mês (NS × 50) — o total
+    contra o qual os temas somados precisam fechar, para `pontos_sem_tema`
+    dizer a verdade sobre o que sobra sem tema (ver módulo).
+    """
+    somados: dict[str, list[float | int]] = {}
+    for peso in pesos:
+        if peso.lente != lente:
+            continue
+        atual = somados.setdefault(peso.tema, [0.0, 0, 0])
+        atual[0] = float(atual[0]) + contribuicao_no_ns(peso) * PONTOS_POR_NS
+        atual[1] = int(atual[1]) + peso.mencoes_positivas
+        atual[2] = int(atual[2]) + peso.mencoes_negativas
+
+    candidatos = [
+        (
+            float(valores[0]),
+            PesosDoTema(
+                lente=lente,
+                fonte="",
+                tema=tema,
+                positivas=0,
+                negativas=0,
+                total_da_fonte=0,
+                fontes_da_lente=0,
+                mencoes_positivas=int(valores[1]),
+                mencoes_negativas=int(valores[2]),
+            ),
+        )
+        for tema, valores in somados.items()
+        if valores[0]
+    ]
+
+    positivos = [(p, m) for p, m in candidatos if p > 0]
+    negativos = [(p, m) for p, m in candidatos if p < 0]
+    explicado = sum(float(valores[0]) for valores in somados.values())
+
+    return TemasDoMes(
+        pontos_sem_tema=round(pontos_da_lente - explicado, 1),
+        sustentou=(
+            _para_tema(*min(positivos, key=lambda par: (-par[0], par[1].tema)))
+            if positivos
+            else None
+        ),
+        pressionou=(
+            _para_tema(*min(negativos, key=lambda par: (par[0], par[1].tema)))
+            if negativos
+            else None
+        ),
+    )
+
+
 def contribuicao_no_ns(peso: PesosDoTema) -> float:
     """Quanto este tema pôs no NS da LENTE, com sinal.
 

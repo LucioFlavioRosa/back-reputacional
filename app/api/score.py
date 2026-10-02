@@ -48,7 +48,7 @@ from app.dominio.score import (
     pesos_exatos,
 )
 from app.dominio.sinais_da_lente import Limites
-from app.dominio.tema_do_mes import TemaDoMes, temas_que_pesaram
+from app.dominio.tema_do_mes import TemaDoMes, temas_que_pesaram, temas_que_pesaram_na_lente
 
 rotas = APIRouter(
     prefix="/api/score",
@@ -177,6 +177,20 @@ class MovimentoDaLente(BaseModel):
     delta: int
 
 
+class TemasDaLenteSaida(BaseModel):
+    """O que moveu a nota de UMA lente no mês — a mesma pergunta de
+    `sustentou`/`pressionou`, respondida dentro dela só.
+
+    É A METADE DA PERGUNTA QUE A JORNADA DE UMA LENTE PRECISA: lá dentro não se
+    compara lente com lente, e por isso não há `maior_movimento` equivalente —
+    só "o que, dentro da Imprensa, sustentou e o que pressionou".
+    """
+
+    sustentou: TemaSaida | None = None
+    pressionou: TemaSaida | None = None
+    pontos_sem_tema: float = 0.0
+
+
 class PontoDaSerie(BaseModel):
     mes: str
     isr: int | None
@@ -205,6 +219,9 @@ class PontoDaSerie(BaseModel):
     #: A nota de cada lente medida no mês, por código. É o que permite desenhar
     #: a curva de comparação sem uma segunda chamada por lente.
     notas_das_lentes: dict[str, int] = Field(default_factory=dict)
+    #: O que sustentou e o que pressionou CADA lente no mês, por código — a
+    #: Jornada de uma lente lê a dela própria sem uma segunda chamada.
+    temas_das_lentes: dict[str, TemasDaLenteSaida] = Field(default_factory=dict)
 
 
 def _mes_de(texto: str) -> date:
@@ -474,6 +491,22 @@ def serie(sessao: Sessao, usuario: UsuarioLogado) -> list[PontoDaSerie]:
                 for lente in indice.lentes_no_calculo
             },
         )
+        # A MESMA LISTA DE PESOS, aberta por lente — sem consulta nova: é a
+        # soma que `temas_que_pesaram` já fez para o índice, só que sem
+        # atravessar as outras lentes. SÓ QUEM TEM NOTA entra, pelo mesmo
+        # corte de `notas` acima — uma lente sem nota não tem o que explicar.
+        temas_das_lentes: dict[str, TemasDaLenteSaida] = {}
+        for lente in indice.lentes:
+            if lente.score is None:
+                continue
+            por_lente = temas_que_pesaram_na_lente(
+                temas.get(mes, []), lente.codigo, (lente.ns or 0) * 50
+            )
+            temas_das_lentes[lente.codigo] = TemasDaLenteSaida(
+                sustentou=_saida_do_tema(por_lente.sustentou),
+                pressionou=_saida_do_tema(por_lente.pressionou),
+                pontos_sem_tema=por_lente.pontos_sem_tema,
+            )
         pontos.append(
             PontoDaSerie(
                 mes=indice.mes,
@@ -490,6 +523,7 @@ def serie(sessao: Sessao, usuario: UsuarioLogado) -> list[PontoDaSerie]:
                 pontos_sem_tema=do_mes.pontos_sem_tema,
                 maior_movimento=_maior_movimento(notas, anterior, nomes),
                 notas_das_lentes=notas,
+                temas_das_lentes=temas_das_lentes,
             )
         )
         anterior, isr_anterior = notas, indice.isr

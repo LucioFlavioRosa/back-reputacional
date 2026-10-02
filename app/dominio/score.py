@@ -193,6 +193,32 @@ class Calibracao:
 
 
 @dataclass(frozen=True, slots=True)
+class FiltroDeMencoes:
+    """O recorte de uma lente na tela — tier, veículo, atributo, tema.
+
+    TODOS OS QUATRO SÃO SOBRE `mencao`, e nenhum deles existe em
+    `score_mes_fonte` (o agregado que a ingestão grava): aquela tabela só tem
+    grão de (fonte, mês, sentimento, tier). Um filtro de veículo/atributo/tema
+    não tem como ler dali — tem de agregar `mencao` na hora. Ver
+    `repositorio_score.somas_da_lente_filtradas`.
+
+    É UM RECORTE DE TELA, E NÃO CALIBRAÇÃO: a régua (`Calibracao`) é decisão
+    de coordenação, versionada, e vale para todo mundo que olhar o índice.
+    Este filtro é exploração de quem está lendo — por isso a nota recalculada
+    com ele ativo não é "a nota do mês", e a tela precisa dizer isso.
+    """
+
+    tier: str | None = None
+    veiculo: str | None = None
+    atributo: str | None = None
+    tema_texto: str | None = None
+
+    @property
+    def ativo(self) -> bool:
+        return bool(self.tier or self.veiculo or self.atributo or self.tema_texto)
+
+
+@dataclass(frozen=True, slots=True)
 class SomasDaFonte:
     """As somas de uma fonte num mês, no grão em que o banco as guarda.
 

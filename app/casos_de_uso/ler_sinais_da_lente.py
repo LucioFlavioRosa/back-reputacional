@@ -25,7 +25,7 @@ from datetime import date
 
 from app.banco import repositorio_lentes
 from app.dominio.erros import RegraViolada
-from app.dominio.score import Calibracao
+from app.dominio.score import Calibracao, FiltroDeMencoes
 from app.dominio.sinais_da_lente import (
     AcaoDeRating,
     Evento,
@@ -87,6 +87,7 @@ def ler_sinais(
     nome_do_painel_a: str,
     nome_do_painel_b: str,
     secoes_a_omitir: frozenset[Secao] = frozenset(),
+    filtro: FiltroDeMencoes | None = None,
 ) -> Leitura:
     """O que está acontecendo nesta lente, já escolhido para cada lugar da tela.
 
@@ -97,6 +98,12 @@ def ler_sinais(
     sinal mais forte da Imprensa costuma ser o da matriz, que nomeia a pessoa e
     o veículo. Filtrar depois é escolher primeiro entre o que não podia ser
     lido, e então esconder tudo menos a primeira frase da tela.
+
+    `filtro` VIAJA ATÉ AQUI pelo mesmo motivo do payload inteiro: os
+    detectores leem os mesmos `repositorio_lentes.serie_da_lente`/
+    `composicao_por_tier`/`matriz_de_jornalistas` que montam os painéis — sem
+    passar o filtro adiante, a manchete descreveria o mês inteiro enquanto o
+    gráfico ao lado mostra um recorte, e ninguém perceberia o desencontro.
     """
     detectores = {
         "imprensa": _da_imprensa,
@@ -107,7 +114,7 @@ def ler_sinais(
     de = detectores.get(lente.codigo, _da_sociedade)
     achados = [
         sinal
-        for sinal in de(sessao, lente, mes, meses, calibracao, limites)
+        for sinal in de(sessao, lente, mes, meses, calibracao, limites, filtro)
         if sinal.secao not in secoes_a_omitir
     ]
     return escolher(
@@ -121,16 +128,16 @@ def ler_sinais(
 # -- o que cada lente lê ---------------------------------------------------------
 
 
-def _da_imprensa(sessao, lente, mes, meses, calibracao, limites) -> list[Sinal]:
+def _da_imprensa(sessao, lente, mes, meses, calibracao, limites, filtro=None) -> list[Sinal]:
     return [
         *detectar_na_serie(
-            _serie(sessao, lente, meses, calibracao),
+            _serie(sessao, lente, meses, calibracao, filtro),
             unidade="matérias",
             secao=Secao.EVOLUCAO,
             limites=limites,
         ),
         *detectar_nos_itens(
-            _tiers(sessao, lente, mes, calibracao),
+            _tiers(sessao, lente, mes, calibracao, filtro),
             secao=Secao.PAINEL_A,
             rotulo_do_negativo="Tier",
         ),
@@ -143,14 +150,16 @@ def _da_imprensa(sessao, lente, mes, meses, calibracao, limites) -> list[Sinal]:
                     exposicao=pessoa.exposicao,
                     proximidade=pessoa.proximidade,
                 )
-                for pessoa in repositorio_lentes.matriz_de_jornalistas(sessao)
+                for pessoa in repositorio_lentes.matriz_de_jornalistas(
+                    sessao, veiculo=filtro.veiculo if filtro else None
+                )
             ],
             secao=Secao.PAINEL_B,
         ),
     ]
 
 
-def _do_mercado(sessao, lente, mes, meses, calibracao, limites) -> list[Sinal]:
+def _do_mercado(sessao, lente, mes, meses, calibracao, limites, filtro=None) -> list[Sinal]:
     """A única lente sem série de sentimento — e a única que precisa dizer isso.
 
     O EVENTOGRAMA OCUPA O LUGAR DA EVOLUÇÃO. Não é uma contagem mensal, é uma
@@ -188,7 +197,7 @@ def _do_mercado(sessao, lente, mes, meses, calibracao, limites) -> list[Sinal]:
     ]
 
 
-def _dos_clientes(sessao, lente, mes, meses, calibracao, limites) -> list[Sinal]:
+def _dos_clientes(sessao, lente, mes, meses, calibracao, limites, filtro=None) -> list[Sinal]:
     """A evolução conta MENSAGENS, não sentimento — daí o pico e a recuperação.
 
     O SENTIMENTO DESCE PARA O PAINEL A, e sem pico: o pico de volume já foi dito
@@ -229,7 +238,7 @@ def _dos_clientes(sessao, lente, mes, meses, calibracao, limites) -> list[Sinal]
     ]
 
 
-def _do_institucional(sessao, lente, mes, meses, calibracao, limites) -> list[Sinal]:
+def _do_institucional(sessao, lente, mes, meses, calibracao, limites, filtro=None) -> list[Sinal]:
     """Lê do CRM, e não das menções: a fonte desta lente é interna."""
     return [
         *detectar_na_serie(
@@ -252,7 +261,7 @@ def _do_institucional(sessao, lente, mes, meses, calibracao, limites) -> list[Si
     ]
 
 
-def _da_sociedade(sessao, lente, mes, meses, calibracao, limites) -> list[Sinal]:
+def _da_sociedade(sessao, lente, mes, meses, calibracao, limites, filtro=None) -> list[Sinal]:
     return [
         *detectar_na_serie(
             _serie(sessao, lente, meses, calibracao),
@@ -287,7 +296,7 @@ def _da_sociedade(sessao, lente, mes, meses, calibracao, limites) -> list[Sinal]
 # -- as traduções que se repetem -------------------------------------------------
 
 
-def _serie(sessao, lente, meses, calibracao) -> list[Ponto]:
+def _serie(sessao, lente, meses, calibracao, filtro=None) -> list[Ponto]:
     return [
         Ponto(
             mes=linha["mes"],
@@ -297,11 +306,11 @@ def _serie(sessao, lente, meses, calibracao) -> list[Ponto]:
             sem_classificacao=linha.get("sem_classificacao", 0),
             sem_base=linha["sem_base"],
         )
-        for linha in repositorio_lentes.serie_da_lente(sessao, lente.id, meses, calibracao)
+        for linha in repositorio_lentes.serie_da_lente(sessao, lente.id, meses, calibracao, filtro)
     ]
 
 
-def _tiers(sessao, lente, mes, calibracao) -> list[Item]:
+def _tiers(sessao, lente, mes, calibracao, filtro=None) -> list[Item]:
     nomes = {
         "muito_relevante": "Muito Relevante",
         "relevante": "Relevante",
@@ -314,7 +323,9 @@ def _tiers(sessao, lente, mes, calibracao) -> list[Item]:
             neu=linha["neutro"],
             neg=linha["negativo"],
         )
-        for linha in repositorio_lentes.composicao_por_tier(sessao, lente.id, mes, calibracao)
+        for linha in repositorio_lentes.composicao_por_tier(
+            sessao, lente.id, mes, calibracao, filtro
+        )
     ]
 
 

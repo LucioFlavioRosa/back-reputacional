@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.banco.sessao import obter_sessao
 from app.banco.tabelas_interacoes import InteracaoRegistro
-from app.banco.tabelas_score import Lente, ScoreConfig, ScoreFonte, ScoreMesFonte
+from app.banco.tabelas_score import Lente, Mencao, ScoreConfig, ScoreFonte, ScoreMesFonte
 from app.banco.tabelas_stakeholders import Instituicao
 from main import app
 from tests.test_e2e_postgres import URL, corpo
@@ -179,6 +179,60 @@ def test_a_serie_diz_quantas_lentes_formaram_cada_ponto(cliente_do_score, junho)
     assert serie, "junho tem dado; a série não pode vir vazia"
     assert all("lentes" in ponto for ponto in serie)
     assert all(0 <= ponto["lentes"] <= 5 for ponto in serie)
+
+
+@pytest.fixture
+def junho_com_temas(sessao):
+    """Imprensa em junho com dois temas — um sustentando, um pressionando —,
+    e `mencao`/`score_mes_fonte` na mesma soma: pela MESMA razão de
+    `imprensa_de_junho` em `test_filtro_da_lente.py`, é `score_mes_fonte` quem
+    dá a nota da lente, e `mencao` quem abre por tema; sem o par, ou a nota sai
+    nula ou a decomposição não tem o que explicar.
+    """
+    mes = date(2026, 6, 1)
+    sessao.execute(delete(ScoreMesFonte).where(ScoreMesFonte.mes == mes))
+    clipei = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == "clipei"))
+    for _ in range(2):
+        sessao.add(
+            Mencao(
+                fonte_id=clipei.id, mes=mes, sentimento="pos",
+                tier="muito_relevante", tema_texto="Tarifa justa",
+            )
+        )
+    sessao.add(
+        Mencao(
+            fonte_id=clipei.id, mes=mes, sentimento="neg",
+            tier="muito_relevante", tema_texto="Falha no abastecimento",
+        )
+    )
+    sessao.add(
+        ScoreMesFonte(
+            fonte_id=clipei.id, mes=mes, sentimento="pos", tier="muito_relevante", mencoes=2,
+        )
+    )
+    sessao.add(
+        ScoreMesFonte(
+            fonte_id=clipei.id, mes=mes, sentimento="neg", tier="muito_relevante", mencoes=1,
+        )
+    )
+    sessao.flush()
+    return mes
+
+
+def test_a_serie_abre_o_que_sustentou_e_pressionou_CADA_lente(
+    cliente_do_score, junho_com_temas
+):
+    """A Jornada de uma lente lê `temas_das_lentes[codigo]` sem chamada extra —
+    é a mesma pergunta de `sustentou`/`pressionou`, respondida dentro da
+    Imprensa só, e não comparada com as outras quatro."""
+    serie = cliente_do_score.get("/api/score/serie").json()
+    junho = next(ponto for ponto in serie if ponto["mes"] == "2026-06")
+
+    imprensa = junho["temas_das_lentes"]["imprensa"]
+    assert imprensa["sustentou"]["tema"] == "Tarifa justa"
+    assert imprensa["pressionou"]["tema"] == "Falha no abastecimento"
+    # As duas menções têm tema: nada sobra sem explicação.
+    assert imprensa["pontos_sem_tema"] == pytest.approx(0, abs=0.2)
 
 
 def test_mes_invalido_e_recusado_dizendo_o_formato(cliente_do_score):

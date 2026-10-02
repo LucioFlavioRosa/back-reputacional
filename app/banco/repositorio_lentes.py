@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 
 from app.banco.repositorio_score import (
     SENTIMENTO_DO_CLIMA,
+    condicoes_do_filtro,
     primeiro_dia,
     so_fontes_ligadas,
     so_interacoes_visiveis,
@@ -46,7 +47,7 @@ from app.banco.tabelas_lentes import (
 )
 from app.banco.tabelas_score import Lente, Mencao, ScoreFonte
 from app.banco.tabelas_stakeholders import Instituicao
-from app.dominio.score import Calibracao
+from app.dominio.score import Calibracao, FiltroDeMencoes
 
 
 def meses_ate(mes: date, quantos: int) -> list[date]:
@@ -87,7 +88,11 @@ def lente_e_interna(sessao: Session, lente_id: int) -> bool:
 
 
 def serie_da_lente(
-    sessao: Session, lente_id: int, meses: Sequence[date], calibracao: Calibracao
+    sessao: Session,
+    lente_id: int,
+    meses: Sequence[date],
+    calibracao: Calibracao,
+    filtro: FiltroDeMencoes | None = None,
 ) -> list[dict]:
     """Positivo, neutro e negativo por mês, contados um a um.
 
@@ -100,6 +105,10 @@ def serie_da_lente(
 
     Contar a segunda como zero seria dizer que o mês foi neutro, quando o que
     houve foi ausência de leitura.
+
+    `filtro` NÃO VALE PARA A LENTE INTERNA: tier/veículo/atributo/tema são
+    campos de `mencao`, e o clima das interações não passa por ela — ver
+    `FiltroDeMencoes`.
     """
     if lente_e_interna(sessao, lente_id):
         return _serie_do_crm(sessao, meses)
@@ -117,6 +126,7 @@ def serie_da_lente(
             ScoreFonte.lente_id == lente_id,
             Mencao.mes.in_(list(meses)),
             *so_fontes_ligadas(calibracao),
+            *condicoes_do_filtro(filtro),
         )
         .group_by(Mencao.mes)
     )
@@ -124,7 +134,13 @@ def serie_da_lente(
         mes: {"pos": pos, "neu": neu, "neg": neg}
         for mes, pos, neu, neg in sessao.execute(consulta)
     }
-    nao_classificadas = _nao_classificadas(sessao, lente_id, meses, calibracao)
+    # NÃO-CLASSIFICADAS NÃO TEM COMO SABER DE VEÍCULO/ATRIBUTO/TEMA — é uma
+    # contagem agregada na ingestão, sem essas colunas. Com filtro ativo, as
+    # não-classificadas somem da série em vez de aparecerem infladas (contando
+    # linhas que o filtro teria excluído se tivesse como classificá-las).
+    nao_classificadas = (
+        {} if filtro and filtro.ativo else _nao_classificadas(sessao, lente_id, meses, calibracao)
+    )
     vazio = {"pos": 0, "neu": 0, "neg": 0}
     return [
         {
@@ -202,13 +218,20 @@ def _serie_do_crm(sessao: Session, meses: Sequence[date]) -> list[dict]:
 
 
 def composicao_por_tier(
-    sessao: Session, lente_id: int, mes: date, calibracao: Calibracao
+    sessao: Session,
+    lente_id: int,
+    mes: date,
+    calibracao: Calibracao,
+    filtro: FiltroDeMencoes | None = None,
 ) -> list[dict]:
     """Tier do veículo × sentimento — o Painel A da Imprensa.
 
     É este cruzamento que o peso 10/5/1 do índice captura, e mostrá-lo em
     contagem crua é o que deixa a régua auditável: quem quiser conferir a nota
     multiplica na mão.
+
+    COM O FILTRO DE TIER ATIVO, este painel vira uma única barra — é o
+    esperado: "Tier × sentimento" filtrado por um tier só mostra ele mesmo.
     """
     consulta = (
         select(
@@ -224,6 +247,7 @@ def composicao_por_tier(
             Mencao.mes == primeiro_dia(mes),
             Mencao.tier.is_not(None),
             *so_fontes_ligadas(calibracao),
+            *condicoes_do_filtro(filtro),
         )
         .group_by(Mencao.tier)
     )
@@ -235,8 +259,105 @@ def composicao_por_tier(
     return sorted(linhas, key=lambda linha: ordem.get(linha["tier"], 9))
 
 
+def opcoes_de_filtro(sessao: Session, lente_id: int, mes: date) -> dict[str, list[str]]:
+    """Os valores de veículo/atributo/tema que REALMENTE aparecem no mês desta
+    lente — e não um dicionário fechado, porque nenhum dos três é um: são
+    texto livre que cada fornecedor manda do seu jeito.
+
+    SÓ DO MÊS, de propósito: oferecer um veículo que só existiu em março
+    deixaria o filtro aceitar uma escolha que não muda nada no mês vigente, e
+    quem escolheu não teria como saber que o resultado vazio era disso.
+    """
+
+    def _distintos(coluna) -> list[str]:
+        consulta = (
+            select(coluna)
+            .distinct()
+            .select_from(Mencao)
+            .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+            .where(
+                ScoreFonte.lente_id == lente_id,
+                Mencao.mes == primeiro_dia(mes),
+                coluna.is_not(None),
+            )
+            .order_by(coluna)
+        )
+        return [valor for (valor,) in sessao.execute(consulta) if valor]
+
+    return {
+        "tiers": _distintos(Mencao.tier),
+        "veiculos": _distintos(Mencao.veiculo),
+        "atributos": _distintos(Mencao.atributo),
+        "temas": _distintos(Mencao.tema_texto),
+    }
+
+
+def materias_recentes(
+    sessao: Session,
+    lente_id: int,
+    mes: date,
+    calibracao: Calibracao,
+    filtro: FiltroDeMencoes | None = None,
+    quantas: int = 5,
+) -> list[dict]:
+    """As `quantas` matérias mais recentes do mês — o drill-down até a linha.
+
+    NÃO É A MATÉRIA, É O METADADO DELA: `mencao` não guarda título nem link
+    hoje — o pipeline de importação atual não tem como ler isso (ver
+    `ingestao_score.CAMPOS`), independente do que a planilha de origem traga.
+
+    A CALIBRAÇÃO VALE AQUI TAMBÉM, pela mesma razão do resto do dossiê: uma
+    matéria de fonte desligada não entrou na nota lá em cima, e listá-la aqui
+    embaixo contaria uma história que o número não sustenta.
+
+    SEM DADO É LISTA VAZIA, igual ao resto do dossiê — nunca uma linha
+    inventada para preencher a tabela.
+    """
+    rotulo = func.coalesce(Tema.nome, Mencao.tema_texto)
+    consulta = (
+        select(
+            Mencao.data,
+            Mencao.veiculo,
+            Mencao.sentimento,
+            Mencao.tier,
+            Mencao.atributo,
+            rotulo,
+        )
+        .select_from(Mencao)
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .outerjoin(Tema, Tema.id == Mencao.tema_id)
+        .where(
+            ScoreFonte.lente_id == lente_id,
+            Mencao.mes == primeiro_dia(mes),
+            *so_fontes_ligadas(calibracao),
+            *condicoes_do_filtro(filtro),
+        )
+        # MAIS RECENTE PRIMEIRO; SEM DATA POR ÚLTIMO — `data` é opcional no
+        # schema (algumas fontes não trazem a data exata da matéria), e uma
+        # linha sem data não é "a mais antiga", é "não se sabe quando".
+        .order_by(Mencao.data.desc().nulls_last(), Mencao.criado_em.desc())
+        .limit(quantas)
+    )
+    return [
+        {
+            "data": data,
+            "veiculo": veiculo,
+            "sentimento": sentimento,
+            "tier": tier,
+            "atributo": atributo,
+            "tema": tema,
+        }
+        for data, veiculo, sentimento, tier, atributo, tema in sessao.execute(consulta)
+    ]
+
+
 def temas_por_sentimento(
-    sessao: Session, lente_id: int, mes: date, calibracao: Calibracao, quantos: int = 6
+    sessao: Session,
+    lente_id: int,
+    mes: date,
+    calibracao: Calibracao,
+    filtro: FiltroDeMencoes | None = None,
+    quantos: int = 6,
 ) -> list[dict]:
     """Os temas mais falados do mês, com a composição de cada um."""
     rotulo = func.coalesce(Tema.nome, Mencao.tema_texto)
@@ -255,6 +376,7 @@ def temas_por_sentimento(
             Mencao.mes == primeiro_dia(mes),
             rotulo.is_not(None),
             *so_fontes_ligadas(calibracao),
+            *condicoes_do_filtro(filtro),
         )
         .group_by(rotulo)
         .order_by(func.count().desc(), rotulo.asc())
@@ -264,6 +386,141 @@ def temas_por_sentimento(
         {"tema": tema, "positivo": pos, "neutro": neu, "negativo": neg}
         for tema, pos, neu, neg in sessao.execute(consulta)
     ]
+
+
+#: QUANTOS PILARES REPUTACIONAIS EXISTEM — 7, pelo slide que substituiu os 4
+#: blocos de tema (ver a conversa que abriu essa mudança). NÃO É UM TETO DE
+#: "TOP N" como em `temas_por_sentimento`: atributo é vocabulário FECHADO, e
+#: um teto menor que o total corta um pilar inteiro da tela sem avisar — foi
+#: o que aconteceu com `quantos=6`: "Inovação e Tecnologia" desaparecia de
+#: "Drivers e riscos" sempre que os outros seis tivessem mais matérias no mês.
+QUANTOS_PILARES_REPUTACIONAIS = 7
+
+
+def atributos_por_sentimento(
+    sessao: Session,
+    lente_id: int,
+    mes: date,
+    calibracao: Calibracao,
+    filtro: FiltroDeMencoes | None = None,
+    quantos: int = QUANTOS_PILARES_REPUTACIONAIS,
+) -> list[dict]:
+    """Os atributos reputacionais mais falados do mês — "Drivers e riscos":
+    o que está puxando a lente para cima ou para baixo, e não só o saldo
+    final. Mesmo molde de `temas_por_sentimento`, sem o `coalesce` com `Tema`
+    porque atributo não tem dicionário do CRM para casar — é só da Clipei.
+
+    `quantos` É O TOTAL DE PILARES, e não um corte de "top N": ao contrário de
+    tema ou veículo, atributo é um vocabulário fechado — perder um pilar da
+    tela por volume baixo no mês esconderia justamente o que mais precisa de
+    atenção (pouco falado é, às vezes, o próprio problema).
+    """
+    consulta = (
+        select(
+            Mencao.atributo,
+            func.count().filter(Mencao.sentimento == "pos"),
+            func.count().filter(Mencao.sentimento == "neu"),
+            func.count().filter(Mencao.sentimento == "neg"),
+        )
+        .select_from(Mencao)
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .where(
+            ScoreFonte.lente_id == lente_id,
+            Mencao.mes == primeiro_dia(mes),
+            Mencao.atributo.is_not(None),
+            *so_fontes_ligadas(calibracao),
+            *condicoes_do_filtro(filtro),
+        )
+        .group_by(Mencao.atributo)
+        .order_by(func.count().desc(), Mencao.atributo.asc())
+        .limit(quantos)
+    )
+    return [
+        {"atributo": atributo, "positivo": pos, "neutro": neu, "negativo": neg}
+        for atributo, pos, neu, neg in sessao.execute(consulta)
+    ]
+
+
+def veiculos_por_sentimento(
+    sessao: Session,
+    lente_id: int,
+    mes: date,
+    calibracao: Calibracao,
+    filtro: FiltroDeMencoes | None = None,
+    quantos: int = 5,
+) -> list[dict]:
+    """Os veículos com mais matérias no mês — "quem é a cobertura" desta
+    lente, e o saldo de sentimento de cada um.
+
+    POR VOLUME, E NÃO POR SALDO — mesmo critério de `unidades_da_lente` e do
+    placar de clima do Painel (CRM): o veículo que mais falou da companhia
+    entra primeiro, com o saldo que ele tiver, bom ou ruim. Ordenar pelo
+    saldo esconderia o volume: um veículo com 2 matérias e 100% negativo
+    pesaria mais que um com 40 matérias e 60% negativo, que é o que de fato
+    está formando a opinião do mês.
+    """
+    consulta = (
+        select(
+            Mencao.veiculo,
+            func.count().filter(Mencao.sentimento == "pos"),
+            func.count().filter(Mencao.sentimento == "neu"),
+            func.count().filter(Mencao.sentimento == "neg"),
+        )
+        .select_from(Mencao)
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .where(
+            ScoreFonte.lente_id == lente_id,
+            Mencao.mes == primeiro_dia(mes),
+            Mencao.veiculo.is_not(None),
+            *so_fontes_ligadas(calibracao),
+            *condicoes_do_filtro(filtro),
+        )
+        .group_by(Mencao.veiculo)
+        .order_by((func.count()).desc(), Mencao.veiculo.asc())
+        .limit(quantos)
+    )
+    return [
+        {
+            "veiculo": veiculo,
+            "positivo": pos,
+            "neutro": neu,
+            "negativo": neg,
+            "total": pos + neu + neg,
+        }
+        for veiculo, pos, neu, neg in sessao.execute(consulta)
+    ]
+
+
+def veiculos_tier1_do_periodo(
+    sessao: Session,
+    lente_id: int,
+    meses: Sequence[date],
+    calibracao: Calibracao,
+    filtro: FiltroDeMencoes | None = None,
+) -> int:
+    """Quantos veículos DIFERENTES, Tier 1 (muito relevante), cobriram a Aegea
+    no período.
+
+    O SUBSTITUTO HONESTO DE "Jornalistas P1": aquele KPI vinha da matriz de
+    jornalistas, que promete uma relação jornalista-a-jornalista que ainda não
+    existe — hoje é dado de exemplo (ver `JornalistaMatriz`). O tier do
+    veículo, ao contrário, é o mesmo dado real que já forma o Top 5 veículos e
+    a régua do índice: vem de cada matéria ingerida, não de cadastro à parte.
+    """
+    consulta = (
+        select(func.count(func.distinct(Mencao.veiculo)))
+        .select_from(Mencao)
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .where(
+            ScoreFonte.lente_id == lente_id,
+            Mencao.mes.in_(list(meses)),
+            Mencao.tier == "muito_relevante",
+            Mencao.veiculo.is_not(None),
+            *so_fontes_ligadas(calibracao),
+            *condicoes_do_filtro(filtro),
+        )
+    )
+    return sessao.scalar(consulta) or 0
 
 
 def unidades_da_lente(
@@ -531,11 +788,18 @@ def _inicio_do_mes_seguinte(mes: date) -> date:
     )
 
 
-def matriz_de_jornalistas(sessao: Session) -> list[JornalistaMatriz]:
+def matriz_de_jornalistas(
+    sessao: Session, veiculo: str | None = None
+) -> list[JornalistaMatriz]:
+    """A matriz é cadastro à mão, não vem de `mencao` — só `veiculo` filtra
+    aqui: tier/atributo/tema não são atributo de jornalista nenhum."""
+    condicoes = [JornalistaMatriz.ativo.is_(True)]
+    if veiculo:
+        condicoes.append(JornalistaMatriz.veiculo == veiculo)
     return list(
         sessao.scalars(
             select(JornalistaMatriz)
-            .where(JornalistaMatriz.ativo.is_(True))
+            .where(*condicoes)
             .order_by(
                 (
                     JornalistaMatriz.relevancia

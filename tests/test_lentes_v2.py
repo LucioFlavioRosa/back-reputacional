@@ -262,7 +262,7 @@ def test_os_kpis_sao_os_da_especificacao_em_cada_lente(sessao):
         codigo: [kpi.rotulo for kpi in _dossie(sessao, codigo).kpis]
         for codigo in ("imprensa", "mercado", "clientes")
     }
-    assert "Jornalistas P1" in rotulos["imprensa"]
+    assert "Veículos Tier 1" in rotulos["imprensa"]
     assert "Solidez financeira" in rotulos["mercado"]
     # As DUAS taxas, lado a lado — é a diferença entre cobrar a equipe por
     # marcação de post e cobrá-la pelo trabalho que existia.
