@@ -227,9 +227,9 @@ CONCEITO_NS = Conceito(
 CONCEITO_TIER = Conceito(
     termo="Tier do veículo",
     texto=(
-        "A relevância do veículo na escala da própria clipagem: Muito "
-        "Relevante (imprensa nacional e econômica), Relevante (regionais com "
-        "influência) e Menos Relevante (locais e blogs de nicho)."
+        "A relevância do veículo na escala da própria clipagem: Tier 1 "
+        "(imprensa nacional e econômica), Tier 2 (regionais com influência) "
+        "e Tier 3 (locais e blogs de nicho)."
     ),
 )
 CONCEITO_ACIONAVEL = Conceito(
@@ -553,11 +553,7 @@ def _paineis(
                 "Tier do veículo × sentimento",
                 [
                     {
-                        "rotulo": {
-                            "muito_relevante": "Muito Relevante",
-                            "relevante": "Relevante",
-                            "menos_relevante": "Menos Relevante",
-                        }.get(linha["tier"], linha["tier"]),
+                        "rotulo": _ROTULO_DO_TIER_DA_MATERIA.get(linha["tier"], linha["tier"]),
                         **{k: v for k, v in linha.items() if k != "tier"},
                     }
                     for linha in tiers
@@ -1012,9 +1008,9 @@ def _temas_mais_falados(
 
 _ROTULO_DO_SENTIMENTO = {"pos": "Positivo", "neu": "Neutro", "neg": "Negativo"}
 _ROTULO_DO_TIER_DA_MATERIA = {
-    "muito_relevante": "Muito Relevante",
-    "relevante": "Relevante",
-    "menos_relevante": "Menos Relevante",
+    "muito_relevante": "Tier 1",
+    "relevante": "Tier 2",
+    "menos_relevante": "Tier 3",
 }
 
 
