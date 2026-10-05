@@ -34,7 +34,7 @@ from sqlalchemy.orm import Session
 
 from app.api.lentes import MESES_DA_EVOLUCAO, obter_recorte
 from app.banco.tabelas_score import Mencao, ScoreFonte, ScoreMesFonte
-from app.dominio.score import peso_do_cargo, peso_do_engajamento
+from app.dominio.score import FiltroDeMencoes, peso_do_cargo, peso_do_engajamento
 from tests.test_e2e_postgres import URL
 
 _engine = create_engine(URL, pool_pre_ping=True)
@@ -236,3 +236,94 @@ def test_sem_recorte_o_endpoint_responde_o_MES(sessao, sociedade_de_junho):
     assert inteiro.trilha == []
     assert inteiro.itens == 6
     assert inteiro.itens_no_mes == 6
+
+
+# =============================================================================
+# os achados da revisão deste endpoint
+# =============================================================================
+
+
+def test_a_trilha_mostra_TODA_dimensao_do_filtro(sessao, sociedade_de_junho):
+    """ACHADO DE REVISÃO (média). A trilha percorria só a lista de dimensões DA
+    LENTE, com tier e atributo apensados no fim — então um recorte por uma
+    dimensão fora da lista daquela lente era aplicado e não aparecia.
+
+    UM DEGRAU INVISÍVEL NÃO DÁ PARA REMOVER: o número do painel sai diferente do
+    que a pessoa espera, a trilha não explica por quê, e o botão para desfazer
+    não existe. É pior que não aceitar o recorte."""
+    #: A IMPRENSA É O CASO: a lista dela é tema, atributo, veículo, UF e autor —
+    #: `subtema` e `empresa` ficam fora, e a rota aceita as duas. O remendo
+    #: anterior apensava só tier e atributo, que por acaso eram as duas que eu
+    #: tinha em mente quando escrevi.
+    recorte = obter_recorte(
+        sessao=sessao,
+        usuario=_QuemOlha(),
+        codigo="imprensa",
+        mes="2026-06",
+        uf="RJ",
+        subtema="Falta de água",
+        empresa="Águas do Rio",
+        tier="relevante",
+    )
+
+    chaves = {passo.chave for passo in recorte.trilha}
+    assert chaves == {"uf", "subtema", "empresa", "tier"}
+    #: E CADA UM COM O NOME QUE SE LÊ, não a chave do parâmetro.
+    por_chave = {passo.chave: passo.dimensao for passo in recorte.trilha}
+    assert por_chave["tier"] == "Tier"
+    assert por_chave["uf"] == "UF"
+    assert por_chave["empresa"] == "Concessionária"
+
+
+def test_a_lente_que_NAO_vem_de_mencao_recusa_o_recorte(sessao):
+    """ACHADO DE REVISÃO (média). A Institucional lê o CRM, não `mencao` — e o
+    filtro é de `mencao`. A resposta misturava "nota do recorte vazio" (que mede
+    `mencao` e dá zero) com "composição e histórico do mês inteiro" (que
+    `serie_da_lente` devolve do CRM ignorando o filtro).
+
+    DUAS CONTAS DE UNIVERSOS DIFERENTES NO MESMO PAINEL é o pior resultado: cada
+    número está certo no seu mundo, e lado a lado eles se contradizem sem que
+    nada na tela explique. Agora o painel diz que o recorte não se aplica."""
+    recorte = obter_recorte(
+        sessao=sessao, usuario=_QuemOlha(), codigo="institucional", mes="2026-06", uf="RJ"
+    )
+
+    assert recorte.itens == 0
+    assert recorte.impacto == 0
+    assert recorte.ausencia and "CRM" in recorte.ausencia
+    #: O HISTÓRICO FICA DE FORA: ele viria do CRM, sem o recorte — o número que
+    #: contradizia o resto.
+    assert recorte.historico == []
+    #: E A TRILHA FICA, para a pessoa ver o que pediu e poder desfazer.
+    assert [passo.chave for passo in recorte.trilha] == ["uf"]
+
+
+def test_sem_filtro_a_lente_interna_responde_o_mes(sessao):
+    """O CONTRAPESO: sem recorte, a Institucional continua respondendo — é o que
+    a barra da Evolução abre quando alguém clica num mês dela."""
+    recorte = obter_recorte(
+        sessao=sessao, usuario=_QuemOlha(), codigo="institucional", mes="2026-06"
+    )
+
+    assert recorte.ausencia is None or "CRM" not in recorte.ausencia
+    assert recorte.historico
+
+
+def test_toda_dimensao_do_filtro_TEM_rotulo():
+    """O invariante que impede o achado de voltar: a trilha nomeia a dimensão pelo
+    dicionário de rótulos, e uma dimensão nova no filtro sem rótulo aqui sairia
+    da trilha em silêncio — ou estouraria na primeira vez que alguém a usasse.
+
+    SEM BANCO, de propósito: é uma conferência entre duas declarações, e um teste
+    que precisa de banco para isso não roda quando mais importa."""
+    from dataclasses import fields
+
+    from app.dominio.causa_da_lente import ROTULO_DA_DIMENSAO
+
+    #: `tema_texto` é o nome da coluna; a chave da rota é `tema`.
+    do_filtro = {
+        ("tema" if campo.name == "tema_texto" else campo.name)
+        for campo in fields(FiltroDeMencoes)
+    }
+
+    assert do_filtro == set(ROTULO_DA_DIMENSAO)

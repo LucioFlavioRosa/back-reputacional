@@ -495,20 +495,32 @@ def composicao_da_lente(
     return total
 
 
-def regua_do_mes(
+def denominador_do_mes(
     sessao: Session, lente_id: int, mes: date, calibracao: Calibracao
-) -> str:
-    """A régua com que o MÊS INTEIRO desta lente se mede.
+) -> tuple[str, float]:
+    """A régua e o total ponderado do mês — o denominador do impacto, de uma
+    leitura só.
 
-    Separada para que o impacto de um recorte a use nos dois lados da divisão —
-    ver `composicao_da_lente`.
+    ACHADO DE REVISÃO (desempenho). Antes eram duas funções: uma lia as somas do
+    mês para decidir a régua, a outra as lia DE NOVO para somar o total. E o
+    impacto é chamado uma vez por mês do período no histórico — oito meses,
+    dezesseis leituras do mesmo agregado, metade delas para redescobrir a mesma
+    régua. O endpoint levava 472 ms no mês mais cheio.
+
+    AS DUAS COISAS SAEM DA MESMA LEITURA porque dependem do mesmo dado: a régua é
+    o que todas as fontes ligadas cumprem, e o total é a soma delas sob essa
+    régua.
     """
     ligadas = {
         fonte: linhas
         for fonte, linhas in _somas_da_lente(sessao, lente_id, mes, None).items()
         if calibracao.ligada(fonte)
     }
-    return regua_da_lente(ligadas, calibracao.regua_engajamento)
+    regua = regua_da_lente(ligadas, calibracao.regua_engajamento)
+    total = Contagem()
+    for linhas in ligadas.values():
+        total = total + ponderar(linhas, calibracao, regua)
+    return regua, total.total
 
 
 def impacto_do_recorte(
@@ -517,8 +529,12 @@ def impacto_do_recorte(
     mes: date,
     calibracao: Calibracao,
     filtro: FiltroDeMencoes | None = None,
+    denominador: tuple[str, float] | None = None,
 ) -> float:
     """Quantos pontos este pedaço do mês tira (ou põe) na nota da lente.
+
+    `denominador` PRONTO evita medir o mês duas vezes quando quem chama já o tem —
+    é o caso do dossiê, que pede o impacto do mês alvo e depois o histórico.
 
     A REGRA CENTRAL DO PACOTE, na letra:
 
@@ -530,19 +546,18 @@ def impacto_do_recorte(
     — cada barra pareceria enorme, nenhuma somaria o todo, e a tela estaria
     mostrando pedaços que não compõem a coisa que dizem compor.
 
-    A MESMA RÉGUA NOS DOIS LADOS, por `regua_do_mes`: um recorte cujas fontes não
+    A MESMA RÉGUA NOS DOIS LADOS, por `denominador_do_mes`: um recorte cujas fontes não
     mandam engajamento seria medido em menções e dividido por um mês medido em
     curtidas.
 
     ZERO QUANDO O MÊS NÃO TEM BASE, e não divisão por zero: sem denominador não
     há pergunta a responder.
     """
-    regua = regua_do_mes(sessao, lente_id, mes, calibracao)
-    do_mes = composicao_da_lente(sessao, lente_id, mes, calibracao, None, regua)
-    if not do_mes.total:
+    regua, total_do_mes = denominador or denominador_do_mes(sessao, lente_id, mes, calibracao)
+    if not total_do_mes:
         return 0.0
     do_recorte = composicao_da_lente(sessao, lente_id, mes, calibracao, filtro, regua)
-    return PONTOS_POR_NS * (do_recorte.positivo - do_recorte.negativo) / do_mes.total
+    return PONTOS_POR_NS * (do_recorte.positivo - do_recorte.negativo) / total_do_mes
 
 
 def fontes_da_lente(

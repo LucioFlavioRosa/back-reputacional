@@ -34,6 +34,30 @@ ABAS = 6
 NULO_DEMAIS = 0.6
 
 
+#: O NOME DE CADA DIMENSÃO DO RECORTE, inclusive as que não são aba de lente
+#: nenhuma.
+#:
+#: ACHADO DE REVISÃO: a trilha do aprofundamento percorria só a lista da lente, com
+#: tier e atributo apensados à mão — as duas que eu tinha em mente quando escrevi.
+#: `subtema` numa lente de clipping, ou `empresa` na Imprensa, eram aplicados pelo
+#: servidor e NÃO apareciam na trilha: um degrau invisível, que não dá para
+#: remover. Pior que não aceitar o recorte.
+#:
+#: A CHAVE É A DO PARÂMETRO DA ROTA. Toda dimensão que `FiltroDeMencoes` aceita
+#: tem de estar aqui, e é isto que o teste da trilha trava.
+ROTULO_DA_DIMENSAO: dict[str, str] = {
+    "tema": "Tema",
+    "subtema": "Subtema",
+    "empresa": "Concessionária",
+    "veiculo": "Veículo",
+    "perfil_autor": "Perfil de quem fala",
+    "autor": "Autor",
+    "uf": "UF",
+    "tier": "Tier",
+    "atributo": "Atributo",
+}
+
+
 @dataclass(frozen=True)
 class Dimensao:
     """Um corte pelo qual se pergunta onde está a causa.

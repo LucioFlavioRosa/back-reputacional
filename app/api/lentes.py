@@ -40,7 +40,7 @@ from app.banco.sessao import SessaoDoPedido
 from app.banco.tabelas_score import Mencao
 from app.casos_de_uso.ler_sinais_da_lente import ler_sinais, regua_dos_sinais
 from app.dominio import frases_de_sinais as frases
-from app.dominio.causa_da_lente import DIMENSOES_POR_LENTE
+from app.dominio.causa_da_lente import DIMENSOES_POR_LENTE, ROTULO_DA_DIMENSAO
 from app.dominio.erros import NaoEncontrado
 from app.dominio.lentes import (
     Conceito,
@@ -1030,20 +1030,28 @@ def _trilha_do_recorte(codigo_da_lente: str, filtro: FiltroDeMencoes) -> list[Pa
         "tier": filtro.tier,
         "atributo": filtro.atributo,
     }
-    passos = []
-    for dimensao in DIMENSOES_POR_LENTE.get(codigo_da_lente, ()):
-        valor = valores.get(dimensao.chave)
-        if valor:
-            passos.append(
-                PassoDaTrilha(chave=dimensao.chave, dimensao=dimensao.rotulo, valor=valor)
-            )
-    #: AS DE CLIPPING NO FIM, e sem perder nenhuma: tier e atributo não estão na
-    #: lista de dimensões da Sociedade, mas o filtro as aceita — um recorte vindo
-    #: da barra de filtros da Imprensa não pode sumir da trilha.
-    for chave, rotulo in (("tier", "Tier"), ("atributo", "Atributo")):
-        if valores.get(chave) and not any(passo.chave == chave for passo in passos):
-            passos.append(PassoDaTrilha(chave=chave, dimensao=rotulo, valor=valores[chave]))
-    return passos
+    #: PRIMEIRO AS DA LENTE, NA ORDEM DELA; depois TODAS as outras que o filtro
+    #: aceita, na ordem do dicionário de rótulos.
+    #:
+    #: ACHADO DE REVISÃO: eu apensava tier e atributo à mão — as duas que me
+    #: vieram à cabeça. `subtema` na Imprensa, `empresa` em qualquer lente cuja
+    #: lista não a traga: aplicados pelo servidor e invisíveis na trilha. Um
+    #: degrau invisível não dá para remover.
+    da_lente = [d.chave for d in DIMENSOES_POR_LENTE.get(codigo_da_lente, ())]
+    ordem = da_lente + [chave for chave in ROTULO_DA_DIMENSAO if chave not in da_lente]
+    rotulos = {d.chave: d.rotulo for d in DIMENSOES_POR_LENTE.get(codigo_da_lente, ())}
+    return [
+        PassoDaTrilha(
+            chave=chave,
+            #: O RÓTULO DA LENTE VENCE o genérico: na Sociedade, `veiculo` se lê
+            #: "Rede"; na Imprensa, "Veículo". É a mesma coluna com dois nomes, e
+            #: quem lê a trilha espera o nome que viu na aba.
+            dimensao=rotulos.get(chave) or ROTULO_DA_DIMENSAO[chave],
+            valor=valores[chave],
+        )
+        for chave in ordem
+        if valores.get(chave)
+    ]
 
 
 def _frase_do_recorte(
@@ -2064,9 +2072,45 @@ def obter_recorte(
     )
     calibracao = repositorio_score.calibracao_vigente(sessao)
     meses = repositorio_lentes.meses_ate(alvo, MESES_DA_EVOLUCAO)
+    trilha = _trilha_do_recorte(lente.codigo, filtro)
+
+    #: A LENTE QUE LÊ O CRM NÃO TEM O QUE RECORTAR, e isto foi achado de revisão.
+    #: O filtro é de `mencao`; a Institucional conta interações. A resposta
+    #: misturava duas contas de universos diferentes: a nota vinha de `mencao`
+    #: (zero, porque não há) e a composição e o histórico vinham do CRM INTEIRO,
+    #: porque `serie_da_lente` ignora o filtro na lente interna — cada número
+    #: certo no seu mundo, e lado a lado se contradizendo sem nada explicando.
+    #:
+    #: A TRILHA FICA, para a pessoa ver o que pediu e poder desfazer.
+    if filtro.ativo and repositorio_lentes.lente_e_interna(sessao, lente.id):
+        return RecorteSaida(
+            lente=lente.codigo,
+            mes=f"{alvo:%Y-%m}",
+            trilha=trilha,
+            nota=None,
+            impacto=0,
+            composicao={"positivo": 0, "neutro": 0, "negativo": 0},
+            itens=0,
+            itens_no_mes=0,
+            frase=(
+                f"{lente.nome} não vem de menções: ela conta as agendas registradas "
+                "no CRM, e este recorte não se aplica a elas."
+            ),
+            ausencia=(
+                f"{lente.nome} lê o CRM dos Stakeholders, e o recorte da tela filtra "
+                "menções de planilha. Remova o recorte para ver esta lente."
+            ),
+            historico=[],
+            dentro=[],
+            itens_do_recorte=_materias_recentes(sessao, lente, alvo, calibracao, None),
+        )
 
     medida = repositorio_score.medir_uma_lente(sessao, lente, alvo, calibracao, filtro)
-    impacto = repositorio_score.impacto_do_recorte(sessao, lente.id, alvo, calibracao, filtro)
+    #: MEDIDO UMA VEZ e reusado no histórico — ver `denominador_do_mes`.
+    denominador = repositorio_score.denominador_do_mes(sessao, lente.id, alvo, calibracao)
+    impacto = repositorio_score.impacto_do_recorte(
+        sessao, lente.id, alvo, calibracao, filtro, denominador
+    )
 
     serie = repositorio_lentes.serie_da_lente(sessao, lente.id, meses, calibracao, filtro)
     do_mes = repositorio_lentes.serie_da_lente(sessao, lente.id, [alvo], calibracao, None)
@@ -2088,7 +2132,13 @@ def obter_recorte(
             "mes": f"{linha['mes']:%Y-%m}",
             "impacto": round(
                 repositorio_score.impacto_do_recorte(
-                    sessao, lente.id, linha["mes"], calibracao, filtro
+                    sessao,
+                    lente.id,
+                    linha["mes"],
+                    calibracao,
+                    filtro,
+                    #: O DO MÊS ALVO JÁ ESTÁ NA MÃO; os outros sete se medem aqui.
+                    denominador if linha["mes"] == alvo else None,
                 ),
                 2,
             ),
@@ -2101,7 +2151,7 @@ def obter_recorte(
     return RecorteSaida(
         lente=lente.codigo,
         mes=f"{alvo:%Y-%m}",
-        trilha=_trilha_do_recorte(lente.codigo, filtro),
+        trilha=trilha,
         nota=medida.score,
         impacto=round(impacto, 2),
         composicao=composicao,
