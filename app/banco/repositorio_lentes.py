@@ -284,11 +284,59 @@ def opcoes_de_filtro(sessao: Session, lente_id: int, mes: date) -> dict[str, lis
         )
         return [valor for (valor,) in sessao.execute(consulta) if valor]
 
+    def _mais_presentes(coluna, quantos: int) -> list[str]:
+        """Os valores com mais menções no mês, e só eles.
+
+        UM SELETOR DE MIL E SETECENTAS OPÇÕES NÃO É UM SELETOR — e é isso que o
+        autor dá em junho de 2026, com perfis que a fonte nem soube nomear
+        ("1000000000"). Quem aparece uma vez no mês não é um recorte: é uma linha
+        da lista de itens, que a tela já mostra.
+
+        POR VOLUME, E NÃO ALFABÉTICO, porque a pergunta de quem abre o seletor é
+        "quem está falando deste mês", e a resposta começa por quem fala mais.
+        """
+        consulta = (
+            select(coluna, func.count().label("total"))
+            .select_from(Mencao)
+            .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+            .where(
+                ScoreFonte.lente_id == lente_id,
+                Mencao.mes == primeiro_dia(mes),
+                coluna.is_not(None),
+            )
+            .group_by(coluna)
+            .order_by(func.count().desc(), coluna.asc())
+            .limit(quantos)
+        )
+        return [valor for valor, _ in sessao.execute(consulta) if valor]
+
     return {
         "tiers": _distintos(Mencao.tier),
         "veiculos": _distintos(Mencao.veiculo),
         "atributos": _distintos(Mencao.atributo),
         "temas": _distintos(Mencao.tema_texto),
+        # -- os cortes que o padrão Aegea trouxe (0055) ----------------------
+        #
+        # O PACOTE DE PRODUÇÃO LISTA AS DIMENSÕES ÚTEIS DE CADA LENTE, e as da
+        # Sociedade digital são tema, subtema, empresa citada, rede, perfil do
+        # autor, autor, fonte e UF. Quatro delas chegaram com a carga do padrão e
+        # não tinham por onde ser escolhidas na tela.
+        #
+        # AQUI, E NÃO EM PAINEL NOVO, porque os dois painéis do dossiê são
+        # estrutura fixa — é o que faz as cinco lentes se lerem igual. O filtro é
+        # o lugar onde a tela já aceita recortar por mais dimensões do que
+        # desenha, e é dele que o recorte do pacote (nível 3) nasce.
+        #
+        # VAZIO NAS LENTES QUE NÃO TÊM O CAMPO, e isso é o próprio contrato de
+        # `_distintos`: ele só devolve o que aparece no mês daquela lente. A
+        # Imprensa não manda perfil do autor, então a chave vem vazia e a tela
+        # não oferece o filtro.
+        "perfis": _distintos(Mencao.perfil_autor),
+        "ufs": _distintos(Mencao.uf),
+        "subtemas": _distintos(Mencao.subtema),
+        #: O AUTOR É O ÚNICO CORTADO: os outros cabem numa lista (25 UFs, 40
+        #: subtemas, 4 perfis), e o autor são 1.745 no mês real.
+        "autores": _mais_presentes(Mencao.autor, 20),
     }
 
 
@@ -439,6 +487,155 @@ def atributos_por_sentimento(
         {"atributo": atributo, "positivo": pos, "neutro": neu, "negativo": neg}
         for atributo, pos, neu, neg in sessao.execute(consulta)
     ]
+
+
+def _por_coluna_de_texto(
+    sessao: Session,
+    coluna,
+    rotulo: str,
+    lente_id: int,
+    mes: date,
+    calibracao: Calibracao,
+    filtro: FiltroDeMencoes | None = None,
+    quantos: int = 6,
+    ordenar_pelo_negativo: bool = False,
+) -> list[dict]:
+    """O corte do mês por uma coluna de texto da própria menção.
+
+    UMA FUNÇÃO PARA OS QUATRO CORTES NOVOS — perfil do autor, UF, subtema e
+    autor —, porque é literalmente a mesma consulta: agrupar por uma coluna de
+    `mencao`, contar por sentimento, ignorar nulo. As irmãs mais velhas
+    (`temas_por_sentimento`, `veiculos_por_sentimento`) são separadas porque cada
+    uma tem a sua particularidade: tema casa com o dicionário do CRM por
+    `coalesce`, veículo tem grafia a normalizar. Estas quatro não têm nenhuma, e
+    quatro cópias da mesma consulta divergiriam na primeira correção.
+
+    NULO FICA FORA, e isto é decisão de leitura: a UF vem em pouco mais da metade
+    dos itens e o subtema em 15%. Uma linha "sem classificação" seria a maior de
+    todas em quase todo mês, dizendo nada sobre a reputação — e empurrando para
+    baixo as que dizem algo. Quanto falta de cada campo é assunto da ficha de
+    procedência do bloco, que a tela já mostra.
+
+    `ordenar_pelo_negativo` É PARA O AUTOR, e a diferença importa: o corte por
+    perfil responde "como se divide o mês" e se ordena por volume; o de autor
+    responde "quem pesou contra", e aí quem falou muito e elogiou não é a
+    resposta.
+    """
+    negativas = func.count().filter(Mencao.sentimento == "neg")
+    consulta = (
+        select(
+            coluna,
+            func.count().filter(Mencao.sentimento == "pos"),
+            func.count().filter(Mencao.sentimento == "neu"),
+            negativas,
+        )
+        .select_from(Mencao)
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .where(
+            ScoreFonte.lente_id == lente_id,
+            Mencao.mes == primeiro_dia(mes),
+            coluna.is_not(None),
+            *so_fontes_ligadas(calibracao),
+            *condicoes_do_filtro(filtro),
+        )
+        .group_by(coluna)
+        .order_by(
+            negativas.desc() if ordenar_pelo_negativo else func.count().desc(),
+            coluna.asc(),
+        )
+        .limit(quantos)
+    )
+    return [
+        {rotulo: valor, "positivo": pos, "neutro": neu, "negativo": neg}
+        for valor, pos, neu, neg in sessao.execute(consulta)
+    ]
+
+
+def perfis_por_sentimento(
+    sessao: Session,
+    lente_id: int,
+    mes: date,
+    calibracao: Calibracao,
+    filtro: FiltroDeMencoes | None = None,
+    quantos: int = 6,
+) -> list[dict]:
+    """Quem fala, e com que sinal: Cidadão, Figura pública, Imprensa, Perfil
+    institucional.
+
+    É O CORTE QUE MAIS MUDA A LEITURA DA LENTE. Mil cidadãos reclamando e um
+    deputado reclamando têm o mesmo sinal e consequências diferentes — um é
+    clima, o outro é agenda. Sem este corte a lente diz que o negativo subiu e
+    não diz de quem é a voz.
+    """
+    return _por_coluna_de_texto(
+        sessao,
+        Mencao.perfil_autor,
+        "perfil",
+        lente_id,
+        mes,
+        calibracao,
+        filtro,
+        quantos,
+    )
+
+
+def ufs_por_sentimento(
+    sessao: Session,
+    lente_id: int,
+    mes: date,
+    calibracao: Calibracao,
+    filtro: FiltroDeMencoes | None = None,
+    quantos: int = 6,
+) -> list[dict]:
+    """Onde o mês pesou, por estado. É a base do indicador `UF mais negativa`."""
+    return _por_coluna_de_texto(
+        sessao, Mencao.uf, "uf", lente_id, mes, calibracao, filtro, quantos
+    )
+
+
+def subtemas_por_sentimento(
+    sessao: Session,
+    lente_id: int,
+    mes: date,
+    calibracao: Calibracao,
+    filtro: FiltroDeMencoes | None = None,
+    quantos: int = 6,
+) -> list[dict]:
+    """O assunto um nível abaixo do tema — é ele que explica POR QUE um tema pesa.
+
+    "Saneamento básico" é o tema de metade das menções de um mês ruim, e isso não
+    diz nada que se possa resolver; "Falta de água" e "Obra atrasada", dentro
+    dele, dizem.
+    """
+    return _por_coluna_de_texto(
+        sessao, Mencao.subtema, "subtema", lente_id, mes, calibracao, filtro, quantos
+    )
+
+
+def autores_por_sentimento(
+    sessao: Session,
+    lente_id: int,
+    mes: date,
+    calibracao: Calibracao,
+    filtro: FiltroDeMencoes | None = None,
+    quantos: int = 6,
+) -> list[dict]:
+    """Quem pesou contra, do mais negativo para o menos.
+
+    ORDENADO PELO NEGATIVO, e não por volume: o indicador pergunta quem pesou
+    contra, e quem falou muito elogiando não é essa resposta.
+    """
+    return _por_coluna_de_texto(
+        sessao,
+        Mencao.autor,
+        "autor",
+        lente_id,
+        mes,
+        calibracao,
+        filtro,
+        quantos,
+        ordenar_pelo_negativo=True,
+    )
 
 
 def veiculos_por_sentimento(

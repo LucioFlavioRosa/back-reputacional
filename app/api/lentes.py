@@ -705,6 +705,23 @@ def _paineis(
     # devolveria zero, e zero numa tela se lê como "não houve", nunca como
     # "está noutro lugar".
     interna = lente.codigo == "institucional"
+
+    # OS DOIS PAINÉIS DESTA LENTE FICAM COMO ESTÃO, e isto é uma decisão que eu
+    # TOMEI E DESFIZ no meio do caminho.
+    #
+    # Eu havia trocado o segundo — "Concessionárias com maior repercussão" — por
+    # perfil do autor × sentimento, com o argumento de que o perfil é a dimensão
+    # mais informativa que a tela não tinha. Desfiz ao conferir a ordem de
+    # prioridade que o próprio pacote declara para esta lente: tema, subtema,
+    # EMPRESA CITADA, rede, perfil do autor. A concessionária é a terceira e o
+    # perfil a quinta — a troca entregava uma dimensão do pacote pagando com
+    # outra, mais alta, e ainda tirava da tela a pergunta de negócio que a Aegea
+    # faz primeiro: qual operação está apanhando.
+    #
+    # O PERFIL ENTROU ONDE HAVIA ESPAÇO DE VERDADE: nos indicadores da lente
+    # (`Figuras públicas` e `Autor mais negativo`) e no filtro, que é o mecanismo
+    # de recorte que esta tela já tem — junto de UF, subtema e autor.
+
     if interna:
         temas = repositorio_lentes.temas_do_crm(sessao, meses)
         unidades = repositorio_lentes.orgaos_do_crm(sessao, meses)
@@ -1278,28 +1295,88 @@ def _kpis_do_institucional(serie, do_mes, total) -> list[KpiSaida]:
 def _kpis_da_sociedade(
     sessao, lente, alvo: date, meses, calibracao, serie, do_mes, total
 ) -> list[KpiSaida]:
-    unidades = repositorio_lentes.unidades_da_lente(sessao, lente.id, meses, calibracao)
     no_mes = (do_mes["pos"] + do_mes["neu"] + do_mes["neg"]) if do_mes else 0
+
+    autores = repositorio_lentes.autores_por_sentimento(
+        sessao, lente.id, alvo, calibracao, quantos=1
+    )
+    perfis = repositorio_lentes.perfis_por_sentimento(sessao, lente.id, alvo, calibracao)
+    #: SOMA OS TRÊS SINAIS do perfil "Figura pública": a pergunta é quantas
+    #: menções vieram de voz com palco, e não quantas delas foram negativas — essa
+    #: é a do indicador ao lado.
+    das_figuras = [linha for linha in perfis if linha["perfil"] == "Figura pública"]
+    figuras = (
+        sum(linha["positivo"] + linha["neutro"] + linha["negativo"] for linha in das_figuras)
+        if perfis
+        else None
+    )
+    #: A UF MAIS NEGATIVA é a de mais menções NEGATIVAS, e não a de mais menções:
+    #: o estado com mais volume costuma ser o maior, e isso não é notícia.
+    ufs = repositorio_lentes.ufs_por_sentimento(sessao, lente.id, alvo, calibracao)
+    com_negativo = [linha for linha in ufs if linha["negativo"]]
+    mais_negativa = (
+        max(com_negativo, key=lambda linha: (linha["negativo"], linha["uf"]))
+        if com_negativo
+        else None
+    )
     return [
         KpiSaida(
             rotulo="Menções no período",
             valor=_num(total),
             detalhe=f"{len([x for x in serie if not x['sem_base']])} meses com base",
         ),
+        # -- OS TRÊS QUE O PACOTE DE PRODUÇÃO NOMEIA PARA ESTA LENTE ---------
+        #
+        # ELES SUBSTITUEM TRÊS, e não se somam aos quatro: o dossiê tem quatro
+        # indicadores por lente, de propósito — "é o que faz as cinco lentes se
+        # lerem igual", e o Pydantic recusa o quinto. Acrescentar os do pacote
+        # daria sete nesta lente e quatro nas outras.
+        #
+        # SAÍRAM "POSITIVO NO MÊS" E "NEGATIVO NO MÊS" porque a manchete do
+        # dossiê já diz isso em palavras ("o negativo foi de 45% para 53%") e o
+        # gráfico de evolução o desenha mês a mês — três lugares para o mesmo
+        # número, e o cartão era o que menos acrescentava.
+        #
+        # SAIU TAMBÉM "UNIDADE COM MAIS MENÇÕES", que continua na tela como
+        # painel inteiro ("Concessionárias com maior repercussão"), com o
+        # sentimento de cada uma — mais do que o cartão dizia.
+        #
+        # O QUE ENTROU responde "de quem" e "onde", que é a pergunta seguinte de
+        # quem lê uma nota que caiu: `autor_mais_negativo`, `figuras_publicas` e
+        # `uf_mais_negativa` no vocabulário do pacote.
         KpiSaida(
-            rotulo="Positivo no mês",
-            valor=_pct(do_mes["pos"] / no_mes if no_mes else None),
-            detalhe=f"{_num(do_mes['pos'])} menções" if do_mes else "sem base",
+            rotulo="Autor mais negativo",
+            valor=autores[0]["autor"] if autores else "—",
+            detalhe=(
+                f"{_num(autores[0]['negativo'])} menções negativas"
+                if autores
+                else "sem autor informado"
+            ),
         ),
         KpiSaida(
-            rotulo="Negativo no mês",
-            valor=_pct(do_mes["neg"] / no_mes if no_mes else None),
-            detalhe=f"{_num(do_mes['neg'])} menções" if do_mes else "sem base",
+            rotulo="Figuras públicas",
+            # QUEM FALA, E NÃO QUANTOS CARGOS A FONTE DIGITOU: o cargo do autor
+            # chega em 5 dos 14.855 itens reais e o perfil em todos. Contar pelo
+            # cargo diria "5 figuras públicas" num mês com centenas delas.
+            valor=_num(figuras) if figuras is not None else "—",
+            # DE QUANTAS, E NÃO O PERCENTUAL: em junho de 2026 são 5 de 6.932,
+            # e "0% das menções do mês" ao lado do número 5 é uma frase que
+            # desinforma — quem lê conclui que o indicador está quebrado. A
+            # fração bruta diz a mesma coisa sem arredondar para nada.
+            detalhe=(
+                f"de {_num(no_mes)} menções no mês"
+                if figuras is not None and no_mes
+                else "sem perfil informado"
+            ),
         ),
         KpiSaida(
-            rotulo="Unidade com mais menções",
-            valor=unidades[0]["unidade"] if unidades else "—",
-            detalhe=_num(unidades[0]["total"]) if unidades else "sem unidade informada",
+            rotulo="UF mais negativa",
+            valor=mais_negativa["uf"] if mais_negativa else "—",
+            detalhe=(
+                f"{_num(mais_negativa['negativo'])} menções negativas"
+                if mais_negativa
+                else "sem UF informada"
+            ),
         ),
     ]
 
@@ -1511,6 +1588,13 @@ class OpcoesDeFiltroSaida(BaseModel):
     veiculos: list[str]
     atributos: list[str]
     temas: list[str]
+    #: Os cortes que o padrão Aegea trouxe (0055). VAZIOS na lente que não tem o
+    #: campo — a Imprensa não manda perfil do autor —, e é assim que a tela sabe
+    #: não oferecer um seletor que não escolhe nada.
+    perfis: list[str] = []
+    ufs: list[str] = []
+    subtemas: list[str] = []
+    autores: list[str] = []
 
 
 @rotas.get("/{codigo}/dossie/opcoes-de-filtro")
