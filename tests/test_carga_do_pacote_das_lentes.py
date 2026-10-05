@@ -274,3 +274,64 @@ def test_a_carga_NAO_mexe_no_mes_que_o_arquivo_nao_traz(sessao):
         .where(Mencao.fonte_id == bites.id, Mencao.mes == date(2026, 5, 1))
     )
     assert de_maio == 1
+
+
+# =============================================================================
+# os achados da revisão sobre a carga
+# =============================================================================
+
+
+def test_fonte_DESCONHECIDA_recusa_a_carga_em_vez_de_gravar_metade(sessao):
+    """ACHADO MÉDIO DA REVISÃO, e o cenário dele é real: a planilha vem com
+    "Approach" em vez de "Approach SL" — ou a coluna chega vazia porque o arquivo
+    foi gerado por pipeline e a fórmula não tinha cache.
+
+    O QUE ACONTECIA: as linhas da fonte desconhecida eram contadas em
+    `descartes`, o resto era gravado, o comando imprimia o resumo e saía com
+    sucesso. A lente ficava com metade das menções do mês e uma nota plausível —
+    o pior tipo de erro, porque ninguém olha o stdout de uma carga que "passou".
+
+    A CARGA NÃO ADIVINHA NOME DE FONTE, e também não grava pela metade: ela
+    recusa dizendo qual nome não reconheceu e quantas linhas dependiam dele.
+    """
+    conteudo = _planilha(
+        [_item(id_fonte="a", fonte="Bites"), _item(id_fonte="b", fonte="Approach")]
+    )
+
+    with pytest.raises(Exception) as erro:
+        carregar(sessao, conteudo, "sociedade")
+
+    assert "Approach" in str(erro.value)
+
+
+def test_mes_ILEGIVEL_recusa_a_carga(sessao):
+    """O MESMO CENÁRIO POR OUTRA PORTA: coluna `mes` preenchida por fórmula sem
+    cache chega vazia, e cada linha dessas sairia como descarte silencioso.
+
+    SEM MÊS NÃO HÁ ONDE GRAVAR — o mês é a chave da nota, do agregado e da
+    substituição —, então uma planilha cujo mês não se lê é uma planilha que a
+    carga não entendeu, e não uma planilha com algumas linhas a menos.
+    """
+    conteudo = _planilha([_item(id_fonte="a"), _item(id_fonte="b", mes=None)])
+
+    with pytest.raises(Exception) as erro:
+        carregar(sessao, conteudo, "sociedade")
+
+    assert "mês" in str(erro.value) or "mes" in str(erro.value)
+
+
+def test_a_linha_SEM_CLASSIFICACAO_continua_passando(sessao):
+    """O CONTRAPESO, e a diferença entre os dois casos: sem classificação é um
+    estado PREVISTO — a fonte mandou volume e não classificou, a tela desenha
+    isso em cinza e a contagem vai para `mencao_nao_classificada`. Recusar a
+    carga por isso jogaria fora um mês inteiro por causa de uma informação que o
+    produto já sabe representar.
+    """
+    conteudo = _planilha(
+        [_item(id_fonte="a"), _item(id_fonte="b", classificacao=None)]
+    )
+
+    resumo = carregar(sessao, conteudo, "sociedade")
+
+    assert resumo.gravadas == 1
+    assert resumo.descartes["sem classificação"] == 1

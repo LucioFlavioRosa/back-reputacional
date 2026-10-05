@@ -1222,3 +1222,47 @@ class TestMencoesDaSociedade:
         chaves = [coluna.chave for coluna in dossie.materias_recentes.colunas]
         assert "veiculo" in chaves
         assert "tier" in chaves
+
+
+class TestAchadosDaRevisaoDosIndicadores:
+    """Dois indicadores liam um corte CORTADO, e por isso podiam errar.
+
+    O corte por dimensão devolve os seis valores de MAIOR VOLUME — é o que serve
+    a um painel. Os indicadores perguntam outra coisa: "qual UF é a mais
+    negativa" e "quantas menções vieram de figura pública". Ler a resposta de uma
+    lista que já foi cortada por outro critério é o erro, e ele não aparece no
+    dado de hoje: aparece quando a cauda cresce.
+    """
+
+    def test_a_UF_MAIS_NEGATIVA_pode_estar_FORA_das_seis_maiores(self, sessao):
+        """ACHADO MÉDIO DA REVISÃO, com o cenário dele: seis UFs grandes e pouco
+        negativas, e uma pequena inteiramente negativa. A pequena é a resposta, e
+        era justamente ela que o corte por volume deixava de fora."""
+        for sigla in ("AM", "BA", "CE", "DF", "ES", "GO"):
+            for _ in range(10):
+                _social(sessao, uf=sigla, sentimento="pos")
+            _social(sessao, uf=sigla, sentimento="neg")
+        #: A sétima em volume, e a primeira em negativas.
+        for _ in range(5):
+            _social(sessao, uf="RJ", sentimento="neg")
+
+        dossie = _dossie(sessao, "sociedade")
+        kpi = next(k for k in dossie.kpis if k.rotulo == "UF mais negativa")
+
+        assert kpi.valor == "RJ"
+
+    def test_FIGURAS_PUBLICAS_conta_mesmo_com_muitos_perfis_na_frente(self, sessao):
+        """ACHADO BAIXO DA REVISÃO: o indicador somava as linhas do corte por
+        perfil, que traz seis. Com sete grafias de perfil mais volumosas, "Figura
+        pública" cairia fora da lista e o número viraria zero — um zero que não
+        significa "não houve"."""
+        for i in range(7):
+            for _ in range(10):
+                _social(sessao, perfil_autor=f"Perfil {i}")
+        _social(sessao, perfil_autor="Figura pública")
+        _social(sessao, perfil_autor="Figura pública")
+
+        dossie = _dossie(sessao, "sociedade")
+        kpi = next(k for k in dossie.kpis if k.rotulo == "Figuras públicas")
+
+        assert kpi.valor == "2"

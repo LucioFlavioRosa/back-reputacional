@@ -50,6 +50,7 @@ from app.dominio.score import (
     peso_do_cargo,
     peso_do_engajamento,
     ponderar,
+    regua_da_lente,
 )
 from app.dominio.tema_do_mes import PesosDoTema
 
@@ -439,13 +440,26 @@ def composicao_da_lente(
 ) -> Contagem:
     """Os três números da fórmula, já ponderados — o que a barra desenha.
 
-    SOMA DAS FONTES LIGADAS, e não a média de NS: a média é como o SCORE da
-    lente sai (§2.4), mas a barra mostra volume, e volume se soma.
+    SOMA DAS FONTES LIGADAS. Hoje é também como o SCORE sai (um denominador só,
+    ver `medir_lente`); antes a nota era a média dos NS das fontes e esta soma
+    existia porque a barra mostra VOLUME, e volume se soma. As duas contas
+    convergiram, e é bom que tenham: a barra e o número agora dizem a mesma coisa.
+
+    A RÉGUA É A DA LENTE, e este era um achado de revisão — eu havia passado a
+    nota para a régua do conjunto e deixado esta chamada com a régua por fonte.
+    Numa lente com duas fontes, uma com engajamento e outra sem, a barra mediria
+    uma em curtidas e a outra em menções: a composição exibida no detalhe
+    discordaria da nota exibida ao lado dela, sem nada explicando a diferença.
     """
+    ligadas = {
+        fonte: linhas
+        for fonte, linhas in _somas_da_lente(sessao, lente_id, mes, filtro).items()
+        if calibracao.ligada(fonte)
+    }
+    regua = regua_da_lente(ligadas, calibracao.regua_engajamento)
     total = Contagem()
-    for fonte, linhas in _somas_da_lente(sessao, lente_id, mes, filtro).items():
-        if calibracao.ligada(fonte):
-            total = total + ponderar(linhas, calibracao)
+    for linhas in ligadas.values():
+        total = total + ponderar(linhas, calibracao, regua)
     return total
 
 

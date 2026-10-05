@@ -247,6 +247,38 @@ def carregar(sessao: Session, conteudo: bytes, lente: str) -> ResumoDaCarga:
     """
     leitura = ler_aba_da_lente(conteudo, lente)
 
+    # A CARGA NÃO GRAVA PELA METADE, e este era um achado de revisão com um
+    # cenário bem concreto: a planilha vem com "Approach" em vez de "Approach SL",
+    # ou a coluna `fonte`/`mes` chega vazia porque o arquivo foi gerado por
+    # pipeline e a fórmula não tinha cache calculado (`data_only` lê o cache, não
+    # avalia a fórmula).
+    #
+    # O QUE ACONTECIA: as linhas iam para `descartes`, o resto era gravado, o
+    # comando imprimia o resumo e saía com sucesso. A lente ficava com metade das
+    # menções do mês e uma nota plausível — o pior tipo de erro, porque ninguém
+    # relê o stdout de uma carga que "passou".
+    #
+    # SÓ OS DESCARTES ESTRUTURAIS RECUSAM. Falta de classificação é estado
+    # previsto — a fonte mandou volume e não classificou, a tela desenha isso em
+    # cinza e a contagem vai para `mencao_nao_classificada`. Recusar por isso
+    # jogaria fora um mês inteiro por causa de algo que o produto já representa.
+    estruturais = {
+        motivo: quantas
+        for motivo, quantas in leitura.descartes.items()
+        if motivo != "sem classificação" and quantas
+    }
+    if estruturais:
+        detalhe = "; ".join(
+            f"{quantas} linha(s) por {motivo}" for motivo, quantas in sorted(estruturais.items())
+        )
+        nomes = ", ".join(sorted(PACOTE[lente].fontes)) if lente in PACOTE else ""
+        raise RegraViolada(
+            f"A carga não entendeu parte da aba da lente {lente!r}: {detalhe}. "
+            f"Nada foi gravado. As fontes que esta lente reconhece são: {nomes}. "
+            "Confira a coluna `fonte` e a coluna `mes` — num arquivo gerado fora "
+            "do Excel, uma coluna de fórmula pode chegar vazia."
+        )
+
     gravadas = 0
     por_fonte: dict[str, int] = {}
     meses: set[date] = set()

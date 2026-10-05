@@ -596,6 +596,41 @@ def _por_coluna_de_texto(
     ]
 
 
+def quantas_com(
+    sessao: Session,
+    coluna,
+    valor: str,
+    lente_id: int,
+    mes: date,
+    calibracao: Calibracao,
+    filtro: FiltroDeMencoes | None = None,
+) -> int:
+    """Quantas menções do mês têm aquele valor naquela coluna.
+
+    ACHADO DE REVISÃO, e a lição é sobre reusar a resposta errada: o indicador
+    "Figuras públicas" somava as linhas do CORTE por perfil, que devolve os seis
+    valores de MAIOR VOLUME. Com sete grafias de perfil na frente, "Figura
+    pública" cairia fora da lista e o indicador mostraria zero — um zero que não
+    significa "não houve", e ninguém teria como saber disso olhando a tela.
+
+    CORTE E CONTAGEM RESPONDEM PERGUNTAS DIFERENTES: o corte serve a um painel e
+    por isso é limitado; a contagem de um valor específico não pode ser.
+    """
+    total = sessao.scalar(
+        select(func.count())
+        .select_from(Mencao)
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .where(
+            ScoreFonte.lente_id == lente_id,
+            Mencao.mes == primeiro_dia(mes),
+            coluna == valor,
+            *so_fontes_ligadas(calibracao),
+            *condicoes_do_filtro(filtro),
+        )
+    )
+    return int(total or 0)
+
+
 def perfis_por_sentimento(
     sessao: Session,
     lente_id: int,
@@ -631,10 +666,25 @@ def ufs_por_sentimento(
     calibracao: Calibracao,
     filtro: FiltroDeMencoes | None = None,
     quantos: int = 6,
+    ordenar_pelo_negativo: bool = False,
 ) -> list[dict]:
-    """Onde o mês pesou, por estado. É a base do indicador `UF mais negativa`."""
+    """Onde o mês pesou, por estado.
+
+    `ordenar_pelo_negativo` É PARA O INDICADOR `UF mais negativa`, e existe por
+    um achado de revisão: lê-lo da lista ordenada por VOLUME fazia a resposta sair
+    de dentre as seis UFs maiores, e a mais negativa do mês pode ser a sétima —
+    uma UF pequena com tudo negativo é exatamente o caso que interessa.
+    """
     return _por_coluna_de_texto(
-        sessao, Mencao.uf, "uf", lente_id, mes, calibracao, filtro, quantos
+        sessao,
+        Mencao.uf,
+        "uf",
+        lente_id,
+        mes,
+        calibracao,
+        filtro,
+        quantos,
+        ordenar_pelo_negativo=ordenar_pelo_negativo,
     )
 
 

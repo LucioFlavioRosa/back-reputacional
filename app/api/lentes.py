@@ -34,6 +34,10 @@ from app.api.dependencias import UsuarioLogado, exigir_portal_score
 from app.api.score import _formula, _mes_de
 from app.banco import repositorio_lentes, repositorio_score
 from app.banco.sessao import SessaoDoPedido
+
+#: A coluna em si, para pedir a contagem de um valor específico ao
+#: repositório — ver `quantas_com`.
+from app.banco.tabelas_score import Mencao
 from app.casos_de_uso.ler_sinais_da_lente import ler_sinais, regua_dos_sinais
 from app.dominio import frases_de_sinais as frases
 from app.dominio.erros import NaoEncontrado
@@ -1382,25 +1386,24 @@ def _kpis_da_sociedade(
     autores = repositorio_lentes.autores_por_sentimento(
         sessao, lente.id, alvo, calibracao, quantos=1
     )
-    perfis = repositorio_lentes.perfis_por_sentimento(sessao, lente.id, alvo, calibracao)
-    #: SOMA OS TRÊS SINAIS do perfil "Figura pública": a pergunta é quantas
-    #: menções vieram de voz com palco, e não quantas delas foram negativas — essa
-    #: é a do indicador ao lado.
-    das_figuras = [linha for linha in perfis if linha["perfil"] == "Figura pública"]
-    figuras = (
-        sum(linha["positivo"] + linha["neutro"] + linha["negativo"] for linha in das_figuras)
-        if perfis
-        else None
+    #: CONTAGEM DIRETA, e não a soma de um corte: o corte por perfil devolve os
+    #: seis de maior VOLUME, e com sete grafias na frente "Figura pública" cairia
+    #: fora dele — o indicador mostraria zero sem nada ter acontecido. Achado de
+    #: revisão; ver `quantas_com`.
+    figuras = repositorio_lentes.quantas_com(
+        sessao, Mencao.perfil_autor, "Figura pública", lente.id, alvo, calibracao
     )
     #: A UF MAIS NEGATIVA é a de mais menções NEGATIVAS, e não a de mais menções:
     #: o estado com mais volume costuma ser o maior, e isso não é notícia.
-    ufs = repositorio_lentes.ufs_por_sentimento(sessao, lente.id, alvo, calibracao)
-    com_negativo = [linha for linha in ufs if linha["negativo"]]
-    mais_negativa = (
-        max(com_negativo, key=lambda linha: (linha["negativo"], linha["uf"]))
-        if com_negativo
-        else None
+    #:
+    #: ORDENADA PELO NEGATIVO NA PRÓPRIA CONSULTA, e aqui estava o segundo achado
+    #: da mesma família: eu lia o corte por volume e escolhia o mais negativo
+    #: DENTRE OS SEIS MAIORES. Seis UFs grandes e pouco negativas escondiam uma
+    #: pequena inteiramente negativa — que é justamente a que interessa.
+    mais_negativas = repositorio_lentes.ufs_por_sentimento(
+        sessao, lente.id, alvo, calibracao, quantos=1, ordenar_pelo_negativo=True
     )
+    mais_negativa = mais_negativas[0] if mais_negativas and mais_negativas[0]["negativo"] else None
     return [
         KpiSaida(
             rotulo="Menções no período",
