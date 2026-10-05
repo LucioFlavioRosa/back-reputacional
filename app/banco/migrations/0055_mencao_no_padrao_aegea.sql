@@ -43,11 +43,18 @@ alter table mencao
   -- a ausência, e é por isso que ambas são nulas.
   add column if not exists titulo_texto text,
   add column if not exists link text,
-  -- O PESO DO ITEM NA CONTA, materializado. Na Sociedade é 1 para todos; na
-  -- Imprensa será 10/5/1 pelo tier do veículo. Fica na linha em vez de ser
-  -- derivado a cada consulta porque é ele que entra no denominador de TODOS os
-  -- níveis (lente, causa, recorte, item), e uma régua que se recalcula em quatro
-  -- lugares é uma régua que um dia discorda de si mesma.
+  -- O PESO QUE O PADRÃO DÁ AO ITEM, como DADO e não como régua. A planilha o
+  -- traz pronto (1 na Sociedade; 10/5/1 pelo tier do veículo na Imprensa), e ele
+  -- fica na linha para a ficha do item poder explicar o próprio peso e para a
+  -- importação ser auditável contra o que o fornecedor afirmou.
+  --
+  -- A NOTA NÃO SAI DAQUI, e é importante não confundir: ela sai da régua da
+  -- CALIBRAÇÃO vigente (`score_config.regua_tier` e `regua_engajamento`, ver
+  -- `dominio/score.py`), que é o que a tela de Calibração deixa a coordenação
+  -- mudar. Com a régua de hoje — contagem, cada menção vale 1 — as duas coisas
+  -- coincidem na Sociedade; na Imprensa, a régua `aegea` reproduz o 10/5/1.
+  -- Fazer a nota ler esta coluna tiraria a calibração do caminho sem ninguém
+  -- pedir.
   add column if not exists peso_tier numeric(4,1) not null default 1;
 
 comment on column mencao.id_fonte is
@@ -58,8 +65,9 @@ comment on column mencao.perfil_autor is
   'Derivado pelo fornecedor ou pelo importador a partir do cargo e do '
   'nome do autor (padrão Aegea, normalização 8). Ver 0055.';
 comment on column mencao.peso_tier is
-  'O peso do item no denominador da nota: 1 na Sociedade e nos Clientes, '
-  '10/5/1 pelo tier do veículo na Imprensa e no Mercado. Ver 0055.';
+  'O peso que o padrão Aegea atribui ao item, como o fornecedor o enviou: '
+  '1 na Sociedade e nos Clientes, 10/5/1 pelo tier do veículo na Imprensa. '
+  'É dado, não régua — a nota usa a calibração vigente. Ver 0055.';
 
 -- A MESMA MENÇÃO NÃO ENTRA DUAS VEZES, e o índice é o que garante. Parcial
 -- porque as menções que já estão no banco não têm `id_fonte` — elas vieram antes

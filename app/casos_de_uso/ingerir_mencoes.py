@@ -145,8 +145,16 @@ def _quanto_havia(sessao: Session, fonte: ScoreFonte, meses: list[date]) -> int:
     return int(total or 0)
 
 
-def _regravar(sessao: Session, fonte: ScoreFonte, leitura: Leitura) -> None:
-    """Troca os meses que o arquivo traz — menções, agregado e não classificadas."""
+def regravar(sessao: Session, fonte: ScoreFonte, leitura: Leitura) -> None:
+    """Troca os meses que o arquivo traz — menções, agregado e não classificadas.
+
+    PÚBLICA PORQUE SÃO DOIS CHAMADORES: o importador mensal (aqui) e a carga
+    inicial do pacote (`carga_do_pacote_das_lentes`). As duas leem planilhas de
+    formatos diferentes e precisam da MESMA gravação — menções, as quatro somas
+    do agregado e a contagem do que ninguém classificou, tudo substituindo o mês.
+    Uma segunda cópia desta função seria a segunda definição de "o que é um mês
+    no banco".
+    """
     meses = list(leitura.meses)
     sessao.execute(
         delete(MencaoNaoClassificada).where(
@@ -180,6 +188,16 @@ def _regravar(sessao: Session, fonte: ScoreFonte, leitura: Leitura) -> None:
             teor=mencao.teor,
             acionavel=mencao.acionavel,
             autor=mencao.autor,
+            # -- os campos do padrão Aegea (0055) ---------------------------
+            # Nulos vindos de fonte que não os manda, e é assim que as
+            # planilhas antigas continuam entrando sem mudança.
+            id_fonte=mencao.id_fonte,
+            uf=mencao.uf,
+            subtema=mencao.subtema,
+            perfil_autor=mencao.perfil_autor,
+            titulo_texto=mencao.titulo_texto,
+            link=mencao.link,
+            peso_tier=mencao.peso_tier,
         )
         for mencao in leitura.mencoes
     )
@@ -230,7 +248,7 @@ def _ingerir_uma(sessao: Session, fonte: ScoreFonte, conteudo: bytes) -> Resumo:
         )
 
     antes = _quanto_havia(sessao, fonte, list(leitura.meses))
-    _regravar(sessao, fonte, leitura)
+    regravar(sessao, fonte, leitura)
     return Resumo(
         fonte=fonte.codigo,
         nome=fonte.nome,

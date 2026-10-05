@@ -134,10 +134,11 @@ class Mencao(Tabela):
     #: a tela tem de saber viver com a ausência.
     titulo_texto: Mapped[str | None] = mapped_column(Text, nullable=True)
     link: Mapped[str | None] = mapped_column(Text, nullable=True)
-    #: O peso do item no denominador da nota, materializado na linha: 1 na
-    #: Sociedade e nos Clientes, 10/5/1 pelo tier do veículo na Imprensa. Fica
-    #: gravado porque é ele que entra no denominador de TODOS os níveis, e uma
-    #: régua que se recalcula em quatro lugares um dia discorda de si mesma.
+    #: O peso que o PADRÃO dá ao item, como o fornecedor o enviou: 1 na
+    #: Sociedade, 10/5/1 pelo tier do veículo na Imprensa. É DADO, e não régua —
+    #: a nota sai da calibração vigente (`dominio/score.py`), que é o que a tela
+    #: de Calibração deixa mudar. Guardado para a ficha do item poder explicar o
+    #: próprio peso e para a carga ser auditável contra o que a fonte afirmou.
     peso_tier: Mapped[float] = mapped_column(Numeric(4, 1), default=1)
     veiculo: Mapped[str | None] = mapped_column(Text, nullable=True)
     publico_alvo: Mapped[str | None] = mapped_column(Text, nullable=True)
