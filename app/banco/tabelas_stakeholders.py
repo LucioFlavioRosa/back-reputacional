@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, SmallInteger, String, Text, func
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -83,6 +84,12 @@ class Interlocutor(Tabela):
     #: Como se chega na pessoa. Marcar agenda comeca por escrever para alguem, e
     #: este endereco vivia fora do sistema.
     email: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Os links/handles de redes sociais do contato, se ele tiver — texto
+    #: livre, zero ou mais, sem identificar a rede nem validar formato. Uma
+    #: lista, e não cinco campos fixos: ver migrations/0055.
+    redes_sociais: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, server_default="{}"
+    )
     tipo: Mapped[str | None] = mapped_column(Text, nullable=True)
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
     criado_em: Mapped[datetime] = mapped_column(

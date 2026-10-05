@@ -87,6 +87,9 @@ class InterlocutorSaida(BaseModel):
     #: `area_pessoa` (a área da Aegea). Ver migrations/0054.
     area: str | None
     email: str | None
+    #: Links/handles de redes sociais, texto livre, zero ou mais. Ver
+    #: migrations/0055.
+    redes_sociais: list[str]
     tipo: str | None
     ativo: bool
 
@@ -223,6 +226,9 @@ class InterlocutorEntrada(BaseModel):
     area: str | None = None
     #: Como se chega na pessoa para marcar a agenda.
     email: str | None = None
+    #: Links/handles de redes sociais, texto livre, zero ou mais — não
+    #: identifica a rede nem valida formato. Ver migrations/0055.
+    redes_sociais: list[str] = Field(default_factory=list)
     tipo: str | None = None
     ativo: bool = True
 
@@ -456,6 +462,7 @@ def criar_interlocutor(
         cargo=entrada.cargo,
         area=entrada.area,
         email=entrada.email,
+        redes_sociais=entrada.redes_sociais,
         tipo=entrada.tipo,
         ativo=entrada.ativo,
     )
@@ -489,6 +496,7 @@ def editar_interlocutor(
     registro.cargo = entrada.cargo
     registro.area = entrada.area
     registro.email = entrada.email
+    registro.redes_sociais = entrada.redes_sociais
     registro.tipo = entrada.tipo
     registro.ativo = entrada.ativo
     return gravar(
