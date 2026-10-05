@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from sqlalchemy import Date as ColunaDeData
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.banco.tabelas_catalogo import Clima, Tema
@@ -50,8 +50,9 @@ from app.dominio.score import (
     peso_do_cargo,
     peso_do_engajamento,
     ponderar,
+    regua_da_lente,
 )
-from app.dominio.tema_do_mes import PesosDoTema
+from app.dominio.tema_do_mes import PONTOS_POR_NS, PesosDoTema
 
 logger = logging.getLogger(__name__)
 
@@ -344,15 +345,41 @@ def condicoes_do_filtro(filtro: FiltroDeMencoes | None) -> list:
     """
     if filtro is None:
         return []
-    condicoes = []
-    if filtro.tier:
-        condicoes.append(Mencao.tier == filtro.tier)
-    if filtro.veiculo:
-        condicoes.append(Mencao.veiculo == filtro.veiculo)
-    if filtro.atributo:
-        condicoes.append(Mencao.atributo == filtro.atributo)
+    #: UMA CONDIÇÃO POR DIMENSÃO PREENCHIDA, e todas no mesmo `where`: é o `and`
+    #: que faz os recortes se EMPILHAREM (nível 3 do pacote), em vez de o último
+    #: escolhido vencer os anteriores.
+    de_cada = (
+        (Mencao.tier, filtro.tier),
+        (Mencao.veiculo, filtro.veiculo),
+        (Mencao.atributo, filtro.atributo),
+        # -- as do padrão Aegea (0055) --
+        (Mencao.perfil_autor, filtro.perfil_autor),
+        (Mencao.uf, filtro.uf),
+        (Mencao.subtema, filtro.subtema),
+        (Mencao.autor, filtro.autor),
+        (Mencao.unidade_texto, filtro.empresa),
+    )
+    condicoes = [coluna == valor for coluna, valor in de_cada if valor]
     if filtro.tema_texto:
-        condicoes.append(Mencao.tema_texto == filtro.tema_texto)
+        #: O TEMA CASA POR DUAS COLUNAS, e isto foi achado de revisão. O rótulo
+        #: que a tela mostra é `coalesce(Tema.nome, Mencao.tema_texto)` — o nome
+        #: do dicionário do CRM vence a grafia do fornecedor —, e o filtro
+        #: comparava só o texto cru. Com `tema_id` preenchido e grafia diferente
+        #: ("SAN BASICO" para o tema "Saneamento básico"), clicar no rótulo
+        #: mandava ao servidor um valor que o dado não tem: nenhuma menção
+        #: encontrada, numa barra que acabou de mostrar três.
+        #:
+        #: SUBCONSULTA, E NÃO JUNÇÃO: `condicoes_do_filtro` entra em nove
+        #: consultas diferentes, e algumas já juntam `Tema` por conta própria —
+        #: acrescentar uma junção aqui mudaria o `from` delas por baixo.
+        condicoes.append(
+            or_(
+                Mencao.tema_texto == filtro.tema_texto,
+                Mencao.tema_id.in_(
+                    select(Tema.id).where(Tema.nome == filtro.tema_texto).scalar_subquery()
+                ),
+            )
+        )
     return condicoes
 
 
@@ -436,17 +463,101 @@ def composicao_da_lente(
     mes: date,
     calibracao: Calibracao,
     filtro: FiltroDeMencoes | None = None,
+    regua: str | None = None,
 ) -> Contagem:
     """Os três números da fórmula, já ponderados — o que a barra desenha.
 
-    SOMA DAS FONTES LIGADAS, e não a média de NS: a média é como o SCORE da
-    lente sai (§2.4), mas a barra mostra volume, e volume se soma.
+    SOMA DAS FONTES LIGADAS. Hoje é também como o SCORE sai (um denominador só,
+    ver `medir_lente`); antes a nota era a média dos NS das fontes e esta soma
+    existia porque a barra mostra VOLUME, e volume se soma. As duas contas
+    convergiram, e é bom que tenham: a barra e o número agora dizem a mesma coisa.
+
+    A RÉGUA É A DA LENTE, e este era um achado de revisão — eu havia passado a
+    nota para a régua do conjunto e deixado esta chamada com a régua por fonte.
+    Numa lente com duas fontes, uma com engajamento e outra sem, a barra mediria
+    uma em curtidas e a outra em menções: a composição exibida no detalhe
+    discordaria da nota exibida ao lado dela, sem nada explicando a diferença.
     """
+    ligadas = {
+        fonte: linhas
+        for fonte, linhas in _somas_da_lente(sessao, lente_id, mes, filtro).items()
+        if calibracao.ligada(fonte)
+    }
+    #: A RÉGUA DE FORA VENCE, e existe por causa do impacto de um recorte: lá o
+    #: numerador é do recorte e o denominador é do MÊS, e os dois têm de estar na
+    #: mesma unidade. Deixar cada chamada achar a sua régua faria um recorte
+    #: pequeno (sem engajamento no dado) ser dividido por um mês medido em
+    #: curtidas — curtida sobre menção, um número sem significado nenhum.
+    regua = regua or regua_da_lente(ligadas, calibracao.regua_engajamento)
     total = Contagem()
-    for fonte, linhas in _somas_da_lente(sessao, lente_id, mes, filtro).items():
-        if calibracao.ligada(fonte):
-            total = total + ponderar(linhas, calibracao)
+    for linhas in ligadas.values():
+        total = total + ponderar(linhas, calibracao, regua)
     return total
+
+
+def denominador_do_mes(
+    sessao: Session, lente_id: int, mes: date, calibracao: Calibracao
+) -> tuple[str, float]:
+    """A régua e o total ponderado do mês — o denominador do impacto, de uma
+    leitura só.
+
+    ACHADO DE REVISÃO (desempenho). Antes eram duas funções: uma lia as somas do
+    mês para decidir a régua, a outra as lia DE NOVO para somar o total. E o
+    impacto é chamado uma vez por mês do período no histórico — oito meses,
+    dezesseis leituras do mesmo agregado, metade delas para redescobrir a mesma
+    régua. O endpoint levava 472 ms no mês mais cheio.
+
+    AS DUAS COISAS SAEM DA MESMA LEITURA porque dependem do mesmo dado: a régua é
+    o que todas as fontes ligadas cumprem, e o total é a soma delas sob essa
+    régua.
+    """
+    ligadas = {
+        fonte: linhas
+        for fonte, linhas in _somas_da_lente(sessao, lente_id, mes, None).items()
+        if calibracao.ligada(fonte)
+    }
+    regua = regua_da_lente(ligadas, calibracao.regua_engajamento)
+    total = Contagem()
+    for linhas in ligadas.values():
+        total = total + ponderar(linhas, calibracao, regua)
+    return regua, total.total
+
+
+def impacto_do_recorte(
+    sessao: Session,
+    lente_id: int,
+    mes: date,
+    calibracao: Calibracao,
+    filtro: FiltroDeMencoes | None = None,
+    denominador: tuple[str, float] | None = None,
+) -> float:
+    """Quantos pontos este pedaço do mês tira (ou põe) na nota da lente.
+
+    `denominador` PRONTO evita medir o mês duas vezes quando quem chama já o tem —
+    é o caso do dossiê, que pede o impacto do mês alvo e depois o histórico.
+
+    A REGRA CENTRAL DO PACOTE, na letra:
+
+        impacto(S) = 50 × Σ(sinal × peso de S) ÷ Σ(peso de TODOS os itens do mês)
+
+    O DENOMINADOR É O DO MÊS, e é tudo o que importa aqui: é o que faz a soma dos
+    impactos de todos os valores de uma dimensão fechar em `nota − 50`, em
+    qualquer nível. Um denominador local daria a cada pedaço o seu próprio 100%
+    — cada barra pareceria enorme, nenhuma somaria o todo, e a tela estaria
+    mostrando pedaços que não compõem a coisa que dizem compor.
+
+    A MESMA RÉGUA NOS DOIS LADOS, por `denominador_do_mes`: um recorte cujas fontes não
+    mandam engajamento seria medido em menções e dividido por um mês medido em
+    curtidas.
+
+    ZERO QUANDO O MÊS NÃO TEM BASE, e não divisão por zero: sem denominador não
+    há pergunta a responder.
+    """
+    regua, total_do_mes = denominador or denominador_do_mes(sessao, lente_id, mes, calibracao)
+    if not total_do_mes:
+        return 0.0
+    do_recorte = composicao_da_lente(sessao, lente_id, mes, calibracao, filtro, regua)
+    return PONTOS_POR_NS * (do_recorte.positivo - do_recorte.negativo) / total_do_mes
 
 
 def fontes_da_lente(
@@ -710,34 +821,42 @@ def pesos_por_tema(
 
     linhas = list(sessao.execute(consulta))
 
-    # A MESMA RÉGUA POR FONTE QUE A LENTE USA. `regua_da_fonte` decide, lá no
-    # domínio, que uma fonte sem o dado pedido é contada por menções — e esta
-    # conta TEM de decidir igual, ou ela para de fechar com o número que
-    # explica. Não é a mesma chamada porque não é o mesmo dado de entrada: a
-    # lente soma `score_mes_fonte`, já agregado, e aqui se lê a menção crua,
-    # que é o que permite abrir por tema. A regra é uma; a matéria-prima, duas.
+    # A MESMA RÉGUA QUE A LENTE USA, E ELA É DA LENTE. `regua_da_lente` decide,
+    # lá no domínio, que basta UMA fonte sem o dado pedido para a lente inteira
+    # ser contada por menções — e esta conta TEM de decidir igual, ou ela para de
+    # fechar com o número que explica. Não é a mesma chamada porque não é o mesmo
+    # dado de entrada: a lente soma `score_mes_fonte`, já agregado, e aqui se lê a
+    # menção crua, que é o que permite abrir por tema. A regra é uma; a
+    # matéria-prima, duas.
+    #
+    # ERA POR FONTE, e deixou de ser quando a nota passou a ter um denominador
+    # só: a fonte sem engajamento seria medida em menções e a outra em curtidas,
+    # dentro da mesma razão.
     medido_por_fonte: dict[tuple[date, str], float] = {}
-    for mes, _lente, fonte, _tema, _sent, tier, cargo, engajamento, quantas in linhas:
+    fontes_da_lente: dict[tuple[date, str], set[str]] = {}
+    for mes, lente, fonte, _tema, _sent, tier, cargo, engajamento, quantas in linhas:
         peso = pesos_de_tier.get(tier, 1.0) if tier else 1.0
         medido_por_fonte[(mes, fonte)] = medido_por_fonte.get((mes, fonte), 0.0) + (
             peso * medida(calibracao.regua_engajamento, cargo, engajamento, quantas)
         )
-    regua_de: dict[tuple[date, str], str] = {
-        chave: calibracao.regua_engajamento if total else REGUA_DE_CONTAGEM
-        for chave, total in medido_por_fonte.items()
-    }
-
-    # O DENOMINADOR É A FONTE INTEIRA, inclusive as menções sem tema: elas
-    # entraram no NS, e tirá-las faria as contribuições somarem mais do que a
-    # fonte de fato pôs.
-    total_da_fonte: dict[tuple[date, str], float] = {}
-    fontes_da_lente: dict[tuple[date, str], set[str]] = {}
-    for mes, lente, fonte, _tema, _sent, tier, cargo, engajamento, quantas in linhas:
-        peso = pesos_de_tier.get(tier, 1.0) if tier else 1.0
-        total_da_fonte[(mes, fonte)] = total_da_fonte.get((mes, fonte), 0.0) + (
-            peso * medida(regua_de[(mes, fonte)], cargo, engajamento, quantas)
-        )
         fontes_da_lente.setdefault((mes, lente), set()).add(fonte)
+
+    regua_de: dict[tuple[date, str], str] = {}
+    for (mes, lente), fontes in fontes_da_lente.items():
+        cumprem = all(medido_por_fonte.get((mes, fonte)) for fonte in fontes)
+        regua_de[(mes, lente)] = (
+            calibracao.regua_engajamento if cumprem else REGUA_DE_CONTAGEM
+        )
+
+    # O DENOMINADOR É A LENTE INTEIRA — todas as fontes, inclusive as menções sem
+    # tema: elas entraram no NS, e tirá-las faria as contribuições somarem mais do
+    # que a lente de fato pôs.
+    total_da_lente: dict[tuple[date, str], float] = {}
+    for mes, lente, _fonte, _tema, _sent, tier, cargo, engajamento, quantas in linhas:
+        peso = pesos_de_tier.get(tier, 1.0) if tier else 1.0
+        total_da_lente[(mes, lente)] = total_da_lente.get((mes, lente), 0.0) + (
+            peso * medida(regua_de[(mes, lente)], cargo, engajamento, quantas)
+        )
 
     # (mês, lente, fonte, tema) -> [pos ponderado, neg ponderado, pos, neg]
     por_tema: dict[tuple[date, str, str, str], list[float]] = {}
@@ -745,7 +864,7 @@ def pesos_por_tema(
         if tema is None or sentimento not in ("pos", "neg"):
             continue
         peso = pesos_de_tier.get(tier, 1.0) if tier else 1.0
-        valor = peso * medida(regua_de[(mes, fonte)], cargo, engajamento, quantas)
+        valor = peso * medida(regua_de[(mes, lente)], cargo, engajamento, quantas)
         atual = por_tema.setdefault((mes, lente, fonte, tema), [0.0, 0.0, 0.0, 0.0])
         if sentimento == "pos":
             atual[0] += valor
@@ -763,8 +882,7 @@ def pesos_por_tema(
                 tema=tema,
                 positivas=pos,
                 negativas=neg,
-                total_da_fonte=total_da_fonte.get((mes, fonte), 0.0),
-                fontes_da_lente=len(fontes_da_lente.get((mes, lente), ())),
+                total_da_lente=total_da_lente.get((mes, lente), 0.0),
                 mencoes_positivas=int(cruas_pos),
                 mencoes_negativas=int(cruas_neg),
             )

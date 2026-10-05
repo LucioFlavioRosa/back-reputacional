@@ -260,7 +260,7 @@ def test_os_kpis_sao_os_da_especificacao_em_cada_lente(sessao):
     "matérias no ano" responde a pergunta da imprensa, não a de clientes."""
     rotulos = {
         codigo: [kpi.rotulo for kpi in _dossie(sessao, codigo).kpis]
-        for codigo in ("imprensa", "mercado", "clientes")
+        for codigo in ("imprensa", "mercado", "clientes", "sociedade")
     }
     assert "Veículos Tier 1" in rotulos["imprensa"]
     assert "Solidez financeira" in rotulos["mercado"]
@@ -268,6 +268,12 @@ def test_os_kpis_sao_os_da_especificacao_em_cada_lente(sessao):
     # marcação de post e cobrá-la pelo trabalho que existia.
     assert "Resposta bruta" in rotulos["clientes"]
     assert "Resposta operacional" in rotulos["clientes"]
+    # A SOCIEDADE PERGUNTA "DE QUEM" E "ONDE": numa lente de rede aberta, o
+    # volume diz pouco e a voz diz tudo. São os `kpis[]` que o pacote de
+    # produção nomeia para ela.
+    assert "Autor mais negativo" in rotulos["sociedade"]
+    assert "Figuras públicas" in rotulos["sociedade"]
+    assert "UF mais negativa" in rotulos["sociedade"]
 
 
 def test_todo_bloco_de_informacao_tem_ficha(sessao):
@@ -907,3 +913,356 @@ def test_sem_ve_diretorio_nenhum_texto_do_dossie_nomeia_o_jornalista(sessao):
     ]
 
     assert "Zulmira Vazamento" not in " ".join(pedacos)
+
+
+# =============================================================================
+# os cortes da Sociedade digital que o pacote de produção pede
+# =============================================================================
+#
+# O PACOTE DEFINE AS DIMENSÕES ÚTEIS DE CADA LENTE, e as da Sociedade são tema,
+# subtema, empresa citada, rede, PERFIL DO AUTOR, autor, fonte e UF. Três delas
+# chegaram com a carga do padrão e não existiam na tela: perfil do autor (em 100%
+# dos itens reais), UF (53%) e subtema (15%).
+#
+# O PERFIL DO AUTOR É O QUE MAIS MUDA A LEITURA, e é a razão de ele estar aqui:
+# mil cidadãos reclamando e um deputado reclamando têm o mesmo sinal e
+# consequências diferentes. Sem esse corte, a lente diz "o negativo subiu" e não
+# diz de quem é a voz.
+#
+# OS DADOS SÃO DO TESTE, e não da carga: o banco de teste nasce das migrations,
+# sem menção nenhuma. É melhor assim — um teste que dependesse dos 14.855 itens
+# reais passaria a falhar no dia em que a planilha fosse corrigida.
+
+
+def _social(sessao, **campos):
+    """Uma menção da Sociedade digital, com os campos do padrão Aegea."""
+    from app.banco.tabelas_score import Mencao, ScoreFonte
+
+    fonte = sessao.scalars(
+        select(ScoreFonte).where(ScoreFonte.codigo == campos.pop("fonte", "bites"))
+    ).one()
+    base = {
+        "mes": date(2026, 6, 1),
+        "sentimento": "neg",
+        "perfil_autor": "Cidadão",
+        "veiculo": "Instagram",
+        "peso_tier": 1,
+    }
+    mencao = Mencao(fonte_id=fonte.id, **{**base, **campos})
+    sessao.add(mencao)
+    sessao.flush()
+    return mencao
+
+
+class TestCortesDaSociedade:
+    def test_o_corte_por_PERFIL_DO_AUTOR_separa_cidadao_de_figura_publica(self, sessao):
+        from app.banco import repositorio_lentes
+        from app.dominio.score import Calibracao
+
+        _social(sessao, perfil_autor="Cidadão", sentimento="neg")
+        _social(sessao, perfil_autor="Cidadão", sentimento="neg")
+        _social(sessao, perfil_autor="Figura pública", sentimento="neg")
+        _social(sessao, perfil_autor="Figura pública", sentimento="pos")
+
+        perfis = repositorio_lentes.perfis_por_sentimento(
+            sessao, _lente(sessao, "sociedade"), date(2026, 6, 1), Calibracao()
+        )
+
+        por_rotulo = {linha["perfil"]: linha for linha in perfis}
+        assert por_rotulo["Cidadão"]["negativo"] == 2
+        assert por_rotulo["Figura pública"]["negativo"] == 1
+        assert por_rotulo["Figura pública"]["positivo"] == 1
+
+    def test_o_corte_por_UF_so_conta_quem_tem_UF(self, sessao):
+        from app.banco import repositorio_lentes
+        from app.dominio.score import Calibracao
+
+        _social(sessao, uf="RJ", sentimento="neg")
+        _social(sessao, uf="SP", sentimento="pos")
+        #: NULO NÃO VIRA CATEGORIA. A UF vem em pouco mais da metade dos itens
+        #: reais, e uma linha "—" no corte seria a maior de todas, dizendo nada.
+        _social(sessao, uf=None, sentimento="neg")
+
+        ufs = repositorio_lentes.ufs_por_sentimento(
+            sessao, _lente(sessao, "sociedade"), date(2026, 6, 1), Calibracao()
+        )
+
+        assert {linha["uf"] for linha in ufs} == {"RJ", "SP"}
+
+    def test_o_corte_por_SUBTEMA_desce_um_nivel_abaixo_do_tema(self, sessao):
+        from app.banco import repositorio_lentes
+        from app.dominio.score import Calibracao
+
+        _social(sessao, tema_texto="Saneamento básico", subtema="Falta de água")
+        _social(sessao, tema_texto="Saneamento básico", subtema="Falta de água")
+        _social(sessao, tema_texto="Saneamento básico", subtema="Obra atrasada")
+        _social(sessao, tema_texto="Saneamento básico", subtema=None)
+
+        subtemas = repositorio_lentes.subtemas_por_sentimento(
+            sessao, _lente(sessao, "sociedade"), date(2026, 6, 1), Calibracao()
+        )
+
+        por_rotulo = {linha["subtema"]: linha for linha in subtemas}
+        assert por_rotulo["Falta de água"]["negativo"] == 2
+        assert "Obra atrasada" in por_rotulo
+        assert None not in por_rotulo
+
+    def test_o_AUTOR_MAIS_NEGATIVO_vem_primeiro(self, sessao):
+        from app.banco import repositorio_lentes
+        from app.dominio.score import Calibracao
+
+        for _ in range(3):
+            _social(sessao, autor="@quemmaisreclama", sentimento="neg")
+        _social(sessao, autor="@outro", sentimento="neg")
+        _social(sessao, autor="@elogia", sentimento="pos")
+
+        autores = repositorio_lentes.autores_por_sentimento(
+            sessao, _lente(sessao, "sociedade"), date(2026, 6, 1), Calibracao()
+        )
+
+        #: ORDENADO PELO NEGATIVO, que é a pergunta do indicador: não é quem
+        #: falou mais, é quem pesou mais contra.
+        assert autores[0]["autor"] == "@quemmaisreclama"
+        assert autores[0]["negativo"] == 3
+        assert all(linha["autor"] for linha in autores)
+
+
+def _lente(sessao, codigo: str) -> int:
+    from app.banco.tabelas_score import Lente
+
+    return sessao.scalars(select(Lente.id).where(Lente.codigo == codigo)).one()
+
+
+class TestIndicadoresDaSociedade:
+    def test_a_lente_traz_os_tres_indicadores_do_pacote(self, sessao):
+        """O pacote nomeia três para esta lente: autor mais negativo, figuras
+        públicas e UF mais negativa. Os que já existiam continuam: eles respondem
+        "quanto", e os novos respondem "de quem" e "onde"."""
+        _social(sessao, autor="@fulano", uf="RJ", perfil_autor="Figura pública")
+
+        dossie = _dossie(sessao, "sociedade")
+
+        rotulos = [kpi.rotulo for kpi in dossie.kpis]
+        assert "Autor mais negativo" in rotulos
+        assert "Figuras públicas" in rotulos
+        assert "UF mais negativa" in rotulos
+
+    def test_figuras_publicas_conta_o_PERFIL_e_nao_o_cargo(self, sessao):
+        """O cargo do autor chega em 5 itens de 14.855; o perfil, em todos.
+        Contar pelo cargo diria "5 figuras públicas" num mês com centenas."""
+        _social(sessao, perfil_autor="Figura pública", cargo=None)
+        _social(sessao, perfil_autor="Figura pública", cargo=None)
+        _social(sessao, perfil_autor="Cidadão", cargo=None)
+
+        dossie = _dossie(sessao, "sociedade")
+        kpi = next(k for k in dossie.kpis if k.rotulo == "Figuras públicas")
+
+        assert kpi.valor == "2"
+
+    def test_a_UF_MAIS_NEGATIVA_e_a_de_mais_menções_negativas(self, sessao):
+        _social(sessao, uf="RJ", sentimento="neg")
+        _social(sessao, uf="RJ", sentimento="neg")
+        _social(sessao, uf="SP", sentimento="neg")
+        _social(sessao, uf="SP", sentimento="pos")
+
+        dossie = _dossie(sessao, "sociedade")
+        kpi = next(k for k in dossie.kpis if k.rotulo == "UF mais negativa")
+
+        assert kpi.valor == "RJ"
+
+
+class TestFiltroDaSociedade:
+    """OS CORTES NOVOS ENTRAM PELO FILTRO, e não por painel novo.
+
+    Eu havia trocado o painel das concessionárias pelo do perfil do autor, e
+    desfiz: a ordem do pacote põe empresa citada (3ª) antes de perfil (5ª), e a
+    troca pagava uma dimensão do pacote com outra, mais alta. Os dois painéis são
+    estrutura fixa do dossiê; o filtro é onde a tela já aceita recortar por mais
+    dimensões do que desenha, e é dele que o recorte do pacote nasce.
+    """
+
+    def test_o_filtro_oferece_perfil_uf_subtema_e_autor(self, sessao):
+        from app.banco import repositorio_lentes
+
+        _social(
+            sessao,
+            perfil_autor="Figura pública",
+            uf="RJ",
+            subtema="Falta de água",
+            autor="@fulano",
+        )
+
+        opcoes = repositorio_lentes.opcoes_de_filtro(
+            sessao, _lente(sessao, "sociedade"), date(2026, 6, 1)
+        )
+
+        assert opcoes["perfis"] == ["Figura pública"]
+        assert opcoes["ufs"] == ["RJ"]
+        assert opcoes["subtemas"] == ["Falta de água"]
+        assert opcoes["autores"] == ["@fulano"]
+
+    def test_a_lista_de_AUTORES_e_cortada_nos_que_mais_aparecem(self, sessao):
+        """UM SELETOR DE MIL E SETECENTAS OPÇÕES NÃO É UM SELETOR.
+
+        Medido no mês real: 1.745 autores distintos em junho, e entre eles
+        valores como "1000000000" — perfis que a fonte não soube nomear. Uma
+        lista assim não se percorre, e oferecê-la inteira é empurrar para quem
+        usa o trabalho de achar o que importa.
+
+        OS MAIS PRESENTES PRIMEIRO, e um teto: quem tem uma menção no mês não é
+        um recorte, é uma linha da lista de itens — que a tela já mostra.
+        """
+        from app.banco import repositorio_lentes
+
+        for i in range(40):
+            #: Quarenta autores com uma menção cada, e um com três.
+            _social(sessao, autor=f"@perfil{i:02d}")
+        for _ in range(3):
+            _social(sessao, autor="@quemfalamuito")
+
+        opcoes = repositorio_lentes.opcoes_de_filtro(
+            sessao, _lente(sessao, "sociedade"), date(2026, 6, 1)
+        )
+
+        assert len(opcoes["autores"]) <= 20
+        #: O mais presente está na lista, e é o primeiro.
+        assert opcoes["autores"][0] == "@quemfalamuito"
+
+    def test_a_lente_que_nao_tem_o_campo_vem_com_a_lista_VAZIA(self, sessao):
+        """A Imprensa não manda perfil do autor. Oferecer o filtro vazio faria a
+        tela mostrar um seletor que não escolhe nada."""
+        from app.banco import repositorio_lentes
+
+        opcoes = repositorio_lentes.opcoes_de_filtro(
+            sessao, _lente(sessao, "imprensa"), date(2026, 6, 1)
+        )
+
+        assert opcoes["perfis"] == []
+
+
+class TestMencoesDaSociedade:
+    """A LISTA DE ITENS — o nível 5 do pacote, a menção em si.
+
+    ELA ESTAVA DESLIGADA NESTA LENTE, e por uma razão que era boa: o Jones
+    restringiu a tabela à Imprensa em 02/10/2026 porque as colunas dela são de
+    clipping ("Veículo", "Aegea Tier") e não dizem nada de uma menção de rede.
+
+    O QUE MUDOU: a carga do pacote trouxe o texto da menção e o link dela —
+    2.208 dos 14.855 itens, as negativas, as de tier alto e as mais engajadas.
+    Com texto e link, a lista da Sociedade passa a ter o que mostrar; o que ela
+    precisa são as colunas DELA, que é justamente o motivo da restrição.
+    """
+
+    def test_a_lista_traz_o_texto_e_o_link_da_mencao(self, sessao):
+        _social(
+            sessao,
+            titulo_texto="Falta água no bairro há três dias",
+            link="https://instagram.com/p/abc",
+            autor="@vizinho",
+            engajamento=420,
+        )
+
+        dossie = _dossie(sessao, "sociedade")
+
+        assert dossie.materias_recentes.dados, "a lente tem menção com texto"
+        linha = dossie.materias_recentes.dados[0]
+        assert linha["texto"] == "Falta água no bairro há três dias"
+        assert linha["link"] == "https://instagram.com/p/abc"
+        assert linha["autor"] == "@vizinho"
+
+    def test_as_colunas_sao_as_DA_LENTE_e_nao_as_de_clipping(self, sessao):
+        """O MOTIVO DA RESTRIÇÃO ERA ESTE: "Veículo" e "Aegea Tier" não dizem
+        nada de uma menção de rede. A Sociedade recebe as colunas dela."""
+        _social(sessao, titulo_texto="qualquer coisa")
+
+        dossie = _dossie(sessao, "sociedade")
+
+        chaves = [coluna.chave for coluna in dossie.materias_recentes.colunas]
+        assert "texto" in chaves
+        assert "autor" in chaves
+        assert "engajamento" in chaves
+        assert "tier" not in chaves
+
+    def test_quem_TEM_TEXTO_vem_primeiro(self, sessao):
+        """OITENTA E SEIS POR CENTO DOS ITENS CHEGAM SEM TEXTO, e o pacote diz
+        que isso é esperado — o resto vem na primeira carga mensal completa.
+
+        ORDENAR POR DATA DEIXARIA A LISTA TODA SEM TEXTO: cinco linhas de
+        metadado, sem nada a ler. Quem tem texto vem primeiro, e dentro deles o
+        maior engajamento — que é a ordem que o pacote pede para esta lente.
+        """
+        from datetime import date as _date
+
+        _social(sessao, titulo_texto=None, data=_date(2026, 6, 28))
+        _social(sessao, titulo_texto="o que se lê", data=_date(2026, 6, 2), engajamento=10)
+        _social(sessao, titulo_texto="o mais engajado", data=_date(2026, 6, 1), engajamento=9000)
+
+        dossie = _dossie(sessao, "sociedade")
+        textos = [linha["texto"] for linha in dossie.materias_recentes.dados]
+
+        assert textos[0] == "o mais engajado"
+        assert textos[1] == "o que se lê"
+
+    def test_sem_nenhuma_mencao_com_texto_a_ficha_DIZ_isso(self, sessao):
+        """Lista vazia sem explicação faz quem olha concluir que não houve
+        menção no mês — e houve: 6.932 em junho, nenhuma com texto ainda."""
+        _social(sessao, titulo_texto=None)
+
+        dossie = _dossie(sessao, "sociedade")
+
+        assert dossie.materias_recentes.dados == []
+        assert any(
+            "texto" in lacuna for lacuna in dossie.materias_recentes.ficha.lacunas
+        )
+
+    def test_a_imprensa_continua_com_as_colunas_de_clipping(self, sessao):
+        """O contrapeso: a lente que já tinha a lista não muda."""
+        dossie = _dossie(sessao, "imprensa")
+
+        chaves = [coluna.chave for coluna in dossie.materias_recentes.colunas]
+        assert "veiculo" in chaves
+        assert "tier" in chaves
+
+
+class TestAchadosDaRevisaoDosIndicadores:
+    """Dois indicadores liam um corte CORTADO, e por isso podiam errar.
+
+    O corte por dimensão devolve os seis valores de MAIOR VOLUME — é o que serve
+    a um painel. Os indicadores perguntam outra coisa: "qual UF é a mais
+    negativa" e "quantas menções vieram de figura pública". Ler a resposta de uma
+    lista que já foi cortada por outro critério é o erro, e ele não aparece no
+    dado de hoje: aparece quando a cauda cresce.
+    """
+
+    def test_a_UF_MAIS_NEGATIVA_pode_estar_FORA_das_seis_maiores(self, sessao):
+        """ACHADO MÉDIO DA REVISÃO, com o cenário dele: seis UFs grandes e pouco
+        negativas, e uma pequena inteiramente negativa. A pequena é a resposta, e
+        era justamente ela que o corte por volume deixava de fora."""
+        for sigla in ("AM", "BA", "CE", "DF", "ES", "GO"):
+            for _ in range(10):
+                _social(sessao, uf=sigla, sentimento="pos")
+            _social(sessao, uf=sigla, sentimento="neg")
+        #: A sétima em volume, e a primeira em negativas.
+        for _ in range(5):
+            _social(sessao, uf="RJ", sentimento="neg")
+
+        dossie = _dossie(sessao, "sociedade")
+        kpi = next(k for k in dossie.kpis if k.rotulo == "UF mais negativa")
+
+        assert kpi.valor == "RJ"
+
+    def test_FIGURAS_PUBLICAS_conta_mesmo_com_muitos_perfis_na_frente(self, sessao):
+        """ACHADO BAIXO DA REVISÃO: o indicador somava as linhas do corte por
+        perfil, que traz seis. Com sete grafias de perfil mais volumosas, "Figura
+        pública" cairia fora da lista e o número viraria zero — um zero que não
+        significa "não houve"."""
+        for i in range(7):
+            for _ in range(10):
+                _social(sessao, perfil_autor=f"Perfil {i}")
+        _social(sessao, perfil_autor="Figura pública")
+        _social(sessao, perfil_autor="Figura pública")
+
+        dossie = _dossie(sessao, "sociedade")
+        kpi = next(k for k in dossie.kpis if k.rotulo == "Figuras públicas")
+
+        assert kpi.valor == "2"

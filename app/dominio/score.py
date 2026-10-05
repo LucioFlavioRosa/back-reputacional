@@ -194,28 +194,58 @@ class Calibracao:
 
 @dataclass(frozen=True, slots=True)
 class FiltroDeMencoes:
-    """O recorte de uma lente na tela — tier, veículo, atributo, tema.
+    """O recorte de uma lente na tela, por qualquer dimensão da menção.
 
-    TODOS OS QUATRO SÃO SOBRE `mencao`, e nenhum deles existe em
-    `score_mes_fonte` (o agregado que a ingestão grava): aquela tabela só tem
-    grão de (fonte, mês, sentimento, tier). Um filtro de veículo/atributo/tema
-    não tem como ler dali — tem de agregar `mencao` na hora. Ver
-    `repositorio_score.somas_da_lente_filtradas`.
+    TODAS SÃO SOBRE `mencao`, e nenhuma existe em `score_mes_fonte` (o agregado
+    que a ingestão grava): aquela tabela só tem grão de (fonte, mês, sentimento,
+    tier). Um filtro de veículo, tema ou UF não tem como ler dali — tem de
+    agregar `mencao` na hora. Ver `repositorio_score.somas_da_lente_filtradas`.
 
     É UM RECORTE DE TELA, E NÃO CALIBRAÇÃO: a régua (`Calibracao`) é decisão
     de coordenação, versionada, e vale para todo mundo que olhar o índice.
     Este filtro é exploração de quem está lendo — por isso a nota recalculada
     com ele ativo não é "a nota do mês", e a tela precisa dizer isso.
+
+    AS QUATRO ÚLTIMAS VIERAM DO PADRÃO AEGEA (0055), e elas fecham uma porta que
+    eu havia aberto para o vazio: o endpoint de opções passou a oferecer perfil do
+    autor, UF, subtema e autor, e este recorte não os conhecia. A tela ofereceria
+    a escolha, o servidor ignoraria em silêncio e devolveria o mês inteiro como se
+    fosse o recorte — a pior forma de não funcionar, porque parece ter funcionado.
+
+    EMPILHAM-SE, e é o nível 3 do pacote: escolher uma UF e, dentro dela, um
+    perfil. Todas as dimensões preenchidas valem JUNTAS — cada uma é um `and` na
+    consulta, nunca a última vencendo as outras.
     """
 
     tier: str | None = None
     veiculo: str | None = None
     atributo: str | None = None
     tema_texto: str | None = None
+    perfil_autor: str | None = None
+    uf: str | None = None
+    subtema: str | None = None
+    autor: str | None = None
+    #: A concessionária como o fornecedor a nomeia (`mencao.unidade_texto`). É a
+    #: terceira dimensão prioritária do pacote, e era a única dos dois painéis da
+    #: lente sem lugar aqui: clicar na barra de uma concessionária não tinha para
+    #: onde ir.
+    empresa: str | None = None
 
     @property
     def ativo(self) -> bool:
-        return bool(self.tier or self.veiculo or self.atributo or self.tema_texto)
+        return any(
+            (
+                self.tier,
+                self.veiculo,
+                self.atributo,
+                self.tema_texto,
+                self.perfil_autor,
+                self.uf,
+                self.subtema,
+                self.autor,
+                self.empresa,
+            )
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,7 +300,37 @@ def regua_da_fonte(somas: list[SomasDaFonte], regua_engajamento: str) -> str:
     return REGUA_DE_CONTAGEM
 
 
-def ponderar(somas: list[SomasDaFonte], calibracao: Calibracao) -> Contagem:
+def regua_da_lente(
+    somas_por_fonte: dict[str, list[SomasDaFonte]], regua_engajamento: str
+) -> str:
+    """A régua que TODAS as fontes da lente conseguem cumprir.
+
+    ACHADO DE REVISÃO, e ele nasceu do denominador único. Enquanto a lente era a
+    média dos NS de cada fonte, decidir a régua POR FONTE era certo: o que se
+    comparava depois era NS, adimensional, e uma fonte sem engajamento entrava
+    medida em menções sem contaminar a outra.
+
+    SOMAR AS CONTAGENS TIROU ESSA PROTEÇÃO: com um denominador só, uma fonte
+    medida em engajamento e outra em menções fazem o denominador somar grandezas
+    diferentes — 5.900 curtidas com 100 menções —, e a fonte sem o dado vence
+    justamente por não tê-lo.
+
+    A RÉGUA PASSA A SER DO CONJUNTO: se qualquer fonte com dado não cumpre a
+    régua pedida, a lente inteira é medida por contagem. O preço está dito: ligar
+    engajamento numa lente onde uma das fontes não o manda rebaixa a lente toda.
+    É menor que o de uma nota que soma curtida com menção.
+    """
+    if regua_engajamento == REGUA_DE_CONTAGEM:
+        return REGUA_DE_CONTAGEM
+    for somas in somas_por_fonte.values():
+        if regua_da_fonte(somas, regua_engajamento) == REGUA_DE_CONTAGEM:
+            return REGUA_DE_CONTAGEM
+    return regua_engajamento
+
+
+def ponderar(
+    somas: list[SomasDaFonte], calibracao: Calibracao, regua: str | None = None
+) -> Contagem:
     """As somas de uma fonte viram os três números da fórmula.
 
     DUAS RÉGUAS, UMA MULTIPLICAÇÃO. O tier diz quanto vale a matéria pelo
@@ -289,7 +349,11 @@ def ponderar(somas: list[SomasDaFonte], calibracao: Calibracao) -> Contagem:
     # por não ter tier 1 é o que "só tier 1" pede, e continua valendo; perdê-la
     # por não ter curtida não é o que régua nenhuma pediu.
     contam = [linha for linha in somas if peso_do_veiculo(linha) != 0]
-    regua = regua_da_fonte(contam, calibracao.regua_engajamento)
+    #: A RÉGUA PODE VIR DE FORA, e é `medir_lente` quem a manda: numa lente com
+    #: várias fontes ela é do CONJUNTO (ver `regua_da_lente`), senão o
+    #: denominador único somaria grandezas diferentes. Sem o parâmetro, a decisão
+    #: é desta fonte — é como a ingestão e os testes de uma fonte só a chamam.
+    regua = regua or regua_da_fonte(contam, calibracao.regua_engajamento)
 
     total = Contagem()
     for linha in contam:
@@ -332,11 +396,31 @@ def medir_lente(
 ) -> LenteMedida:
     """O score de uma lente no mês.
 
-    MÉDIA SIMPLES DOS NS DAS FONTES, e não soma das contagens (§2.4). A
-    diferença é grande: a Bites classifica 4.973 posts e a Approach 1.959, e
-    somar as contagens faria a Bites decidir a lente sozinha. Média de NS dá
-    voz igual a cada fornecedor — que é o que se quer de duas leituras da
-    mesma realidade.
+    UM DENOMINADOR SÓ PARA TODAS AS FONTES, e isto INVERTE a §2.4.
+
+    A REGRA ANTERIOR ERA MÉDIA SIMPLES DOS NS, com uma razão escrita aqui: a
+    Bites classifica 4.973 posts e a Approach 1.959, e somar as contagens faz a
+    Bites decidir a lente sozinha. Média de NS dava voz igual a cada fornecedor —
+    que é o que se quer de duas leituras da mesma realidade.
+
+    O PACOTE DE PRODUÇÃO DAS LENTES (out/2026) manda o contrário, e o dono do
+    produto escolheu seguir depois de ver as duas contas: "impacto de qualquer
+    conjunto de itens = 50 × Σ(sinal × peso) ÷ Σ(peso de TODOS os itens do mês na
+    lente)". A razão é a que sustenta a pirâmide nova: a mesma conta tem de valer
+    para a lente, para uma linha de causa, para um recorte e para um item, e com
+    um denominador POR FONTE a soma das linhas de causa deixa de dar `nota − 50`.
+    Os quatro níveis param de fechar entre si, e é esse fechamento que torna o
+    número auditável na frente de quem pergunta.
+
+    O QUE SE PERDE ESTÁ DITO, não escondido: a fonte que classifica mais itens
+    passa a pesar mais. Em junho de 2026 a Bites responde por 72% dos itens da
+    Sociedade digital, e a lente caiu de 36 para 35.
+
+    A RÉGUA É DO CONJUNTO, e não de cada fonte (ver `regua_da_lente`). Era por
+    fonte, e com a média dos NS isso estava certo; com um denominador só, uma
+    fonte medida em engajamento e outra em menções fariam o denominador somar
+    grandezas diferentes. O que se soma são as contagens já ponderadas de cada
+    fonte, todas pela MESMA régua — a que todas conseguem cumprir.
 
     A ESTIMATIVA SÓ ENTRA ONDE NÃO HÁ MEDIÇÃO. Havendo contagem, ela é
     ignorada: medido ganha de suposto, sempre.
@@ -364,22 +448,26 @@ def medir_lente(
             ausencia="todas as fontes desta lente estão desligadas",
         )
 
-    valores: list[float] = []
+    #: AS CONTAGENS SE SOMAM, os NS não. Cada fonte é ponderada pela régua dela e
+    #: entra no mesmo balde; o NS sai uma vez, do total.
+    total = Contagem()
     com_dado: list[str] = []
+    #: UMA RÉGUA PARA A LENTE INTEIRA, decidida antes de somar nada.
+    regua = regua_da_lente(ligadas, calibracao.regua_engajamento)
     for fonte, somas in sorted(ligadas.items()):
-        valor = ns(ponderar(somas, calibracao))
-        if valor is not None:
-            valores.append(valor)
+        contagem = ponderar(somas, calibracao, regua)
+        if ns(contagem) is not None:
+            total = total + contagem
             com_dado.append(fonte)
 
-    if valores:
-        media = sum(valores) / len(valores)
+    medido = ns(total)
+    if medido is not None:
         return LenteMedida(
             codigo=codigo,
             nome=nome,
             peso=peso,
-            ns=media,
-            score=para_score(media),
+            ns=medido,
+            score=para_score(medido),
             fontes=tuple(com_dado),
         )
 

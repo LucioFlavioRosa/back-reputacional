@@ -756,7 +756,7 @@ def _formula(lente: str, calibracao: Calibracao) -> str:
         }[calibracao.regua_engajamento]
         return (
             f"{base} {comoR[0].upper() + comoR[1:]}. Com mais de uma fonte, "
-            "a lente é a média simples dos NS."
+            "as menções das duas entram na mesma conta — um denominador só."
         )
     return f"{base} Vem do clima das interações registradas neste painel."
 

@@ -26,6 +26,12 @@ from app.dominio.score import Sentimento, Tier, peso_do_cargo, peso_do_engajamen
 
 #: Os campos de `mencao` que uma planilha pode alimentar. Um mapeamento que
 #: cite outro nome é erro de cadastro, e não coluna ignorada em silêncio.
+#:
+#: OS SETE DO PADRÃO AEGEA ENTRARAM AQUI (0055), e era um achado de revisão: eles
+#: existiam na tabela e no `MencaoLida`, mas esta lista é a porta do importador
+#: MENSAL — sem eles, um fornecedor que mapeasse `id_fonte` teria a planilha
+#: recusada por "campo desconhecido", e a carga mensal entraria sem `id_fonte`,
+#: deixando o índice único que protege a recarga sem nada para proteger.
 CAMPOS = frozenset(
     {
         "data",
@@ -38,6 +44,14 @@ CAMPOS = frozenset(
         "publico_alvo",
         "tema",
         "unidade",
+        # -- o padrão Aegea (0055) --
+        "id_fonte",
+        "uf",
+        "subtema",
+        "perfil_autor",
+        "titulo_texto",
+        "link",
+        "peso_tier",
         "teor",
         "autor",
     }
@@ -47,9 +61,13 @@ CAMPOS = frozenset(
 CAMPOS_OBRIGATORIOS = frozenset({"data", "sentimento"})
 
 
-def _achatar(texto: object) -> str:
-    """Minúsculo, sem acento e sem espaço dobrado.
+def achatar(texto: object) -> str:
+    """Minúsculas, sem acento, espaços colapsados — a forma de comparar rótulo.
 
+    PÚBLICA porque são dois leitores de planilha: o importador mensal e a carga
+    inicial do pacote. Os dois precisam casar "Negativa", "negativa" e
+    "NEGATIVA " com a mesma chave, e duas normalizações diferentes fariam a mesma
+    palavra virar duas categorias.
     É o que permite `POSITIVA`, `Positivo` e `positiva ` caírem no mesmo lugar
     sem uma tabela de sinônimos por fornecedor.
     """
@@ -162,7 +180,7 @@ class Mapeamento:
         object.__setattr__(
             self,
             "sentimentos",
-            {_achatar(chave): str(valor) for chave, valor in self.sentimentos.items()},
+            {achatar(chave): str(valor) for chave, valor in self.sentimentos.items()},
         )
 
     @classmethod
@@ -190,7 +208,7 @@ class Mapeamento:
                 for de, para in dict(dados.get("apelidos") or {}).items()
             },
             teores_nao_acionaveis=frozenset(
-                _achatar(teor) for teor in (dados.get("teores_nao_acionaveis") or [])
+                achatar(teor) for teor in (dados.get("teores_nao_acionaveis") or [])
             ),
         )
 
@@ -220,6 +238,26 @@ class MencaoLida:
     #: `False` diria que a menção não é um contato de verdade.
     acionavel: bool | None = None
     autor: str | None = None
+
+    # -- o que o padrão Aegea acrescentou (0055) ------------------------------
+    #
+    # TODOS OPCIONAIS, e isso é o contrato com as fontes antigas: a Clipei e a
+    # Approach de 2025 não mandam nenhum deles, e as planilhas que elas já
+    # enviaram continuam sendo lidas sem mudança nenhuma.
+
+    #: O id do item no sistema do fornecedor — a chave natural da carga.
+    id_fonte: str | None = None
+    uf: str | None = None
+    subtema: str | None = None
+    #: Cidadão, Figura pública, Imprensa, Perfil institucional.
+    perfil_autor: str | None = None
+    #: O texto e o endereço da menção. Vêm só numa amostra das linhas.
+    titulo_texto: str | None = None
+    link: str | None = None
+    #: O peso que o padrão dá ao item. Vem pronto na planilha (1 na Sociedade,
+    #: 10/5/1 pelo tier na Imprensa); guardado como dado, não como régua — a
+    #: nota continua saindo da régua da calibração vigente.
+    peso_tier: float = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,7 +363,7 @@ def para_inteiro(valor: object) -> int | None:
 
 def normalizar_cargo(valor: object) -> str | None:
     """`Deputado Estadual` → `deputado_estadual`, a chave de `PESO_DO_CARGO`."""
-    achatado = _achatar(valor)
+    achatado = achatar(valor)
     return achatado.replace(" ", "_") if achatado else None
 
 
@@ -365,7 +403,7 @@ def ler_linha(
 ) -> MencaoLida | Descarte:
     """Uma linha da planilha, ou o motivo de ela não contar."""
     for coluna, aceitos in mapeamento.filtros.items():
-        if _achatar(linha.get(coluna)) not in {_achatar(aceito) for aceito in aceitos}:
+        if achatar(linha.get(coluna)) not in {achatar(aceito) for aceito in aceitos}:
             return Descarte.FORA_DO_FILTRO
 
     colunas = mapeamento.colunas
@@ -373,7 +411,7 @@ def ler_linha(
     if data is None:
         return Descarte.SEM_DATA
 
-    achatado = _achatar(linha.get(colunas["sentimento"]))
+    achatado = achatar(linha.get(colunas["sentimento"]))
     sentimento = mapeamento.sentimentos.get(achatado) or SENTIMENTOS.get(achatado)
     if sentimento is None:
         # A Bites traz 1.426 posts com `Não informado`: são posts reais que o
@@ -391,7 +429,7 @@ def ler_linha(
         mes=data.replace(day=1),
         data=data,
         sentimento=sentimento,
-        tier=TIERS.get(_achatar(opcional("tier"))),
+        tier=TIERS.get(achatar(opcional("tier"))),
         engajamento=para_inteiro(opcional("engajamento")),
         cargo=normalizar_cargo(opcional("cargo")),
         atributo=_texto(opcional("atributo")),
@@ -400,7 +438,7 @@ def ler_linha(
         tema_texto=_rotulo(opcional("tema"), mapeamento),
         unidade_texto=_rotulo(opcional("unidade"), mapeamento),
         teor=teor,
-        acionavel=None if teor is None else _achatar(teor) not in nao_acionaveis,
+        acionavel=None if teor is None else achatar(teor) not in nao_acionaveis,
         autor=_texto(opcional("autor")),
     )
 
@@ -433,7 +471,7 @@ def ler_planilha(
         # A fonte mapeia tier, a célula tem texto, e o texto não é nenhum dos
         # três valores da escala: alguém trocou a coluna, ou o fornecedor mudou
         # o vocabulário.
-        if coluna_do_tier and lido.tier is None and _achatar(linha.get(coluna_do_tier)):
+        if coluna_do_tier and lido.tier is None and achatar(linha.get(coluna_do_tier)):
             avisos[AVISO_DE_TIER] += 1
     return Leitura(
         mencoes=tuple(mencoes),

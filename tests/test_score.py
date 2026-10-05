@@ -185,19 +185,39 @@ def test_com_junho_e_a_calibracao_padrao_o_isr_fica_em_58():
     assert indice.lentes_de_fora == ()
 
 
-def test_a_sociedade_e_a_media_dos_ns_das_duas_fontes():
-    """MÉDIA DE NS, e não soma das contagens (§2.4).
+def test_a_sociedade_e_o_ns_de_TODOS_os_itens_do_mes():
+    """UM DENOMINADOR SÓ, somando as duas fontes — e isto INVERTE a §2.4.
 
-    A Bites classifica 4.973 posts e a Approach 1.959: somar as contagens
-    faria a Bites decidir a lente sozinha. Média de NS dá voz igual às duas
-    leituras da mesma realidade.
+    A REGRA ANTERIOR ERA MÉDIA SIMPLES DOS NS, com uma razão escrita: a Bites
+    classifica 4.973 posts e a Approach 1.959, e somar as contagens faz a Bites
+    decidir a lente. Média de NS dava voz igual às duas leituras da mesma
+    realidade.
+
+    O PACOTE DE PRODUÇÃO DAS LENTES (out/2026) manda o contrário, e o dono do
+    produto escolheu seguir: "impacto de qualquer conjunto de itens = 50 × Σ(sinal
+    × peso) ÷ Σ(peso de TODOS os itens do mês na lente)". A razão dele é a que
+    sustenta a pirâmide inteira: com um denominador por fonte, a soma das linhas
+    de causa deixa de dar `nota − 50`, e os quatro níveis (lente, causa, recorte,
+    item) param de fechar entre si. Voz igual por fornecedor custaria a
+    propriedade que faz os números serem auditáveis em todos os níveis.
+
+    O QUE SE PERDE FICA DITO: a fonte que classifica mais itens passa a pesar
+    mais. Em junho de 2026 a Bites responde por 72% dos itens da lente.
+
+    A RÉGUA CONTINUA SENDO ESCOLHIDA POR FONTE (ver `regua_da_fonte`): o que se
+    soma são as CONTAGENS JÁ PONDERADAS de cada fonte, cada uma medida pela régua
+    que ela consegue cumprir. Juntar as linhas cruas antes de ponderar faria uma
+    fonte sem engajamento ser medida pela régua de outra.
     """
     sociedade = _lentes(PADRAO)[2]
 
-    ns_sl = ns(ponderar(APPROACH_SL_JUNHO, PADRAO))
-    ns_bites = ns(ponderar(BITES_JUNHO, PADRAO))
-    assert sociedade.ns == pytest.approx((ns_sl + ns_bites) / 2)
+    das_duas = ponderar(APPROACH_SL_JUNHO, PADRAO) + ponderar(BITES_JUNHO, PADRAO)
+    assert sociedade.ns == pytest.approx(ns(das_duas))
     assert sociedade.fontes == ("approach_sl", "bites")
+
+    #: O NÚMERO QUE A TELA MOSTRA, e é o que muda de verdade: era 36 pela média
+    #: simples, e passa a 35 pelo denominador único.
+    assert sociedade.score == 35
 
 
 # -- a calibração muda o número, e é para isso que ela existe -------------------
@@ -636,3 +656,62 @@ def test_o_peso_exato_nao_arredonda():
     exatos = pesos_exatos(_indice_com(**sem_institucional))
     assert exatos["imprensa"] == pytest.approx(30 / 85 * 100)
     assert sum(exatos.values()) == pytest.approx(100)
+
+
+# -- os achados da revisão do denominador único ---------------------------------
+
+
+def test_a_regua_e_a_que_TODAS_as_fontes_da_lente_cumprem():
+    """ACHADO ALTO DA REVISÃO. Com um denominador só, a régua não pode mais ser
+    escolhida por fonte: numa lente com duas fontes, se uma tem engajamento e a
+    outra não, a primeira entraria medida em engajamento e a segunda em contagem
+    de menções — e o denominador passaria a somar grandezas diferentes.
+
+    ANTES ISSO NÃO EXISTIA, e o docstring de `regua_da_fonte` dizia por quê:
+    comparava-se NS, que é adimensional. Somar as contagens tirou essa proteção,
+    e a régua passa a ser decidida pelo CONJUNTO — a que todas conseguem cumprir.
+
+    O QUE SE PERDE ESTÁ DITO: ligar engajamento numa lente onde uma das fontes
+    não o manda rebaixa a lente inteira para contagem. É o preço de o numerador e
+    o denominador serem da mesma grandeza, e é menor que o de uma nota que soma
+    curtidas com menções.
+    """
+    com_engajamento = [
+        SomasDaFonte("com", "pos", "", mencoes=10, soma_log=30, soma_engajamento=5000),
+        SomasDaFonte("com", "neg", "", mencoes=5, soma_log=12, soma_engajamento=900),
+    ]
+    sem_engajamento = [
+        SomasDaFonte("sem", "pos", "", mencoes=40, soma_log=0, soma_engajamento=0),
+        SomasDaFonte("sem", "neg", "", mencoes=60, soma_log=0, soma_engajamento=0),
+    ]
+
+    medida = medir_lente(
+        codigo="sociedade",
+        nome="Sociedade digital",
+        peso=20,
+        somas_por_fonte={"com": com_engajamento, "sem": sem_engajamento},
+        calibracao=Calibracao(pesos=PADRAO.pesos, regua_engajamento="log"),
+    )
+
+    #: AS DUAS PELA CONTAGEM: 50 positivas contra 65 negativas em 115 menções.
+    esperado = (50 - 65) / 115
+    assert medida.ns == pytest.approx(esperado)
+
+
+def test_quando_TODAS_cumprem_a_regua_pedida_ela_vale():
+    """O contrapeso: a régua existe para ser usada. Com as duas fontes trazendo
+    engajamento, a lente é medida por engajamento — e aí as duas estão na mesma
+    grandeza, que era a condição."""
+    uma = [SomasDaFonte("uma", "pos", "", mencoes=10, soma_log=30, soma_engajamento=5000)]
+    outra = [SomasDaFonte("outra", "neg", "", mencoes=10, soma_log=20, soma_engajamento=800)]
+
+    medida = medir_lente(
+        codigo="sociedade",
+        nome="Sociedade digital",
+        peso=20,
+        somas_por_fonte={"uma": uma, "outra": outra},
+        calibracao=Calibracao(pesos=PADRAO.pesos, regua_engajamento="log"),
+    )
+
+    #: Pelo log: 30 positivas contra 20 negativas, em 50.
+    assert medida.ns == pytest.approx((30 - 20) / 50)

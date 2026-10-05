@@ -16,7 +16,8 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from app.api.lentes import obter_dossie, obter_opcoes_de_filtro
+from app.api.lentes import obter_dossie, obter_opcoes_de_filtro, obter_recorte
+from app.banco.tabelas_catalogo import Tema
 from app.banco.tabelas_score import Mencao, ScoreFonte, ScoreMesFonte
 from app.dominio.score import peso_do_cargo, peso_do_engajamento
 from tests.test_e2e_postgres import URL
@@ -404,3 +405,577 @@ def test_materias_recentes_sobe_o_teto_quando_ha_recorte(sessao):
 
     com_filtro = _dossie(sessao, veiculo="Veículo Único")
     assert len(com_filtro.materias_recentes.dados) == 7
+
+
+# =============================================================================
+# o recorte pelas dimensões do padrão Aegea
+# =============================================================================
+#
+# EU ABRI UMA PORTA QUE NÃO LEVAVA A LUGAR NENHUM: o endpoint de opções passou a
+# oferecer perfil do autor, UF, subtema e autor, e `FiltroDeMencoes` só conhecia
+# tier, veículo, atributo e tema. A tela ofereceria a escolha e o servidor
+# devolveria o mês inteiro, sem recorte e sem erro — a pior forma de não
+# funcionar, porque parece ter funcionado.
+#
+# O RECORTE TEM DE CHEGAR À NOTA, e não só à lista: é o que o pacote chama de
+# nível 3, e é a pergunta "quanto este pedaço pesa no número". Um filtro que
+# muda a lista e não muda a nota responde outra coisa.
+
+
+@pytest.fixture
+def sociedade_de_junho(sessao):
+    """Menções de rede em junho, variadas nas dimensões que a carga trouxe.
+
+    O AGREGADO VAI JUNTO, pela mesma razão do fixture da imprensa: o caminho SEM
+    filtro lê `score_mes_fonte`, e sem ele a nota viria nula mesmo com menções no
+    banco.
+    """
+    bites = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "bites")).one()
+    #: A GRAFIA CURTA das duas concessionárias, para a linha caber: o nome
+    #: completo não muda nada do que estes testes provam.
+    rio, holding = "Águas do Rio", "Aegea Holding"
+    agua, obra = "Falta de água", "Obra atrasada"
+    linhas = [
+        # perfil, uf, tema, subtema, autor, sentimento, empresa
+        ("Figura pública", "RJ", "Abastecimento", agua, "@deputado", "neg", rio),
+        ("Figura pública", "SP", "Obras", obra, "@vereadora", "pos", holding),
+        ("Cidadão", "RJ", "Abastecimento", agua, "@vizinho", "neg", rio),
+        ("Cidadão", "RJ", "Abastecimento", agua, "@vizinho", "pos", holding),
+        ("Cidadão", "SP", "Obras", obra, "@outro", "pos", holding),
+        ("Cidadão", "SP", "Obras", obra, "@outro", "pos", holding),
+    ]
+    for perfil, uf, tema, subtema, autor, sentimento, empresa in linhas:
+        sessao.add(
+            Mencao(
+                fonte_id=bites.id,
+                mes=MES,
+                sentimento=sentimento,
+                perfil_autor=perfil,
+                uf=uf,
+                #: O TEMA É A PRIMEIRA DIMENSÃO PRIORITÁRIA DO PACOTE nesta
+                #: lente, e o fixture nascera sem ele. Dois temas, cada um com o
+                #: seu subtema: é o que faz a aba de tema ter o que mostrar e a
+                #: descida tema → subtema significar algo.
+                tema_texto=tema,
+                subtema=subtema,
+                autor=autor,
+                veiculo="Instagram",
+                unidade_texto=empresa,
+            )
+        )
+
+    por_sentimento: dict[str, int] = {}
+    for _perfil, _uf, _tema, _subtema, _autor, sentimento, _empresa in linhas:
+        por_sentimento[sentimento] = por_sentimento.get(sentimento, 0) + 1
+    for sentimento, mencoes in por_sentimento.items():
+        sessao.add(
+            ScoreMesFonte(
+                fonte_id=bites.id,
+                mes=MES,
+                sentimento=sentimento,
+                tier="",
+                mencoes=mencoes,
+                soma_log=mencoes * peso_do_engajamento(None),
+                soma_engajamento=0,
+                soma_cargo=mencoes * peso_do_cargo(None),
+            )
+        )
+    sessao.flush()
+    return linhas
+
+
+def _da_sociedade(sessao, **filtro):
+    return obter_dossie(
+        sessao=sessao, usuario=_QuemOlha(), codigo="sociedade", mes="2026-06", **filtro
+    )
+
+
+def test_o_recorte_por_PERFIL_muda_a_nota_da_lente(sessao, sociedade_de_junho):
+    """Quatro positivas e duas negativas no mês dão nota 67. O recorte das duas
+    figuras públicas — uma negativa e uma positiva — dá 50."""
+    inteiro = _da_sociedade(sessao)
+    recortado = _da_sociedade(sessao, perfil_autor="Figura pública")
+
+    assert inteiro.nota == 67
+    assert inteiro.recorte_filtrado is False
+    assert recortado.nota == 50
+    assert recortado.recorte_filtrado is True
+
+
+def test_o_recorte_por_UF_por_SUBTEMA_e_por_AUTOR_tambem_recorta(sessao, sociedade_de_junho):
+    #: RJ: duas negativas e uma positiva -> 33. "Obra atrasada": três positivas
+    #: -> 100. "@vizinho": uma de cada -> 50.
+    assert _da_sociedade(sessao, uf="RJ").nota == 33
+    assert _da_sociedade(sessao, subtema="Obra atrasada").nota == 100
+    assert _da_sociedade(sessao, autor="@vizinho").nota == 50
+
+
+def test_DOIS_recortes_ao_mesmo_tempo_se_acumulam(sessao, sociedade_de_junho):
+    """É o empilhamento que o pacote pede no nível 3: escolher uma UF e, DENTRO
+    dela, um perfil. Os dois valem juntos, e não o último."""
+    so_uf = _da_sociedade(sessao, uf="RJ")
+    uf_e_perfil = _da_sociedade(sessao, uf="RJ", perfil_autor="Figura pública")
+
+    assert so_uf.nota == 33
+    #: Em RJ, a única figura pública é a negativa: nota 0.
+    assert uf_e_perfil.nota == 0
+
+
+def test_o_recorte_que_nao_casa_com_nada_NAO_devolve_o_mes_inteiro(sessao, sociedade_de_junho):
+    """O QUE ESTE TESTE PROTEGE é o modo de falhar silencioso: um filtro que o
+    servidor não conhece é ignorado, e a tela mostra o mês inteiro como se fosse
+    o recorte. Zero menções é uma resposta; o mês todo é uma mentira."""
+    vazio = _da_sociedade(sessao, uf="AC")
+
+    assert vazio.nota is None
+    assert vazio.ausencia is not None
+
+
+# =============================================================================
+# a navegação pelos três níveis: clicar num painel recorta a tela
+# =============================================================================
+#
+# O DONO DO PRODUTO FOI À TELA E NÃO ACHOU COMO DESCER OS NÍVEIS. O recorte
+# funcionava — a barra de filtros aplica, o servidor recalcula, a nota muda —, mas
+# a barra é um SELETOR: quem olha um painel e vê "Saneamento básico" com 60% de
+# negativas tenta clicar NELE, não procurar o mesmo nome num campo suspenso.
+#
+# NA IMPRENSA ISSO JÁ EXISTIA: a rosca de tier e o ranking de veículos são
+# clicáveis e recortam a tela inteira. Os painéis das outras lentes não eram, e o
+# que faltava para serem é o servidor DIZER qual dimensão cada painel representa
+# — sem isso a tela recebe barras com rótulos e não sabe que filtro aplicar.
+#
+# E A EMPRESA CITADA NÃO ESTAVA NO RECORTE: o painel de concessionárias é a
+# terceira dimensão prioritária do pacote, e clicar nele não tinha para onde ir.
+
+
+def test_cada_painel_DIZ_a_dimensao_que_ele_recorta(sessao, sociedade_de_junho):
+    """É o que permite a tela ligar um clique a um filtro sem adivinhar pelo
+    título do painel — e o título é a frase de um detector, que muda com o dado."""
+    dossie = _da_sociedade(sessao)
+
+    por_titulo = {painel.titulo: painel.recorta for painel in dossie.paineis}
+    assert por_titulo["Temas × sentimento"] == "tema"
+    assert por_titulo["Concessionárias com maior repercussão"] == "empresa"
+
+
+def test_o_recorte_por_EMPRESA_muda_a_nota(sessao, sociedade_de_junho):
+    """A empresa citada é a terceira dimensão prioritária do pacote, e era a
+    única dos dois painéis da lente sem lugar no filtro: clicar na barra de uma
+    concessionária não tinha para onde ir."""
+    de_uma = _da_sociedade(sessao, empresa="Águas do Rio")
+
+    assert de_uma.recorte_filtrado is True
+    #: As duas menções de Águas do Rio no fixture são negativas.
+    assert de_uma.nota == 0
+
+
+def test_a_empresa_entra_nas_opcoes_de_filtro(sessao, sociedade_de_junho):
+    opcoes = obter_opcoes_de_filtro(
+        sessao=sessao, usuario=_QuemOlha(), codigo="sociedade", mes="2026-06"
+    )
+
+    assert "Águas do Rio" in opcoes.empresas
+
+
+def test_o_painel_da_IMPRENSA_tambem_diz_o_que_recorta(sessao, imprensa_de_junho):
+    """O contrapeso, e ele corrige uma premissa minha: a Imprensa NÃO tem painel
+    de temas — os dois dela são o tier do veículo e a matriz de jornalistas.
+
+    O TIER RECORTA, a matriz não: ela é uma matriz de prioridade de pessoas, com
+    duas coordenadas e sem uma dimensão de menção para filtrar. Painel que não
+    recorta nada diz `None`, e a tela não o torna clicável — o que é melhor que
+    um clique que não faz nada.
+    """
+    dossie = _dossie(sessao)
+
+    por_titulo = {painel.titulo: painel.recorta for painel in dossie.paineis}
+    assert por_titulo["Tier do veículo × sentimento"] == "tier"
+    assert por_titulo["Matriz de relacionamento com jornalistas"] is None
+
+
+# =============================================================================
+# "Onde está a causa": uma aba por dimensão útil
+# =============================================================================
+#
+# OS DOIS PAINÉIS NÃO BASTAM, e isto foi medido: o pacote declara oito dimensões
+# prioritárias para a Sociedade digital — tema, subtema, empresa citada, rede,
+# perfil do autor, autor, fonte e UF — e a tela desenhava duas. As outras seis só
+# existiam no seletor da barra, que é onde se ESCOLHE um recorte, não onde se
+# DESCOBRE qual deles explica o mês.
+#
+# O PACOTE PEDE ABAS (FRONTEND §3): "abas das dimensões úteis (máx. 6 visíveis +
+# mais)". É a mesma pergunta — "onde está a causa" — feita por vários cortes, e
+# trocar de aba é a navegação que faltava.
+#
+# TUDO NO MESMO PEDIDO, e isto foi medido antes de decidir: as seis consultas
+# levam 109 ms juntas no mês mais cheio (6.932 menções). Um endpoint por aba
+# custaria um estado de carregamento por clique e um segundo caminho de dados
+# para a mesma conta.
+#
+# "ÚTIL" É O CRITÉRIO DO PACOTE: pelo menos dois valores distintos não nulos, e
+# nulos abaixo de 60%. Uma dimensão em que quase ninguém classificou não é uma
+# causa: é uma lacuna de dado, e a ficha do bloco é quem conta isso.
+
+
+def test_a_causa_vem_com_uma_aba_por_dimensao_util(sessao, sociedade_de_junho):
+    dossie = _da_sociedade(sessao)
+
+    chaves = [bloco.recorta for bloco in dossie.onde_esta_a_causa]
+    #: A ORDEM É A DO PACOTE para esta lente: o assunto primeiro, depois quem
+    #: fala, depois onde.
+    assert chaves[0] == "tema"
+    assert "subtema" in chaves
+    assert "perfil_autor" in chaves
+    assert "uf" in chaves
+    assert "autor" in chaves
+
+
+def test_a_dimensao_de_UM_VALOR_SO_nao_e_aba(sessao, sociedade_de_junho):
+    """Uma dimensão com um valor só não explica nada: a barra ocuparia a largura
+    inteira e diria "100% de tudo é isto". No fixture, a rede é só Instagram."""
+    dossie = _da_sociedade(sessao)
+
+    assert "veiculo" not in [bloco.recorta for bloco in dossie.onde_esta_a_causa]
+
+
+def test_a_dimensao_com_MUITO_NULO_nao_e_aba(sessao):
+    """O critério do pacote: nulos abaixo de 60%. Uma dimensão que a fonte quase
+    não classificou não é causa, é lacuna — e a tela que a mostra como causa diz
+    que "a maior parte do mês é Sem classificação", o que não ajuda ninguém."""
+    bites = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "bites")).one()
+    for i in range(10):
+        sessao.add(
+            Mencao(
+                fonte_id=bites.id,
+                mes=MES,
+                sentimento="neg",
+                perfil_autor="Cidadão" if i < 4 else None,
+                tema_texto="Saneamento",
+                uf="RJ" if i % 2 else "SP",
+            )
+        )
+    sessao.add(
+        ScoreMesFonte(
+            fonte_id=bites.id, mes=MES, sentimento="neg", tier="", mencoes=10,
+            soma_log=10 * peso_do_engajamento(None), soma_engajamento=0,
+            soma_cargo=10 * peso_do_cargo(None),
+        )
+    )
+    sessao.flush()
+
+    dossie = _da_sociedade(sessao)
+
+    #: Perfil em 4 de 10 — 60% de nulo — fica fora. A UF, em todas, entra.
+    chaves = [bloco.recorta for bloco in dossie.onde_esta_a_causa]
+    assert "perfil_autor" not in chaves
+    assert "uf" in chaves
+
+
+def test_cada_aba_traz_as_linhas_e_o_que_ela_recorta(sessao, sociedade_de_junho):
+    """A aba é um bloco como os outros: linhas com sentimento, ficha de
+    procedência e a dimensão que um clique aplica."""
+    dossie = _da_sociedade(sessao)
+    da_uf = next(b for b in dossie.onde_esta_a_causa if b.recorta == "uf")
+
+    assert da_uf.tipo == "barras_100"
+    assert {linha["rotulo"] for linha in da_uf.dados} == {"RJ", "SP"}
+    assert da_uf.ficha.origem
+    #: RJ tem duas negativas e uma positiva no fixture.
+    do_rio = next(linha for linha in da_uf.dados if linha["rotulo"] == "RJ")
+    assert do_rio["negativo"] == 2
+    assert do_rio["positivo"] == 1
+
+
+def test_a_causa_respeita_o_recorte_ativo(sessao, sociedade_de_junho):
+    """DENTRO DO RECORTE, e é isto que faz o terceiro nível existir: com uma UF
+    escolhida, as abas passam a mostrar o que explica AQUELA UF — é descer um
+    nível, e não olhar o mês inteiro de outro jeito."""
+    inteiro = _da_sociedade(sessao)
+    no_rio = _da_sociedade(sessao, uf="RJ")
+
+    do_perfil_inteiro = next(b for b in inteiro.onde_esta_a_causa if b.recorta == "perfil_autor")
+    do_perfil_no_rio = next(b for b in no_rio.onde_esta_a_causa if b.recorta == "perfil_autor")
+
+    #: No mês há duas figuras públicas; no Rio, uma só.
+    das_figuras_inteiro = next(
+        linha for linha in do_perfil_inteiro.dados if linha["rotulo"] == "Figura pública"
+    )
+    das_figuras_no_rio = next(
+        linha for linha in do_perfil_no_rio.dados if linha["rotulo"] == "Figura pública"
+    )
+    assert das_figuras_inteiro["negativo"] + das_figuras_inteiro["positivo"] == 2
+    assert das_figuras_no_rio["negativo"] + das_figuras_no_rio["positivo"] == 1
+
+
+# =============================================================================
+# os achados da revisão desta etapa
+# =============================================================================
+
+
+def test_a_aba_de_tema_usa_o_MESMO_rotulo_do_painel(sessao):
+    """ACHADO DE REVISÃO (alta). O painel "Temas × sentimento" agrupa por
+    `coalesce(Tema.nome, Mencao.tema_texto)` — o nome do dicionário do CRM vence
+    a grafia do fornecedor. A aba de tema agrupava por `Mencao.tema_texto` cru.
+
+    O ESTRAGO ERA DUPLO, e os dois lados aparecem na mesma tela: painel e aba
+    mostrariam rótulos diferentes para o mesmo mês, e clicar no rótulo
+    normalizado do painel mandaria `?tema=Saneamento básico` para um dado cuja
+    grafia é "SAN BASICO" — nenhuma menção encontrada, num clique numa barra
+    visível."""
+    bites = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "bites")).one()
+    do_dicionario = sessao.scalars(select(Tema).limit(1)).one()
+    for sentimento in ("neg", "neg", "pos"):
+        sessao.add(
+            Mencao(
+                fonte_id=bites.id,
+                mes=MES,
+                sentimento=sentimento,
+                #: A GRAFIA DO FORNECEDOR, com o tema do dicionário ao lado.
+                tema_texto="SAN BASICO",
+                tema_id=do_dicionario.id,
+                uf="RJ",
+                perfil_autor="Cidadão",
+            )
+        )
+    sessao.add(
+        Mencao(
+            fonte_id=bites.id,
+            mes=MES,
+            sentimento="pos",
+            tema_texto="Outro assunto",
+            uf="SP",
+            perfil_autor="Cidadão",
+        )
+    )
+    sessao.add(
+        ScoreMesFonte(
+            fonte_id=bites.id, mes=MES, sentimento="neg", tier="", mencoes=2,
+            soma_log=2 * peso_do_engajamento(None), soma_engajamento=0,
+            soma_cargo=2 * peso_do_cargo(None),
+        )
+    )
+    sessao.add(
+        ScoreMesFonte(
+            fonte_id=bites.id, mes=MES, sentimento="pos", tier="", mencoes=2,
+            soma_log=2 * peso_do_engajamento(None), soma_engajamento=0,
+            soma_cargo=2 * peso_do_cargo(None),
+        )
+    )
+    sessao.flush()
+
+    dossie = _da_sociedade(sessao)
+    da_aba = next(bloco for bloco in dossie.onde_esta_a_causa if bloco.recorta == "tema")
+    do_painel = next(painel for painel in dossie.paineis if painel.recorta == "tema")
+
+    rotulos_da_aba = {linha["rotulo"] for linha in da_aba.dados}
+    rotulos_do_painel = {linha["rotulo"] for linha in do_painel.dados}
+    assert rotulos_da_aba == rotulos_do_painel
+    assert do_dicionario.nome in rotulos_da_aba
+
+
+def test_o_recorte_por_tema_ACHA_o_que_o_rotulo_normalizado_nomeia(sessao):
+    """A outra metade do mesmo achado: o filtro comparava só `tema_texto`, então
+    o rótulo que a tela mostra (o do dicionário) não encontrava as menções cuja
+    grafia crua é outra. Um clique que devolve "nenhuma menção" numa barra que
+    acabou de mostrar três é o pior resultado possível."""
+    bites = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "bites")).one()
+    do_dicionario = sessao.scalars(select(Tema).limit(1)).one()
+    for sentimento in ("neg", "neg"):
+        sessao.add(
+            Mencao(
+                fonte_id=bites.id, mes=MES, sentimento=sentimento,
+                tema_texto="SAN BASICO", tema_id=do_dicionario.id,
+            )
+        )
+    sessao.add(
+        ScoreMesFonte(
+            fonte_id=bites.id, mes=MES, sentimento="neg", tier="", mencoes=2,
+            soma_log=2 * peso_do_engajamento(None), soma_engajamento=0,
+            soma_cargo=2 * peso_do_cargo(None),
+        )
+    )
+    sessao.flush()
+
+    pelo_nome_do_dicionario = _da_sociedade(sessao, tema=do_dicionario.nome)
+
+    assert pelo_nome_do_dicionario.recorte_filtrado is True
+    #: Duas negativas: a nota do recorte é zero, e NÃO a ausência.
+    assert pelo_nome_do_dicionario.nota == 0
+    assert pelo_nome_do_dicionario.ausencia is None
+
+
+def test_a_aba_de_JORNALISTA_respeita_ve_diretorio(sessao, imprensa_de_junho):
+    """ACHADO DE REVISÃO (alta). A matriz de jornalistas e os sinais que nomeiam
+    jornalista saem do payload de quem não tem `ve_diretorio` — e a aba "Jornalista"
+    da Imprensa publicava os mesmos nomes por outra porta.
+
+    E A DA SOCIEDADE CONTINUA: lá o autor é o perfil de rede que veio DENTRO da
+    menção, não cadastro de terceiro — é o mesmo dado que o indicador "Autor mais
+    negativo" já publica. A distinção é a que `_nomeia_o_diretorio` faz, e ela é
+    por lente, não por nome de coluna."""
+    bites = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "bites")).one()
+    clipei = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "clipei")).one()
+    #: A IMPRENSA PRECISA DE AUTOR NA MAIORIA DAS MENÇÕES para a aba existir: o
+    #: critério do pacote exige nulo abaixo de 60%, e o fixture da imprensa traz
+    #: seis matérias sem autor. Oito com autor passam das seis sem.
+    for nome in ("Repórter A",) * 5 + ("Repórter B",) * 3:
+        sessao.add(
+            Mencao(
+                fonte_id=clipei.id, mes=MES, sentimento="neg", autor=nome,
+                tier="relevante", veiculo="Veículo A", atributo="Qualidade",
+                tema_texto="Tarifa",
+            )
+        )
+    sessao.flush()
+
+    de_quem_ve = obter_dossie(
+        sessao=sessao, usuario=_QuemOlha(ve_diretorio=True), codigo="imprensa", mes="2026-06"
+    )
+    de_quem_nao_ve = obter_dossie(
+        sessao=sessao, usuario=_QuemOlha(ve_diretorio=False), codigo="imprensa", mes="2026-06"
+    )
+
+    assert "autor" in [bloco.recorta for bloco in de_quem_ve.onde_esta_a_causa]
+    assert "autor" not in [bloco.recorta for bloco in de_quem_nao_ve.onde_esta_a_causa]
+    #: E AS OUTRAS ABAS FICAM: esconder a lente inteira para proteger um nome
+    #: seria pagar com a tela toda por uma coluna.
+    assert "tema" in [bloco.recorta for bloco in de_quem_nao_ve.onde_esta_a_causa]
+    _ = bites
+
+
+def test_a_dimensao_ESPERADA_que_nao_explica_vira_AVISO(sessao):
+    """O PACOTE PEDE ISTO (FRONTEND §40), e o caso é real, não hipotético: o tema
+    é a PRIMEIRA dimensão prioritária da Sociedade digital e chega em 1.959 dos
+    6.932 itens de junho — uma das duas fontes não classifica assunto.
+
+    SEM O AVISO, a tela mostra um cartão "onde está a causa" SEM aba de tema logo
+    acima de um painel "Temas × sentimento". Quem lê conclui que a tela está
+    quebrada. A frase transforma um buraco inexplicável em um fato sobre a
+    fonte — e esse fato é acionável: dá para cobrar do fornecedor."""
+    bites = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "bites")).one()
+    for i in range(10):
+        sessao.add(
+            Mencao(
+                fonte_id=bites.id,
+                mes=MES,
+                sentimento="neg" if i % 2 else "pos",
+                #: O tema em 2 de 10 — a proporção da planilha real, arredondada.
+                tema_texto=("Abastecimento" if i == 0 else "Obras") if i < 2 else None,
+                uf="RJ" if i % 2 else "SP",
+                perfil_autor="Cidadão",
+            )
+        )
+    for sentimento, quantas in (("neg", 5), ("pos", 5)):
+        sessao.add(
+            ScoreMesFonte(
+                fonte_id=bites.id, mes=MES, sentimento=sentimento, tier="", mencoes=quantas,
+                soma_log=quantas * peso_do_engajamento(None), soma_engajamento=0,
+                soma_cargo=quantas * peso_do_cargo(None),
+            )
+        )
+    sessao.flush()
+
+    dossie = _da_sociedade(sessao)
+
+    assert "tema" not in [bloco.recorta for bloco in dossie.onde_esta_a_causa]
+    #: E A TELA SABE DIZER POR QUÊ, com o número na frase.
+    do_tema = next(frase for frase in dossie.lacunas_da_causa if frase.startswith("Tema"))
+    assert "2 de 10" in do_tema
+
+    #: O VALOR ÚNICO TEM FRASE PRÓPRIA: o perfil está em todas as menções, mas com
+    #: um valor só — não é falta de classificação, é dimensão que não separa nada.
+    do_perfil = next(
+        frase for frase in dossie.lacunas_da_causa if frase.startswith("Perfil de quem fala")
+    )
+    assert "um valor só" in do_perfil
+
+
+def test_a_tabela_de_mencoes_DIZ_qual_coluna_e_o_endereco_da_linha(sessao, sociedade_de_junho):
+    """O DONO DO PRODUTO PEDIU A LINHA, E NÃO O LINK: "não precisa ter o link no
+    modal, mas se clicar gostaria de acessar a página".
+
+    UMA COLUNA "LINK" COM "ABRIR ↗" EM CADA LINHA É RUÍDO: a coluna existe só
+    para repetir, trinta vezes, a mesma palavra — e rouba largura do texto da
+    menção, que é o que se lê. O endereço continua vindo no dado; o que muda é
+    que ele passa a ser o DESTINO DA LINHA, e não uma célula.
+
+    QUEM DECIDE É O SERVIDOR, pelo mesmo motivo de `recorta`: a alternativa é a
+    tela procurar uma coluna chamada "link" — adivinhação pelo nome, que é
+    exatamente como a escolha do schema da tabela já quebrou uma vez."""
+    bites = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "bites")).one()
+    sessao.add(
+        Mencao(
+            fonte_id=bites.id,
+            mes=MES,
+            sentimento="neg",
+            titulo_texto="Falta de água no bairro",
+            link="https://exemplo.com/post/1",
+            uf="RJ",
+        )
+    )
+    sessao.flush()
+
+    dossie = _da_sociedade(sessao)
+    tabela = dossie.materias_recentes
+
+    assert tabela.coluna_do_link == "link"
+    #: A COLUNA SAI DA TELA, mas o endereço CONTINUA NO DADO — é ele que a linha
+    #: usa para levar à página.
+    assert "link" not in [coluna.chave for coluna in tabela.colunas]
+    assert tabela.dados[0]["link"] == "https://exemplo.com/post/1"
+
+
+def test_a_tabela_que_nao_tem_endereco_nao_promete_nenhum(sessao, imprensa_de_junho):
+    """A tabela de matérias da Imprensa não traz link — e uma linha que parece
+    clicável e não leva a lugar nenhum custa mais do que uma que não parece."""
+    dossie = _dossie(sessao)
+
+    assert dossie.materias_recentes.coluna_do_link is None
+
+
+def test_o_bloco_dos_TEMAS_MAIS_FALADOS_recorta_por_tema(sessao, sociedade_de_junho):
+    """PEDIDO DO DONO DO PRODUTO: "Temas mais falados seria ter um modal aqui tb".
+    Era o único gráfico da tela em que a barra não levava a lugar nenhum."""
+    dossie = _da_sociedade(sessao)
+
+    assert dossie.temas_mais_falados.recorta == "tema"
+
+
+def test_DENTRO_de_um_tema_a_primeira_aba_e_o_SUBTEMA(sessao, sociedade_de_junho):
+    """A OUTRA METADE DO PEDIDO: "e uma aba com os sub temas".
+
+    ELA JÁ FUNCIONAVA, e vale dizer por quê, porque o motivo é frágil se ninguém
+    o escrever: o subtema chega em 28% das menções do mês e por isso NÃO é aba do
+    mês — mas a presença de cada dimensão é medida DENTRO do recorte ativo, e
+    quem classifica o tema classifica o subtema (as duas colunas vêm da mesma
+    fonte). Dentro de um tema, o subtema está em quase tudo, e entra."""
+    #: DOIS SUBTEMAS DENTRO DO TEMA, porque um valor só não explica nada e é
+    #: corretamente excluído — o fixture nasceu com "Falta de água" nas três
+    #: menções de Abastecimento. No dado real são vários por tema.
+    bites = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "bites")).one()
+    sessao.add(
+        Mencao(
+            fonte_id=bites.id,
+            mes=MES,
+            sentimento="neg",
+            tema_texto="Abastecimento",
+            subtema="Água turva",
+            uf="RJ",
+            perfil_autor="Cidadão",
+        )
+    )
+    sessao.flush()
+
+    no_tema = _da_sociedade(sessao, tema="Abastecimento")
+    dentro = obter_recorte(
+        sessao=sessao, usuario=_QuemOlha(), codigo="sociedade", mes="2026-06", tema="Abastecimento"
+    )
+
+    assert no_tema.recorte_filtrado is True
+    assert [bloco.recorta for bloco in dentro.dentro][0] == "subtema"
+    #: E AS LINHAS SÃO AS DE DENTRO DO TEMA: os dois subtemas dele, não os do mês.
+    do_subtema = dentro.dentro[0]
+    assert {linha["rotulo"] for linha in do_subtema.dados} == {"Falta de água", "Água turva"}
+    #: E O TEMA NÃO SE REPETE dentro de si mesmo.
+    assert "tema" not in [bloco.recorta for bloco in dentro.dentro]

@@ -32,7 +32,6 @@ def peso(
     pos: float = 0,
     neg: float = 0,
     total: float = 1000,
-    fontes: int = 1,
     cruas_pos: int = 0,
     cruas_neg: int = 0,
 ) -> PesosDoTema:
@@ -42,8 +41,7 @@ def peso(
         tema=tema,
         positivas=pos,
         negativas=neg,
-        total_da_fonte=total,
-        fontes_da_lente=fontes,
+        total_da_lente=total,
         mencoes_positivas=cruas_pos or int(pos),
         mencoes_negativas=cruas_neg or int(neg),
     )
@@ -57,29 +55,37 @@ class TestContribuicaoNoNs:
         # Metade do peso da fonte, todo negativo, numa fonte única: −0,5 de NS.
         assert contribuicao_no_ns(peso("Privatização", neg=500)) == pytest.approx(-0.5)
 
-    def test_a_LENTE_É_MÉDIA_das_fontes(self):
-        # O mesmo tema, na mesma proporção, numa lente de DUAS fontes: ele
-        # mexe metade, porque a outra fonte entra com o mesmo direito de voto.
-        # Ignorar isto era metade do erro de 4,3 pontos.
-        de_uma = contribuicao_no_ns(peso("X", neg=500, fontes=1))
-        de_duas = contribuicao_no_ns(peso("X", neg=500, fontes=2))
-        assert de_duas == pytest.approx(de_uma / 2)
+    def test_o_DENOMINADOR_É_DA_LENTE_e_nao_da_fonte(self):
+        """INVERTE O `test_a_LENTE_É_MÉDIA_das_fontes`, e de propósito.
+
+        A lente era a média dos NS das fontes, então um tema que dominava uma
+        fonte de duas mexia metade — a outra entrava com o mesmo direito de voto.
+        Com o denominador único (ver `medir_lente`), o que importa é o peso do
+        tema sobre TODOS os itens do mês: o mesmo tema, na mesma proporção, pesa
+        o mesmo independentemente de quantas fontes a lente tem. O que muda é o
+        denominador, que agora soma as duas.
+        """
+        numa_lente_pequena = contribuicao_no_ns(peso("X", neg=500, total=1000))
+        na_lente_com_as_duas = contribuicao_no_ns(peso("X", neg=500, total=2000))
+
+        assert numa_lente_pequena == pytest.approx(-0.5)
+        assert na_lente_com_as_duas == pytest.approx(-0.25)
 
     def test_um_assunto_equilibrado_não_pesa(self):
         # Quinhentas menções não movem nada quando metade sustenta e metade
         # pressiona — e é por isso que VOLUME não é peso.
         assert contribuicao_no_ns(peso("Obra", pos=250, neg=250)) == 0
 
-    def test_a_fonte_sem_peso_não_estoura(self):
+    def test_a_lente_sem_peso_não_estoura(self):
         assert contribuicao_no_ns(peso("Nada", neg=5, total=0)) == 0
-        assert contribuicao_no_ns(peso("Nada", neg=5, fontes=0)) == 0
 
-    def test_A_CONTA_FECHA_com_o_ns_da_fonte(self):
-        """A soma dos temas recupera o NS da fonte.
+    def test_A_CONTA_FECHA_com_o_ns_da_lente(self):
+        """A soma dos temas recupera o NS da LENTE.
 
-        É a propriedade que torna a frase auditável. Uma fonte com 300 de peso
-        positivo e 700 de negativo, sobre 1000, tem NS de −0,4 — e os temas
-        dela têm de somar exatamente isso.
+        É a propriedade que torna a frase auditável, e é a razão de o pacote de
+        produção exigir um denominador só: uma lente com 300 de peso positivo e
+        700 de negativo, sobre 1000, tem NS de −0,4 — e os temas dela têm de somar
+        exatamente isso, em qualquer dimensão que se abra.
         """
         partes = [
             peso("A", pos=300, neg=100),
@@ -89,16 +95,28 @@ class TestContribuicaoNoNs:
         assert sum(contribuicao_no_ns(parte) for parte in partes) == pytest.approx(-0.4)
 
     def test_A_CONTA_FECHA_com_DUAS_fontes(self):
-        """O caso que o teste antigo não montava — e onde a conta errada errava.
+        """A soma das contribuições dá o NS DO BOLO JUNTO, e não a média das
+        fontes — é o que o denominador único significa, e este teste afirmava o
+        contrário até out/2026.
 
-        Duas fontes, cada uma com o seu NS; a lente é a média. A soma das
-        contribuições precisa dar essa média, e não o NS do bolo junto.
+        O CASO ESCOLHIDO TEM FONTES DE TAMANHOS DIFERENTES de propósito: com duas
+        fontes do mesmo tamanho, a média e o bolo dão o mesmo número e o teste
+        passaria com qualquer uma das duas regras — não mediria nada.
+
+        A fonte grande traz 1.500 de peso com saldo −500; a pequena, 500 com
+        saldo +300. Pelo bolo: (−500 + 300) ÷ 2.000 = −0,1. Pela média dos NS,
+        que era a regra antiga: (−0,333 + 0,6) ÷ 2 = +0,133 — sinal trocado, e
+        a lente diria que o mês sustentou quando ele pressionou.
         """
-        # Fonte A: NS = −0,4. Fonte B: NS = +0,2. Média = −0,1.
-        de_a = [peso("X", pos=300, neg=700, fontes=2, fonte="a")]
-        de_b = [peso("Y", pos=600, neg=400, fontes=2, fonte="b")]
-        soma = sum(contribuicao_no_ns(p) for p in de_a + de_b)
-        assert soma == pytest.approx((-0.4 + 0.2) / 2)
+        #: `total` é o total da LENTE: as duas fontes somadas.
+        da_grande = peso("X", pos=500, neg=1000, fonte="grande", total=2000)
+        da_pequena = peso("Y", pos=400, neg=100, fonte="pequena", total=2000)
+
+        soma = contribuicao_no_ns(da_grande) + contribuicao_no_ns(da_pequena)
+
+        assert soma == pytest.approx((-500 + 300) / 2000)
+        #: E o sinal é o do bolo, não o da média: o mês pressionou.
+        assert soma < 0
 
     def test_O_TIER_JÁ_VEM_APLICADO_nas_somas(self):
         """A ponderação não mora aqui: chega pronta do repositório.
@@ -149,8 +167,8 @@ class TestAssuntosQuePesaram:
         mostrá-lo duas vezes faria a coluna parecer erro de listagem."""
         dos_lados = temas_que_pesaram(
             [
-                peso("Privatização", fonte="approach_sl", neg=300, fontes=2, cruas_neg=300),
-                peso("Privatização", fonte="bites", neg=200, fontes=2, cruas_neg=200),
+                peso("Privatização", fonte="approach_sl", neg=300, cruas_neg=300),
+                peso("Privatização", fonte="bites", neg=200, cruas_neg=200),
             ],
             PESOS,
         )
@@ -267,11 +285,11 @@ class TestAssuntosQuePesaramNaLente:
             [
                 peso(
                     "Privatização", lente="imprensa", fonte="clipei",
-                    neg=300, fontes=2, cruas_neg=300,
+                    neg=300, cruas_neg=300,
                 ),
                 peso(
                     "Privatização", lente="imprensa", fonte="clipei_investidores",
-                    neg=200, fontes=2, cruas_neg=200,
+                    neg=200, cruas_neg=200,
                 ),
             ],
             "imprensa",

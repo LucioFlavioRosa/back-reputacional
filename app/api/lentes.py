@@ -34,8 +34,13 @@ from app.api.dependencias import UsuarioLogado, exigir_portal_score
 from app.api.score import _formula, _mes_de
 from app.banco import repositorio_lentes, repositorio_score
 from app.banco.sessao import SessaoDoPedido
+
+#: A coluna em si, para pedir a contagem de um valor específico ao
+#: repositório — ver `quantas_com`.
+from app.banco.tabelas_score import Mencao
 from app.casos_de_uso.ler_sinais_da_lente import ler_sinais, regua_dos_sinais
 from app.dominio import frases_de_sinais as frases
+from app.dominio.causa_da_lente import DIMENSOES_POR_LENTE, ROTULO_DA_DIMENSAO
 from app.dominio.erros import NaoEncontrado
 from app.dominio.lentes import (
     Conceito,
@@ -118,6 +123,28 @@ class BlocoSaida(BaseModel):
     cores: list[str] = Field(default_factory=list)
     #: Só nas tabelas.
     colunas: list[ColunaSaida] = Field(default_factory=list)
+    #: A coluna cujo valor é o ENDEREÇO DA LINHA — a tela a usa como destino de
+    #: um clique na linha, e NÃO desenha a coluna.
+    #:
+    #: O DONO DO PRODUTO PEDIU A LINHA, E NÃO O LINK: "não precisa ter o link no
+    #: modal, mas se clicar gostaria de acessar a página". Uma coluna "Link" com
+    #: "Abrir ↗" repetido trinta vezes é ruído, e rouba largura do texto da
+    #: menção — que é o que se lê.
+    #:
+    #: VEM DO SERVIDOR pelo mesmo motivo de `recorta`: a alternativa é a tela
+    #: procurar uma coluna chamada "link", que é adivinhação pelo nome — o jeito
+    #: exato como a escolha do schema da tabela já quebrou uma vez (ver
+    #: `ColunaSaida`).
+    coluna_do_link: str | None = None
+    #: A dimensão do recorte que um clique neste painel aplica — a chave do
+    #: parâmetro da rota (`tema`, `empresa`, `perfil_autor`). Nula no bloco que
+    #: não recorta nada (a evolução, as tabelas).
+    #:
+    #: VEM DO SERVIDOR porque a alternativa é a tela adivinhar a dimensão pelo
+    #: TÍTULO do painel — e o título é a frase de um detector, que muda com o
+    #: dado. Ver `RECORTE_DO_PAINEL`, e o comentário de `ColunaSaida`, que conta
+    #: como esse mesmo atalho já quebrou uma vez.
+    recorta: str | None = None
     ficha: FichaSaida
 
 
@@ -210,6 +237,22 @@ class DossieSaida(BaseModel):
     #: O TETO CONTINUA EM DOIS: a especificação dá dois painéis por lente, e um
     #: terceiro seria mudança de tela, não de permissão.
     paineis: list[BlocoSaida] = Field(min_length=1, max_length=2)
+    #: As abas de "onde está a causa" — o mesmo mês cortado por cada dimensão
+    #: que o explica, na ordem em que a lente se explica. Ver
+    #: `_onde_esta_a_causa`.
+    #:
+    #: FORA DE `paineis` DE PROPÓSITO: aquele campo tem teto de dois porque a
+    #: especificação dá dois painéis por lente, e um terceiro seria mudança de
+    #: tela. Isto não é um terceiro painel — é um cartão só, com abas, e as abas
+    #: não cabem num contrato que a tela lê como "painel A" e "painel B".
+    #:
+    #: VAZIO na lente que não vem de menção (Mercado, Institucional) e no mês
+    #: em que nenhuma dimensão explica nada.
+    onde_esta_a_causa: list[BlocoSaida] = Field(default_factory=list)
+    #: A dimensão ESPERADA que não explica este mês, dita em palavras — ver
+    #: `_lacunas_da_causa`. É o aviso âmbar do pacote (FRONTEND §40): sem ele, a
+    #: aba que falta é um buraco inexplicável no meio do cartão.
+    lacunas_da_causa: list[str] = Field(default_factory=list)
     #: O bloco do fim da tela: o que mudou no período, por intensidade, com as
     #: lacunas de dado no fim.
     sinais: list[SinalSaida] = Field(default_factory=list)
@@ -249,8 +292,9 @@ FICHA_DO_DESTAQUE = Ficha(
             termo="Nota da lente",
             texto=(
                 "O saldo de sentimento das fontes ligadas, na escala de 0 a "
-                "100. Com mais de uma fonte é a média simples dos saldos — a "
-                "que classifica mais posts não decide a lente sozinha."
+                "100. Com mais de uma fonte, as menções das duas entram na "
+                "mesma conta: um denominador só, para a soma dos recortes "
+                "fechar com a nota."
             ),
         ),
         Conceito(
@@ -276,6 +320,25 @@ COLUNAS_DAS_MATERIAS = [
     ColunaSaida(chave="tier", titulo="Tier"),
     ColunaSaida(chave="atributo", titulo="Atributo"),
     ColunaSaida(chave="tema", titulo="Tema"),
+]
+
+#: As colunas da MENÇÃO DE REDE, que não são as da matéria de jornal.
+#:
+#: O MOTIVO DA RESTRIÇÃO DO JONES (02/10/2026) ERA ESTE: a tabela de matérias
+#: existia só na Imprensa porque "Veículo" e "Aegea Tier" não dizem nada de um
+#: post — e mostrar colunas vazias é pior que não mostrar tabela. A Sociedade
+#: passa a ter a lista porque a carga do padrão trouxe o que ela precisa (o
+#: texto, o link, quem escreveu e o engajamento), com as colunas dela.
+#:
+#: O TEXTO VEM PRIMEIRO porque é o que se lê; o resto é o que localiza a menção.
+COLUNAS_DAS_MENCOES = [
+    ColunaSaida(chave="texto", titulo="Menção"),
+    ColunaSaida(chave="quando", titulo="Quando"),
+    ColunaSaida(chave="veiculo", titulo="Rede"),
+    ColunaSaida(chave="sentimento", titulo="Classificação"),
+    ColunaSaida(chave="autor", titulo="Quem falou"),
+    ColunaSaida(chave="perfil", titulo="Perfil"),
+    ColunaSaida(chave="engajamento", titulo="Engajamento"),
 ]
 
 
@@ -322,6 +385,37 @@ def _legenda_e_cores_do_clima(sessao) -> tuple[list[str], list[str]]:
     return [c.nome for c in climas], [c.cor_hex for c in climas]
 
 
+#: Painel → a dimensão do recorte que um clique nele aplica.
+#:
+#: O DONO DO PRODUTO FOI À TELA E NÃO ACHOU COMO DESCER OS NÍVEIS, e a causa era
+#: esta: o recorte funcionava pela barra de filtros, mas a barra é um SELETOR.
+#: Quem olha um painel e vê um tema com 60% de negativas tenta clicar NELE.
+#:
+#: POR QUE VEM DO SERVIDOR: a tela recebe barras com rótulos, e ligar o clique ao
+#: filtro exigiria adivinhar a dimensão pelo TÍTULO do painel — que é a frase de um
+#: detector e muda com o dado. Era assim que a tabela escolhia o schema antes, e o
+#: comentário de `ColunaSaida` conta como isso quebrou.
+#:
+#: A CHAVE É A DO PARÂMETRO da rota (`?tema=`, `?empresa=`), e não o nome da
+#: coluna: é o que a tela põe na URL, e é o que faz um link reproduzir o ponto do
+#: caminho.
+RECORTE_DO_PAINEL: dict[str, str] = {
+    "Temas × sentimento": "tema",
+    "Temas × clima": "tema",
+    #: O BLOCO AMPLO DOS TEMAS, logo abaixo dos painéis. Ele mostra os seis temas
+    #: mais falados do mês com o sentimento de cada um, e era o único gráfico da
+    #: tela em que a barra não levava a lugar nenhum — pedido do dono do produto,
+    #: e o pedido seguinte dele já estava atendido: DENTRO de um tema a primeira
+    #: aba é o Subtema, porque quem classifica o tema classifica o subtema (as
+    #: duas colunas vêm da mesma fonte, e a medida de presença é feita já dentro
+    #: do recorte).
+    "Temas mais falados": "tema",
+    "Concessionárias com maior repercussão": "empresa",
+    "Tier do veículo × sentimento": "tier",
+    "Perfil de quem fala × sentimento": "perfil_autor",
+}
+
+
 def _bloco(
     tipo: str,
     titulo: str,
@@ -332,6 +426,8 @@ def _bloco(
     subtipo: str | None = None,
     colunas: list[ColunaSaida] | None = None,
     cores: list[str] | None = None,
+    recorta: str | None = None,
+    coluna_do_link: str | None = None,
 ) -> BlocoSaida:
     return BlocoSaida(
         tipo=tipo,
@@ -342,6 +438,23 @@ def _bloco(
         legenda=legenda or [],
         cores=cores or [],
         colunas=colunas or [],
+        #: PELO TÍTULO, e é o único lugar onde o título decide algo: `_bloco` é
+        #: chamado de dez pontos diferentes, e passar a dimensão em cada chamada
+        #: seria dez chances de esquecer. O mapa é pequeno, fica ao lado da
+        #: função, e um painel que não está nele simplesmente não recorta.
+        #:
+        #: DITO NA CHAMADA VENCE O MAPA, e as abas de "onde está a causa" são o
+        #: caso: o título delas é o nome da dimensão, que já vem do domínio —
+        #: repeti-lo no mapa seria manter a mesma lista em dois lugares.
+        #:
+        #: BLOCO SEM LINHA NENHUMA NÃO RECORTA, e isto é achado de revisão: o mapa
+        #: casa por TÍTULO, e a Institucional monta um "Temas mais falados" vazio
+        #: (ela lê o CRM, não clipping) que passou a anunciar `recorta: "tema"`.
+        #: Não há clique falso na tela de hoje — sem linha não há botão —, mas o
+        #: contrato prometia o que não existe, e é o contrato que o próximo
+        #: consumidor lê.
+        recorta=(recorta or RECORTE_DO_PAINEL.get(titulo)) if dados else None,
+        coluna_do_link=coluna_do_link,
         ficha=_saida_da_ficha(ficha),
     )
 
@@ -704,6 +817,23 @@ def _paineis(
     # devolveria zero, e zero numa tela se lê como "não houve", nunca como
     # "está noutro lugar".
     interna = lente.codigo == "institucional"
+
+    # OS DOIS PAINÉIS DESTA LENTE FICAM COMO ESTÃO, e isto é uma decisão que eu
+    # TOMEI E DESFIZ no meio do caminho.
+    #
+    # Eu havia trocado o segundo — "Concessionárias com maior repercussão" — por
+    # perfil do autor × sentimento, com o argumento de que o perfil é a dimensão
+    # mais informativa que a tela não tinha. Desfiz ao conferir a ordem de
+    # prioridade que o próprio pacote declara para esta lente: tema, subtema,
+    # EMPRESA CITADA, rede, perfil do autor. A concessionária é a terceira e o
+    # perfil a quinta — a troca entregava uma dimensão do pacote pagando com
+    # outra, mais alta, e ainda tirava da tela a pergunta de negócio que a Aegea
+    # faz primeiro: qual operação está apanhando.
+    #
+    # O PERFIL ENTROU ONDE HAVIA ESPAÇO DE VERDADE: nos indicadores da lente
+    # (`Figuras públicas` e `Autor mais negativo`) e no filtro, que é o mecanismo
+    # de recorte que esta tela já tem — junto de UF, subtema e autor.
+
     if interna:
         temas = repositorio_lentes.temas_do_crm(sessao, meses)
         unidades = repositorio_lentes.orgaos_do_crm(sessao, meses)
@@ -765,6 +895,208 @@ def _paineis(
             titulo_b,
         ),
     ]
+
+
+def _onde_esta_a_causa(
+    sessao,
+    lente,
+    mes: date,
+    calibracao: Calibracao,
+    filtro: FiltroDeMencoes | None = None,
+    ja_usadas: FiltroDeMencoes | None = None,
+    ve_diretorio: bool = True,
+) -> tuple[list[BlocoSaida], list[str]]:
+    """As abas do cartão "Onde está a causa": o mesmo mês, cortado por cada
+    dimensão que o explica.
+
+    É A NAVEGAÇÃO QUE FALTAVA ENTRE O NÍVEL 1 E O NÍVEL 3. A tela tinha a nota
+    (nível 1), tinha a lista de itens (nível 3) e, no meio, dois painéis — tema e
+    concessionária. As outras seis dimensões que o pacote prioriza só existiam no
+    seletor da barra, que serve a quem JÁ SABE o que procurar. Quem abre a lente
+    com a nota caída não sabe: a pergunta é "onde está a causa", e ela se responde
+    trocando de aba até uma barra pular.
+
+    CADA ABA É UM BLOCO COMO OS OUTROS — linhas com sentimento, ficha de
+    procedência e a dimensão que um clique aplica. A tela que já desenha
+    `barras_100` não aprende nada novo para desenhar estas.
+
+    QUEM MANDA NA ORDEM E NO CRITÉRIO é `app/dominio/causa_da_lente`; aqui só se
+    veste o resultado. Ver lá por que seis abas, e por que uma dimensão com 70%
+    de nulo não é causa.
+
+    O AUTOR NÃO É DIRETÓRIO, e a distinção é a mesma que `_nomeia_o_diretorio`
+    faz: `ve_diretorio` guarda o CADASTRO de terceiros (a matriz de jornalistas,
+    os órgãos do CRM), não o nome que veio dentro da menção. O indicador "Autor
+    mais negativo" já publica o perfil que mais pesou, pela mesma razão.
+    """
+    cortes = repositorio_lentes.cortes_da_causa(
+        sessao, lente.codigo, lente.id, mes, calibracao, filtro, ve_diretorio=ve_diretorio
+    )
+    #: DENTRO DE "UF: RJ" NÃO SE OFERECE UF DE NOVO, e é esta linha que faz o
+    #: empilhamento ter fim: a dimensão já usada daria uma única barra de 100% e
+    #: repetiria a pergunta que acabou de ser respondida.
+    if ja_usadas is not None:
+        usadas = {passo.chave for passo in _trilha_do_recorte(lente.codigo, ja_usadas)}
+        cortes = [corte for corte in cortes if corte.dimensao.chave not in usadas]
+    if not cortes:
+        return [], []
+    fonte = _nomes_das_fontes(sessao, lente.id)
+    blocos = []
+    for corte in cortes:
+        #: O CORTE QUE NÃO EXPLICA NÃO É ABA — é aviso, e sai por
+        #: `_lacunas_da_causa`. Ver `CorteDaCausa.explica`.
+        if not corte.explica:
+            continue
+        dimensao, linhas, presenca, total = (
+            corte.dimensao,
+            corte.linhas,
+            corte.presenca,
+            corte.total,
+        )
+        faltam = total - presenca.preenchidas
+        blocos.append(
+            _bloco(
+                "barras_100",
+                dimensao.rotulo,
+                linhas,
+                Ficha(
+                    origem=Procedencia.PLANILHA,
+                    fonte=fonte,
+                    colunas=(dimensao.rotulo, "Sentimento"),
+                    #: QUANTO FALTA VAI ESCRITO, e é o que impede a aba de
+                    #: mentir por omissão: o corte ignora nulo, então uma
+                    #: dimensão presente em pouco mais da metade dos itens
+                    #: desenha barras que somam 100% de um mês menor do que o
+                    #: mês. Quem lê precisa saber de qual pedaço se fala.
+                    lacunas=(
+                        (
+                            f"{dimensao.rotulo} vem em {presenca.preenchidas} "
+                            f"das {total} menções do mês; {faltam} não trazem o campo.",
+                        )
+                        if faltam
+                        else ()
+                    ),
+                ),
+                None,
+                SENTIMENTO,
+                cores=CORES_DO_SENTIMENTO,
+                recorta=dimensao.chave,
+            )
+        )
+    #: OS DOIS JUNTOS, DE UMA MEDIDA SÓ: as abas e o motivo das que faltam saem da
+    #: mesma leitura de presença. Separar em duas funções custaria uma segunda
+    #: varredura de `mencao` para contar o que já foi contado.
+    return blocos, _lacunas_da_causa(cortes)
+
+
+def _lacunas_da_causa(cortes) -> list[str]:
+    """A dimensão ESPERADA que não explica este mês, dita em palavras.
+
+    O PACOTE PEDE ISTO (FRONTEND §40): "aviso específico quando uma dimensão
+    esperada não é útil no mês, explicando que a fonte não classificou".
+
+    E O CASO É REAL, não hipotético: o tema é a PRIMEIRA dimensão prioritária da
+    Sociedade digital e chega em 1.959 dos 6.932 itens de junho — uma das duas
+    fontes não classifica assunto. Sem o aviso, a tela mostra um cartão "onde está
+    a causa" SEM aba de tema logo acima de um painel "Temas × sentimento", e quem
+    lê conclui que a tela está quebrada. A frase transforma um buraco inexplicável
+    em um fato sobre a fonte — que é acionável: dá para cobrar do fornecedor.
+
+    DOIS MOTIVOS, e eles pedem frases diferentes: campo que quase ninguém
+    preencheu, e campo preenchido com um valor só (que não divide nada).
+    """
+    frases = []
+    for corte in cortes:
+        if corte.explica:
+            continue
+        if corte.presenca.distintas < 2:
+            frases.append(
+                f"{corte.dimensao.rotulo}: a fonte mandou um valor só neste mês — "
+                f"não há como separar o mês por ele."
+            )
+        else:
+            frases.append(
+                f"{corte.dimensao.rotulo}: a fonte classificou "
+                f"{_num(corte.presenca.preenchidas)} de {_num(corte.total)} itens — "
+                f"pouco para explicar o mês."
+            )
+    return frases
+
+
+def _trilha_do_recorte(codigo_da_lente: str, filtro: FiltroDeMencoes) -> list[PassoDaTrilha]:
+    """O caminho até este recorte, na ordem em que a lente se explica.
+
+    A TRILHA É O QUE IMPEDE O DRAWER DE SER UM BECO: sem ela, quem desceu dois
+    níveis não sabe de onde veio nem o que remover para subir um.
+
+    A ORDEM É A DO DOMÍNIO, e não a dos cliques: a ordem dos cliques não viaja
+    numa URL (`?uf=RJ&perfil_autor=Cidadão` é o mesmo conjunto de qualquer jeito),
+    e uma trilha que mudasse de forma conforme o caminho tomado faria dois links
+    para o mesmo recorte se lerem como recortes diferentes.
+    """
+    valores = {
+        "tema": filtro.tema_texto,
+        "subtema": filtro.subtema,
+        "empresa": filtro.empresa,
+        "veiculo": filtro.veiculo,
+        "perfil_autor": filtro.perfil_autor,
+        "autor": filtro.autor,
+        "uf": filtro.uf,
+        "tier": filtro.tier,
+        "atributo": filtro.atributo,
+    }
+    #: PRIMEIRO AS DA LENTE, NA ORDEM DELA; depois TODAS as outras que o filtro
+    #: aceita, na ordem do dicionário de rótulos.
+    #:
+    #: ACHADO DE REVISÃO: eu apensava tier e atributo à mão — as duas que me
+    #: vieram à cabeça. `subtema` na Imprensa, `empresa` em qualquer lente cuja
+    #: lista não a traga: aplicados pelo servidor e invisíveis na trilha. Um
+    #: degrau invisível não dá para remover.
+    da_lente = [d.chave for d in DIMENSOES_POR_LENTE.get(codigo_da_lente, ())]
+    ordem = da_lente + [chave for chave in ROTULO_DA_DIMENSAO if chave not in da_lente]
+    rotulos = {d.chave: d.rotulo for d in DIMENSOES_POR_LENTE.get(codigo_da_lente, ())}
+    return [
+        PassoDaTrilha(
+            chave=chave,
+            #: O RÓTULO DA LENTE VENCE o genérico: na Sociedade, `veiculo` se lê
+            #: "Rede"; na Imprensa, "Veículo". É a mesma coluna com dois nomes, e
+            #: quem lê a trilha espera o nome que viu na aba.
+            dimensao=rotulos.get(chave) or ROTULO_DA_DIMENSAO[chave],
+            valor=valores[chave],
+        )
+        for chave in ordem
+        if valores.get(chave)
+    ]
+
+
+def _frase_do_recorte(
+    lente,
+    filtro: FiltroDeMencoes,
+    impacto: float,
+    composicao: dict[str, int],
+    itens: int,
+    no_mes: int,
+) -> str:
+    """A frase do topo do drawer — o número em palavras.
+
+    CALCULADA A CADA LEITURA, nunca salva: texto guardado envelhece em silêncio
+    numa tela que a diretoria lê como se fosse deste mês.
+
+    DIZ OS DOIS NÚMEROS: "4 itens" não informa nada; "4 dos 6 itens do mês"
+    informa que isto é metade do mês. É a diferença entre um pedaço que explica a
+    nota e um que só aparece primeiro na lista.
+    """
+    if not itens:
+        return f"Nenhum item deste recorte em {lente.nome} neste mês."
+    negativas = round(composicao["negativo"] / itens * 100)
+    verbo = "tira" if impacto < 0 else "põe"
+    pontos = f"{abs(impacto):.1f}".replace(".", ",")
+    quantos = f"{_num(itens)} de {_num(no_mes)}" if no_mes else _num(itens)
+    return (
+        f"Este recorte {verbo} {pontos} ponto"
+        f"{'s' if abs(impacto) >= 2 else ''} da nota de {lente.nome}, "
+        f"com {quantos} itens do mês e {negativas}% de negativas."
+    )
 
 
 def _nomeia_o_diretorio(codigo_da_lente: str, bloco: BlocoSaida) -> bool:
@@ -1020,6 +1352,62 @@ TETO_DE_MATERIAS = 5
 TETO_DE_MATERIAS_FILTRADO = 30
 
 
+def _mencoes_da_sociedade(
+    sessao, lente, mes: date, calibracao: Calibracao, filtro: FiltroDeMencoes | None = None
+) -> BlocoSaida:
+    """As menções de rede do mês — o nível do item, nesta lente.
+
+    SÓ AS QUE TÊM TEXTO. Uma linha sem texto nesta tabela é um endereço sem
+    conteúdo: nem se lê, nem se clica. Elas continuam na nota, nos cortes e no
+    engajamento — o que não fazem é ocupar a lista de leitura.
+    """
+    quantas = TETO_DE_MATERIAS_FILTRADO if filtro and filtro.ativo else TETO_DE_MATERIAS
+    linhas = [
+        {
+            "texto": linha["titulo_texto"],
+            "quando": f"{linha['data']:%d/%m}" if linha["data"] else None,
+            "veiculo": linha["veiculo"],
+            "sentimento": _ROTULO_DO_SENTIMENTO.get(
+                linha["sentimento"], linha["sentimento"]
+            ),
+            "autor": linha["autor"],
+            "perfil": linha["perfil_autor"],
+            "engajamento": _num(linha["engajamento"]) if linha["engajamento"] else None,
+            "link": linha["link"],
+        }
+        for linha in repositorio_lentes.materias_recentes(
+            sessao, lente.id, mes, calibracao, filtro, quantas=quantas
+        )
+        if linha["titulo_texto"]
+    ]
+    return _bloco(
+        "tabela",
+        "Menções do mês",
+        linhas,
+        Ficha(
+            origem=Procedencia.PLANILHA,
+            fonte=_nomes_das_fontes(sessao, lente.id),
+            colunas=("Texto", "Link", "Autor", "Perfil do autor", "Engajamento"),
+            lacunas=(
+                # O NÚMERO É DO PACOTE, e dizer quanto falta é o que separa
+                # "não houve menção" de "o texto ainda não chegou": o
+                # fornecedor manda o conteúdo de uma amostra — as negativas,
+                # as de tier alto e as mais engajadas — e o resto vem na
+                # primeira carga mensal completa.
+                "O texto e o link vêm numa amostra das menções (as negativas, "
+                "as de maior alcance e as mais engajadas). As demais entram na "
+                "nota e nos cortes, mas não têm o que mostrar aqui.",
+            ),
+        ),
+        None,
+        subtipo="mencoes",
+        colunas=COLUNAS_DAS_MENCOES,
+        #: O ENDEREÇO SAIU DA GRADE E VIROU O DESTINO DA LINHA — ver
+        #: `BlocoSaida.coluna_do_link`. O valor continua em `dados`.
+        coluna_do_link="link",
+    )
+
+
 def _materias_recentes(
     sessao, lente, mes: date, calibracao: Calibracao, filtro: FiltroDeMencoes | None = None
 ) -> BlocoSaida:
@@ -1029,7 +1417,16 @@ def _materias_recentes(
     restrição de TELA, pedida pelo Jones (2026-10-02), e não um juízo de que
     o dado do Mercado seja inválido. As colunas desta tabela ("Veículo",
     "Aegea Tier") são as mesmas duas que motivaram a restrição lá.
+
+    A SOCIEDADE SAIU DESSA RESTRIÇÃO, e pela própria razão dela: o motivo era
+    que as colunas de clipping não dizem nada de um post. A carga do padrão
+    trouxe o que uma menção de rede precisa — o texto, o link, quem escreveu e o
+    engajamento —, então ela ganha a lista com as colunas DELA
+    (`_mencoes_da_sociedade`). As outras três continuam como o Jones pediu.
     """
+    if lente.codigo == "sociedade":
+        return _mencoes_da_sociedade(sessao, lente, mes, calibracao, filtro)
+
     if lente.codigo != "imprensa":
         vazio_ficha = (
             Ficha(
@@ -1277,28 +1674,87 @@ def _kpis_do_institucional(serie, do_mes, total) -> list[KpiSaida]:
 def _kpis_da_sociedade(
     sessao, lente, alvo: date, meses, calibracao, serie, do_mes, total
 ) -> list[KpiSaida]:
-    unidades = repositorio_lentes.unidades_da_lente(sessao, lente.id, meses, calibracao)
     no_mes = (do_mes["pos"] + do_mes["neu"] + do_mes["neg"]) if do_mes else 0
+
+    autores = repositorio_lentes.autores_por_sentimento(
+        sessao, lente.id, alvo, calibracao, quantos=1
+    )
+    #: CONTAGEM DIRETA, e não a soma de um corte: o corte por perfil devolve os
+    #: seis de maior VOLUME, e com sete grafias na frente "Figura pública" cairia
+    #: fora dele — o indicador mostraria zero sem nada ter acontecido. Achado de
+    #: revisão; ver `quantas_com`.
+    figuras = repositorio_lentes.quantas_com(
+        sessao, Mencao.perfil_autor, "Figura pública", lente.id, alvo, calibracao
+    )
+    #: A UF MAIS NEGATIVA é a de mais menções NEGATIVAS, e não a de mais menções:
+    #: o estado com mais volume costuma ser o maior, e isso não é notícia.
+    #:
+    #: ORDENADA PELO NEGATIVO NA PRÓPRIA CONSULTA, e aqui estava o segundo achado
+    #: da mesma família: eu lia o corte por volume e escolhia o mais negativo
+    #: DENTRE OS SEIS MAIORES. Seis UFs grandes e pouco negativas escondiam uma
+    #: pequena inteiramente negativa — que é justamente a que interessa.
+    mais_negativas = repositorio_lentes.ufs_por_sentimento(
+        sessao, lente.id, alvo, calibracao, quantos=1, ordenar_pelo_negativo=True
+    )
+    mais_negativa = mais_negativas[0] if mais_negativas and mais_negativas[0]["negativo"] else None
     return [
         KpiSaida(
             rotulo="Menções no período",
             valor=_num(total),
             detalhe=f"{len([x for x in serie if not x['sem_base']])} meses com base",
         ),
+        # -- OS TRÊS QUE O PACOTE DE PRODUÇÃO NOMEIA PARA ESTA LENTE ---------
+        #
+        # ELES SUBSTITUEM TRÊS, e não se somam aos quatro: o dossiê tem quatro
+        # indicadores por lente, de propósito — "é o que faz as cinco lentes se
+        # lerem igual", e o Pydantic recusa o quinto. Acrescentar os do pacote
+        # daria sete nesta lente e quatro nas outras.
+        #
+        # SAÍRAM "POSITIVO NO MÊS" E "NEGATIVO NO MÊS" porque a manchete do
+        # dossiê já diz isso em palavras ("o negativo foi de 45% para 53%") e o
+        # gráfico de evolução o desenha mês a mês — três lugares para o mesmo
+        # número, e o cartão era o que menos acrescentava.
+        #
+        # SAIU TAMBÉM "UNIDADE COM MAIS MENÇÕES", que continua na tela como
+        # painel inteiro ("Concessionárias com maior repercussão"), com o
+        # sentimento de cada uma — mais do que o cartão dizia.
+        #
+        # O QUE ENTROU responde "de quem" e "onde", que é a pergunta seguinte de
+        # quem lê uma nota que caiu: `autor_mais_negativo`, `figuras_publicas` e
+        # `uf_mais_negativa` no vocabulário do pacote.
         KpiSaida(
-            rotulo="Positivo no mês",
-            valor=_pct(do_mes["pos"] / no_mes if no_mes else None),
-            detalhe=f"{_num(do_mes['pos'])} menções" if do_mes else "sem base",
+            rotulo="Autor mais negativo",
+            valor=autores[0]["autor"] if autores else "—",
+            detalhe=(
+                f"{_num(autores[0]['negativo'])} menções negativas"
+                if autores
+                else "sem autor informado"
+            ),
         ),
         KpiSaida(
-            rotulo="Negativo no mês",
-            valor=_pct(do_mes["neg"] / no_mes if no_mes else None),
-            detalhe=f"{_num(do_mes['neg'])} menções" if do_mes else "sem base",
+            rotulo="Figuras públicas",
+            # QUEM FALA, E NÃO QUANTOS CARGOS A FONTE DIGITOU: o cargo do autor
+            # chega em 5 dos 14.855 itens reais e o perfil em todos. Contar pelo
+            # cargo diria "5 figuras públicas" num mês com centenas delas.
+            valor=_num(figuras) if figuras is not None else "—",
+            # DE QUANTAS, E NÃO O PERCENTUAL: em junho de 2026 são 5 de 6.932,
+            # e "0% das menções do mês" ao lado do número 5 é uma frase que
+            # desinforma — quem lê conclui que o indicador está quebrado. A
+            # fração bruta diz a mesma coisa sem arredondar para nada.
+            detalhe=(
+                f"de {_num(no_mes)} menções no mês"
+                if figuras is not None and no_mes
+                else "sem perfil informado"
+            ),
         ),
         KpiSaida(
-            rotulo="Unidade com mais menções",
-            valor=unidades[0]["unidade"] if unidades else "—",
-            detalhe=_num(unidades[0]["total"]) if unidades else "sem unidade informada",
+            rotulo="UF mais negativa",
+            valor=mais_negativa["uf"] if mais_negativa else "—",
+            detalhe=(
+                f"{_num(mais_negativa['negativo'])} menções negativas"
+                if mais_negativa
+                else "sem UF informada"
+            ),
         ),
     ]
 
@@ -1343,6 +1799,15 @@ def obter_dossie(
     veiculo: Annotated[str | None, Query()] = None,
     atributo: Annotated[str | None, Query()] = None,
     tema: Annotated[str | None, Query()] = None,
+    #: As dimensões que o padrão Aegea trouxe (0055). Elas se empilham com as de
+    #: cima: `?uf=RJ&perfil_autor=Figura+pública` é "figuras públicas no Rio", e
+    #: não uma coisa ou a outra. É o nível 3 do pacote, e é o que faz um link
+    #: reproduzir o ponto exato do caminho.
+    perfil_autor: Annotated[str | None, Query()] = None,
+    uf: Annotated[str | None, Query()] = None,
+    subtema: Annotated[str | None, Query()] = None,
+    autor: Annotated[str | None, Query()] = None,
+    empresa: Annotated[str | None, Query()] = None,
 ) -> DossieSaida:
     """A lente inteira: nota, KPIs, evolução, dois painéis, texto e ações.
 
@@ -1356,7 +1821,17 @@ def obter_dossie(
     if lente is None:
         raise NaoEncontrado("Lente não encontrada.")
 
-    filtro = FiltroDeMencoes(tier=tier, veiculo=veiculo, atributo=atributo, tema_texto=tema)
+    filtro = FiltroDeMencoes(
+        tier=tier,
+        veiculo=veiculo,
+        atributo=atributo,
+        tema_texto=tema,
+        perfil_autor=perfil_autor,
+        uf=uf,
+        subtema=subtema,
+        autor=autor,
+        empresa=empresa,
+    )
     calibracao = repositorio_score.calibracao_vigente(sessao)
     meses = repositorio_lentes.meses_ate(alvo, MESES_DA_EVOLUCAO)
 
@@ -1402,6 +1877,13 @@ def obter_dossie(
     drivers = _drivers_e_riscos(sessao, lente, alvo, calibracao, filtro)
     temas_falados = _temas_mais_falados(sessao, lente, alvo, calibracao, filtro)
     materias = _materias_recentes(sessao, lente, alvo, calibracao, filtro)
+    #: `ve_diretorio` CHEGA ATÉ AQUI porque uma das abas publica nome de gente de
+    #: fora: na Imprensa, `autor` é o jornalista — o mesmo cadastro de terceiros
+    #: que a matriz de jornalistas publica e que esta permissão guarda. Achado de
+    #: revisão: a aba entregava por outra porta o que o painel esconde.
+    causa, lacunas_da_causa = _onde_esta_a_causa(
+        sessao, lente, alvo, calibracao, filtro, ve_diretorio=usuario.ve_diretorio
+    )
 
     #: O QUE ESTE PAPEL NÃO ALCANÇA. `score_leitura` e `score_edicao` têm
     #: `acessa_score` e NÃO têm `ve_diretorio` — e levam 403 em
@@ -1479,6 +1961,8 @@ def obter_dossie(
             FatoSaida(mes=f"{fato.mes:%Y-%m}", texto=fato.texto, efeito=fato.efeito)
             for fato in repositorio_score.fatos_do_periodo(sessao, meses)
         ],
+        onde_esta_a_causa=causa,
+        lacunas_da_causa=lacunas_da_causa,
         paineis=[
             _com_conclusao(bloco, titulo)
             for secao, bloco, titulo in (
@@ -1505,11 +1989,247 @@ def obter_dossie(
     )
 
 
+class PassoDaTrilha(BaseModel):
+    """Um degrau do caminho que levou até este recorte."""
+
+    #: A chave do parâmetro (`uf`), para a tela saber o que remover ao subir.
+    chave: str
+    #: O nome da dimensão como a pessoa a leu na aba (`UF`).
+    dimensao: str
+    valor: str
+
+
+class RecorteSaida(BaseModel):
+    """O nível 3: um pedaço do mês, medido e decomposto.
+
+    UM PEDIDO SÓ, de propósito. O drawer abre com tudo ou abre mentindo — e
+    cinco chamadas dariam cinco estados de carregamento dentro de um painel de
+    600px, cada um aparecendo e sumindo na frente de quem só clicou numa barra.
+    """
+
+    lente: str
+    mes: str
+    #: O caminho até aqui, na ordem em que a lente se explica. Vazio no recorte
+    #: que é o mês inteiro (os cartões do topo abrem assim).
+    trilha: list[PassoDaTrilha] = Field(default_factory=list)
+
+    #: A nota que este pedaço teria se fosse o mês — é o número que a tela já
+    #: mostrava quando o recorte era aplicado na tela inteira.
+    nota: int | None
+    #: Quantos pontos ele tira ou põe na nota da lente. VER `impacto_do_recorte`:
+    #: o denominador é o do mês, e é isso que faz a soma dos pedaços fechar com
+    #: `nota − 50`.
+    impacto: float
+    #: Positivo/neutro/negativo CONTADOS um a um — o que a barra desenha. Não é o
+    #: ponderado da nota: a barra mostra volume, e volume se conta.
+    composicao: dict[str, int]
+    itens: int
+    #: O total do mês, para a frase dizer "4 dos 6 itens" em vez de "4 itens".
+    itens_no_mes: int
+    #: A frase pronta, calculada a cada leitura — nunca salva.
+    frase: str
+    ausencia: str | None = None
+
+    #: Seis células: o mesmo recorte mês a mês. Responde "isto é de agora ou é
+    #: sempre assim", que é a pergunta que decide se o pedaço merece ação.
+    historico: list[dict] = Field(default_factory=list)
+    #: As dimensões AINDA NÃO USADAS, cortadas dentro deste recorte. Clicar numa
+    #: linha empilha mais um degrau — é descer no mesmo painel.
+    dentro: list[BlocoSaida] = Field(default_factory=list)
+    #: A lista que fecha a descida: os itens deste recorte.
+    itens_do_recorte: BlocoSaida
+
+
+@rotas.get("/{codigo}/recorte")
+def obter_recorte(
+    sessao: Sessao,
+    usuario: UsuarioLogado,
+    codigo: str,
+    mes: Annotated[str, Query(description="AAAA-MM")],
+    tier: Annotated[str | None, Query()] = None,
+    veiculo: Annotated[str | None, Query()] = None,
+    atributo: Annotated[str | None, Query()] = None,
+    tema: Annotated[str | None, Query()] = None,
+    perfil_autor: Annotated[str | None, Query()] = None,
+    uf: Annotated[str | None, Query()] = None,
+    subtema: Annotated[str | None, Query()] = None,
+    autor: Annotated[str | None, Query()] = None,
+    empresa: Annotated[str | None, Query()] = None,
+) -> RecorteSaida:
+    """O nível 3 do pacote: o que o drawer abre quando alguém clica num dado.
+
+    POR QUE NÃO BASTAVA O RECORTE NA TELA INTEIRA — e esta foi a correção que o
+    dono do produto pediu com estas palavras: "ao clicar em um dado temos que
+    abrir um modal com o deep diving, e não como é feito hoje". Aplicar o filtro
+    na tela inteira REFAZ o mês: a nota muda, os painéis se refazem, e quem
+    clicou perde de vista o mês de onde saiu. É recortar, não aprofundar. O
+    drawer põe o pedaço AO LADO do mês, com a trilha de volta.
+
+    OS MESMOS PARÂMETROS DO DOSSIÊ, e isso não é repetição preguiçosa: é o que
+    faz um link reproduzir o ponto exato do caminho, e o que permite a mesma
+    barra de filtros e o mesmo clique levarem ao mesmo lugar.
+    """
+    alvo = _mes_de(mes)
+    lente = repositorio_lentes.lente_por_codigo(sessao, codigo)
+    if lente is None:
+        raise NaoEncontrado("Lente não encontrada.")
+
+    filtro = FiltroDeMencoes(
+        tier=tier,
+        veiculo=veiculo,
+        atributo=atributo,
+        tema_texto=tema,
+        perfil_autor=perfil_autor,
+        uf=uf,
+        subtema=subtema,
+        autor=autor,
+        empresa=empresa,
+    )
+    calibracao = repositorio_score.calibracao_vigente(sessao)
+    meses = repositorio_lentes.meses_ate(alvo, MESES_DA_EVOLUCAO)
+    trilha = _trilha_do_recorte(lente.codigo, filtro)
+
+    #: A LENTE QUE LÊ O CRM NÃO TEM O QUE RECORTAR, e isto foi achado de revisão.
+    #: O filtro é de `mencao`; a Institucional conta interações. A resposta
+    #: misturava duas contas de universos diferentes: a nota vinha de `mencao`
+    #: (zero, porque não há) e a composição e o histórico vinham do CRM INTEIRO,
+    #: porque `serie_da_lente` ignora o filtro na lente interna — cada número
+    #: certo no seu mundo, e lado a lado se contradizendo sem nada explicando.
+    #:
+    #: A TRILHA FICA, para a pessoa ver o que pediu e poder desfazer.
+    if filtro.ativo and repositorio_lentes.lente_e_interna(sessao, lente.id):
+        return RecorteSaida(
+            lente=lente.codigo,
+            mes=f"{alvo:%Y-%m}",
+            trilha=trilha,
+            nota=None,
+            impacto=0,
+            composicao={"positivo": 0, "neutro": 0, "negativo": 0},
+            itens=0,
+            itens_no_mes=0,
+            frase=(
+                f"{lente.nome} não vem de menções: ela conta as agendas registradas "
+                "no CRM, e este recorte não se aplica a elas."
+            ),
+            ausencia=(
+                f"{lente.nome} lê o CRM dos Stakeholders, e o recorte da tela filtra "
+                "menções de planilha. Remova o recorte para ver esta lente."
+            ),
+            historico=[],
+            dentro=[],
+            itens_do_recorte=_materias_recentes(sessao, lente, alvo, calibracao, None),
+        )
+
+    medida = repositorio_score.medir_uma_lente(sessao, lente, alvo, calibracao, filtro)
+    #: MEDIDO UMA VEZ e reusado no histórico — ver `denominador_do_mes`.
+    denominador = repositorio_score.denominador_do_mes(sessao, lente.id, alvo, calibracao)
+    impacto = repositorio_score.impacto_do_recorte(
+        sessao, lente.id, alvo, calibracao, filtro, denominador
+    )
+
+    serie = repositorio_lentes.serie_da_lente(sessao, lente.id, meses, calibracao, filtro)
+    do_mes = repositorio_lentes.serie_da_lente(sessao, lente.id, [alvo], calibracao, None)
+    deste_mes = next((linha for linha in serie if linha["mes"] == alvo), None)
+    composicao = {
+        "positivo": int(deste_mes["pos"]) if deste_mes else 0,
+        "neutro": int(deste_mes["neu"]) if deste_mes else 0,
+        "negativo": int(deste_mes["neg"]) if deste_mes else 0,
+    }
+    itens = sum(composicao.values())
+    no_mes = sum(int(do_mes[0][chave]) for chave in ("pos", "neu", "neg")) if do_mes else 0
+
+    #: O HISTÓRICO É O IMPACTO MÊS A MÊS, e não a contagem: a pergunta é "este
+    #: pedaço pesava o mesmo antes", e peso se mede em pontos. A contagem vai ao
+    #: lado porque um impacto pequeno com muitos itens e um impacto pequeno com
+    #: dois itens são situações diferentes.
+    #:
+    #: A NOTA DO MÊS NÃO SAI DAQUI, e eu já tentei que saísse — duas vezes achado
+    #: de revisão, pela mesma razão de fundo: um segundo caminho para o mesmo
+    #: número.
+    #:
+    #: O DONO DO PRODUTO LEU A COLUNA COMO VARIAÇÃO MÊS A MÊS, e ele leu certo o
+    #: que a tela mostrava: cada número é a distância da nota daquele mês até 50,
+    #: e nada dizia isso. Eu resolvi derivando a nota aqui (`50 + impacto`, que é
+    #: identidade exata quando não há recorte) — e a revisão mostrou DOIS furos:
+    #:
+    #:   arredondamento   `impacto` já vinha com 2 casas, e `round(50 + 35.50)`
+    #:                    dá 86 onde `para_score` dá 85
+    #:   estimativa       `medir_uma_lente` exclui `score_estimativa` de
+    #:                    propósito, então num mês estimado a lente publica nota
+    #:                    e este histórico diria "sem base"
+    #:
+    #: A NOTA OFICIAL JÁ ESTÁ NA TELA: `PontoDaSerie.notas_das_lentes` é o número
+    #: que a própria Jornada desenha, mês a mês, estimativa incluída. Medi-lo de
+    #: novo aqui custaria `indice_do_mes` oito vezes (cinco lentes por chamada)
+    #: para chegar, na melhor das hipóteses, ao mesmo valor. A tela junta os dois;
+    #: aqui fica só o que é desta conta — o impacto.
+    historico = []
+    for linha in serie:
+        do_mes = round(
+            repositorio_score.impacto_do_recorte(
+                sessao,
+                lente.id,
+                linha["mes"],
+                calibracao,
+                filtro,
+                #: O DO MÊS ALVO JÁ ESTÁ NA MÃO; os outros sete se medem aqui.
+                denominador if linha["mes"] == alvo else None,
+            ),
+            2,
+        )
+        historico.append(
+            {
+                "mes": f"{linha['mes']:%Y-%m}",
+                "impacto": do_mes,
+                "itens": int(linha["pos"] + linha["neu"] + linha["neg"]),
+                "sem_base": bool(linha["sem_base"]),
+            }
+        )
+
+    return RecorteSaida(
+        lente=lente.codigo,
+        mes=f"{alvo:%Y-%m}",
+        trilha=trilha,
+        nota=medida.score,
+        impacto=round(impacto, 2),
+        composicao=composicao,
+        itens=itens,
+        itens_no_mes=no_mes,
+        frase=_frase_do_recorte(lente, filtro, impacto, composicao, itens, no_mes),
+        #: A MESMA AUSÊNCIA DO DOSSIÊ, pela mesma razão: um recorte sem
+        #: correspondência tem de DIZER isso, e não cair no mês como se o filtro
+        #: não existisse.
+        ausencia=medida.ausencia if not itens else None,
+        historico=historico,
+        #: SÓ AS ABAS, aqui: o aviso de dimensão esperada mora no cartão da
+        #: tela, e repeti-lo dentro do painel de aprofundamento seria contar duas
+        #: vezes a mesma coisa sobre a mesma fonte.
+        dentro=_onde_esta_a_causa(
+            sessao,
+            lente,
+            alvo,
+            calibracao,
+            filtro,
+            ja_usadas=filtro,
+            ve_diretorio=usuario.ve_diretorio,
+        )[0],
+        itens_do_recorte=_materias_recentes(sessao, lente, alvo, calibracao, filtro),
+    )
+
+
 class OpcoesDeFiltroSaida(BaseModel):
     tiers: list[str]
     veiculos: list[str]
     atributos: list[str]
     temas: list[str]
+    #: Os cortes que o padrão Aegea trouxe (0055). VAZIOS na lente que não tem o
+    #: campo — a Imprensa não manda perfil do autor —, e é assim que a tela sabe
+    #: não oferecer um seletor que não escolhe nada.
+    perfis: list[str] = []
+    ufs: list[str] = []
+    subtemas: list[str] = []
+    autores: list[str] = []
+    empresas: list[str] = []
 
 
 @rotas.get("/{codigo}/dossie/opcoes-de-filtro")
