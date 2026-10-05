@@ -2127,26 +2127,45 @@ def obter_recorte(
     #: pedaço pesava o mesmo antes", e peso se mede em pontos. A contagem vai ao
     #: lado porque um impacto pequeno com muitos itens e um impacto pequeno com
     #: dois itens são situações diferentes.
-    historico = [
-        {
-            "mes": f"{linha['mes']:%Y-%m}",
-            "impacto": round(
-                repositorio_score.impacto_do_recorte(
-                    sessao,
-                    lente.id,
-                    linha["mes"],
-                    calibracao,
-                    filtro,
-                    #: O DO MÊS ALVO JÁ ESTÁ NA MÃO; os outros sete se medem aqui.
-                    denominador if linha["mes"] == alvo else None,
-                ),
-                2,
+    #:
+    #: E A NOTA DO MÊS VAI JUNTO QUANDO NÃO HÁ RECORTE, porque sem recorte a
+    #: identidade é exata: `impacto = 50 × NS` e `nota = 50 + 50 × NS`, logo
+    #: `nota = 50 + impacto`.
+    #:
+    #: O DONO DO PRODUTO LEU A COLUNA COMO VARIAÇÃO MÊS A MÊS. Não é: cada número
+    #: é a distância da nota daquele mês até 50, o neutro. Em junho de 2026 o
+    #: histórico dizia "-15,14" e o ponto da Jornada dizia 35, sem nada na tela
+    #: ligando os dois — e "-15" ao lado de "-8" e "+29" se lê como salto de um
+    #: mês para o outro. A nota ao lado resolve pelo número que a pessoa já
+    #: conhece do gráfico.
+    #:
+    #: COM RECORTE ATIVO ELA NÃO VAI, de propósito: aí o impacto é a CONTRIBUIÇÃO
+    #: daquele pedaço na nota do mês (o denominador é o do mês inteiro), e a nota
+    #: do pedaço é outra conta. Pôr as duas lado a lado como se uma explicasse a
+    #: outra seria o mesmo erro de leitura, com outro número.
+    historico = []
+    for linha in serie:
+        do_mes = round(
+            repositorio_score.impacto_do_recorte(
+                sessao,
+                lente.id,
+                linha["mes"],
+                calibracao,
+                filtro,
+                #: O DO MÊS ALVO JÁ ESTÁ NA MÃO; os outros sete se medem aqui.
+                denominador if linha["mes"] == alvo else None,
             ),
-            "itens": int(linha["pos"] + linha["neu"] + linha["neg"]),
-            "sem_base": bool(linha["sem_base"]),
-        }
-        for linha in serie
-    ]
+            2,
+        )
+        historico.append(
+            {
+                "mes": f"{linha['mes']:%Y-%m}",
+                "impacto": do_mes,
+                "itens": int(linha["pos"] + linha["neu"] + linha["neg"]),
+                "sem_base": bool(linha["sem_base"]),
+                "nota": None if filtro.ativo or linha["sem_base"] else round(50 + do_mes),
+            }
+        )
 
     return RecorteSaida(
         lente=lente.codigo,

@@ -327,3 +327,28 @@ def test_toda_dimensao_do_filtro_TEM_rotulo():
     }
 
     assert do_filtro == set(ROTULO_DA_DIMENSAO)
+
+
+def test_o_historico_traz_a_NOTA_do_mes_quando_nao_ha_recorte(sessao, sociedade_de_junho):
+    """O DONO DO PRODUTO LEU OS NÚMEROS COMO VARIAÇÃO MÊS A MÊS, e não são: cada
+    um é a distância da nota daquele mês até 50, o neutro. Em junho de 2026, o
+    histórico mostrava "-15,14" e o ponto da Jornada mostrava 35 — e nada na tela
+    ligava os dois.
+
+    A IDENTIDADE É EXATA quando não há recorte: `nota = 50 + impacto`, porque
+    `impacto = 50 × NS` e `nota = 50 + 50 × NS`. Então a nota do mês viaja junto,
+    e o painel passa a dizer o mesmo número que o gráfico que o abriu.
+
+    COM RECORTE ATIVO ELA NÃO VAI, de propósito: aí o impacto é a CONTRIBUIÇÃO do
+    pedaço na nota do mês (denominador do mês inteiro), e a nota do pedaço é outra
+    conta — mostrar as duas lado a lado como se uma explicasse a outra seria o
+    mesmo erro de leitura, com outro número."""
+    inteiro = _recorte(sessao)
+    deste_mes = next(h for h in inteiro.historico if h["mes"] == "2026-06")
+
+    assert deste_mes["nota"] == round(50 + deste_mes["impacto"])
+    #: E é a MESMA nota que a lente mostra — a do ponto na Jornada.
+    assert deste_mes["nota"] == inteiro.nota
+
+    com_recorte = _recorte(sessao, uf="RJ")
+    assert all(h["nota"] is None for h in com_recorte.historico)
