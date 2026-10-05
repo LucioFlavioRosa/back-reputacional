@@ -402,6 +402,14 @@ def _legenda_e_cores_do_clima(sessao) -> tuple[list[str], list[str]]:
 RECORTE_DO_PAINEL: dict[str, str] = {
     "Temas × sentimento": "tema",
     "Temas × clima": "tema",
+    #: O BLOCO AMPLO DOS TEMAS, logo abaixo dos painéis. Ele mostra os seis temas
+    #: mais falados do mês com o sentimento de cada um, e era o único gráfico da
+    #: tela em que a barra não levava a lugar nenhum — pedido do dono do produto,
+    #: e o pedido seguinte dele já estava atendido: DENTRO de um tema a primeira
+    #: aba é o Subtema, porque quem classifica o tema classifica o subtema (as
+    #: duas colunas vêm da mesma fonte, e a medida de presença é feita já dentro
+    #: do recorte).
+    "Temas mais falados": "tema",
     "Concessionárias com maior repercussão": "empresa",
     "Tier do veículo × sentimento": "tier",
     "Perfil de quem fala × sentimento": "perfil_autor",

@@ -16,7 +16,7 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from app.api.lentes import obter_dossie, obter_opcoes_de_filtro
+from app.api.lentes import obter_dossie, obter_opcoes_de_filtro, obter_recorte
 from app.banco.tabelas_catalogo import Tema
 from app.banco.tabelas_score import Mencao, ScoreFonte, ScoreMesFonte
 from app.dominio.score import peso_do_cargo, peso_do_engajamento
@@ -431,14 +431,18 @@ def sociedade_de_junho(sessao):
     banco.
     """
     bites = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "bites")).one()
+    #: A GRAFIA CURTA das duas concessionárias, para a linha caber: o nome
+    #: completo não muda nada do que estes testes provam.
+    rio, holding = "Águas do Rio", "Aegea Holding"
+    agua, obra = "Falta de água", "Obra atrasada"
     linhas = [
         # perfil, uf, tema, subtema, autor, sentimento, empresa
-        ("Figura pública", "RJ", "Abastecimento", "Falta de água", "@deputado", "neg", "Águas do Rio"),
-        ("Figura pública", "SP", "Obras", "Obra atrasada", "@vereadora", "pos", "Aegea Holding"),
-        ("Cidadão", "RJ", "Abastecimento", "Falta de água", "@vizinho", "neg", "Águas do Rio"),
-        ("Cidadão", "RJ", "Abastecimento", "Falta de água", "@vizinho", "pos", "Aegea Holding"),
-        ("Cidadão", "SP", "Obras", "Obra atrasada", "@outro", "pos", "Aegea Holding"),
-        ("Cidadão", "SP", "Obras", "Obra atrasada", "@outro", "pos", "Aegea Holding"),
+        ("Figura pública", "RJ", "Abastecimento", agua, "@deputado", "neg", rio),
+        ("Figura pública", "SP", "Obras", obra, "@vereadora", "pos", holding),
+        ("Cidadão", "RJ", "Abastecimento", agua, "@vizinho", "neg", rio),
+        ("Cidadão", "RJ", "Abastecimento", agua, "@vizinho", "pos", holding),
+        ("Cidadão", "SP", "Obras", obra, "@outro", "pos", holding),
+        ("Cidadão", "SP", "Obras", obra, "@outro", "pos", holding),
     ]
     for perfil, uf, tema, subtema, autor, sentimento, empresa in linhas:
         sessao.add(
@@ -928,3 +932,50 @@ def test_a_tabela_que_nao_tem_endereco_nao_promete_nenhum(sessao, imprensa_de_ju
     dossie = _dossie(sessao)
 
     assert dossie.materias_recentes.coluna_do_link is None
+
+
+def test_o_bloco_dos_TEMAS_MAIS_FALADOS_recorta_por_tema(sessao, sociedade_de_junho):
+    """PEDIDO DO DONO DO PRODUTO: "Temas mais falados seria ter um modal aqui tb".
+    Era o único gráfico da tela em que a barra não levava a lugar nenhum."""
+    dossie = _da_sociedade(sessao)
+
+    assert dossie.temas_mais_falados.recorta == "tema"
+
+
+def test_DENTRO_de_um_tema_a_primeira_aba_e_o_SUBTEMA(sessao, sociedade_de_junho):
+    """A OUTRA METADE DO PEDIDO: "e uma aba com os sub temas".
+
+    ELA JÁ FUNCIONAVA, e vale dizer por quê, porque o motivo é frágil se ninguém
+    o escrever: o subtema chega em 28% das menções do mês e por isso NÃO é aba do
+    mês — mas a presença de cada dimensão é medida DENTRO do recorte ativo, e
+    quem classifica o tema classifica o subtema (as duas colunas vêm da mesma
+    fonte). Dentro de um tema, o subtema está em quase tudo, e entra."""
+    #: DOIS SUBTEMAS DENTRO DO TEMA, porque um valor só não explica nada e é
+    #: corretamente excluído — o fixture nasceu com "Falta de água" nas três
+    #: menções de Abastecimento. No dado real são vários por tema.
+    bites = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "bites")).one()
+    sessao.add(
+        Mencao(
+            fonte_id=bites.id,
+            mes=MES,
+            sentimento="neg",
+            tema_texto="Abastecimento",
+            subtema="Água turva",
+            uf="RJ",
+            perfil_autor="Cidadão",
+        )
+    )
+    sessao.flush()
+
+    no_tema = _da_sociedade(sessao, tema="Abastecimento")
+    dentro = obter_recorte(
+        sessao=sessao, usuario=_QuemOlha(), codigo="sociedade", mes="2026-06", tema="Abastecimento"
+    )
+
+    assert no_tema.recorte_filtrado is True
+    assert [bloco.recorta for bloco in dentro.dentro][0] == "subtema"
+    #: E AS LINHAS SÃO AS DE DENTRO DO TEMA: os dois subtemas dele, não os do mês.
+    do_subtema = dentro.dentro[0]
+    assert {linha["rotulo"] for linha in do_subtema.dados} == {"Falta de água", "Água turva"}
+    #: E O TEMA NÃO SE REPETE dentro de si mesmo.
+    assert "tema" not in [bloco.recorta for bloco in dentro.dentro]
