@@ -106,6 +106,39 @@ class Mencao(Tabela):
     acionavel: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     #: Quem assina a matéria. Nulo em tudo hoje: a Clipei não manda a coluna.
     autor: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # -- os campos do padrão Aegea que a Sociedade digital usa (0055) ---------
+    #
+    # O PACOTE DE PRODUÇÃO DAS LENTES define uma planilha única de 40 colunas por
+    # item, igual para as cinco lentes. Onze delas já moram aqui com o nome que o
+    # índice usa — `sentimento` é `classificacao` no padrão, `veiculo` é
+    # `veiculo_rede`, `tema_texto` é `tema`, `unidade_texto` é `empresa_citada`,
+    # `cargo` é `cargo_autor` —, e estas sete faltavam. As colunas das outras
+    # lentes entram na migration da etapa daquela lente, com dado dentro.
+
+    #: O id do item no sistema do fornecedor. É a chave natural da carga: com
+    #: ela, reimportar o mesmo mês atualiza em vez de duplicar.
+    id_fonte: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: A UF do autor ou do assunto — um dos cortes que o pacote pede, e base do
+    #: KPI `uf_mais_negativa`.
+    uf: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: O segundo nível do assunto, abaixo de `tema_texto`: é o corte que explica
+    #: POR QUE um tema pesa.
+    subtema: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Quem fala: Cidadão, Figura pública, Imprensa, Perfil institucional. É o
+    #: que separa "mil cidadãos reclamando" de "um deputado reclamando" — duas
+    #: coisas com o mesmo sinal e consequências diferentes.
+    perfil_autor: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: O texto da menção e o endereço dela. Vêm só numa amostra (as negativas,
+    #: as de tier alto e as mais engajadas); o pacote diz que isso é esperado, e
+    #: a tela tem de saber viver com a ausência.
+    titulo_texto: Mapped[str | None] = mapped_column(Text, nullable=True)
+    link: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: O peso do item no denominador da nota, materializado na linha: 1 na
+    #: Sociedade e nos Clientes, 10/5/1 pelo tier do veículo na Imprensa. Fica
+    #: gravado porque é ele que entra no denominador de TODOS os níveis, e uma
+    #: régua que se recalcula em quatro lugares um dia discorda de si mesma.
+    peso_tier: Mapped[float] = mapped_column(Numeric(4, 1), default=1)
     veiculo: Mapped[str | None] = mapped_column(Text, nullable=True)
     publico_alvo: Mapped[str | None] = mapped_column(Text, nullable=True)
     criado_em: Mapped[datetime] = mapped_column(server_default=func.now())

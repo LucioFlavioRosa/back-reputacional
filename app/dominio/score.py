@@ -332,11 +332,31 @@ def medir_lente(
 ) -> LenteMedida:
     """O score de uma lente no mês.
 
-    MÉDIA SIMPLES DOS NS DAS FONTES, e não soma das contagens (§2.4). A
-    diferença é grande: a Bites classifica 4.973 posts e a Approach 1.959, e
-    somar as contagens faria a Bites decidir a lente sozinha. Média de NS dá
-    voz igual a cada fornecedor — que é o que se quer de duas leituras da
-    mesma realidade.
+    UM DENOMINADOR SÓ PARA TODAS AS FONTES, e isto INVERTE a §2.4.
+
+    A REGRA ANTERIOR ERA MÉDIA SIMPLES DOS NS, com uma razão escrita aqui: a
+    Bites classifica 4.973 posts e a Approach 1.959, e somar as contagens faz a
+    Bites decidir a lente sozinha. Média de NS dava voz igual a cada fornecedor —
+    que é o que se quer de duas leituras da mesma realidade.
+
+    O PACOTE DE PRODUÇÃO DAS LENTES (out/2026) manda o contrário, e o dono do
+    produto escolheu seguir depois de ver as duas contas: "impacto de qualquer
+    conjunto de itens = 50 × Σ(sinal × peso) ÷ Σ(peso de TODOS os itens do mês na
+    lente)". A razão é a que sustenta a pirâmide nova: a mesma conta tem de valer
+    para a lente, para uma linha de causa, para um recorte e para um item, e com
+    um denominador POR FONTE a soma das linhas de causa deixa de dar `nota − 50`.
+    Os quatro níveis param de fechar entre si, e é esse fechamento que torna o
+    número auditável na frente de quem pergunta.
+
+    O QUE SE PERDE ESTÁ DITO, não escondido: a fonte que classifica mais itens
+    passa a pesar mais. Em junho de 2026 a Bites responde por 72% dos itens da
+    Sociedade digital, e a lente caiu de 36 para 35.
+
+    A RÉGUA CONTINUA POR FONTE, e isso não é detalhe: o que se soma são as
+    CONTAGENS JÁ PONDERADAS de cada fonte, cada uma medida pela régua que ela
+    consegue cumprir (ver `regua_da_fonte`). Juntar as linhas cruas antes de
+    ponderar faria uma fonte sem engajamento ser medida pela régua de outra —
+    exatamente o defeito que `regua_da_fonte` existe para evitar.
 
     A ESTIMATIVA SÓ ENTRA ONDE NÃO HÁ MEDIÇÃO. Havendo contagem, ela é
     ignorada: medido ganha de suposto, sempre.
@@ -364,22 +384,24 @@ def medir_lente(
             ausencia="todas as fontes desta lente estão desligadas",
         )
 
-    valores: list[float] = []
+    #: AS CONTAGENS SE SOMAM, os NS não. Cada fonte é ponderada pela régua dela e
+    #: entra no mesmo balde; o NS sai uma vez, do total.
+    total = Contagem()
     com_dado: list[str] = []
     for fonte, somas in sorted(ligadas.items()):
-        valor = ns(ponderar(somas, calibracao))
-        if valor is not None:
-            valores.append(valor)
+        contagem = ponderar(somas, calibracao)
+        if ns(contagem) is not None:
+            total = total + contagem
             com_dado.append(fonte)
 
-    if valores:
-        media = sum(valores) / len(valores)
+    medido = ns(total)
+    if medido is not None:
         return LenteMedida(
             codigo=codigo,
             nome=nome,
             peso=peso,
-            ns=media,
-            score=para_score(media),
+            ns=medido,
+            score=para_score(medido),
             fontes=tuple(com_dado),
         )
 
