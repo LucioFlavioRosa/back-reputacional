@@ -48,6 +48,17 @@ class Dimensao:
     #: O atributo de `Mencao` que guarda o valor. Texto, e não a coluna em si,
     #: porque o domínio não importa o ORM — o repositório resolve.
     campo: str
+    #: ESTA ABA PUBLICA NOME DE GENTE DE FORA? ACHADO DE REVISÃO, e ele é sobre a
+    #: mesma coluna significar coisas diferentes em duas lentes: na Imprensa,
+    #: `autor` é o JORNALISTA — o mesmo cadastro de terceiros que a matriz de
+    #: jornalistas publica e que `ve_diretorio` guarda; na Sociedade é o perfil de
+    #: rede que veio DENTRO da menção, que o indicador "Autor mais negativo" já
+    #: mostra a todo mundo.
+    #:
+    #: POR DIMENSÃO E POR LENTE, portanto, e não pelo nome da coluna: gatilhar
+    #: pelo nome esconderia da Sociedade um dado que é dela, ou publicaria o da
+    #: Imprensa. É a mesma pergunta que `_nomeia_o_diretorio` faz dos painéis.
+    nomeia_o_diretorio: bool = False
 
 
 @dataclass(frozen=True)
@@ -89,7 +100,7 @@ DIMENSOES_POR_LENTE: dict[str, tuple[Dimensao, ...]] = {
         Dimensao("atributo", "Atributo", "atributo"),
         Dimensao("veiculo", "Veículo", "veiculo"),
         Dimensao("uf", "UF", "uf"),
-        Dimensao("autor", "Jornalista", "autor"),
+        Dimensao("autor", "Jornalista", "autor", nomeia_o_diretorio=True),
     ),
     "clientes": (
         Dimensao("tema", "Tema", "tema_texto"),
@@ -114,12 +125,21 @@ def explica(presenca: Presenca, total: int) -> bool:
 
 
 def dimensoes_que_explicam(
-    codigo_da_lente: str, presencas: dict[str, Presenca], total: int
+    codigo_da_lente: str,
+    presencas: dict[str, Presenca],
+    total: int,
+    ve_diretorio: bool = True,
 ) -> list[Dimensao]:
-    """As abas desta lente, na ordem dela, até o teto de `ABAS`."""
+    """As abas desta lente, na ordem dela, até o teto de `ABAS`.
+
+    `ve_diretorio` TIRA A ABA, E NÃO A LENTE: quem não alcança o cadastro de
+    terceiros perde a aba que nomeia jornalista e fica com todas as outras. O
+    contrário — esconder o cartão inteiro — pagaria a tela toda por uma coluna.
+    """
     candidatas = DIMENSOES_POR_LENTE.get(codigo_da_lente, ())
     return [
         dimensao
         for dimensao in candidatas
         if explica(presencas.get(dimensao.chave, Presenca(0, 0)), total)
+        and (ve_diretorio or not dimensao.nomeia_o_diretorio)
     ][:ABAS]

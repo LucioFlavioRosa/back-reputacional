@@ -22,6 +22,7 @@ isso pesou". A única exceção é a NOTA da lente, que vem pronta de
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import date
 
 from sqlalchemy import Date as ColunaDeData
@@ -52,6 +53,7 @@ from app.dominio.causa_da_lente import (
     Dimensao,
     Presenca,
     dimensoes_que_explicam,
+    explica,
 )
 from app.dominio.score import Calibracao, FiltroDeMencoes
 
@@ -653,6 +655,26 @@ def presenca_das_dimensoes(
     return presencas, total
 
 
+@dataclass(frozen=True)
+class CorteDaCausa:
+    """Um corte do mês por uma dimensão — ou a falta dele.
+
+    COM NOME, e não uma tupla de quatro: a tupla era desempacotada por índice em
+    dois lugares (`corte[0].chave`), e o terceiro lugar erraria a ordem.
+    """
+
+    dimensao: Dimensao
+    #: Vazio no corte que NÃO explica o mês: ele existe no resultado para a tela
+    #: poder dizer por que a aba esperada não está lá.
+    linhas: list[dict]
+    presenca: Presenca
+    total: int
+
+    @property
+    def explica(self) -> bool:
+        return bool(self.linhas)
+
+
 def cortes_da_causa(
     sessao: Session,
     codigo_da_lente: str,
@@ -661,7 +683,8 @@ def cortes_da_causa(
     calibracao: Calibracao,
     filtro: FiltroDeMencoes | None = None,
     quantos: int = 6,
-) -> list[tuple[Dimensao, list[dict], Presenca, int]]:
+    ve_diretorio: bool = True,
+) -> list[CorteDaCausa]:
     """Os cortes que explicam o mês desta lente — um por aba de "onde está a
     causa", cada um com as suas linhas e com quanto da dimensão o mês tem.
 
@@ -687,19 +710,56 @@ def cortes_da_causa(
     presencas = {
         dimensao.chave: presencas_por_campo[dimensao.campo] for dimensao in dimensoes
     }
-    cortes = []
-    for dimensao in dimensoes_que_explicam(codigo_da_lente, presencas, total):
-        linhas = _por_coluna_de_texto(
-            sessao,
-            getattr(Mencao, dimensao.campo),
-            "rotulo",
-            lente_id,
-            mes,
-            calibracao,
-            filtro,
-            quantos,
-        )
-        cortes.append((dimensao, linhas, presencas[dimensao.chave], total))
+    #: O QUE FICOU DE FORA VIAJA JUNTO (pacote, FRONTEND §40: "aviso específico
+    #: quando uma dimensão esperada não é útil no mês"). O tema é o caso real: ele
+    #: é a primeira dimensão prioritária desta lente e chega em 1.959 dos 6.932
+    #: itens — uma das duas fontes não classifica assunto. Sem o aviso, a tela
+    #: mostra um cartão "onde está a causa" SEM aba de tema logo acima de um
+    #: painel "Temas × sentimento", e quem lê conclui que a tela está quebrada.
+    explicam = dimensoes_que_explicam(codigo_da_lente, presencas, total, ve_diretorio)
+    cortes: list[CorteDaCausa] = []
+    for dimensao in dimensoes:
+        presenca = presencas[dimensao.chave]
+        if dimensao not in explicam:
+            #: NÃO EXPLICAR E NÃO CABER SÃO COISAS DIFERENTES, e confundi-las
+            #: faria a tela anunciar como lacuna de dado a sétima dimensão de uma
+            #: lente em que todas as sete explicam — mentindo sobre um dado que
+            #: está lá. Só a que falha no critério vira aviso.
+            if not explica(presenca, total):
+                #: SEM LINHA NENHUMA, e por isso sem consulta nenhuma: a ausência
+                #: se explica com a medida que já está na mão.
+                #:
+                #: MENOS A QUE A PERMISSÃO ESCONDE: anunciar a aba de jornalista
+                #: como lacuna de dado seria contar que ela existe.
+                if not (dimensao.nomeia_o_diretorio and not ve_diretorio):
+                    cortes.append(CorteDaCausa(dimensao, [], presenca, total))
+            continue
+        if dimensao.chave == "tema":
+            #: O TEMA PELA MESMA CONSULTA DO PAINEL, e isto foi achado de revisão:
+            #: o painel "Temas × sentimento" agrupa por
+            #: `coalesce(Tema.nome, Mencao.tema_texto)` — o nome do dicionário do
+            #: CRM vence a grafia do fornecedor —, e a aba agrupava pelo texto cru.
+            #: Os dois ficam lado a lado na mesma tela: rótulos diferentes para o
+            #: mesmo mês, e um clique no rótulo do painel mandando ao servidor uma
+            #: grafia que o dado não tem.
+            linhas = [
+                {"rotulo": linha.pop("tema"), **linha}
+                for linha in temas_por_sentimento(
+                    sessao, lente_id, mes, calibracao, filtro, quantos
+                )
+            ]
+        else:
+            linhas = _por_coluna_de_texto(
+                sessao,
+                getattr(Mencao, dimensao.campo),
+                "rotulo",
+                lente_id,
+                mes,
+                calibracao,
+                filtro,
+                quantos,
+            )
+        cortes.append(CorteDaCausa(dimensao, linhas, presenca, total))
     return cortes
 
 

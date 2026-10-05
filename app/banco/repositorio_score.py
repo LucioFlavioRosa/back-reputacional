@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from sqlalchemy import Date as ColunaDeData
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.banco.tabelas_catalogo import Clima, Tema
@@ -52,7 +52,7 @@ from app.dominio.score import (
     ponderar,
     regua_da_lente,
 )
-from app.dominio.tema_do_mes import PesosDoTema
+from app.dominio.tema_do_mes import PONTOS_POR_NS, PesosDoTema
 
 logger = logging.getLogger(__name__)
 
@@ -352,7 +352,6 @@ def condicoes_do_filtro(filtro: FiltroDeMencoes | None) -> list:
         (Mencao.tier, filtro.tier),
         (Mencao.veiculo, filtro.veiculo),
         (Mencao.atributo, filtro.atributo),
-        (Mencao.tema_texto, filtro.tema_texto),
         # -- as do padrão Aegea (0055) --
         (Mencao.perfil_autor, filtro.perfil_autor),
         (Mencao.uf, filtro.uf),
@@ -360,7 +359,28 @@ def condicoes_do_filtro(filtro: FiltroDeMencoes | None) -> list:
         (Mencao.autor, filtro.autor),
         (Mencao.unidade_texto, filtro.empresa),
     )
-    return [coluna == valor for coluna, valor in de_cada if valor]
+    condicoes = [coluna == valor for coluna, valor in de_cada if valor]
+    if filtro.tema_texto:
+        #: O TEMA CASA POR DUAS COLUNAS, e isto foi achado de revisão. O rótulo
+        #: que a tela mostra é `coalesce(Tema.nome, Mencao.tema_texto)` — o nome
+        #: do dicionário do CRM vence a grafia do fornecedor —, e o filtro
+        #: comparava só o texto cru. Com `tema_id` preenchido e grafia diferente
+        #: ("SAN BASICO" para o tema "Saneamento básico"), clicar no rótulo
+        #: mandava ao servidor um valor que o dado não tem: nenhuma menção
+        #: encontrada, numa barra que acabou de mostrar três.
+        #:
+        #: SUBCONSULTA, E NÃO JUNÇÃO: `condicoes_do_filtro` entra em nove
+        #: consultas diferentes, e algumas já juntam `Tema` por conta própria —
+        #: acrescentar uma junção aqui mudaria o `from` delas por baixo.
+        condicoes.append(
+            or_(
+                Mencao.tema_texto == filtro.tema_texto,
+                Mencao.tema_id.in_(
+                    select(Tema.id).where(Tema.nome == filtro.tema_texto).scalar_subquery()
+                ),
+            )
+        )
+    return condicoes
 
 
 def somas_da_lente_filtradas(
@@ -443,6 +463,7 @@ def composicao_da_lente(
     mes: date,
     calibracao: Calibracao,
     filtro: FiltroDeMencoes | None = None,
+    regua: str | None = None,
 ) -> Contagem:
     """Os três números da fórmula, já ponderados — o que a barra desenha.
 
@@ -462,11 +483,66 @@ def composicao_da_lente(
         for fonte, linhas in _somas_da_lente(sessao, lente_id, mes, filtro).items()
         if calibracao.ligada(fonte)
     }
-    regua = regua_da_lente(ligadas, calibracao.regua_engajamento)
+    #: A RÉGUA DE FORA VENCE, e existe por causa do impacto de um recorte: lá o
+    #: numerador é do recorte e o denominador é do MÊS, e os dois têm de estar na
+    #: mesma unidade. Deixar cada chamada achar a sua régua faria um recorte
+    #: pequeno (sem engajamento no dado) ser dividido por um mês medido em
+    #: curtidas — curtida sobre menção, um número sem significado nenhum.
+    regua = regua or regua_da_lente(ligadas, calibracao.regua_engajamento)
     total = Contagem()
     for linhas in ligadas.values():
         total = total + ponderar(linhas, calibracao, regua)
     return total
+
+
+def regua_do_mes(
+    sessao: Session, lente_id: int, mes: date, calibracao: Calibracao
+) -> str:
+    """A régua com que o MÊS INTEIRO desta lente se mede.
+
+    Separada para que o impacto de um recorte a use nos dois lados da divisão —
+    ver `composicao_da_lente`.
+    """
+    ligadas = {
+        fonte: linhas
+        for fonte, linhas in _somas_da_lente(sessao, lente_id, mes, None).items()
+        if calibracao.ligada(fonte)
+    }
+    return regua_da_lente(ligadas, calibracao.regua_engajamento)
+
+
+def impacto_do_recorte(
+    sessao: Session,
+    lente_id: int,
+    mes: date,
+    calibracao: Calibracao,
+    filtro: FiltroDeMencoes | None = None,
+) -> float:
+    """Quantos pontos este pedaço do mês tira (ou põe) na nota da lente.
+
+    A REGRA CENTRAL DO PACOTE, na letra:
+
+        impacto(S) = 50 × Σ(sinal × peso de S) ÷ Σ(peso de TODOS os itens do mês)
+
+    O DENOMINADOR É O DO MÊS, e é tudo o que importa aqui: é o que faz a soma dos
+    impactos de todos os valores de uma dimensão fechar em `nota − 50`, em
+    qualquer nível. Um denominador local daria a cada pedaço o seu próprio 100%
+    — cada barra pareceria enorme, nenhuma somaria o todo, e a tela estaria
+    mostrando pedaços que não compõem a coisa que dizem compor.
+
+    A MESMA RÉGUA NOS DOIS LADOS, por `regua_do_mes`: um recorte cujas fontes não
+    mandam engajamento seria medido em menções e dividido por um mês medido em
+    curtidas.
+
+    ZERO QUANDO O MÊS NÃO TEM BASE, e não divisão por zero: sem denominador não
+    há pergunta a responder.
+    """
+    regua = regua_do_mes(sessao, lente_id, mes, calibracao)
+    do_mes = composicao_da_lente(sessao, lente_id, mes, calibracao, None, regua)
+    if not do_mes.total:
+        return 0.0
+    do_recorte = composicao_da_lente(sessao, lente_id, mes, calibracao, filtro, regua)
+    return PONTOS_POR_NS * (do_recorte.positivo - do_recorte.negativo) / do_mes.total
 
 
 def fontes_da_lente(

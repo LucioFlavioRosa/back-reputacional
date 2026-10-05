@@ -40,6 +40,7 @@ from app.banco.sessao import SessaoDoPedido
 from app.banco.tabelas_score import Mencao
 from app.casos_de_uso.ler_sinais_da_lente import ler_sinais, regua_dos_sinais
 from app.dominio import frases_de_sinais as frases
+from app.dominio.causa_da_lente import DIMENSOES_POR_LENTE
 from app.dominio.erros import NaoEncontrado
 from app.dominio.lentes import (
     Conceito,
@@ -235,6 +236,10 @@ class DossieSaida(BaseModel):
     #: VAZIO na lente que não vem de menção (Mercado, Institucional) e no mês
     #: em que nenhuma dimensão explica nada.
     onde_esta_a_causa: list[BlocoSaida] = Field(default_factory=list)
+    #: A dimensão ESPERADA que não explica este mês, dita em palavras — ver
+    #: `_lacunas_da_causa`. É o aviso âmbar do pacote (FRONTEND §40): sem ele, a
+    #: aba que falta é um buraco inexplicável no meio do cartão.
+    lacunas_da_causa: list[str] = Field(default_factory=list)
     #: O bloco do fim da tela: o que mudou no período, por intensidade, com as
     #: lacunas de dado no fim.
     sinais: list[SinalSaida] = Field(default_factory=list)
@@ -864,8 +869,14 @@ def _paineis(
 
 
 def _onde_esta_a_causa(
-    sessao, lente, mes: date, calibracao: Calibracao, filtro: FiltroDeMencoes | None = None
-) -> list[BlocoSaida]:
+    sessao,
+    lente,
+    mes: date,
+    calibracao: Calibracao,
+    filtro: FiltroDeMencoes | None = None,
+    ja_usadas: FiltroDeMencoes | None = None,
+    ve_diretorio: bool = True,
+) -> tuple[list[BlocoSaida], list[str]]:
     """As abas do cartão "Onde está a causa": o mesmo mês, cortado por cada
     dimensão que o explica.
 
@@ -890,13 +901,29 @@ def _onde_esta_a_causa(
     mais negativo" já publica o perfil que mais pesou, pela mesma razão.
     """
     cortes = repositorio_lentes.cortes_da_causa(
-        sessao, lente.codigo, lente.id, mes, calibracao, filtro
+        sessao, lente.codigo, lente.id, mes, calibracao, filtro, ve_diretorio=ve_diretorio
     )
+    #: DENTRO DE "UF: RJ" NÃO SE OFERECE UF DE NOVO, e é esta linha que faz o
+    #: empilhamento ter fim: a dimensão já usada daria uma única barra de 100% e
+    #: repetiria a pergunta que acabou de ser respondida.
+    if ja_usadas is not None:
+        usadas = {passo.chave for passo in _trilha_do_recorte(lente.codigo, ja_usadas)}
+        cortes = [corte for corte in cortes if corte.dimensao.chave not in usadas]
     if not cortes:
-        return []
+        return [], []
     fonte = _nomes_das_fontes(sessao, lente.id)
     blocos = []
-    for dimensao, linhas, presenca, total in cortes:
+    for corte in cortes:
+        #: O CORTE QUE NÃO EXPLICA NÃO É ABA — é aviso, e sai por
+        #: `_lacunas_da_causa`. Ver `CorteDaCausa.explica`.
+        if not corte.explica:
+            continue
+        dimensao, linhas, presenca, total = (
+            corte.dimensao,
+            corte.linhas,
+            corte.presenca,
+            corte.total,
+        )
         faltam = total - presenca.preenchidas
         blocos.append(
             _bloco(
@@ -927,7 +954,112 @@ def _onde_esta_a_causa(
                 recorta=dimensao.chave,
             )
         )
-    return blocos
+    #: OS DOIS JUNTOS, DE UMA MEDIDA SÓ: as abas e o motivo das que faltam saem da
+    #: mesma leitura de presença. Separar em duas funções custaria uma segunda
+    #: varredura de `mencao` para contar o que já foi contado.
+    return blocos, _lacunas_da_causa(cortes)
+
+
+def _lacunas_da_causa(cortes) -> list[str]:
+    """A dimensão ESPERADA que não explica este mês, dita em palavras.
+
+    O PACOTE PEDE ISTO (FRONTEND §40): "aviso específico quando uma dimensão
+    esperada não é útil no mês, explicando que a fonte não classificou".
+
+    E O CASO É REAL, não hipotético: o tema é a PRIMEIRA dimensão prioritária da
+    Sociedade digital e chega em 1.959 dos 6.932 itens de junho — uma das duas
+    fontes não classifica assunto. Sem o aviso, a tela mostra um cartão "onde está
+    a causa" SEM aba de tema logo acima de um painel "Temas × sentimento", e quem
+    lê conclui que a tela está quebrada. A frase transforma um buraco inexplicável
+    em um fato sobre a fonte — que é acionável: dá para cobrar do fornecedor.
+
+    DOIS MOTIVOS, e eles pedem frases diferentes: campo que quase ninguém
+    preencheu, e campo preenchido com um valor só (que não divide nada).
+    """
+    frases = []
+    for corte in cortes:
+        if corte.explica:
+            continue
+        if corte.presenca.distintas < 2:
+            frases.append(
+                f"{corte.dimensao.rotulo}: a fonte mandou um valor só neste mês — "
+                f"não há como separar o mês por ele."
+            )
+        else:
+            frases.append(
+                f"{corte.dimensao.rotulo}: a fonte classificou "
+                f"{_num(corte.presenca.preenchidas)} de {_num(corte.total)} itens — "
+                f"pouco para explicar o mês."
+            )
+    return frases
+
+
+def _trilha_do_recorte(codigo_da_lente: str, filtro: FiltroDeMencoes) -> list[PassoDaTrilha]:
+    """O caminho até este recorte, na ordem em que a lente se explica.
+
+    A TRILHA É O QUE IMPEDE O DRAWER DE SER UM BECO: sem ela, quem desceu dois
+    níveis não sabe de onde veio nem o que remover para subir um.
+
+    A ORDEM É A DO DOMÍNIO, e não a dos cliques: a ordem dos cliques não viaja
+    numa URL (`?uf=RJ&perfil_autor=Cidadão` é o mesmo conjunto de qualquer jeito),
+    e uma trilha que mudasse de forma conforme o caminho tomado faria dois links
+    para o mesmo recorte se lerem como recortes diferentes.
+    """
+    valores = {
+        "tema": filtro.tema_texto,
+        "subtema": filtro.subtema,
+        "empresa": filtro.empresa,
+        "veiculo": filtro.veiculo,
+        "perfil_autor": filtro.perfil_autor,
+        "autor": filtro.autor,
+        "uf": filtro.uf,
+        "tier": filtro.tier,
+        "atributo": filtro.atributo,
+    }
+    passos = []
+    for dimensao in DIMENSOES_POR_LENTE.get(codigo_da_lente, ()):
+        valor = valores.get(dimensao.chave)
+        if valor:
+            passos.append(
+                PassoDaTrilha(chave=dimensao.chave, dimensao=dimensao.rotulo, valor=valor)
+            )
+    #: AS DE CLIPPING NO FIM, e sem perder nenhuma: tier e atributo não estão na
+    #: lista de dimensões da Sociedade, mas o filtro as aceita — um recorte vindo
+    #: da barra de filtros da Imprensa não pode sumir da trilha.
+    for chave, rotulo in (("tier", "Tier"), ("atributo", "Atributo")):
+        if valores.get(chave) and not any(passo.chave == chave for passo in passos):
+            passos.append(PassoDaTrilha(chave=chave, dimensao=rotulo, valor=valores[chave]))
+    return passos
+
+
+def _frase_do_recorte(
+    lente,
+    filtro: FiltroDeMencoes,
+    impacto: float,
+    composicao: dict[str, int],
+    itens: int,
+    no_mes: int,
+) -> str:
+    """A frase do topo do drawer — o número em palavras.
+
+    CALCULADA A CADA LEITURA, nunca salva: texto guardado envelhece em silêncio
+    numa tela que a diretoria lê como se fosse deste mês.
+
+    DIZ OS DOIS NÚMEROS: "4 itens" não informa nada; "4 dos 6 itens do mês"
+    informa que isto é metade do mês. É a diferença entre um pedaço que explica a
+    nota e um que só aparece primeiro na lista.
+    """
+    if not itens:
+        return f"Nenhum item deste recorte em {lente.nome} neste mês."
+    negativas = round(composicao["negativo"] / itens * 100)
+    verbo = "tira" if impacto < 0 else "põe"
+    pontos = f"{abs(impacto):.1f}".replace(".", ",")
+    quantos = f"{_num(itens)} de {_num(no_mes)}" if no_mes else _num(itens)
+    return (
+        f"Este recorte {verbo} {pontos} ponto"
+        f"{'s' if abs(impacto) >= 2 else ''} da nota de {lente.nome}, "
+        f"com {quantos} itens do mês e {negativas}% de negativas."
+    )
 
 
 def _nomeia_o_diretorio(codigo_da_lente: str, bloco: BlocoSaida) -> bool:
@@ -1705,7 +1837,13 @@ def obter_dossie(
     drivers = _drivers_e_riscos(sessao, lente, alvo, calibracao, filtro)
     temas_falados = _temas_mais_falados(sessao, lente, alvo, calibracao, filtro)
     materias = _materias_recentes(sessao, lente, alvo, calibracao, filtro)
-    causa = _onde_esta_a_causa(sessao, lente, alvo, calibracao, filtro)
+    #: `ve_diretorio` CHEGA ATÉ AQUI porque uma das abas publica nome de gente de
+    #: fora: na Imprensa, `autor` é o jornalista — o mesmo cadastro de terceiros
+    #: que a matriz de jornalistas publica e que esta permissão guarda. Achado de
+    #: revisão: a aba entregava por outra porta o que o painel esconde.
+    causa, lacunas_da_causa = _onde_esta_a_causa(
+        sessao, lente, alvo, calibracao, filtro, ve_diretorio=usuario.ve_diretorio
+    )
 
     #: O QUE ESTE PAPEL NÃO ALCANÇA. `score_leitura` e `score_edicao` têm
     #: `acessa_score` e NÃO têm `ve_diretorio` — e levam 403 em
@@ -1784,6 +1922,7 @@ def obter_dossie(
             for fato in repositorio_score.fatos_do_periodo(sessao, meses)
         ],
         onde_esta_a_causa=causa,
+        lacunas_da_causa=lacunas_da_causa,
         paineis=[
             _com_conclusao(bloco, titulo)
             for secao, bloco, titulo in (
@@ -1807,6 +1946,169 @@ def obter_dossie(
             # jeito exato como a manchete vazou na primeira tentativa.
             if sinal.secao not in escondidos
         ],
+    )
+
+
+class PassoDaTrilha(BaseModel):
+    """Um degrau do caminho que levou até este recorte."""
+
+    #: A chave do parâmetro (`uf`), para a tela saber o que remover ao subir.
+    chave: str
+    #: O nome da dimensão como a pessoa a leu na aba (`UF`).
+    dimensao: str
+    valor: str
+
+
+class RecorteSaida(BaseModel):
+    """O nível 3: um pedaço do mês, medido e decomposto.
+
+    UM PEDIDO SÓ, de propósito. O drawer abre com tudo ou abre mentindo — e
+    cinco chamadas dariam cinco estados de carregamento dentro de um painel de
+    600px, cada um aparecendo e sumindo na frente de quem só clicou numa barra.
+    """
+
+    lente: str
+    mes: str
+    #: O caminho até aqui, na ordem em que a lente se explica. Vazio no recorte
+    #: que é o mês inteiro (os cartões do topo abrem assim).
+    trilha: list[PassoDaTrilha] = Field(default_factory=list)
+
+    #: A nota que este pedaço teria se fosse o mês — é o número que a tela já
+    #: mostrava quando o recorte era aplicado na tela inteira.
+    nota: int | None
+    #: Quantos pontos ele tira ou põe na nota da lente. VER `impacto_do_recorte`:
+    #: o denominador é o do mês, e é isso que faz a soma dos pedaços fechar com
+    #: `nota − 50`.
+    impacto: float
+    #: Positivo/neutro/negativo CONTADOS um a um — o que a barra desenha. Não é o
+    #: ponderado da nota: a barra mostra volume, e volume se conta.
+    composicao: dict[str, int]
+    itens: int
+    #: O total do mês, para a frase dizer "4 dos 6 itens" em vez de "4 itens".
+    itens_no_mes: int
+    #: A frase pronta, calculada a cada leitura — nunca salva.
+    frase: str
+    ausencia: str | None = None
+
+    #: Seis células: o mesmo recorte mês a mês. Responde "isto é de agora ou é
+    #: sempre assim", que é a pergunta que decide se o pedaço merece ação.
+    historico: list[dict] = Field(default_factory=list)
+    #: As dimensões AINDA NÃO USADAS, cortadas dentro deste recorte. Clicar numa
+    #: linha empilha mais um degrau — é descer no mesmo painel.
+    dentro: list[BlocoSaida] = Field(default_factory=list)
+    #: A lista que fecha a descida: os itens deste recorte.
+    itens_do_recorte: BlocoSaida
+
+
+@rotas.get("/{codigo}/recorte")
+def obter_recorte(
+    sessao: Sessao,
+    usuario: UsuarioLogado,
+    codigo: str,
+    mes: Annotated[str, Query(description="AAAA-MM")],
+    tier: Annotated[str | None, Query()] = None,
+    veiculo: Annotated[str | None, Query()] = None,
+    atributo: Annotated[str | None, Query()] = None,
+    tema: Annotated[str | None, Query()] = None,
+    perfil_autor: Annotated[str | None, Query()] = None,
+    uf: Annotated[str | None, Query()] = None,
+    subtema: Annotated[str | None, Query()] = None,
+    autor: Annotated[str | None, Query()] = None,
+    empresa: Annotated[str | None, Query()] = None,
+) -> RecorteSaida:
+    """O nível 3 do pacote: o que o drawer abre quando alguém clica num dado.
+
+    POR QUE NÃO BASTAVA O RECORTE NA TELA INTEIRA — e esta foi a correção que o
+    dono do produto pediu com estas palavras: "ao clicar em um dado temos que
+    abrir um modal com o deep diving, e não como é feito hoje". Aplicar o filtro
+    na tela inteira REFAZ o mês: a nota muda, os painéis se refazem, e quem
+    clicou perde de vista o mês de onde saiu. É recortar, não aprofundar. O
+    drawer põe o pedaço AO LADO do mês, com a trilha de volta.
+
+    OS MESMOS PARÂMETROS DO DOSSIÊ, e isso não é repetição preguiçosa: é o que
+    faz um link reproduzir o ponto exato do caminho, e o que permite a mesma
+    barra de filtros e o mesmo clique levarem ao mesmo lugar.
+    """
+    alvo = _mes_de(mes)
+    lente = repositorio_lentes.lente_por_codigo(sessao, codigo)
+    if lente is None:
+        raise NaoEncontrado("Lente não encontrada.")
+
+    filtro = FiltroDeMencoes(
+        tier=tier,
+        veiculo=veiculo,
+        atributo=atributo,
+        tema_texto=tema,
+        perfil_autor=perfil_autor,
+        uf=uf,
+        subtema=subtema,
+        autor=autor,
+        empresa=empresa,
+    )
+    calibracao = repositorio_score.calibracao_vigente(sessao)
+    meses = repositorio_lentes.meses_ate(alvo, MESES_DA_EVOLUCAO)
+
+    medida = repositorio_score.medir_uma_lente(sessao, lente, alvo, calibracao, filtro)
+    impacto = repositorio_score.impacto_do_recorte(sessao, lente.id, alvo, calibracao, filtro)
+
+    serie = repositorio_lentes.serie_da_lente(sessao, lente.id, meses, calibracao, filtro)
+    do_mes = repositorio_lentes.serie_da_lente(sessao, lente.id, [alvo], calibracao, None)
+    deste_mes = next((linha for linha in serie if linha["mes"] == alvo), None)
+    composicao = {
+        "positivo": int(deste_mes["pos"]) if deste_mes else 0,
+        "neutro": int(deste_mes["neu"]) if deste_mes else 0,
+        "negativo": int(deste_mes["neg"]) if deste_mes else 0,
+    }
+    itens = sum(composicao.values())
+    no_mes = sum(int(do_mes[0][chave]) for chave in ("pos", "neu", "neg")) if do_mes else 0
+
+    #: O HISTÓRICO É O IMPACTO MÊS A MÊS, e não a contagem: a pergunta é "este
+    #: pedaço pesava o mesmo antes", e peso se mede em pontos. A contagem vai ao
+    #: lado porque um impacto pequeno com muitos itens e um impacto pequeno com
+    #: dois itens são situações diferentes.
+    historico = [
+        {
+            "mes": f"{linha['mes']:%Y-%m}",
+            "impacto": round(
+                repositorio_score.impacto_do_recorte(
+                    sessao, lente.id, linha["mes"], calibracao, filtro
+                ),
+                2,
+            ),
+            "itens": int(linha["pos"] + linha["neu"] + linha["neg"]),
+            "sem_base": bool(linha["sem_base"]),
+        }
+        for linha in serie
+    ]
+
+    return RecorteSaida(
+        lente=lente.codigo,
+        mes=f"{alvo:%Y-%m}",
+        trilha=_trilha_do_recorte(lente.codigo, filtro),
+        nota=medida.score,
+        impacto=round(impacto, 2),
+        composicao=composicao,
+        itens=itens,
+        itens_no_mes=no_mes,
+        frase=_frase_do_recorte(lente, filtro, impacto, composicao, itens, no_mes),
+        #: A MESMA AUSÊNCIA DO DOSSIÊ, pela mesma razão: um recorte sem
+        #: correspondência tem de DIZER isso, e não cair no mês como se o filtro
+        #: não existisse.
+        ausencia=medida.ausencia if not itens else None,
+        historico=historico,
+        #: SÓ AS ABAS, aqui: o aviso de dimensão esperada mora no cartão da
+        #: tela, e repeti-lo dentro do painel de aprofundamento seria contar duas
+        #: vezes a mesma coisa sobre a mesma fonte.
+        dentro=_onde_esta_a_causa(
+            sessao,
+            lente,
+            alvo,
+            calibracao,
+            filtro,
+            ja_usadas=filtro,
+            ve_diretorio=usuario.ve_diretorio,
+        )[0],
+        itens_do_recorte=_materias_recentes(sessao, lente, alvo, calibracao, filtro),
     )
 
 
