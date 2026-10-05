@@ -270,7 +270,37 @@ def regua_da_fonte(somas: list[SomasDaFonte], regua_engajamento: str) -> str:
     return REGUA_DE_CONTAGEM
 
 
-def ponderar(somas: list[SomasDaFonte], calibracao: Calibracao) -> Contagem:
+def regua_da_lente(
+    somas_por_fonte: dict[str, list[SomasDaFonte]], regua_engajamento: str
+) -> str:
+    """A régua que TODAS as fontes da lente conseguem cumprir.
+
+    ACHADO DE REVISÃO, e ele nasceu do denominador único. Enquanto a lente era a
+    média dos NS de cada fonte, decidir a régua POR FONTE era certo: o que se
+    comparava depois era NS, adimensional, e uma fonte sem engajamento entrava
+    medida em menções sem contaminar a outra.
+
+    SOMAR AS CONTAGENS TIROU ESSA PROTEÇÃO: com um denominador só, uma fonte
+    medida em engajamento e outra em menções fazem o denominador somar grandezas
+    diferentes — 5.900 curtidas com 100 menções —, e a fonte sem o dado vence
+    justamente por não tê-lo.
+
+    A RÉGUA PASSA A SER DO CONJUNTO: se qualquer fonte com dado não cumpre a
+    régua pedida, a lente inteira é medida por contagem. O preço está dito: ligar
+    engajamento numa lente onde uma das fontes não o manda rebaixa a lente toda.
+    É menor que o de uma nota que soma curtida com menção.
+    """
+    if regua_engajamento == REGUA_DE_CONTAGEM:
+        return REGUA_DE_CONTAGEM
+    for somas in somas_por_fonte.values():
+        if regua_da_fonte(somas, regua_engajamento) == REGUA_DE_CONTAGEM:
+            return REGUA_DE_CONTAGEM
+    return regua_engajamento
+
+
+def ponderar(
+    somas: list[SomasDaFonte], calibracao: Calibracao, regua: str | None = None
+) -> Contagem:
     """As somas de uma fonte viram os três números da fórmula.
 
     DUAS RÉGUAS, UMA MULTIPLICAÇÃO. O tier diz quanto vale a matéria pelo
@@ -289,7 +319,11 @@ def ponderar(somas: list[SomasDaFonte], calibracao: Calibracao) -> Contagem:
     # por não ter tier 1 é o que "só tier 1" pede, e continua valendo; perdê-la
     # por não ter curtida não é o que régua nenhuma pediu.
     contam = [linha for linha in somas if peso_do_veiculo(linha) != 0]
-    regua = regua_da_fonte(contam, calibracao.regua_engajamento)
+    #: A RÉGUA PODE VIR DE FORA, e é `medir_lente` quem a manda: numa lente com
+    #: várias fontes ela é do CONJUNTO (ver `regua_da_lente`), senão o
+    #: denominador único somaria grandezas diferentes. Sem o parâmetro, a decisão
+    #: é desta fonte — é como a ingestão e os testes de uma fonte só a chamam.
+    regua = regua or regua_da_fonte(contam, calibracao.regua_engajamento)
 
     total = Contagem()
     for linha in contam:
@@ -352,11 +386,11 @@ def medir_lente(
     passa a pesar mais. Em junho de 2026 a Bites responde por 72% dos itens da
     Sociedade digital, e a lente caiu de 36 para 35.
 
-    A RÉGUA CONTINUA POR FONTE, e isso não é detalhe: o que se soma são as
-    CONTAGENS JÁ PONDERADAS de cada fonte, cada uma medida pela régua que ela
-    consegue cumprir (ver `regua_da_fonte`). Juntar as linhas cruas antes de
-    ponderar faria uma fonte sem engajamento ser medida pela régua de outra —
-    exatamente o defeito que `regua_da_fonte` existe para evitar.
+    A RÉGUA É DO CONJUNTO, e não de cada fonte (ver `regua_da_lente`). Era por
+    fonte, e com a média dos NS isso estava certo; com um denominador só, uma
+    fonte medida em engajamento e outra em menções fariam o denominador somar
+    grandezas diferentes. O que se soma são as contagens já ponderadas de cada
+    fonte, todas pela MESMA régua — a que todas conseguem cumprir.
 
     A ESTIMATIVA SÓ ENTRA ONDE NÃO HÁ MEDIÇÃO. Havendo contagem, ela é
     ignorada: medido ganha de suposto, sempre.
@@ -388,8 +422,10 @@ def medir_lente(
     #: entra no mesmo balde; o NS sai uma vez, do total.
     total = Contagem()
     com_dado: list[str] = []
+    #: UMA RÉGUA PARA A LENTE INTEIRA, decidida antes de somar nada.
+    regua = regua_da_lente(ligadas, calibracao.regua_engajamento)
     for fonte, somas in sorted(ligadas.items()):
-        contagem = ponderar(somas, calibracao)
+        contagem = ponderar(somas, calibracao, regua)
         if ns(contagem) is not None:
             total = total + contagem
             com_dado.append(fonte)

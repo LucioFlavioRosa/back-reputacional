@@ -61,10 +61,11 @@ PONTOS_POR_NS = 50
 
 @dataclass(frozen=True, slots=True)
 class PesosDoTema:
-    """Um tema dentro de uma FONTE, com as somas já ponderadas.
+    """Um tema dentro de uma fonte, com as somas já ponderadas.
 
-    O GRÃO É A FONTE, e não a lente, porque é nela que o NS se forma: a lente é
-    a média dos NS das fontes dela.
+    O GRÃO CONTINUA SENDO A FONTE porque é assim que a menção chega — cada
+    fornecedor com a sua taxonomia —, mas o DENOMINADOR é da lente: o NS se forma
+    sobre todos os itens do mês, somando as fontes (ver `medir_lente`).
     """
 
     lente: str
@@ -73,10 +74,11 @@ class PesosDoTema:
     #: Já multiplicados pelo tier e pela medida de engajamento em vigor.
     positivas: float
     negativas: float
-    #: O total ponderado da FONTE no mês — o denominador do NS dela.
-    total_da_fonte: float
-    #: Quantas fontes desta lente tiveram dado no mês. É o divisor da média.
-    fontes_da_lente: int
+    #: O total ponderado da LENTE no mês — o denominador do NS dela, somando
+    #: todas as fontes. Era o total da FONTE, mais um divisor pelo número de
+    #: fontes, quando a lente era a média dos NS; com um denominador só, essas
+    #: duas peças viraram esta.
+    total_da_lente: float
     #: As contagens cruas, só para a tela dizer "755 positivas".
     mencoes_positivas: int
     mencoes_negativas: int
@@ -146,8 +148,12 @@ def temas_que_pesaram_na_lente(
                 tema=tema,
                 positivas=0,
                 negativas=0,
-                total_da_fonte=0,
-                fontes_da_lente=0,
+                #: ZERO PORQUE ESTE É UM AGREGADO JÁ CONVERTIDO EM PONTOS: as
+                #: contribuições das peças por fonte já foram somadas acima, e
+                #: este objeto só carrega o rótulo e as contagens cruas para a
+                #: tela. Pôr um denominador aqui convidaria alguém a recalcular
+                #: a contribuição a partir dele — e ela já está calculada.
+                total_da_lente=0,
                 mencoes_positivas=int(valores[1]),
                 mencoes_negativas=int(valores[2]),
             ),
@@ -178,15 +184,20 @@ def temas_que_pesaram_na_lente(
 def contribuicao_no_ns(peso: PesosDoTema) -> float:
     """Quanto este tema pôs no NS da LENTE, com sinal.
 
-    DIVIDIDO PELO NÚMERO DE FONTES porque a lente é a média delas: um tema
-    que domina uma fonte de duas mexe metade do que mexeria se a fonte fosse
-    única. Sem esse divisor, uma lente de duas fontes soma o dobro do que de
-    fato tem.
+    SOBRE O TOTAL DA LENTE, e isto é o que faz a conta fechar. Era sobre o total
+    da FONTE, dividido pelo número de fontes, porque a lente era a média dos NS
+    delas. Com o denominador único (ver `medir_lente`), a soma das contribuições
+    de todos os temas tem de recuperar o NS da lente — é a propriedade que torna
+    a frase auditável, e era ela que o divisor por fonte quebrava.
+
+    ACHADO DE REVISÃO: a nota já havia passado para o denominador único e esta
+    conta não. A lente dizia 35 e os temas explicavam como se cada fonte tivesse
+    metade do voto; a diferença ia para `pontos_sem_tema`, que passaria a mentir
+    sobre quanto não tem explicação.
     """
-    if not peso.total_da_fonte or not peso.fontes_da_lente:
+    if not peso.total_da_lente:
         return 0.0
-    saldo = (peso.positivas - peso.negativas) / peso.total_da_fonte
-    return saldo / peso.fontes_da_lente
+    return (peso.positivas - peso.negativas) / peso.total_da_lente
 
 
 def pontos_no_indice(peso: PesosDoTema, peso_efetivo: int) -> float:
@@ -242,8 +253,12 @@ def temas_que_pesaram(
                 tema=tema,
                 positivas=0,
                 negativas=0,
-                total_da_fonte=0,
-                fontes_da_lente=0,
+                #: ZERO PORQUE ESTE É UM AGREGADO JÁ CONVERTIDO EM PONTOS: as
+                #: contribuições das peças por fonte já foram somadas acima, e
+                #: este objeto só carrega o rótulo e as contagens cruas para a
+                #: tela. Pôr um denominador aqui convidaria alguém a recalcular
+                #: a contribuição a partir dele — e ela já está calculada.
+                total_da_lente=0,
                 mencoes_positivas=int(valores[1]),
                 mencoes_negativas=int(valores[2]),
             ),

@@ -249,8 +249,9 @@ FICHA_DO_DESTAQUE = Ficha(
             termo="Nota da lente",
             texto=(
                 "O saldo de sentimento das fontes ligadas, na escala de 0 a "
-                "100. Com mais de uma fonte é a média simples dos saldos — a "
-                "que classifica mais posts não decide a lente sozinha."
+                "100. Com mais de uma fonte, as menções das duas entram na "
+                "mesma conta: um denominador só, para a soma dos recortes "
+                "fechar com a nota."
             ),
         ),
         Conceito(

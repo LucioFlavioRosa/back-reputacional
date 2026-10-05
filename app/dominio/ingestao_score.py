@@ -26,6 +26,12 @@ from app.dominio.score import Sentimento, Tier, peso_do_cargo, peso_do_engajamen
 
 #: Os campos de `mencao` que uma planilha pode alimentar. Um mapeamento que
 #: cite outro nome é erro de cadastro, e não coluna ignorada em silêncio.
+#:
+#: OS SETE DO PADRÃO AEGEA ENTRARAM AQUI (0055), e era um achado de revisão: eles
+#: existiam na tabela e no `MencaoLida`, mas esta lista é a porta do importador
+#: MENSAL — sem eles, um fornecedor que mapeasse `id_fonte` teria a planilha
+#: recusada por "campo desconhecido", e a carga mensal entraria sem `id_fonte`,
+#: deixando o índice único que protege a recarga sem nada para proteger.
 CAMPOS = frozenset(
     {
         "data",
@@ -38,6 +44,14 @@ CAMPOS = frozenset(
         "publico_alvo",
         "tema",
         "unidade",
+        # -- o padrão Aegea (0055) --
+        "id_fonte",
+        "uf",
+        "subtema",
+        "perfil_autor",
+        "titulo_texto",
+        "link",
+        "peso_tier",
         "teor",
         "autor",
     }

@@ -710,34 +710,42 @@ def pesos_por_tema(
 
     linhas = list(sessao.execute(consulta))
 
-    # A MESMA RÉGUA POR FONTE QUE A LENTE USA. `regua_da_fonte` decide, lá no
-    # domínio, que uma fonte sem o dado pedido é contada por menções — e esta
-    # conta TEM de decidir igual, ou ela para de fechar com o número que
-    # explica. Não é a mesma chamada porque não é o mesmo dado de entrada: a
-    # lente soma `score_mes_fonte`, já agregado, e aqui se lê a menção crua,
-    # que é o que permite abrir por tema. A regra é uma; a matéria-prima, duas.
+    # A MESMA RÉGUA QUE A LENTE USA, E ELA É DA LENTE. `regua_da_lente` decide,
+    # lá no domínio, que basta UMA fonte sem o dado pedido para a lente inteira
+    # ser contada por menções — e esta conta TEM de decidir igual, ou ela para de
+    # fechar com o número que explica. Não é a mesma chamada porque não é o mesmo
+    # dado de entrada: a lente soma `score_mes_fonte`, já agregado, e aqui se lê a
+    # menção crua, que é o que permite abrir por tema. A regra é uma; a
+    # matéria-prima, duas.
+    #
+    # ERA POR FONTE, e deixou de ser quando a nota passou a ter um denominador
+    # só: a fonte sem engajamento seria medida em menções e a outra em curtidas,
+    # dentro da mesma razão.
     medido_por_fonte: dict[tuple[date, str], float] = {}
-    for mes, _lente, fonte, _tema, _sent, tier, cargo, engajamento, quantas in linhas:
+    fontes_da_lente: dict[tuple[date, str], set[str]] = {}
+    for mes, lente, fonte, _tema, _sent, tier, cargo, engajamento, quantas in linhas:
         peso = pesos_de_tier.get(tier, 1.0) if tier else 1.0
         medido_por_fonte[(mes, fonte)] = medido_por_fonte.get((mes, fonte), 0.0) + (
             peso * medida(calibracao.regua_engajamento, cargo, engajamento, quantas)
         )
-    regua_de: dict[tuple[date, str], str] = {
-        chave: calibracao.regua_engajamento if total else REGUA_DE_CONTAGEM
-        for chave, total in medido_por_fonte.items()
-    }
-
-    # O DENOMINADOR É A FONTE INTEIRA, inclusive as menções sem tema: elas
-    # entraram no NS, e tirá-las faria as contribuições somarem mais do que a
-    # fonte de fato pôs.
-    total_da_fonte: dict[tuple[date, str], float] = {}
-    fontes_da_lente: dict[tuple[date, str], set[str]] = {}
-    for mes, lente, fonte, _tema, _sent, tier, cargo, engajamento, quantas in linhas:
-        peso = pesos_de_tier.get(tier, 1.0) if tier else 1.0
-        total_da_fonte[(mes, fonte)] = total_da_fonte.get((mes, fonte), 0.0) + (
-            peso * medida(regua_de[(mes, fonte)], cargo, engajamento, quantas)
-        )
         fontes_da_lente.setdefault((mes, lente), set()).add(fonte)
+
+    regua_de: dict[tuple[date, str], str] = {}
+    for (mes, lente), fontes in fontes_da_lente.items():
+        cumprem = all(medido_por_fonte.get((mes, fonte)) for fonte in fontes)
+        regua_de[(mes, lente)] = (
+            calibracao.regua_engajamento if cumprem else REGUA_DE_CONTAGEM
+        )
+
+    # O DENOMINADOR É A LENTE INTEIRA — todas as fontes, inclusive as menções sem
+    # tema: elas entraram no NS, e tirá-las faria as contribuições somarem mais do
+    # que a lente de fato pôs.
+    total_da_lente: dict[tuple[date, str], float] = {}
+    for mes, lente, _fonte, _tema, _sent, tier, cargo, engajamento, quantas in linhas:
+        peso = pesos_de_tier.get(tier, 1.0) if tier else 1.0
+        total_da_lente[(mes, lente)] = total_da_lente.get((mes, lente), 0.0) + (
+            peso * medida(regua_de[(mes, lente)], cargo, engajamento, quantas)
+        )
 
     # (mês, lente, fonte, tema) -> [pos ponderado, neg ponderado, pos, neg]
     por_tema: dict[tuple[date, str, str, str], list[float]] = {}
@@ -745,7 +753,7 @@ def pesos_por_tema(
         if tema is None or sentimento not in ("pos", "neg"):
             continue
         peso = pesos_de_tier.get(tier, 1.0) if tier else 1.0
-        valor = peso * medida(regua_de[(mes, fonte)], cargo, engajamento, quantas)
+        valor = peso * medida(regua_de[(mes, lente)], cargo, engajamento, quantas)
         atual = por_tema.setdefault((mes, lente, fonte, tema), [0.0, 0.0, 0.0, 0.0])
         if sentimento == "pos":
             atual[0] += valor
@@ -763,8 +771,7 @@ def pesos_por_tema(
                 tema=tema,
                 positivas=pos,
                 negativas=neg,
-                total_da_fonte=total_da_fonte.get((mes, fonte), 0.0),
-                fontes_da_lente=len(fontes_da_lente.get((mes, lente), ())),
+                total_da_lente=total_da_lente.get((mes, lente), 0.0),
                 mencoes_positivas=int(cruas_pos),
                 mencoes_negativas=int(cruas_neg),
             )
