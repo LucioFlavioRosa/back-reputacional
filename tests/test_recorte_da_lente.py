@@ -329,26 +329,22 @@ def test_toda_dimensao_do_filtro_TEM_rotulo():
     assert do_filtro == set(ROTULO_DA_DIMENSAO)
 
 
-def test_o_historico_traz_a_NOTA_do_mes_quando_nao_ha_recorte(sessao, sociedade_de_junho):
-    """O DONO DO PRODUTO LEU OS NÚMEROS COMO VARIAÇÃO MÊS A MÊS, e não são: cada
-    um é a distância da nota daquele mês até 50, o neutro. Em junho de 2026, o
-    histórico mostrava "-15,14" e o ponto da Jornada mostrava 35 — e nada na tela
-    ligava os dois.
+def test_o_historico_NAO_deriva_a_nota_do_mes(sessao, sociedade_de_junho):
+    """DUAS VEZES ACHADO DE REVISÃO, pela mesma razão de fundo: um segundo caminho
+    para o mesmo número.
 
-    A IDENTIDADE É EXATA quando não há recorte: `nota = 50 + impacto`, porque
-    `impacto = 50 × NS` e `nota = 50 + 50 × NS`. Então a nota do mês viaja junto,
-    e o painel passa a dizer o mesmo número que o gráfico que o abriu.
+    O dono do produto leu a coluna do histórico como variação mês a mês — e leu
+    certo o que a tela mostrava: cada número é a distância da nota até 50, e nada
+    dizia isso. Eu resolvi derivando a nota aqui, `50 + impacto`, que é identidade
+    exata sem recorte. A revisão achou dois furos: o `impacto` já vinha com duas
+    casas, e `round(50 + 35.50)` dá 86 onde `para_score` dá 85; e
+    `medir_uma_lente` exclui a estimativa de propósito, então num mês estimado a
+    lente publicaria nota e este histórico diria "sem base".
 
-    COM RECORTE ATIVO ELA NÃO VAI, de propósito: aí o impacto é a CONTRIBUIÇÃO do
-    pedaço na nota do mês (denominador do mês inteiro), e a nota do pedaço é outra
-    conta — mostrar as duas lado a lado como se uma explicasse a outra seria o
-    mesmo erro de leitura, com outro número."""
+    A NOTA OFICIAL JÁ ESTÁ NA TELA (`PontoDaSerie.notas_das_lentes`, o número que
+    a Jornada desenha). Aqui fica só o que é desta conta: o impacto."""
     inteiro = _recorte(sessao)
     deste_mes = next(h for h in inteiro.historico if h["mes"] == "2026-06")
 
-    assert deste_mes["nota"] == round(50 + deste_mes["impacto"])
-    #: E é a MESMA nota que a lente mostra — a do ponto na Jornada.
-    assert deste_mes["nota"] == inteiro.nota
-
-    com_recorte = _recorte(sessao, uf="RJ")
-    assert all(h["nota"] is None for h in com_recorte.historico)
+    assert "nota" not in deste_mes
+    assert set(deste_mes) == {"mes", "impacto", "itens", "sem_base"}

@@ -446,7 +446,14 @@ def _bloco(
         #: DITO NA CHAMADA VENCE O MAPA, e as abas de "onde está a causa" são o
         #: caso: o título delas é o nome da dimensão, que já vem do domínio —
         #: repeti-lo no mapa seria manter a mesma lista em dois lugares.
-        recorta=recorta or RECORTE_DO_PAINEL.get(titulo),
+        #:
+        #: BLOCO SEM LINHA NENHUMA NÃO RECORTA, e isto é achado de revisão: o mapa
+        #: casa por TÍTULO, e a Institucional monta um "Temas mais falados" vazio
+        #: (ela lê o CRM, não clipping) que passou a anunciar `recorta: "tema"`.
+        #: Não há clique falso na tela de hoje — sem linha não há botão —, mas o
+        #: contrato prometia o que não existe, e é o contrato que o próximo
+        #: consumidor lê.
+        recorta=(recorta or RECORTE_DO_PAINEL.get(titulo)) if dados else None,
         coluna_do_link=coluna_do_link,
         ficha=_saida_da_ficha(ficha),
     )
@@ -2136,21 +2143,26 @@ def obter_recorte(
     #: lado porque um impacto pequeno com muitos itens e um impacto pequeno com
     #: dois itens são situações diferentes.
     #:
-    #: E A NOTA DO MÊS VAI JUNTO QUANDO NÃO HÁ RECORTE, porque sem recorte a
-    #: identidade é exata: `impacto = 50 × NS` e `nota = 50 + 50 × NS`, logo
-    #: `nota = 50 + impacto`.
+    #: A NOTA DO MÊS NÃO SAI DAQUI, e eu já tentei que saísse — duas vezes achado
+    #: de revisão, pela mesma razão de fundo: um segundo caminho para o mesmo
+    #: número.
     #:
-    #: O DONO DO PRODUTO LEU A COLUNA COMO VARIAÇÃO MÊS A MÊS. Não é: cada número
-    #: é a distância da nota daquele mês até 50, o neutro. Em junho de 2026 o
-    #: histórico dizia "-15,14" e o ponto da Jornada dizia 35, sem nada na tela
-    #: ligando os dois — e "-15" ao lado de "-8" e "+29" se lê como salto de um
-    #: mês para o outro. A nota ao lado resolve pelo número que a pessoa já
-    #: conhece do gráfico.
+    #: O DONO DO PRODUTO LEU A COLUNA COMO VARIAÇÃO MÊS A MÊS, e ele leu certo o
+    #: que a tela mostrava: cada número é a distância da nota daquele mês até 50,
+    #: e nada dizia isso. Eu resolvi derivando a nota aqui (`50 + impacto`, que é
+    #: identidade exata quando não há recorte) — e a revisão mostrou DOIS furos:
     #:
-    #: COM RECORTE ATIVO ELA NÃO VAI, de propósito: aí o impacto é a CONTRIBUIÇÃO
-    #: daquele pedaço na nota do mês (o denominador é o do mês inteiro), e a nota
-    #: do pedaço é outra conta. Pôr as duas lado a lado como se uma explicasse a
-    #: outra seria o mesmo erro de leitura, com outro número.
+    #:   arredondamento   `impacto` já vinha com 2 casas, e `round(50 + 35.50)`
+    #:                    dá 86 onde `para_score` dá 85
+    #:   estimativa       `medir_uma_lente` exclui `score_estimativa` de
+    #:                    propósito, então num mês estimado a lente publica nota
+    #:                    e este histórico diria "sem base"
+    #:
+    #: A NOTA OFICIAL JÁ ESTÁ NA TELA: `PontoDaSerie.notas_das_lentes` é o número
+    #: que a própria Jornada desenha, mês a mês, estimativa incluída. Medi-lo de
+    #: novo aqui custaria `indice_do_mes` oito vezes (cinco lentes por chamada)
+    #: para chegar, na melhor das hipóteses, ao mesmo valor. A tela junta os dois;
+    #: aqui fica só o que é desta conta — o impacto.
     historico = []
     for linha in serie:
         do_mes = round(
@@ -2171,7 +2183,6 @@ def obter_recorte(
                 "impacto": do_mes,
                 "itens": int(linha["pos"] + linha["neu"] + linha["neg"]),
                 "sem_base": bool(linha["sem_base"]),
-                "nota": None if filtro.ativo or linha["sem_base"] else round(50 + do_mes),
             }
         )
 
