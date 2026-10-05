@@ -885,3 +885,46 @@ def test_a_dimensao_ESPERADA_que_nao_explica_vira_AVISO(sessao):
         frase for frase in dossie.lacunas_da_causa if frase.startswith("Perfil de quem fala")
     )
     assert "um valor só" in do_perfil
+
+
+def test_a_tabela_de_mencoes_DIZ_qual_coluna_e_o_endereco_da_linha(sessao, sociedade_de_junho):
+    """O DONO DO PRODUTO PEDIU A LINHA, E NÃO O LINK: "não precisa ter o link no
+    modal, mas se clicar gostaria de acessar a página".
+
+    UMA COLUNA "LINK" COM "ABRIR ↗" EM CADA LINHA É RUÍDO: a coluna existe só
+    para repetir, trinta vezes, a mesma palavra — e rouba largura do texto da
+    menção, que é o que se lê. O endereço continua vindo no dado; o que muda é
+    que ele passa a ser o DESTINO DA LINHA, e não uma célula.
+
+    QUEM DECIDE É O SERVIDOR, pelo mesmo motivo de `recorta`: a alternativa é a
+    tela procurar uma coluna chamada "link" — adivinhação pelo nome, que é
+    exatamente como a escolha do schema da tabela já quebrou uma vez."""
+    bites = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "bites")).one()
+    sessao.add(
+        Mencao(
+            fonte_id=bites.id,
+            mes=MES,
+            sentimento="neg",
+            titulo_texto="Falta de água no bairro",
+            link="https://exemplo.com/post/1",
+            uf="RJ",
+        )
+    )
+    sessao.flush()
+
+    dossie = _da_sociedade(sessao)
+    tabela = dossie.materias_recentes
+
+    assert tabela.coluna_do_link == "link"
+    #: A COLUNA SAI DA TELA, mas o endereço CONTINUA NO DADO — é ele que a linha
+    #: usa para levar à página.
+    assert "link" not in [coluna.chave for coluna in tabela.colunas]
+    assert tabela.dados[0]["link"] == "https://exemplo.com/post/1"
+
+
+def test_a_tabela_que_nao_tem_endereco_nao_promete_nenhum(sessao, imprensa_de_junho):
+    """A tabela de matérias da Imprensa não traz link — e uma linha que parece
+    clicável e não leva a lugar nenhum custa mais do que uma que não parece."""
+    dossie = _dossie(sessao)
+
+    assert dossie.materias_recentes.coluna_do_link is None

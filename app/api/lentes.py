@@ -123,6 +123,19 @@ class BlocoSaida(BaseModel):
     cores: list[str] = Field(default_factory=list)
     #: Só nas tabelas.
     colunas: list[ColunaSaida] = Field(default_factory=list)
+    #: A coluna cujo valor é o ENDEREÇO DA LINHA — a tela a usa como destino de
+    #: um clique na linha, e NÃO desenha a coluna.
+    #:
+    #: O DONO DO PRODUTO PEDIU A LINHA, E NÃO O LINK: "não precisa ter o link no
+    #: modal, mas se clicar gostaria de acessar a página". Uma coluna "Link" com
+    #: "Abrir ↗" repetido trinta vezes é ruído, e rouba largura do texto da
+    #: menção — que é o que se lê.
+    #:
+    #: VEM DO SERVIDOR pelo mesmo motivo de `recorta`: a alternativa é a tela
+    #: procurar uma coluna chamada "link", que é adivinhação pelo nome — o jeito
+    #: exato como a escolha do schema da tabela já quebrou uma vez (ver
+    #: `ColunaSaida`).
+    coluna_do_link: str | None = None
     #: A dimensão do recorte que um clique neste painel aplica — a chave do
     #: parâmetro da rota (`tema`, `empresa`, `perfil_autor`). Nula no bloco que
     #: não recorta nada (a evolução, as tabelas).
@@ -326,7 +339,6 @@ COLUNAS_DAS_MENCOES = [
     ColunaSaida(chave="autor", titulo="Quem falou"),
     ColunaSaida(chave="perfil", titulo="Perfil"),
     ColunaSaida(chave="engajamento", titulo="Engajamento"),
-    ColunaSaida(chave="link", titulo="Link"),
 ]
 
 
@@ -407,6 +419,7 @@ def _bloco(
     colunas: list[ColunaSaida] | None = None,
     cores: list[str] | None = None,
     recorta: str | None = None,
+    coluna_do_link: str | None = None,
 ) -> BlocoSaida:
     return BlocoSaida(
         tipo=tipo,
@@ -426,6 +439,7 @@ def _bloco(
         #: caso: o título delas é o nome da dimensão, que já vem do domínio —
         #: repeti-lo no mapa seria manter a mesma lista em dois lugares.
         recorta=recorta or RECORTE_DO_PAINEL.get(titulo),
+        coluna_do_link=coluna_do_link,
         ficha=_saida_da_ficha(ficha),
     )
 
@@ -1365,6 +1379,9 @@ def _mencoes_da_sociedade(
         None,
         subtipo="mencoes",
         colunas=COLUNAS_DAS_MENCOES,
+        #: O ENDEREÇO SAIU DA GRADE E VIROU O DESTINO DA LINHA — ver
+        #: `BlocoSaida.coluna_do_link`. O valor continua em `dados`.
+        coluna_do_link="link",
     )
 
 
