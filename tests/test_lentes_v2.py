@@ -1138,3 +1138,87 @@ class TestFiltroDaSociedade:
         )
 
         assert opcoes["perfis"] == []
+
+
+class TestMencoesDaSociedade:
+    """A LISTA DE ITENS — o nível 5 do pacote, a menção em si.
+
+    ELA ESTAVA DESLIGADA NESTA LENTE, e por uma razão que era boa: o Jones
+    restringiu a tabela à Imprensa em 02/10/2026 porque as colunas dela são de
+    clipping ("Veículo", "Aegea Tier") e não dizem nada de uma menção de rede.
+
+    O QUE MUDOU: a carga do pacote trouxe o texto da menção e o link dela —
+    2.208 dos 14.855 itens, as negativas, as de tier alto e as mais engajadas.
+    Com texto e link, a lista da Sociedade passa a ter o que mostrar; o que ela
+    precisa são as colunas DELA, que é justamente o motivo da restrição.
+    """
+
+    def test_a_lista_traz_o_texto_e_o_link_da_mencao(self, sessao):
+        _social(
+            sessao,
+            titulo_texto="Falta água no bairro há três dias",
+            link="https://instagram.com/p/abc",
+            autor="@vizinho",
+            engajamento=420,
+        )
+
+        dossie = _dossie(sessao, "sociedade")
+
+        assert dossie.materias_recentes.dados, "a lente tem menção com texto"
+        linha = dossie.materias_recentes.dados[0]
+        assert linha["texto"] == "Falta água no bairro há três dias"
+        assert linha["link"] == "https://instagram.com/p/abc"
+        assert linha["autor"] == "@vizinho"
+
+    def test_as_colunas_sao_as_DA_LENTE_e_nao_as_de_clipping(self, sessao):
+        """O MOTIVO DA RESTRIÇÃO ERA ESTE: "Veículo" e "Aegea Tier" não dizem
+        nada de uma menção de rede. A Sociedade recebe as colunas dela."""
+        _social(sessao, titulo_texto="qualquer coisa")
+
+        dossie = _dossie(sessao, "sociedade")
+
+        chaves = [coluna.chave for coluna in dossie.materias_recentes.colunas]
+        assert "texto" in chaves
+        assert "autor" in chaves
+        assert "engajamento" in chaves
+        assert "tier" not in chaves
+
+    def test_quem_TEM_TEXTO_vem_primeiro(self, sessao):
+        """OITENTA E SEIS POR CENTO DOS ITENS CHEGAM SEM TEXTO, e o pacote diz
+        que isso é esperado — o resto vem na primeira carga mensal completa.
+
+        ORDENAR POR DATA DEIXARIA A LISTA TODA SEM TEXTO: cinco linhas de
+        metadado, sem nada a ler. Quem tem texto vem primeiro, e dentro deles o
+        maior engajamento — que é a ordem que o pacote pede para esta lente.
+        """
+        from datetime import date as _date
+
+        _social(sessao, titulo_texto=None, data=_date(2026, 6, 28))
+        _social(sessao, titulo_texto="o que se lê", data=_date(2026, 6, 2), engajamento=10)
+        _social(sessao, titulo_texto="o mais engajado", data=_date(2026, 6, 1), engajamento=9000)
+
+        dossie = _dossie(sessao, "sociedade")
+        textos = [linha["texto"] for linha in dossie.materias_recentes.dados]
+
+        assert textos[0] == "o mais engajado"
+        assert textos[1] == "o que se lê"
+
+    def test_sem_nenhuma_mencao_com_texto_a_ficha_DIZ_isso(self, sessao):
+        """Lista vazia sem explicação faz quem olha concluir que não houve
+        menção no mês — e houve: 6.932 em junho, nenhuma com texto ainda."""
+        _social(sessao, titulo_texto=None)
+
+        dossie = _dossie(sessao, "sociedade")
+
+        assert dossie.materias_recentes.dados == []
+        assert any(
+            "texto" in lacuna for lacuna in dossie.materias_recentes.ficha.lacunas
+        )
+
+    def test_a_imprensa_continua_com_as_colunas_de_clipping(self, sessao):
+        """O contrapeso: a lente que já tinha a lista não muda."""
+        dossie = _dossie(sessao, "imprensa")
+
+        chaves = [coluna.chave for coluna in dossie.materias_recentes.colunas]
+        assert "veiculo" in chaves
+        assert "tier" in chaves

@@ -348,14 +348,25 @@ def materias_recentes(
     filtro: FiltroDeMencoes | None = None,
     quantas: int = 5,
 ) -> list[dict]:
-    """As `quantas` matérias mais recentes do mês — o drill-down até a linha.
+    """As `quantas` menções do mês que têm o que mostrar — o drill-down até a linha.
 
-    NÃO É A MATÉRIA, É O METADADO DELA: `mencao` não guarda título nem link
-    hoje — o pipeline de importação atual não tem como ler isso (ver
-    `ingestao_score.CAMPOS`), independente do que a planilha de origem traga.
+    JÁ FOI SÓ METADADO, e o docstring dizia que `mencao` não guardava título nem
+    link porque o importador não tinha como lê-los. Deixou de ser verdade na
+    0055: o padrão Aegea traz o texto e o endereço da menção, e a carga da
+    Sociedade digital pôs 2.208 deles no banco — as negativas, as de tier alto e
+    as mais engajadas, que é a amostra que o pacote avisa que vem na primeira
+    carga.
+
+    QUEM TEM TEXTO VEM PRIMEIRO, e isto é o que faz a lista servir: 86% dos itens
+    chegam sem texto, então ordenar só por data devolveria cinco linhas de
+    metadado, sem nada a ler. Dentro dos que têm, o maior engajamento antes — a
+    ordem que o pacote pede para esta lente.
+
+    A DATA CONTINUA SENDO O ÚLTIMO CRITÉRIO, e o nulo dela fica por último: uma
+    linha sem data não é "a mais antiga", é "não se sabe quando".
 
     A CALIBRAÇÃO VALE AQUI TAMBÉM, pela mesma razão do resto do dossiê: uma
-    matéria de fonte desligada não entrou na nota lá em cima, e listá-la aqui
+    menção de fonte desligada não entrou na nota lá em cima, e listá-la aqui
     embaixo contaria uma história que o número não sustenta.
 
     SEM DADO É LISTA VAZIA, igual ao resto do dossiê — nunca uma linha
@@ -370,6 +381,13 @@ def materias_recentes(
             Mencao.tier,
             Mencao.atributo,
             rotulo,
+            # -- o que a 0055 trouxe: a menção em si, e quem a escreveu -----
+            Mencao.titulo_texto,
+            Mencao.link,
+            Mencao.autor,
+            Mencao.perfil_autor,
+            Mencao.engajamento,
+            Mencao.uf,
         )
         .select_from(Mencao)
         .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
@@ -380,10 +398,18 @@ def materias_recentes(
             *so_fontes_ligadas(calibracao),
             *condicoes_do_filtro(filtro),
         )
-        # MAIS RECENTE PRIMEIRO; SEM DATA POR ÚLTIMO — `data` é opcional no
-        # schema (algumas fontes não trazem a data exata da matéria), e uma
+        # QUEM TEM TEXTO PRIMEIRO, depois o maior engajamento, e só então a
+        # data. Ordenar só por data devolveria cinco linhas de metadado numa
+        # lente em que 86% dos itens chegam sem texto — uma lista sem nada a ler.
+        #
+        # SEM DATA POR ÚLTIMO, como antes: `data` é opcional no schema, e uma
         # linha sem data não é "a mais antiga", é "não se sabe quando".
-        .order_by(Mencao.data.desc().nulls_last(), Mencao.criado_em.desc())
+        .order_by(
+            Mencao.titulo_texto.is_(None),
+            Mencao.engajamento.desc().nulls_last(),
+            Mencao.data.desc().nulls_last(),
+            Mencao.criado_em.desc(),
+        )
         .limit(quantas)
     )
     return [
@@ -393,9 +419,28 @@ def materias_recentes(
             "sentimento": sentimento,
             "tier": tier,
             "atributo": atributo,
+            "titulo_texto": titulo_texto,
+            "link": link,
+            "autor": autor,
+            "perfil_autor": perfil_autor,
+            "engajamento": engajamento,
+            "uf": uf,
             "tema": tema,
         }
-        for data, veiculo, sentimento, tier, atributo, tema in sessao.execute(consulta)
+        for (
+            data,
+            veiculo,
+            sentimento,
+            tier,
+            atributo,
+            tema,
+            titulo_texto,
+            link,
+            autor,
+            perfil_autor,
+            engajamento,
+            uf,
+        ) in sessao.execute(consulta)
     ]
 
 

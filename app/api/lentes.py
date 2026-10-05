@@ -279,6 +279,26 @@ COLUNAS_DAS_MATERIAS = [
     ColunaSaida(chave="tema", titulo="Tema"),
 ]
 
+#: As colunas da MENÇÃO DE REDE, que não são as da matéria de jornal.
+#:
+#: O MOTIVO DA RESTRIÇÃO DO JONES (02/10/2026) ERA ESTE: a tabela de matérias
+#: existia só na Imprensa porque "Veículo" e "Aegea Tier" não dizem nada de um
+#: post — e mostrar colunas vazias é pior que não mostrar tabela. A Sociedade
+#: passa a ter a lista porque a carga do padrão trouxe o que ela precisa (o
+#: texto, o link, quem escreveu e o engajamento), com as colunas dela.
+#:
+#: O TEXTO VEM PRIMEIRO porque é o que se lê; o resto é o que localiza a menção.
+COLUNAS_DAS_MENCOES = [
+    ColunaSaida(chave="texto", titulo="Menção"),
+    ColunaSaida(chave="quando", titulo="Quando"),
+    ColunaSaida(chave="veiculo", titulo="Rede"),
+    ColunaSaida(chave="sentimento", titulo="Classificação"),
+    ColunaSaida(chave="autor", titulo="Quem falou"),
+    ColunaSaida(chave="perfil", titulo="Perfil"),
+    ColunaSaida(chave="engajamento", titulo="Engajamento"),
+    ColunaSaida(chave="link", titulo="Link"),
+]
+
 
 def _ficha_da_base(fonte: str, colunas: tuple[str, ...], conceitos=()) -> Ficha:
     return Ficha(
@@ -1038,6 +1058,59 @@ TETO_DE_MATERIAS = 5
 TETO_DE_MATERIAS_FILTRADO = 30
 
 
+def _mencoes_da_sociedade(
+    sessao, lente, mes: date, calibracao: Calibracao, filtro: FiltroDeMencoes | None = None
+) -> BlocoSaida:
+    """As menções de rede do mês — o nível do item, nesta lente.
+
+    SÓ AS QUE TÊM TEXTO. Uma linha sem texto nesta tabela é um endereço sem
+    conteúdo: nem se lê, nem se clica. Elas continuam na nota, nos cortes e no
+    engajamento — o que não fazem é ocupar a lista de leitura.
+    """
+    quantas = TETO_DE_MATERIAS_FILTRADO if filtro and filtro.ativo else TETO_DE_MATERIAS
+    linhas = [
+        {
+            "texto": linha["titulo_texto"],
+            "quando": f"{linha['data']:%d/%m}" if linha["data"] else None,
+            "veiculo": linha["veiculo"],
+            "sentimento": _ROTULO_DO_SENTIMENTO.get(
+                linha["sentimento"], linha["sentimento"]
+            ),
+            "autor": linha["autor"],
+            "perfil": linha["perfil_autor"],
+            "engajamento": _num(linha["engajamento"]) if linha["engajamento"] else None,
+            "link": linha["link"],
+        }
+        for linha in repositorio_lentes.materias_recentes(
+            sessao, lente.id, mes, calibracao, filtro, quantas=quantas
+        )
+        if linha["titulo_texto"]
+    ]
+    return _bloco(
+        "tabela",
+        "Menções do mês",
+        linhas,
+        Ficha(
+            origem=Procedencia.PLANILHA,
+            fonte=_nomes_das_fontes(sessao, lente.id),
+            colunas=("Texto", "Link", "Autor", "Perfil do autor", "Engajamento"),
+            lacunas=(
+                # O NÚMERO É DO PACOTE, e dizer quanto falta é o que separa
+                # "não houve menção" de "o texto ainda não chegou": o
+                # fornecedor manda o conteúdo de uma amostra — as negativas,
+                # as de tier alto e as mais engajadas — e o resto vem na
+                # primeira carga mensal completa.
+                "O texto e o link vêm numa amostra das menções (as negativas, "
+                "as de maior alcance e as mais engajadas). As demais entram na "
+                "nota e nos cortes, mas não têm o que mostrar aqui.",
+            ),
+        ),
+        None,
+        subtipo="mencoes",
+        colunas=COLUNAS_DAS_MENCOES,
+    )
+
+
 def _materias_recentes(
     sessao, lente, mes: date, calibracao: Calibracao, filtro: FiltroDeMencoes | None = None
 ) -> BlocoSaida:
@@ -1047,7 +1120,16 @@ def _materias_recentes(
     restrição de TELA, pedida pelo Jones (2026-10-02), e não um juízo de que
     o dado do Mercado seja inválido. As colunas desta tabela ("Veículo",
     "Aegea Tier") são as mesmas duas que motivaram a restrição lá.
+
+    A SOCIEDADE SAIU DESSA RESTRIÇÃO, e pela própria razão dela: o motivo era
+    que as colunas de clipping não dizem nada de um post. A carga do padrão
+    trouxe o que uma menção de rede precisa — o texto, o link, quem escreveu e o
+    engajamento —, então ela ganha a lista com as colunas DELA
+    (`_mencoes_da_sociedade`). As outras três continuam como o Jones pediu.
     """
+    if lente.codigo == "sociedade":
+        return _mencoes_da_sociedade(sessao, lente, mes, calibracao, filtro)
+
     if lente.codigo != "imprensa":
         vazio_ficha = (
             Ficha(
