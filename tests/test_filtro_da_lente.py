@@ -404,3 +404,117 @@ def test_materias_recentes_sobe_o_teto_quando_ha_recorte(sessao):
 
     com_filtro = _dossie(sessao, veiculo="Veículo Único")
     assert len(com_filtro.materias_recentes.dados) == 7
+
+
+# =============================================================================
+# o recorte pelas dimensões do padrão Aegea
+# =============================================================================
+#
+# EU ABRI UMA PORTA QUE NÃO LEVAVA A LUGAR NENHUM: o endpoint de opções passou a
+# oferecer perfil do autor, UF, subtema e autor, e `FiltroDeMencoes` só conhecia
+# tier, veículo, atributo e tema. A tela ofereceria a escolha e o servidor
+# devolveria o mês inteiro, sem recorte e sem erro — a pior forma de não
+# funcionar, porque parece ter funcionado.
+#
+# O RECORTE TEM DE CHEGAR À NOTA, e não só à lista: é o que o pacote chama de
+# nível 3, e é a pergunta "quanto este pedaço pesa no número". Um filtro que
+# muda a lista e não muda a nota responde outra coisa.
+
+
+@pytest.fixture
+def sociedade_de_junho(sessao):
+    """Menções de rede em junho, variadas nas dimensões que a carga trouxe.
+
+    O AGREGADO VAI JUNTO, pela mesma razão do fixture da imprensa: o caminho SEM
+    filtro lê `score_mes_fonte`, e sem ele a nota viria nula mesmo com menções no
+    banco.
+    """
+    bites = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "bites")).one()
+    linhas = [
+        # perfil, uf, subtema, autor, sentimento
+        ("Figura pública", "RJ", "Falta de água", "@deputado", "neg"),
+        ("Figura pública", "SP", "Obra atrasada", "@vereadora", "pos"),
+        ("Cidadão", "RJ", "Falta de água", "@vizinho", "neg"),
+        ("Cidadão", "RJ", "Falta de água", "@vizinho", "pos"),
+        ("Cidadão", "SP", "Obra atrasada", "@outro", "pos"),
+        ("Cidadão", "SP", "Obra atrasada", "@outro", "pos"),
+    ]
+    for perfil, uf, subtema, autor, sentimento in linhas:
+        sessao.add(
+            Mencao(
+                fonte_id=bites.id,
+                mes=MES,
+                sentimento=sentimento,
+                perfil_autor=perfil,
+                uf=uf,
+                subtema=subtema,
+                autor=autor,
+                veiculo="Instagram",
+            )
+        )
+
+    por_sentimento: dict[str, int] = {}
+    for _perfil, _uf, _subtema, _autor, sentimento in linhas:
+        por_sentimento[sentimento] = por_sentimento.get(sentimento, 0) + 1
+    for sentimento, mencoes in por_sentimento.items():
+        sessao.add(
+            ScoreMesFonte(
+                fonte_id=bites.id,
+                mes=MES,
+                sentimento=sentimento,
+                tier="",
+                mencoes=mencoes,
+                soma_log=mencoes * peso_do_engajamento(None),
+                soma_engajamento=0,
+                soma_cargo=mencoes * peso_do_cargo(None),
+            )
+        )
+    sessao.flush()
+    return linhas
+
+
+def _da_sociedade(sessao, **filtro):
+    return obter_dossie(
+        sessao=sessao, usuario=_QuemOlha(), codigo="sociedade", mes="2026-06", **filtro
+    )
+
+
+def test_o_recorte_por_PERFIL_muda_a_nota_da_lente(sessao, sociedade_de_junho):
+    """Quatro positivas e duas negativas no mês dão nota 67. O recorte das duas
+    figuras públicas — uma negativa e uma positiva — dá 50."""
+    inteiro = _da_sociedade(sessao)
+    recortado = _da_sociedade(sessao, perfil_autor="Figura pública")
+
+    assert inteiro.nota == 67
+    assert inteiro.recorte_filtrado is False
+    assert recortado.nota == 50
+    assert recortado.recorte_filtrado is True
+
+
+def test_o_recorte_por_UF_por_SUBTEMA_e_por_AUTOR_tambem_recorta(sessao, sociedade_de_junho):
+    #: RJ: duas negativas e uma positiva -> 33. "Obra atrasada": três positivas
+    #: -> 100. "@vizinho": uma de cada -> 50.
+    assert _da_sociedade(sessao, uf="RJ").nota == 33
+    assert _da_sociedade(sessao, subtema="Obra atrasada").nota == 100
+    assert _da_sociedade(sessao, autor="@vizinho").nota == 50
+
+
+def test_DOIS_recortes_ao_mesmo_tempo_se_acumulam(sessao, sociedade_de_junho):
+    """É o empilhamento que o pacote pede no nível 3: escolher uma UF e, DENTRO
+    dela, um perfil. Os dois valem juntos, e não o último."""
+    so_uf = _da_sociedade(sessao, uf="RJ")
+    uf_e_perfil = _da_sociedade(sessao, uf="RJ", perfil_autor="Figura pública")
+
+    assert so_uf.nota == 33
+    #: Em RJ, a única figura pública é a negativa: nota 0.
+    assert uf_e_perfil.nota == 0
+
+
+def test_o_recorte_que_nao_casa_com_nada_NAO_devolve_o_mes_inteiro(sessao, sociedade_de_junho):
+    """O QUE ESTE TESTE PROTEGE é o modo de falhar silencioso: um filtro que o
+    servidor não conhece é ignorado, e a tela mostra o mês inteiro como se fosse
+    o recorte. Zero menções é uma resposta; o mês todo é uma mentira."""
+    vazio = _da_sociedade(sessao, uf="AC")
+
+    assert vazio.nota is None
+    assert vazio.ausencia is not None

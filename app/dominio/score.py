@@ -194,28 +194,52 @@ class Calibracao:
 
 @dataclass(frozen=True, slots=True)
 class FiltroDeMencoes:
-    """O recorte de uma lente na tela — tier, veículo, atributo, tema.
+    """O recorte de uma lente na tela, por qualquer dimensão da menção.
 
-    TODOS OS QUATRO SÃO SOBRE `mencao`, e nenhum deles existe em
-    `score_mes_fonte` (o agregado que a ingestão grava): aquela tabela só tem
-    grão de (fonte, mês, sentimento, tier). Um filtro de veículo/atributo/tema
-    não tem como ler dali — tem de agregar `mencao` na hora. Ver
-    `repositorio_score.somas_da_lente_filtradas`.
+    TODAS SÃO SOBRE `mencao`, e nenhuma existe em `score_mes_fonte` (o agregado
+    que a ingestão grava): aquela tabela só tem grão de (fonte, mês, sentimento,
+    tier). Um filtro de veículo, tema ou UF não tem como ler dali — tem de
+    agregar `mencao` na hora. Ver `repositorio_score.somas_da_lente_filtradas`.
 
     É UM RECORTE DE TELA, E NÃO CALIBRAÇÃO: a régua (`Calibracao`) é decisão
     de coordenação, versionada, e vale para todo mundo que olhar o índice.
     Este filtro é exploração de quem está lendo — por isso a nota recalculada
     com ele ativo não é "a nota do mês", e a tela precisa dizer isso.
+
+    AS QUATRO ÚLTIMAS VIERAM DO PADRÃO AEGEA (0055), e elas fecham uma porta que
+    eu havia aberto para o vazio: o endpoint de opções passou a oferecer perfil do
+    autor, UF, subtema e autor, e este recorte não os conhecia. A tela ofereceria
+    a escolha, o servidor ignoraria em silêncio e devolveria o mês inteiro como se
+    fosse o recorte — a pior forma de não funcionar, porque parece ter funcionado.
+
+    EMPILHAM-SE, e é o nível 3 do pacote: escolher uma UF e, dentro dela, um
+    perfil. Todas as dimensões preenchidas valem JUNTAS — cada uma é um `and` na
+    consulta, nunca a última vencendo as outras.
     """
 
     tier: str | None = None
     veiculo: str | None = None
     atributo: str | None = None
     tema_texto: str | None = None
+    perfil_autor: str | None = None
+    uf: str | None = None
+    subtema: str | None = None
+    autor: str | None = None
 
     @property
     def ativo(self) -> bool:
-        return bool(self.tier or self.veiculo or self.atributo or self.tema_texto)
+        return any(
+            (
+                self.tier,
+                self.veiculo,
+                self.atributo,
+                self.tema_texto,
+                self.perfil_autor,
+                self.uf,
+                self.subtema,
+                self.autor,
+            )
+        )
 
 
 @dataclass(frozen=True, slots=True)

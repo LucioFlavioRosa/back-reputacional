@@ -1506,6 +1506,14 @@ def obter_dossie(
     veiculo: Annotated[str | None, Query()] = None,
     atributo: Annotated[str | None, Query()] = None,
     tema: Annotated[str | None, Query()] = None,
+    #: As dimensões que o padrão Aegea trouxe (0055). Elas se empilham com as de
+    #: cima: `?uf=RJ&perfil_autor=Figura+pública` é "figuras públicas no Rio", e
+    #: não uma coisa ou a outra. É o nível 3 do pacote, e é o que faz um link
+    #: reproduzir o ponto exato do caminho.
+    perfil_autor: Annotated[str | None, Query()] = None,
+    uf: Annotated[str | None, Query()] = None,
+    subtema: Annotated[str | None, Query()] = None,
+    autor: Annotated[str | None, Query()] = None,
 ) -> DossieSaida:
     """A lente inteira: nota, KPIs, evolução, dois painéis, texto e ações.
 
@@ -1519,7 +1527,16 @@ def obter_dossie(
     if lente is None:
         raise NaoEncontrado("Lente não encontrada.")
 
-    filtro = FiltroDeMencoes(tier=tier, veiculo=veiculo, atributo=atributo, tema_texto=tema)
+    filtro = FiltroDeMencoes(
+        tier=tier,
+        veiculo=veiculo,
+        atributo=atributo,
+        tema_texto=tema,
+        perfil_autor=perfil_autor,
+        uf=uf,
+        subtema=subtema,
+        autor=autor,
+    )
     calibracao = repositorio_score.calibracao_vigente(sessao)
     meses = repositorio_lentes.meses_ate(alvo, MESES_DA_EVOLUCAO)
 

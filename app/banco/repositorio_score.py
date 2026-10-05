@@ -345,16 +345,21 @@ def condicoes_do_filtro(filtro: FiltroDeMencoes | None) -> list:
     """
     if filtro is None:
         return []
-    condicoes = []
-    if filtro.tier:
-        condicoes.append(Mencao.tier == filtro.tier)
-    if filtro.veiculo:
-        condicoes.append(Mencao.veiculo == filtro.veiculo)
-    if filtro.atributo:
-        condicoes.append(Mencao.atributo == filtro.atributo)
-    if filtro.tema_texto:
-        condicoes.append(Mencao.tema_texto == filtro.tema_texto)
-    return condicoes
+    #: UMA CONDIÇÃO POR DIMENSÃO PREENCHIDA, e todas no mesmo `where`: é o `and`
+    #: que faz os recortes se EMPILHAREM (nível 3 do pacote), em vez de o último
+    #: escolhido vencer os anteriores.
+    de_cada = (
+        (Mencao.tier, filtro.tier),
+        (Mencao.veiculo, filtro.veiculo),
+        (Mencao.atributo, filtro.atributo),
+        (Mencao.tema_texto, filtro.tema_texto),
+        # -- as do padrão Aegea (0055) --
+        (Mencao.perfil_autor, filtro.perfil_autor),
+        (Mencao.uf, filtro.uf),
+        (Mencao.subtema, filtro.subtema),
+        (Mencao.autor, filtro.autor),
+    )
+    return [coluna == valor for coluna, valor in de_cada if valor]
 
 
 def somas_da_lente_filtradas(
