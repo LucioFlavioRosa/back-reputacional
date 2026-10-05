@@ -47,6 +47,12 @@ from app.banco.tabelas_lentes import (
 )
 from app.banco.tabelas_score import Lente, Mencao, ScoreFonte
 from app.banco.tabelas_stakeholders import Instituicao
+from app.dominio.causa_da_lente import (
+    DIMENSOES_POR_LENTE,
+    Dimensao,
+    Presenca,
+    dimensoes_que_explicam,
+)
 from app.dominio.score import Calibracao, FiltroDeMencoes
 
 
@@ -337,6 +343,10 @@ def opcoes_de_filtro(sessao: Session, lente_id: int, mes: date) -> dict[str, lis
         #: O AUTOR É O ÚNICO CORTADO: os outros cabem numa lista (25 UFs, 40
         #: subtemas, 4 perfis), e o autor são 1.745 no mês real.
         "autores": _mais_presentes(Mencao.autor, 20),
+        #: A concessionária citada. Cortada como o autor, pelo mesmo motivo: numa
+        #: base nacional são dezenas, e a lista por volume responde "quem está
+        #: aparecendo este mês".
+        "empresas": _mais_presentes(Mencao.unidade_texto, 20),
     }
 
 
@@ -594,6 +604,103 @@ def _por_coluna_de_texto(
         {rotulo: valor, "positivo": pos, "neutro": neu, "negativo": neg}
         for valor, pos, neu, neg in sessao.execute(consulta)
     ]
+
+
+def presenca_das_dimensoes(
+    sessao: Session,
+    campos: Sequence[str],
+    lente_id: int,
+    mes: date,
+    calibracao: Calibracao,
+    filtro: FiltroDeMencoes | None = None,
+) -> tuple[dict[str, Presenca], int]:
+    """Quanto cada dimensão aparece no mês, e quantas menções o mês tem.
+
+    UMA CONSULTA PARA TODAS, e isto é o que torna as abas viáveis: decidir quais
+    cortes merecem aba exige saber, de cada um, quantas menções o trazem e em
+    quantos valores — sete perguntas. Sete consultas seriam sete idas ao banco
+    para NÃO desenhar nada; `count` e `count(distinct)` lado a lado na mesma
+    varredura custam uma.
+
+    `COUNT(COLUNA)` IGNORA NULO e `COUNT(*)` não — é nessa diferença que mora o
+    "quanto falta", que a ficha de cada aba publica.
+    """
+    medidas: list = [func.count()]
+    for campo in campos:
+        coluna = getattr(Mencao, campo)
+        medidas.append(func.count(coluna))
+        medidas.append(func.count(coluna.distinct()))
+    consulta = (
+        select(*medidas)
+        .select_from(Mencao)
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .where(
+            ScoreFonte.lente_id == lente_id,
+            Mencao.mes == primeiro_dia(mes),
+            *so_fontes_ligadas(calibracao),
+            *condicoes_do_filtro(filtro),
+        )
+    )
+    linha = sessao.execute(consulta).one()
+    total = int(linha[0] or 0)
+    presencas = {
+        campo: Presenca(
+            preenchidas=int(linha[1 + i * 2] or 0),
+            distintas=int(linha[2 + i * 2] or 0),
+        )
+        for i, campo in enumerate(campos)
+    }
+    return presencas, total
+
+
+def cortes_da_causa(
+    sessao: Session,
+    codigo_da_lente: str,
+    lente_id: int,
+    mes: date,
+    calibracao: Calibracao,
+    filtro: FiltroDeMencoes | None = None,
+    quantos: int = 6,
+) -> list[tuple[Dimensao, list[dict], Presenca, int]]:
+    """Os cortes que explicam o mês desta lente — um por aba de "onde está a
+    causa", cada um com as suas linhas e com quanto da dimensão o mês tem.
+
+    TUDO NO MESMO PEDIDO, e isto foi medido antes de decidir: os seis cortes do
+    mês mais cheio (6.932 menções) somam 109 ms. Um endpoint por aba custaria um
+    estado de carregamento a cada clique e um segundo caminho de dados para a
+    mesma conta — por um ganho que o relógio não vê.
+
+    A MEDIDA VEM PRIMEIRO, de propósito: só se consulta o corte da dimensão que
+    passou no critério. Num mês em que a fonte não mandou UF nem subtema, isto é
+    uma consulta em vez de três.
+
+    DENTRO DO RECORTE ATIVO, e é o que faz o terceiro nível existir: com uma UF
+    escolhida, as abas passam a explicar AQUELA UF. Descer um nível é refazer a
+    mesma pergunta num pedaço menor, e não olhar o mês inteiro de outro jeito.
+    """
+    dimensoes = DIMENSOES_POR_LENTE.get(codigo_da_lente, ())
+    if not dimensoes:
+        return []
+    presencas_por_campo, total = presenca_das_dimensoes(
+        sessao, [dimensao.campo for dimensao in dimensoes], lente_id, mes, calibracao, filtro
+    )
+    presencas = {
+        dimensao.chave: presencas_por_campo[dimensao.campo] for dimensao in dimensoes
+    }
+    cortes = []
+    for dimensao in dimensoes_que_explicam(codigo_da_lente, presencas, total):
+        linhas = _por_coluna_de_texto(
+            sessao,
+            getattr(Mencao, dimensao.campo),
+            "rotulo",
+            lente_id,
+            mes,
+            calibracao,
+            filtro,
+            quantos,
+        )
+        cortes.append((dimensao, linhas, presencas[dimensao.chave], total))
+    return cortes
 
 
 def quantas_com(

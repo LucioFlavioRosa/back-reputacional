@@ -122,6 +122,15 @@ class BlocoSaida(BaseModel):
     cores: list[str] = Field(default_factory=list)
     #: Só nas tabelas.
     colunas: list[ColunaSaida] = Field(default_factory=list)
+    #: A dimensão do recorte que um clique neste painel aplica — a chave do
+    #: parâmetro da rota (`tema`, `empresa`, `perfil_autor`). Nula no bloco que
+    #: não recorta nada (a evolução, as tabelas).
+    #:
+    #: VEM DO SERVIDOR porque a alternativa é a tela adivinhar a dimensão pelo
+    #: TÍTULO do painel — e o título é a frase de um detector, que muda com o
+    #: dado. Ver `RECORTE_DO_PAINEL`, e o comentário de `ColunaSaida`, que conta
+    #: como esse mesmo atalho já quebrou uma vez.
+    recorta: str | None = None
     ficha: FichaSaida
 
 
@@ -214,6 +223,18 @@ class DossieSaida(BaseModel):
     #: O TETO CONTINUA EM DOIS: a especificação dá dois painéis por lente, e um
     #: terceiro seria mudança de tela, não de permissão.
     paineis: list[BlocoSaida] = Field(min_length=1, max_length=2)
+    #: As abas de "onde está a causa" — o mesmo mês cortado por cada dimensão
+    #: que o explica, na ordem em que a lente se explica. Ver
+    #: `_onde_esta_a_causa`.
+    #:
+    #: FORA DE `paineis` DE PROPÓSITO: aquele campo tem teto de dois porque a
+    #: especificação dá dois painéis por lente, e um terceiro seria mudança de
+    #: tela. Isto não é um terceiro painel — é um cartão só, com abas, e as abas
+    #: não cabem num contrato que a tela lê como "painel A" e "painel B".
+    #:
+    #: VAZIO na lente que não vem de menção (Mercado, Institucional) e no mês
+    #: em que nenhuma dimensão explica nada.
+    onde_esta_a_causa: list[BlocoSaida] = Field(default_factory=list)
     #: O bloco do fim da tela: o que mudou no período, por intensidade, com as
     #: lacunas de dado no fim.
     sinais: list[SinalSaida] = Field(default_factory=list)
@@ -347,6 +368,29 @@ def _legenda_e_cores_do_clima(sessao) -> tuple[list[str], list[str]]:
     return [c.nome for c in climas], [c.cor_hex for c in climas]
 
 
+#: Painel → a dimensão do recorte que um clique nele aplica.
+#:
+#: O DONO DO PRODUTO FOI À TELA E NÃO ACHOU COMO DESCER OS NÍVEIS, e a causa era
+#: esta: o recorte funcionava pela barra de filtros, mas a barra é um SELETOR.
+#: Quem olha um painel e vê um tema com 60% de negativas tenta clicar NELE.
+#:
+#: POR QUE VEM DO SERVIDOR: a tela recebe barras com rótulos, e ligar o clique ao
+#: filtro exigiria adivinhar a dimensão pelo TÍTULO do painel — que é a frase de um
+#: detector e muda com o dado. Era assim que a tabela escolhia o schema antes, e o
+#: comentário de `ColunaSaida` conta como isso quebrou.
+#:
+#: A CHAVE É A DO PARÂMETRO da rota (`?tema=`, `?empresa=`), e não o nome da
+#: coluna: é o que a tela põe na URL, e é o que faz um link reproduzir o ponto do
+#: caminho.
+RECORTE_DO_PAINEL: dict[str, str] = {
+    "Temas × sentimento": "tema",
+    "Temas × clima": "tema",
+    "Concessionárias com maior repercussão": "empresa",
+    "Tier do veículo × sentimento": "tier",
+    "Perfil de quem fala × sentimento": "perfil_autor",
+}
+
+
 def _bloco(
     tipo: str,
     titulo: str,
@@ -357,6 +401,7 @@ def _bloco(
     subtipo: str | None = None,
     colunas: list[ColunaSaida] | None = None,
     cores: list[str] | None = None,
+    recorta: str | None = None,
 ) -> BlocoSaida:
     return BlocoSaida(
         tipo=tipo,
@@ -367,6 +412,15 @@ def _bloco(
         legenda=legenda or [],
         cores=cores or [],
         colunas=colunas or [],
+        #: PELO TÍTULO, e é o único lugar onde o título decide algo: `_bloco` é
+        #: chamado de dez pontos diferentes, e passar a dimensão em cada chamada
+        #: seria dez chances de esquecer. O mapa é pequeno, fica ao lado da
+        #: função, e um painel que não está nele simplesmente não recorta.
+        #:
+        #: DITO NA CHAMADA VENCE O MAPA, e as abas de "onde está a causa" são o
+        #: caso: o título delas é o nome da dimensão, que já vem do domínio —
+        #: repeti-lo no mapa seria manter a mesma lista em dois lugares.
+        recorta=recorta or RECORTE_DO_PAINEL.get(titulo),
         ficha=_saida_da_ficha(ficha),
     )
 
@@ -807,6 +861,73 @@ def _paineis(
             titulo_b,
         ),
     ]
+
+
+def _onde_esta_a_causa(
+    sessao, lente, mes: date, calibracao: Calibracao, filtro: FiltroDeMencoes | None = None
+) -> list[BlocoSaida]:
+    """As abas do cartão "Onde está a causa": o mesmo mês, cortado por cada
+    dimensão que o explica.
+
+    É A NAVEGAÇÃO QUE FALTAVA ENTRE O NÍVEL 1 E O NÍVEL 3. A tela tinha a nota
+    (nível 1), tinha a lista de itens (nível 3) e, no meio, dois painéis — tema e
+    concessionária. As outras seis dimensões que o pacote prioriza só existiam no
+    seletor da barra, que serve a quem JÁ SABE o que procurar. Quem abre a lente
+    com a nota caída não sabe: a pergunta é "onde está a causa", e ela se responde
+    trocando de aba até uma barra pular.
+
+    CADA ABA É UM BLOCO COMO OS OUTROS — linhas com sentimento, ficha de
+    procedência e a dimensão que um clique aplica. A tela que já desenha
+    `barras_100` não aprende nada novo para desenhar estas.
+
+    QUEM MANDA NA ORDEM E NO CRITÉRIO é `app/dominio/causa_da_lente`; aqui só se
+    veste o resultado. Ver lá por que seis abas, e por que uma dimensão com 70%
+    de nulo não é causa.
+
+    O AUTOR NÃO É DIRETÓRIO, e a distinção é a mesma que `_nomeia_o_diretorio`
+    faz: `ve_diretorio` guarda o CADASTRO de terceiros (a matriz de jornalistas,
+    os órgãos do CRM), não o nome que veio dentro da menção. O indicador "Autor
+    mais negativo" já publica o perfil que mais pesou, pela mesma razão.
+    """
+    cortes = repositorio_lentes.cortes_da_causa(
+        sessao, lente.codigo, lente.id, mes, calibracao, filtro
+    )
+    if not cortes:
+        return []
+    fonte = _nomes_das_fontes(sessao, lente.id)
+    blocos = []
+    for dimensao, linhas, presenca, total in cortes:
+        faltam = total - presenca.preenchidas
+        blocos.append(
+            _bloco(
+                "barras_100",
+                dimensao.rotulo,
+                linhas,
+                Ficha(
+                    origem=Procedencia.PLANILHA,
+                    fonte=fonte,
+                    colunas=(dimensao.rotulo, "Sentimento"),
+                    #: QUANTO FALTA VAI ESCRITO, e é o que impede a aba de
+                    #: mentir por omissão: o corte ignora nulo, então uma
+                    #: dimensão presente em pouco mais da metade dos itens
+                    #: desenha barras que somam 100% de um mês menor do que o
+                    #: mês. Quem lê precisa saber de qual pedaço se fala.
+                    lacunas=(
+                        (
+                            f"{dimensao.rotulo} vem em {presenca.preenchidas} "
+                            f"das {total} menções do mês; {faltam} não trazem o campo.",
+                        )
+                        if faltam
+                        else ()
+                    ),
+                ),
+                None,
+                SENTIMENTO,
+                cores=CORES_DO_SENTIMENTO,
+                recorta=dimensao.chave,
+            )
+        )
+    return blocos
 
 
 def _nomeia_o_diretorio(codigo_da_lente: str, bloco: BlocoSaida) -> bool:
@@ -1514,6 +1635,7 @@ def obter_dossie(
     uf: Annotated[str | None, Query()] = None,
     subtema: Annotated[str | None, Query()] = None,
     autor: Annotated[str | None, Query()] = None,
+    empresa: Annotated[str | None, Query()] = None,
 ) -> DossieSaida:
     """A lente inteira: nota, KPIs, evolução, dois painéis, texto e ações.
 
@@ -1536,6 +1658,7 @@ def obter_dossie(
         uf=uf,
         subtema=subtema,
         autor=autor,
+        empresa=empresa,
     )
     calibracao = repositorio_score.calibracao_vigente(sessao)
     meses = repositorio_lentes.meses_ate(alvo, MESES_DA_EVOLUCAO)
@@ -1582,6 +1705,7 @@ def obter_dossie(
     drivers = _drivers_e_riscos(sessao, lente, alvo, calibracao, filtro)
     temas_falados = _temas_mais_falados(sessao, lente, alvo, calibracao, filtro)
     materias = _materias_recentes(sessao, lente, alvo, calibracao, filtro)
+    causa = _onde_esta_a_causa(sessao, lente, alvo, calibracao, filtro)
 
     #: O QUE ESTE PAPEL NÃO ALCANÇA. `score_leitura` e `score_edicao` têm
     #: `acessa_score` e NÃO têm `ve_diretorio` — e levam 403 em
@@ -1659,6 +1783,7 @@ def obter_dossie(
             FatoSaida(mes=f"{fato.mes:%Y-%m}", texto=fato.texto, efeito=fato.efeito)
             for fato in repositorio_score.fatos_do_periodo(sessao, meses)
         ],
+        onde_esta_a_causa=causa,
         paineis=[
             _com_conclusao(bloco, titulo)
             for secao, bloco, titulo in (
@@ -1697,6 +1822,7 @@ class OpcoesDeFiltroSaida(BaseModel):
     ufs: list[str] = []
     subtemas: list[str] = []
     autores: list[str] = []
+    empresas: list[str] = []
 
 
 @rotas.get("/{codigo}/dossie/opcoes-de-filtro")

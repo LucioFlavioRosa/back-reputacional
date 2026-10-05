@@ -431,15 +431,15 @@ def sociedade_de_junho(sessao):
     """
     bites = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "bites")).one()
     linhas = [
-        # perfil, uf, subtema, autor, sentimento
-        ("Figura pública", "RJ", "Falta de água", "@deputado", "neg"),
-        ("Figura pública", "SP", "Obra atrasada", "@vereadora", "pos"),
-        ("Cidadão", "RJ", "Falta de água", "@vizinho", "neg"),
-        ("Cidadão", "RJ", "Falta de água", "@vizinho", "pos"),
-        ("Cidadão", "SP", "Obra atrasada", "@outro", "pos"),
-        ("Cidadão", "SP", "Obra atrasada", "@outro", "pos"),
+        # perfil, uf, tema, subtema, autor, sentimento, empresa
+        ("Figura pública", "RJ", "Abastecimento", "Falta de água", "@deputado", "neg", "Águas do Rio"),
+        ("Figura pública", "SP", "Obras", "Obra atrasada", "@vereadora", "pos", "Aegea Holding"),
+        ("Cidadão", "RJ", "Abastecimento", "Falta de água", "@vizinho", "neg", "Águas do Rio"),
+        ("Cidadão", "RJ", "Abastecimento", "Falta de água", "@vizinho", "pos", "Aegea Holding"),
+        ("Cidadão", "SP", "Obras", "Obra atrasada", "@outro", "pos", "Aegea Holding"),
+        ("Cidadão", "SP", "Obras", "Obra atrasada", "@outro", "pos", "Aegea Holding"),
     ]
-    for perfil, uf, subtema, autor, sentimento in linhas:
+    for perfil, uf, tema, subtema, autor, sentimento, empresa in linhas:
         sessao.add(
             Mencao(
                 fonte_id=bites.id,
@@ -447,14 +447,20 @@ def sociedade_de_junho(sessao):
                 sentimento=sentimento,
                 perfil_autor=perfil,
                 uf=uf,
+                #: O TEMA É A PRIMEIRA DIMENSÃO PRIORITÁRIA DO PACOTE nesta
+                #: lente, e o fixture nascera sem ele. Dois temas, cada um com o
+                #: seu subtema: é o que faz a aba de tema ter o que mostrar e a
+                #: descida tema → subtema significar algo.
+                tema_texto=tema,
                 subtema=subtema,
                 autor=autor,
                 veiculo="Instagram",
+                unidade_texto=empresa,
             )
         )
 
     por_sentimento: dict[str, int] = {}
-    for _perfil, _uf, _subtema, _autor, sentimento in linhas:
+    for _perfil, _uf, _tema, _subtema, _autor, sentimento, _empresa in linhas:
         por_sentimento[sentimento] = por_sentimento.get(sentimento, 0) + 1
     for sentimento, mencoes in por_sentimento.items():
         sessao.add(
@@ -518,3 +524,180 @@ def test_o_recorte_que_nao_casa_com_nada_NAO_devolve_o_mes_inteiro(sessao, socie
 
     assert vazio.nota is None
     assert vazio.ausencia is not None
+
+
+# =============================================================================
+# a navegação pelos três níveis: clicar num painel recorta a tela
+# =============================================================================
+#
+# O DONO DO PRODUTO FOI À TELA E NÃO ACHOU COMO DESCER OS NÍVEIS. O recorte
+# funcionava — a barra de filtros aplica, o servidor recalcula, a nota muda —, mas
+# a barra é um SELETOR: quem olha um painel e vê "Saneamento básico" com 60% de
+# negativas tenta clicar NELE, não procurar o mesmo nome num campo suspenso.
+#
+# NA IMPRENSA ISSO JÁ EXISTIA: a rosca de tier e o ranking de veículos são
+# clicáveis e recortam a tela inteira. Os painéis das outras lentes não eram, e o
+# que faltava para serem é o servidor DIZER qual dimensão cada painel representa
+# — sem isso a tela recebe barras com rótulos e não sabe que filtro aplicar.
+#
+# E A EMPRESA CITADA NÃO ESTAVA NO RECORTE: o painel de concessionárias é a
+# terceira dimensão prioritária do pacote, e clicar nele não tinha para onde ir.
+
+
+def test_cada_painel_DIZ_a_dimensao_que_ele_recorta(sessao, sociedade_de_junho):
+    """É o que permite a tela ligar um clique a um filtro sem adivinhar pelo
+    título do painel — e o título é a frase de um detector, que muda com o dado."""
+    dossie = _da_sociedade(sessao)
+
+    por_titulo = {painel.titulo: painel.recorta for painel in dossie.paineis}
+    assert por_titulo["Temas × sentimento"] == "tema"
+    assert por_titulo["Concessionárias com maior repercussão"] == "empresa"
+
+
+def test_o_recorte_por_EMPRESA_muda_a_nota(sessao, sociedade_de_junho):
+    """A empresa citada é a terceira dimensão prioritária do pacote, e era a
+    única dos dois painéis da lente sem lugar no filtro: clicar na barra de uma
+    concessionária não tinha para onde ir."""
+    de_uma = _da_sociedade(sessao, empresa="Águas do Rio")
+
+    assert de_uma.recorte_filtrado is True
+    #: As duas menções de Águas do Rio no fixture são negativas.
+    assert de_uma.nota == 0
+
+
+def test_a_empresa_entra_nas_opcoes_de_filtro(sessao, sociedade_de_junho):
+    opcoes = obter_opcoes_de_filtro(
+        sessao=sessao, usuario=_QuemOlha(), codigo="sociedade", mes="2026-06"
+    )
+
+    assert "Águas do Rio" in opcoes.empresas
+
+
+def test_o_painel_da_IMPRENSA_tambem_diz_o_que_recorta(sessao, imprensa_de_junho):
+    """O contrapeso, e ele corrige uma premissa minha: a Imprensa NÃO tem painel
+    de temas — os dois dela são o tier do veículo e a matriz de jornalistas.
+
+    O TIER RECORTA, a matriz não: ela é uma matriz de prioridade de pessoas, com
+    duas coordenadas e sem uma dimensão de menção para filtrar. Painel que não
+    recorta nada diz `None`, e a tela não o torna clicável — o que é melhor que
+    um clique que não faz nada.
+    """
+    dossie = _dossie(sessao)
+
+    por_titulo = {painel.titulo: painel.recorta for painel in dossie.paineis}
+    assert por_titulo["Tier do veículo × sentimento"] == "tier"
+    assert por_titulo["Matriz de relacionamento com jornalistas"] is None
+
+
+# =============================================================================
+# "Onde está a causa": uma aba por dimensão útil
+# =============================================================================
+#
+# OS DOIS PAINÉIS NÃO BASTAM, e isto foi medido: o pacote declara oito dimensões
+# prioritárias para a Sociedade digital — tema, subtema, empresa citada, rede,
+# perfil do autor, autor, fonte e UF — e a tela desenhava duas. As outras seis só
+# existiam no seletor da barra, que é onde se ESCOLHE um recorte, não onde se
+# DESCOBRE qual deles explica o mês.
+#
+# O PACOTE PEDE ABAS (FRONTEND §3): "abas das dimensões úteis (máx. 6 visíveis +
+# mais)". É a mesma pergunta — "onde está a causa" — feita por vários cortes, e
+# trocar de aba é a navegação que faltava.
+#
+# TUDO NO MESMO PEDIDO, e isto foi medido antes de decidir: as seis consultas
+# levam 109 ms juntas no mês mais cheio (6.932 menções). Um endpoint por aba
+# custaria um estado de carregamento por clique e um segundo caminho de dados
+# para a mesma conta.
+#
+# "ÚTIL" É O CRITÉRIO DO PACOTE: pelo menos dois valores distintos não nulos, e
+# nulos abaixo de 60%. Uma dimensão em que quase ninguém classificou não é uma
+# causa: é uma lacuna de dado, e a ficha do bloco é quem conta isso.
+
+
+def test_a_causa_vem_com_uma_aba_por_dimensao_util(sessao, sociedade_de_junho):
+    dossie = _da_sociedade(sessao)
+
+    chaves = [bloco.recorta for bloco in dossie.onde_esta_a_causa]
+    #: A ORDEM É A DO PACOTE para esta lente: o assunto primeiro, depois quem
+    #: fala, depois onde.
+    assert chaves[0] == "tema"
+    assert "subtema" in chaves
+    assert "perfil_autor" in chaves
+    assert "uf" in chaves
+    assert "autor" in chaves
+
+
+def test_a_dimensao_de_UM_VALOR_SO_nao_e_aba(sessao, sociedade_de_junho):
+    """Uma dimensão com um valor só não explica nada: a barra ocuparia a largura
+    inteira e diria "100% de tudo é isto". No fixture, a rede é só Instagram."""
+    dossie = _da_sociedade(sessao)
+
+    assert "veiculo" not in [bloco.recorta for bloco in dossie.onde_esta_a_causa]
+
+
+def test_a_dimensao_com_MUITO_NULO_nao_e_aba(sessao):
+    """O critério do pacote: nulos abaixo de 60%. Uma dimensão que a fonte quase
+    não classificou não é causa, é lacuna — e a tela que a mostra como causa diz
+    que "a maior parte do mês é Sem classificação", o que não ajuda ninguém."""
+    bites = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "bites")).one()
+    for i in range(10):
+        sessao.add(
+            Mencao(
+                fonte_id=bites.id,
+                mes=MES,
+                sentimento="neg",
+                perfil_autor="Cidadão" if i < 4 else None,
+                tema_texto="Saneamento",
+                uf="RJ" if i % 2 else "SP",
+            )
+        )
+    sessao.add(
+        ScoreMesFonte(
+            fonte_id=bites.id, mes=MES, sentimento="neg", tier="", mencoes=10,
+            soma_log=10 * peso_do_engajamento(None), soma_engajamento=0,
+            soma_cargo=10 * peso_do_cargo(None),
+        )
+    )
+    sessao.flush()
+
+    dossie = _da_sociedade(sessao)
+
+    #: Perfil em 4 de 10 — 60% de nulo — fica fora. A UF, em todas, entra.
+    chaves = [bloco.recorta for bloco in dossie.onde_esta_a_causa]
+    assert "perfil_autor" not in chaves
+    assert "uf" in chaves
+
+
+def test_cada_aba_traz_as_linhas_e_o_que_ela_recorta(sessao, sociedade_de_junho):
+    """A aba é um bloco como os outros: linhas com sentimento, ficha de
+    procedência e a dimensão que um clique aplica."""
+    dossie = _da_sociedade(sessao)
+    da_uf = next(b for b in dossie.onde_esta_a_causa if b.recorta == "uf")
+
+    assert da_uf.tipo == "barras_100"
+    assert {linha["rotulo"] for linha in da_uf.dados} == {"RJ", "SP"}
+    assert da_uf.ficha.origem
+    #: RJ tem duas negativas e uma positiva no fixture.
+    do_rio = next(linha for linha in da_uf.dados if linha["rotulo"] == "RJ")
+    assert do_rio["negativo"] == 2
+    assert do_rio["positivo"] == 1
+
+
+def test_a_causa_respeita_o_recorte_ativo(sessao, sociedade_de_junho):
+    """DENTRO DO RECORTE, e é isto que faz o terceiro nível existir: com uma UF
+    escolhida, as abas passam a mostrar o que explica AQUELA UF — é descer um
+    nível, e não olhar o mês inteiro de outro jeito."""
+    inteiro = _da_sociedade(sessao)
+    no_rio = _da_sociedade(sessao, uf="RJ")
+
+    do_perfil_inteiro = next(b for b in inteiro.onde_esta_a_causa if b.recorta == "perfil_autor")
+    do_perfil_no_rio = next(b for b in no_rio.onde_esta_a_causa if b.recorta == "perfil_autor")
+
+    #: No mês há duas figuras públicas; no Rio, uma só.
+    das_figuras_inteiro = next(
+        linha for linha in do_perfil_inteiro.dados if linha["rotulo"] == "Figura pública"
+    )
+    das_figuras_no_rio = next(
+        linha for linha in do_perfil_no_rio.dados if linha["rotulo"] == "Figura pública"
+    )
+    assert das_figuras_inteiro["negativo"] + das_figuras_inteiro["positivo"] == 2
+    assert das_figuras_no_rio["negativo"] + das_figuras_no_rio["positivo"] == 1

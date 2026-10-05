@@ -225,6 +225,11 @@ class FiltroDeMencoes:
     uf: str | None = None
     subtema: str | None = None
     autor: str | None = None
+    #: A concessionária como o fornecedor a nomeia (`mencao.unidade_texto`). É a
+    #: terceira dimensão prioritária do pacote, e era a única dos dois painéis da
+    #: lente sem lugar aqui: clicar na barra de uma concessionária não tinha para
+    #: onde ir.
+    empresa: str | None = None
 
     @property
     def ativo(self) -> bool:
@@ -238,6 +243,7 @@ class FiltroDeMencoes:
                 self.uf,
                 self.subtema,
                 self.autor,
+                self.empresa,
             )
         )
 
