@@ -19,6 +19,14 @@
 # está atrás de private endpoint e o agente hospedado não o alcança — por isso as
 # migrations são um Container Apps Job, que roda DENTRO da rede. Ver
 # `infra-reputacional/scripts/migrar.py`.
+#
+# E O QUE ELE NÃO PODE GARANTIR: atomicidade entre o banco e o app. Se as
+# migrations passam e a atualização do app falha, o banco fica à frente do código
+# que está servindo. Não há como evitar isso com duas chamadas; o que evita é a
+# MIGRATION SER COMPATÍVEL PARA TRÁS — acrescentar coluna e preencher antes de
+# passar a exigir, em dois deploys, nunca renomear ou remover no mesmo. É regra de
+# quem escreve a migration, e o pipeline só pode falhar alto, o que ele faz.
+# Achado de revisão: vale estar escrito onde se lê antes de implantar.
 # =============================================================================
 
 trigger:
@@ -149,7 +157,11 @@ stages:
     displayName: Migrations e implantação
     dependsOn: imagem
     variables:
-      digest: $[ stageDependencies.imagem.acr.construir.outputs['digest'] ]
+      # A SINTAXE É `<estágio>.<job>.outputs['<passo>.<variável>']`, e o passo
+      # vai DENTRO das chaves. Escrito como `...acr.construir.outputs['digest']`
+      # a expressão resolve para vazio e o deploy chama `--image ...@` — sem erro
+      # de sintaxe, só uma imagem sem digest. Achado de revisão.
+      digest: $[ stageDependencies.imagem.acr.outputs['construir.digest'] ]
     jobs:
       - deployment: container_apps
         displayName: Container Apps (dev)
@@ -196,9 +208,15 @@ stages:
                           Succeeded) exit 0 ;;
                           Failed|Degraded)
                             echo "As migrations falharam. O app NÃO foi atualizado." >&2
+                            # `--container` É OBRIGATÓRIO no `logs show`, e sem
+                            # ele o comando falha com erro de uso — engolido pelo
+                            # `|| true`, deixando o diagnóstico fora do log
+                            # justamente quando ele é necessário. O nome vem do
+                            # Terraform (`container { name = "migracoes" }`).
                             az containerapp job logs show \
                               --name "$(JOB_DE_MIGRACOES)" \
                               --resource-group "$(GRUPO_DE_RECURSOS)" \
+                              --container migracoes \
                               --execution "$execucao" --tail 50 || true
                             exit 1 ;;
                         esac
@@ -215,6 +233,15 @@ stages:
                     scriptLocation: inlineScript
                     inlineScript: |
                       set -e
+                      # O DIGEST VAZIO É O MODO DE FALHA DESTA ETAPA, e ele não dá
+                      # erro de sintaxe: `--image repo@` é aceito pela linha de
+                      # comando e falha lá na frente, longe da causa. Conferir aqui
+                      # custa uma linha.
+                      case "$(digest)" in
+                        sha256:*) ;;
+                        *) echo "digest invalido: '$(digest)'. A etapa da imagem nao exportou." >&2; exit 1 ;;
+                      esac
+
                       az containerapp update \
                         --name "$(APP_DO_BACK)" \
                         --resource-group "$(GRUPO_DE_RECURSOS)" \
