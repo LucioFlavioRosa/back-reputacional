@@ -249,10 +249,6 @@ class DossieSaida(BaseModel):
     #: VAZIO na lente que não vem de menção (Mercado, Institucional) e no mês
     #: em que nenhuma dimensão explica nada.
     onde_esta_a_causa: list[BlocoSaida] = Field(default_factory=list)
-    #: A dimensão ESPERADA que não explica este mês, dita em palavras — ver
-    #: `_lacunas_da_causa`. É o aviso âmbar do pacote (FRONTEND §40): sem ele, a
-    #: aba que falta é um buraco inexplicável no meio do cartão.
-    lacunas_da_causa: list[str] = Field(default_factory=list)
     #: O bloco do fim da tela: o que mudou no período, por intensidade, com as
     #: lacunas de dado no fim.
     sinais: list[SinalSaida] = Field(default_factory=list)
@@ -447,13 +443,18 @@ def _bloco(
         #: caso: o título delas é o nome da dimensão, que já vem do domínio —
         #: repeti-lo no mapa seria manter a mesma lista em dois lugares.
         #:
-        #: BLOCO SEM LINHA NENHUMA NÃO RECORTA, e isto é achado de revisão: o mapa
-        #: casa por TÍTULO, e a Institucional monta um "Temas mais falados" vazio
-        #: (ela lê o CRM, não clipping) que passou a anunciar `recorta: "tema"`.
-        #: Não há clique falso na tela de hoje — sem linha não há botão —, mas o
-        #: contrato prometia o que não existe, e é o contrato que o próximo
-        #: consumidor lê.
-        recorta=(recorta or RECORTE_DO_PAINEL.get(titulo)) if dados else None,
+        #: O DEDUZIDO PELO TÍTULO MORRE NO BLOCO VAZIO; o DITO na chamada, não.
+        #:
+        #: Achado de revisão: o mapa casa por TÍTULO, e a Institucional monta um
+        #: "Temas mais falados" vazio (ela lê o CRM, não clipping) que passou a
+        #: anunciar `recorta: "tema"` — contrato prometendo o que não existe.
+        #:
+        #: MAS A ABA VAZIA DE "ONDE ESTÁ A CAUSA" CONTINUA DIZENDO O QUE RECORTA,
+        #: e é por isso que a distinção existe: ela declara a dimensão na chamada,
+        #: e aquela aba É daquela dimensão mesmo num mês em que a fonte não
+        #: classificou nada. Perder a chave ali faria a aba virar um quadro
+        #: anônimo — e, no mês seguinte, deixaria de abrir o que abre hoje.
+        recorta=recorta or (RECORTE_DO_PAINEL.get(titulo) if dados else None),
         coluna_do_link=coluna_do_link,
         ficha=_saida_da_ficha(ficha),
     )
@@ -905,7 +906,7 @@ def _onde_esta_a_causa(
     filtro: FiltroDeMencoes | None = None,
     ja_usadas: FiltroDeMencoes | None = None,
     ve_diretorio: bool = True,
-) -> tuple[list[BlocoSaida], list[str]]:
+) -> list[BlocoSaida]:
     """As abas do cartão "Onde está a causa": o mesmo mês, cortado por cada
     dimensão que o explica.
 
@@ -939,14 +940,13 @@ def _onde_esta_a_causa(
         usadas = {passo.chave for passo in _trilha_do_recorte(lente.codigo, ja_usadas)}
         cortes = [corte for corte in cortes if corte.dimensao.chave not in usadas]
     if not cortes:
-        return [], []
+        return []
     fonte = _nomes_das_fontes(sessao, lente.id)
     blocos = []
     for corte in cortes:
-        #: O CORTE QUE NÃO EXPLICA NÃO É ABA — é aviso, e sai por
-        #: `_lacunas_da_causa`. Ver `CorteDaCausa.explica`.
-        if not corte.explica:
-            continue
+        #: TODO CORTE É ABA, inclusive o sem linha nenhuma: a fileira de abas é a
+        #: mesma em todo mês, e a aba vazia diz que a fonte não classificou aquele
+        #: campo. Decisão do dono do produto — ver `dimensoes_do_recorte`.
         dimensao, linhas, presenca, total = (
             corte.dimensao,
             corte.linhas,
@@ -968,10 +968,22 @@ def _onde_esta_a_causa(
                     #: dimensão presente em pouco mais da metade dos itens
                     #: desenha barras que somam 100% de um mês menor do que o
                     #: mês. Quem lê precisa saber de qual pedaço se fala.
+                    #: QUANTO FALTA, SEMPRE QUE FALTA — e, quando falta TUDO, é
+                    #: esta frase que explica a aba vazia. É o que transforma um
+                    #: quadro em branco num fato sobre a fonte, que dá para cobrar
+                    #: do fornecedor.
                     lacunas=(
                         (
-                            f"{dimensao.rotulo} vem em {presenca.preenchidas} "
-                            f"das {total} menções do mês; {faltam} não trazem o campo.",
+                            (
+                                f"A fonte não classificou {dimensao.rotulo.lower()} "
+                                f"em nenhuma das {_num(total)} menções deste mês."
+                            )
+                            if not presenca.preenchidas
+                            else (
+                                f"{dimensao.rotulo} vem em {_num(presenca.preenchidas)} "
+                                f"das {_num(total)} menções do mês; {_num(faltam)} não "
+                                "trazem o campo."
+                            ),
                         )
                         if faltam
                         else ()
@@ -983,44 +995,7 @@ def _onde_esta_a_causa(
                 recorta=dimensao.chave,
             )
         )
-    #: OS DOIS JUNTOS, DE UMA MEDIDA SÓ: as abas e o motivo das que faltam saem da
-    #: mesma leitura de presença. Separar em duas funções custaria uma segunda
-    #: varredura de `mencao` para contar o que já foi contado.
-    return blocos, _lacunas_da_causa(cortes)
-
-
-def _lacunas_da_causa(cortes) -> list[str]:
-    """A dimensão ESPERADA que não explica este mês, dita em palavras.
-
-    O PACOTE PEDE ISTO (FRONTEND §40): "aviso específico quando uma dimensão
-    esperada não é útil no mês, explicando que a fonte não classificou".
-
-    E O CASO É REAL, não hipotético: o tema é a PRIMEIRA dimensão prioritária da
-    Sociedade digital e chega em 1.959 dos 6.932 itens de junho — uma das duas
-    fontes não classifica assunto. Sem o aviso, a tela mostra um cartão "onde está
-    a causa" SEM aba de tema logo acima de um painel "Temas × sentimento", e quem
-    lê conclui que a tela está quebrada. A frase transforma um buraco inexplicável
-    em um fato sobre a fonte — que é acionável: dá para cobrar do fornecedor.
-
-    DOIS MOTIVOS, e eles pedem frases diferentes: campo que quase ninguém
-    preencheu, e campo preenchido com um valor só (que não divide nada).
-    """
-    frases = []
-    for corte in cortes:
-        if corte.explica:
-            continue
-        if corte.presenca.distintas < 2:
-            frases.append(
-                f"{corte.dimensao.rotulo}: a fonte mandou um valor só neste mês — "
-                f"não há como separar o mês por ele."
-            )
-        else:
-            frases.append(
-                f"{corte.dimensao.rotulo}: a fonte classificou "
-                f"{_num(corte.presenca.preenchidas)} de {_num(corte.total)} itens — "
-                f"pouco para explicar o mês."
-            )
-    return frases
+    return blocos
 
 
 def _trilha_do_recorte(codigo_da_lente: str, filtro: FiltroDeMencoes) -> list[PassoDaTrilha]:
@@ -1881,7 +1856,7 @@ def obter_dossie(
     #: fora: na Imprensa, `autor` é o jornalista — o mesmo cadastro de terceiros
     #: que a matriz de jornalistas publica e que esta permissão guarda. Achado de
     #: revisão: a aba entregava por outra porta o que o painel esconde.
-    causa, lacunas_da_causa = _onde_esta_a_causa(
+    causa = _onde_esta_a_causa(
         sessao, lente, alvo, calibracao, filtro, ve_diretorio=usuario.ve_diretorio
     )
 
@@ -1962,7 +1937,6 @@ def obter_dossie(
             for fato in repositorio_score.fatos_do_periodo(sessao, meses)
         ],
         onde_esta_a_causa=causa,
-        lacunas_da_causa=lacunas_da_causa,
         paineis=[
             _com_conclusao(bloco, titulo)
             for secao, bloco, titulo in (
@@ -2183,6 +2157,31 @@ def obter_recorte(
                 "impacto": do_mes,
                 "itens": int(linha["pos"] + linha["neu"] + linha["neg"]),
                 "sem_base": bool(linha["sem_base"]),
+                #: A PONTUAÇÃO DO RECORTE, mês a mês — pedido do dono do produto:
+                #: "traga a pontuação, que é mais fácil de comunicar".
+                #:
+                #: O IMPACTO CONTINUA SENDO A CONTA CERTA para "quanto este pedaço
+                #: mexe na nota da lente", e é o número grande do topo do painel.
+                #: Mas numa coluna de oito meses ele não se lê: −2,1 ao lado de
+                #: +1,0 diz que mexeu para baixo e para cima, e não se o pedaço
+                #: está bem ou mal. A nota diz as duas coisas, na escala que todo
+                #: mundo na Aegea já usa.
+                #:
+                #: SÓ COM RECORTE ATIVO, e a divisão é deliberada: sem recorte, o
+                #: número certo é o da série que desenha a Jornada (estimativa
+                #: incluída), e a tela já o tem. Derivá-lo aqui foi duas vezes
+                #: achado de revisão — arredondamento duplo, e "sem base" nos
+                #: meses de nota estimada.
+                #:
+                #: 21 ms PARA OS OITO MESES, medido: a nota de um pedaço não
+                #: existe em lugar nenhum senão medindo.
+                "nota": (
+                    repositorio_score.medir_uma_lente(
+                        sessao, lente, linha["mes"], calibracao, filtro
+                    ).score
+                    if filtro.ativo and not linha["sem_base"]
+                    else None
+                ),
             }
         )
 
@@ -2201,9 +2200,6 @@ def obter_recorte(
         #: não existisse.
         ausencia=medida.ausencia if not itens else None,
         historico=historico,
-        #: SÓ AS ABAS, aqui: o aviso de dimensão esperada mora no cartão da
-        #: tela, e repeti-lo dentro do painel de aprofundamento seria contar duas
-        #: vezes a mesma coisa sobre a mesma fonte.
         dentro=_onde_esta_a_causa(
             sessao,
             lente,
@@ -2212,7 +2208,7 @@ def obter_recorte(
             filtro,
             ja_usadas=filtro,
             ve_diretorio=usuario.ve_diretorio,
-        )[0],
+        ),
         itens_do_recorte=_materias_recentes(sessao, lente, alvo, calibracao, filtro),
     )
 

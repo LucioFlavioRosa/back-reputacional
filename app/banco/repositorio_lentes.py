@@ -49,11 +49,9 @@ from app.banco.tabelas_lentes import (
 from app.banco.tabelas_score import Lente, Mencao, ScoreFonte
 from app.banco.tabelas_stakeholders import Instituicao
 from app.dominio.causa_da_lente import (
-    DIMENSOES_POR_LENTE,
     Dimensao,
     Presenca,
-    dimensoes_que_explicam,
-    explica,
+    dimensoes_do_recorte,
 )
 from app.dominio.score import Calibracao, FiltroDeMencoes
 
@@ -701,38 +699,23 @@ def cortes_da_causa(
     escolhida, as abas passam a explicar AQUELA UF. Descer um nível é refazer a
     mesma pergunta num pedaço menor, e não olhar o mês inteiro de outro jeito.
     """
-    dimensoes = DIMENSOES_POR_LENTE.get(codigo_da_lente, ())
+    dimensoes = dimensoes_do_recorte(codigo_da_lente, ve_diretorio)
     if not dimensoes:
         return []
     presencas_por_campo, total = presenca_das_dimensoes(
         sessao, [dimensao.campo for dimensao in dimensoes], lente_id, mes, calibracao, filtro
     )
-    presencas = {
-        dimensao.chave: presencas_por_campo[dimensao.campo] for dimensao in dimensoes
-    }
-    #: O QUE FICOU DE FORA VIAJA JUNTO (pacote, FRONTEND §40: "aviso específico
-    #: quando uma dimensão esperada não é útil no mês"). O tema é o caso real: ele
-    #: é a primeira dimensão prioritária desta lente e chega em 1.959 dos 6.932
-    #: itens — uma das duas fontes não classifica assunto. Sem o aviso, a tela
-    #: mostra um cartão "onde está a causa" SEM aba de tema logo acima de um
-    #: painel "Temas × sentimento", e quem lê conclui que a tela está quebrada.
-    explicam = dimensoes_que_explicam(codigo_da_lente, presencas, total, ve_diretorio)
+    presencas = presencas_por_campo
+    #: UM CORTE POR DIMENSÃO, SEMPRE — e a que não tem dado volta com `linhas`
+    #: vazio, para a aba existir e dizer que a fonte não classificou. Ver
+    #: `dimensoes_do_recorte`: a fileira de abas é a mesma em todo mês.
     cortes: list[CorteDaCausa] = []
-    for dimensao in dimensoes:
-        presenca = presencas[dimensao.chave]
-        if dimensao not in explicam:
-            #: NÃO EXPLICAR E NÃO CABER SÃO COISAS DIFERENTES, e confundi-las
-            #: faria a tela anunciar como lacuna de dado a sétima dimensão de uma
-            #: lente em que todas as sete explicam — mentindo sobre um dado que
-            #: está lá. Só a que falha no critério vira aviso.
-            if not explica(presenca, total):
-                #: SEM LINHA NENHUMA, e por isso sem consulta nenhuma: a ausência
-                #: se explica com a medida que já está na mão.
-                #:
-                #: MENOS A QUE A PERMISSÃO ESCONDE: anunciar a aba de jornalista
-                #: como lacuna de dado seria contar que ela existe.
-                if not (dimensao.nomeia_o_diretorio and not ve_diretorio):
-                    cortes.append(CorteDaCausa(dimensao, [], presenca, total))
+    for dimensao in dimensoes_do_recorte(codigo_da_lente, ve_diretorio):
+        presenca = presencas[dimensao.campo]
+        if not presenca.preenchidas:
+            #: SEM UM VALOR SEQUER, nem se consulta: a aba sai vazia, e a medida
+            #: que já está na mão é o que explica por quê.
+            cortes.append(CorteDaCausa(dimensao, [], presenca, total))
             continue
         if dimensao.chave == "tema":
             #: O TEMA PELA MESMA CONSULTA DO PAINEL, e isto foi achado de revisão:
