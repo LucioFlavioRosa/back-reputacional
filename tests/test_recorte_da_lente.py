@@ -328,28 +328,6 @@ def test_toda_dimensao_do_filtro_TEM_rotulo():
 
     assert do_filtro == set(ROTULO_DA_DIMENSAO)
 
-
-def test_o_historico_NAO_deriva_a_nota_do_mes(sessao, sociedade_de_junho):
-    """DUAS VEZES ACHADO DE REVISÃO, pela mesma razão de fundo: um segundo caminho
-    para o mesmo número.
-
-    O dono do produto leu a coluna do histórico como variação mês a mês — e leu
-    certo o que a tela mostrava: cada número é a distância da nota até 50, e nada
-    dizia isso. Eu resolvi derivando a nota aqui, `50 + impacto`, que é identidade
-    exata sem recorte. A revisão achou dois furos: o `impacto` já vinha com duas
-    casas, e `round(50 + 35.50)` dá 86 onde `para_score` dá 85; e
-    `medir_uma_lente` exclui a estimativa de propósito, então num mês estimado a
-    lente publicaria nota e este histórico diria "sem base".
-
-    A NOTA OFICIAL JÁ ESTÁ NA TELA (`PontoDaSerie.notas_das_lentes`, o número que
-    a Jornada desenha). Aqui fica só o que é desta conta: o impacto."""
-    inteiro = _recorte(sessao)
-    deste_mes = next(h for h in inteiro.historico if h["mes"] == "2026-06")
-
-    assert "nota" not in deste_mes
-    assert set(deste_mes) == {"mes", "impacto", "itens", "sem_base"}
-
-
 def test_cada_lente_NAO_repete_campo_entre_as_dimensoes():
     """A PREMISSA DO CASAMENTO POR ÍNDICE, travada aqui.
 
@@ -370,3 +348,39 @@ def test_cada_lente_NAO_repete_campo_entre_as_dimensoes():
         #: chave recortariam a mesma coisa com nomes diferentes.
         chaves = [dimensao.chave for dimensao in dimensoes]
         assert len(chaves) == len(set(chaves)), codigo
+
+
+def test_o_historico_do_RECORTE_traz_a_NOTA_dele_mes_a_mes(sessao, sociedade_de_junho):
+    """A PONTUAÇÃO, E NÃO A DISTÂNCIA ATÉ 50 — pedido do dono do produto: "traga a
+    pontuação, que é mais fácil de comunicar".
+
+    O IMPACTO CONTINUA SENDO A CONTA CERTA para "quanto este pedaço mexe na nota
+    da lente", e é o número grande do topo do painel. Mas numa coluna de oito
+    meses ele é difícil de ler: -2,1 ao lado de +1,0 não diz se o pedaço está bem
+    ou mal, só se mexeu para cima ou para baixo. A nota diz as duas coisas, e é a
+    escala que todo mundo na Aegea já usa.
+
+    SEM RECORTE A NOTA VEM DA TELA (a mesma série que desenha a Jornada, estimativa
+    incluída); COM RECORTE ela é medida aqui, porque a nota de um pedaço não existe
+    em lugar nenhum senão medindo. São 21 ms para os oito meses."""
+    do_rio = _recorte(sessao, uf="RJ")
+    deste_mes = next(h for h in do_rio.historico if h["mes"] == "2026-06")
+
+    #: A nota do recorte no mês é a mesma do topo do painel.
+    assert deste_mes["nota"] == do_rio.nota
+    #: E O IMPACTO CONTINUA LÁ, para quem quiser a contribuição.
+    assert deste_mes["impacto"] == do_rio.impacto
+
+    #: MÊS SEM O RECORTE não inventa nota.
+    sem_base = [h for h in do_rio.historico if h["sem_base"]]
+    assert sem_base and all(h["nota"] is None for h in sem_base)
+
+
+def test_sem_recorte_a_nota_do_historico_fica_para_a_tela(sessao, sociedade_de_junho):
+    """A DIVISÃO É DELIBERADA, e ela nasceu de dois achados de revisão: derivar a
+    nota do mês aqui (`50 + impacto`) divergia por arredondamento duplo e, nos
+    meses de nota ESTIMADA, dizia "sem base" onde a lente publica número. Sem
+    recorte, quem tem o número certo é a série que desenha a Jornada."""
+    inteiro = _recorte(sessao)
+
+    assert all(h["nota"] is None for h in inteiro.historico)

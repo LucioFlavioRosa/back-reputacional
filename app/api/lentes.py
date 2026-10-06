@@ -2157,6 +2157,31 @@ def obter_recorte(
                 "impacto": do_mes,
                 "itens": int(linha["pos"] + linha["neu"] + linha["neg"]),
                 "sem_base": bool(linha["sem_base"]),
+                #: A PONTUAÇÃO DO RECORTE, mês a mês — pedido do dono do produto:
+                #: "traga a pontuação, que é mais fácil de comunicar".
+                #:
+                #: O IMPACTO CONTINUA SENDO A CONTA CERTA para "quanto este pedaço
+                #: mexe na nota da lente", e é o número grande do topo do painel.
+                #: Mas numa coluna de oito meses ele não se lê: −2,1 ao lado de
+                #: +1,0 diz que mexeu para baixo e para cima, e não se o pedaço
+                #: está bem ou mal. A nota diz as duas coisas, na escala que todo
+                #: mundo na Aegea já usa.
+                #:
+                #: SÓ COM RECORTE ATIVO, e a divisão é deliberada: sem recorte, o
+                #: número certo é o da série que desenha a Jornada (estimativa
+                #: incluída), e a tela já o tem. Derivá-lo aqui foi duas vezes
+                #: achado de revisão — arredondamento duplo, e "sem base" nos
+                #: meses de nota estimada.
+                #:
+                #: 21 ms PARA OS OITO MESES, medido: a nota de um pedaço não
+                #: existe em lugar nenhum senão medindo.
+                "nota": (
+                    repositorio_score.medir_uma_lente(
+                        sessao, lente, linha["mes"], calibracao, filtro
+                    ).score
+                    if filtro.ativo and not linha["sem_base"]
+                    else None
+                ),
             }
         )
 
