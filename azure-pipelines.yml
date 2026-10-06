@@ -1,0 +1,238 @@
+# =============================================================================
+# API do Painel Reputacional — build, migrations e implantação
+#
+# TRÊS ETAPAS, NESTA ORDEM, e a ordem é a regra: os testes passam, a imagem sobe
+# para o registry, as migrations correm, e só então o app aponta para a imagem
+# nova. Inverter as duas últimas publica código que espera uma coluna que ainda
+# não existe.
+#
+# A IMAGEM É IDENTIFICADA PELO DIGEST, nunca por `latest`. É o que garante que o
+# que foi testado é o que roda: uma tag pode ser movida, um digest não. Vale mais
+# ainda quando a mesma imagem vai para dois lugares — o ambiente de
+# desenvolvimento (Container Apps) e o cluster do cliente (AKS).
+#
+# `az acr build` E NÃO `docker build`: a construção acontece DENTRO do registry,
+# então o agente não precisa de Docker nem de credencial de push. Um agente
+# hospedado padrão basta.
+#
+# O QUE ESTE PIPELINE NÃO FAZ: aplicar migrations do próprio agente. O Postgres
+# está atrás de private endpoint e o agente hospedado não o alcança — por isso as
+# migrations são um Container Apps Job, que roda DENTRO da rede. Ver
+# `infra-reputacional/scripts/migrar.py`.
+# =============================================================================
+
+trigger:
+  branches:
+    include: [main]
+  paths:
+    # A infra tem o pipeline dela; mudança de documentação não reimplanta nada.
+    exclude: [docs/*, README.md, '**/*.md']
+
+pr: none
+
+pool:
+  vmImage: ubuntu-latest
+
+# O POSTGRES COMO CONTÊINER DE SERVIÇO. Declarado aqui e referenciado por
+# `services:` no job — é a forma que o Azure Pipelines aceita; `services: banco:
+# postgres` (sem esta declaração) não resolve a imagem.
+resources:
+  containers:
+    - container: banco
+      image: postgres:18-alpine
+      env:
+        POSTGRES_PASSWORD: postgres
+        POSTGRES_DB: painel_reputacional
+      ports:
+        - 5432:5432
+
+variables:
+  # DE UM GRUPO DE VARIÁVEIS, e não escritos aqui: os nomes mudam por ambiente
+  # (`dev`, `hml`), e um pipeline por ambiente seria o mesmo arquivo duplicado.
+  #
+  # Crie o grupo em Pipelines > Library com:
+  #   CONEXAO_AZURE      conexão de serviço (ARM) com acesso ao grupo
+  #   GRUPO_DE_RECURSOS  rg-painel-reputacional-aegea-dev-usce
+  #   ACR                nome do registry, SEM `.azurecr.io`
+  #   APP_DO_BACK        ca-back-painel-rep-<ambiente>
+  #   APP_DO_FRONT       ca-front-painel-rep-<ambiente>  (só para a sonda final)
+  #   JOB_DE_MIGRACOES   caj-migracoes-painel-rep-<ambiente>
+  - group: painel-reputacional-dev
+  - name: imagem
+    value: painel-reputacional/back
+
+stages:
+  # ---------------------------------------------------------------------------
+  - stage: conferir
+    displayName: Testes
+    jobs:
+      - job: pytest
+        displayName: pytest + ruff
+        # O POSTGRES VEM COMO SERVIÇO DO JOB. Sem ele a suíte PULA 600 testes em
+        # silêncio e termina verde — o pior desfecho possível num pipeline, porque
+        # ele passa a aprovar sem olhar.
+        services:
+          banco: banco
+        variables:
+          BANCO_URL_TESTE: postgresql+psycopg2://postgres:postgres@localhost:5432/painel_reputacional
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '3.13'
+          - script: |
+              set -e
+              python -m pip install --upgrade pip
+              pip install --require-hashes -r requirements.txt
+              pip install -r requirements-dev.txt
+            displayName: Dependências
+          - script: python -m ruff check app tests
+            displayName: ruff
+          - script: |
+              set -e
+              # A CONTAGEM É CONFERIDA: a suíte sem Postgres sai verde pulando
+              # centenas de testes, e `exit 0` não distingue um caso do outro.
+              python -m pytest -q --junitxml=resultado.xml
+              # NA RAIZ NÃO HÁ `skipped` — ele fica em cada `<testsuite>`, e ler
+              # da raiz devolvia sempre `None`/0: o guarda nunca dispararia, e
+              # este pipeline aprovaria a suíte que pulou tudo. Conferido no
+              # junit real do pytest antes de escrever isto.
+              pulados=$(python - <<'FIM'
+              import xml.etree.ElementTree as ET
+              raiz = ET.parse("resultado.xml").getroot()
+              print(sum(int(s.get("skipped", 0)) for s in raiz.iter("testsuite")))
+              FIM
+              )
+              echo "pulados: $pulados"
+              if [ "$pulados" -gt 20 ]; then
+                echo "A suíte pulou $pulados testes — o banco provavelmente não subiu." >&2
+                exit 1
+              fi
+            displayName: pytest
+          - task: PublishTestResults@2
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFiles: resultado.xml
+
+  # ---------------------------------------------------------------------------
+  - stage: imagem
+    displayName: Imagem
+    dependsOn: conferir
+    jobs:
+      - job: acr
+        displayName: az acr build
+        steps:
+          - task: AzureCLI@2
+            name: construir
+            inputs:
+              azureSubscription: $(CONEXAO_AZURE)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -e
+                # A TAG É O COMMIT, para dar nome ao que se vê no portal; o que o
+                # deploy usa é o DIGEST, logo abaixo.
+                az acr build \
+                  --registry "$(ACR)" \
+                  --image "$(imagem):$(Build.SourceVersion)" \
+                  --file Dockerfile .
+
+                digest=$(az acr repository show \
+                  --name "$(ACR)" \
+                  --image "$(imagem):$(Build.SourceVersion)" \
+                  --query digest -o tsv)
+                echo "digest: $digest"
+                # `isOutput=true` para a próxima etapa ler.
+                echo "##vso[task.setvariable variable=digest;isOutput=true]$digest"
+
+  # ---------------------------------------------------------------------------
+  - stage: implantar
+    displayName: Migrations e implantação
+    dependsOn: imagem
+    variables:
+      digest: $[ stageDependencies.imagem.acr.construir.outputs['digest'] ]
+    jobs:
+      - deployment: container_apps
+        displayName: Container Apps (dev)
+        # `environment` dá o histórico de implantações e o lugar de pôr aprovação
+        # manual quando o alvo for o cliente.
+        environment: painel-reputacional-dev
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  displayName: Migrations (Container Apps Job)
+                  inputs:
+                    azureSubscription: $(CONEXAO_AZURE)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -e
+                      # O JOB RODA A IMAGEM NOVA, pelo digest: as migrations têm
+                      # de ser as do código que vai subir, não as da imagem
+                      # anterior.
+                      az containerapp job update \
+                        --name "$(JOB_DE_MIGRACOES)" \
+                        --resource-group "$(GRUPO_DE_RECURSOS)" \
+                        --image "$(ACR).azurecr.io/$(imagem)@$(digest)" >/dev/null
+
+                      execucao=$(az containerapp job start \
+                        --name "$(JOB_DE_MIGRACOES)" \
+                        --resource-group "$(GRUPO_DE_RECURSOS)" \
+                        --query name -o tsv)
+                      echo "execução: $execucao"
+
+                      # ESPERAR É OBRIGATÓRIO. `job start` devolve na hora; sem
+                      # esperar, o app subiria junto das migrations e atenderia
+                      # requisição contra um banco a meio caminho.
+                      for _ in $(seq 1 60); do
+                        estado=$(az containerapp job execution show \
+                          --name "$(JOB_DE_MIGRACOES)" \
+                          --resource-group "$(GRUPO_DE_RECURSOS)" \
+                          --job-execution-name "$execucao" \
+                          --query properties.status -o tsv)
+                        echo "  $estado"
+                        case "$estado" in
+                          Succeeded) exit 0 ;;
+                          Failed|Degraded)
+                            echo "As migrations falharam. O app NÃO foi atualizado." >&2
+                            az containerapp job logs show \
+                              --name "$(JOB_DE_MIGRACOES)" \
+                              --resource-group "$(GRUPO_DE_RECURSOS)" \
+                              --execution "$execucao" --tail 50 || true
+                            exit 1 ;;
+                        esac
+                        sleep 10
+                      done
+                      echo "As migrations não terminaram em 10 minutos." >&2
+                      exit 1
+
+                - task: AzureCLI@2
+                  displayName: Apontar o app para a imagem nova
+                  inputs:
+                    azureSubscription: $(CONEXAO_AZURE)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -e
+                      az containerapp update \
+                        --name "$(APP_DO_BACK)" \
+                        --resource-group "$(GRUPO_DE_RECURSOS)" \
+                        --image "$(ACR).azurecr.io/$(imagem)@$(digest)"
+
+                      # A SONDA DEPOIS DO DEPLOY, e contra o endereço público do
+                      # painel: `/api/saude` responder pelo caminho que o usuário
+                      # usa é o que prova que a revisão nova está servindo. O app
+                      # do back é interno — quem o expõe é o nginx do front.
+                      url=$(az containerapp show \
+                        --name "$(APP_DO_FRONT)" \
+                        --resource-group "$(GRUPO_DE_RECURSOS)" \
+                        --query properties.configuration.ingress.fqdn -o tsv)
+                      for _ in $(seq 1 20); do
+                        codigo=$(curl -s -o /dev/null -w '%{http_code}' "https://$url/api/saude" || true)
+                        echo "  GET /api/saude -> $codigo"
+                        [ "$codigo" = "200" ] && exit 0
+                        sleep 6
+                      done
+                      echo "A API não respondeu 200 depois da implantação." >&2
+                      exit 1
