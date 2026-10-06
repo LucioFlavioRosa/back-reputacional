@@ -1314,6 +1314,35 @@ def test_area_do_interlocutor_e_opcional(cliente_admin, semente):
     assert pessoa["area"] is None
 
 
+def test_redes_sociais_do_interlocutor_e_uma_lista_livre_de_zero_ou_mais(cliente_admin, semente):
+    """Uma lista, e não uma caixa por rede — a pessoa pode ter zero, um, ou
+    vários links, inclusive dois da mesma rede."""
+    sem_nenhuma = cliente_admin.post(
+        "/api/interlocutores", json={"nome": "Sem Rede Nenhuma"}
+    ).json()
+    assert sem_nenhuma["redes_sociais"] == []
+
+    criada = cliente_admin.post(
+        "/api/interlocutores",
+        json={
+            "nome": "Jornalista Conectado",
+            "redes_sociais": ["@jornalista", "instagram.com/jornalista"],
+        },
+    ).json()
+    assert criada["redes_sociais"] == ["@jornalista", "instagram.com/jornalista"]
+
+    editada = cliente_admin.put(
+        f"/api/interlocutores/{criada['id']}",
+        json={
+            "nome": "Jornalista Conectado",
+            "redes_sociais": ["@jornalista", "linkedin.com/in/jornalista", "@jornalista2"],
+        },
+    ).json()
+    assert editada["redes_sociais"] == [
+        "@jornalista", "linkedin.com/in/jornalista", "@jornalista2",
+    ]
+
+
 def test_mudar_a_pessoa_de_instituicao(cliente_admin, semente):
     """Alguem troca de emprego, e a agenda antiga nao pode perder o nome.
 
