@@ -1,4 +1,4 @@
-"""Por quais cortes se pergunta "onde está a causa" — e quando um corte explica.
+"""Por quais cortes se pergunta "onde está a causa".
 
 O DONO DO PRODUTO FOI À TELA E NÃO ACHOU COMO DESCER OS NÍVEIS. O recorte
 funcionava: a barra de filtros aplica, o servidor recalcula, a nota muda. Mas a
@@ -7,32 +7,17 @@ com a nota caída não sabe; a pergunta é "onde está a causa", e a tela só a
 respondia por duas dimensões (tema e concessionária), enquanto o pacote declara
 oito para a Sociedade digital.
 
-AS ABAS SÃO A RESPOSTA DO PACOTE (FRONTEND §3: "abas das dimensões úteis"). É uma
-pergunta só, feita por vários cortes: trocar de aba é a navegação que faltava
-entre o nível 1 (a nota) e o nível 3 (o item).
+AS ABAS SÃO A RESPOSTA DO PACOTE (FRONTEND §3). É uma pergunta só, feita por
+vários cortes: trocar de aba é a navegação que faltava entre o nível 1 (a nota) e
+o nível 3 (o item).
 
-AQUI MORA O QUE É DECISÃO, e não consulta: a ordem em que se pergunta, e quando
-um corte merece aba. O SQL fica no repositório, que é quem conhece as colunas.
+AQUI MORA O QUE É DECISÃO, e não consulta: QUAIS cortes a lente oferece e em que
+ordem se pergunta. O SQL fica no repositório, que é quem conhece as colunas.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-
-#: QUANTAS ABAS CABEM. O pacote pede "máx. 6 visíveis + mais"; seis é o número a
-#: partir do qual a fileira de abas deixa de ser escolha e passa a ser lista —
-#: e uma lista de cortes é exatamente a barra de filtros que já existe.
-ABAS = 6
-
-#: NULO DEMAIS PARA SER CAUSA. Uma dimensão que a fonte quase não classificou não
-#: explica o mês: explica a si mesma. Com 70% de nulo, a maior barra do painel
-#: seria "sem classificação" — e quem lê conclui que a lente está quebrada, não
-#: que o fornecedor não mandou o campo.
-#:
-#: QUANTO FALTA CONTINUA VISÍVEL, na lacuna da ficha de cada aba: o corte sai da
-#: fileira de abas, não do conhecimento de quem lê.
-NULO_DEMAIS = 0.6
-
 
 #: O NOME DE CADA DIMENSÃO DO RECORTE, inclusive as que não são aba de lente
 #: nenhuma.
@@ -135,35 +120,36 @@ DIMENSOES_POR_LENTE: dict[str, tuple[Dimensao, ...]] = {
 }
 
 
-def explica(presenca: Presenca, total: int) -> bool:
-    """Esta dimensão explica o mês, ou só a si mesma?
-
-    DOIS VALORES, NO MÍNIMO: com um só, a barra ocupa a largura inteira e diz
-    "100% de tudo é isto" — informação zero, e uma aba gasta.
-
-    E NULO ABAIXO DE `NULO_DEMAIS`: ver o comentário da constante.
-    """
-    if total <= 0:
-        return False
-    return presenca.distintas >= 2 and presenca.preenchidas > total * (1 - NULO_DEMAIS)
-
-
-def dimensoes_que_explicam(
-    codigo_da_lente: str,
-    presencas: dict[str, Presenca],
-    total: int,
-    ve_diretorio: bool = True,
-) -> list[Dimensao]:
-    """As abas desta lente, na ordem dela, até o teto de `ABAS`.
+#: AS MESMAS ABAS EM TODO MÊS, E A QUE NÃO TEM DADO FICA VAZIA — decisão do dono
+#: do produto (05/10/2026), e ela SUBSTITUI as "dimensões úteis" do pacote
+#: (FRONTEND §3), que mediam quanto cada dimensão explicava o mês e escondiam a
+#: que explicava pouco.
+#:
+#: O QUE O CRITÉRIO DO PACOTE CUSTAVA, no dado real: até maio/2026 só a Approach
+#: entregava, e o tema vinha em 97% a 100% dos itens; em junho a Bites entra com
+#: 4.973 posts sem tema, o tema cai para 28% do mês e a aba SUMIA. O dono do
+#: produto abriu junho pelo ponto da Jornada e reparou na hora — "não tenho a
+#: opção de tema como aparece nos demais meses".
+#:
+#: UMA FILEIRA DE ABAS QUE MUDA DE MÊS PARA MÊS SE LÊ COMO TELA QUEBRADA, e o
+#: preço de mostrar a aba vazia é menor: ela diz que a fonte não classificou
+#: aquele campo naquele mês — um fato sobre a fonte, e acionável, porque dá para
+#: cobrar do fornecedor.
+#:
+#: QUANTO FALTA CONTINUA DITO na ficha de cada aba ("Tema vem em 1.959 das 6.932
+#: menções do mês"), que é onde a informação não concorre com a navegação.
+#:
+#: E VALE PARA TODAS AS LENTES, e para os dois lugares onde as abas aparecem: o
+#: cartão da tela e o painel de aprofundamento.
+def dimensoes_do_recorte(codigo_da_lente: str, ve_diretorio: bool = True) -> list[Dimensao]:
+    """Os cortes que esta lente oferece, na ordem em que ela se explica.
 
     `ve_diretorio` TIRA A ABA, E NÃO A LENTE: quem não alcança o cadastro de
     terceiros perde a aba que nomeia jornalista e fica com todas as outras. O
     contrário — esconder o cartão inteiro — pagaria a tela toda por uma coluna.
     """
-    candidatas = DIMENSOES_POR_LENTE.get(codigo_da_lente, ())
     return [
         dimensao
-        for dimensao in candidatas
-        if explica(presencas.get(dimensao.chave, Presenca(0, 0)), total)
-        and (ve_diretorio or not dimensao.nomeia_o_diretorio)
-    ][:ABAS]
+        for dimensao in DIMENSOES_POR_LENTE.get(codigo_da_lente, ())
+        if ve_diretorio or not dimensao.nomeia_o_diretorio
+    ]

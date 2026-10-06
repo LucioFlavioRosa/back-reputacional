@@ -631,18 +631,32 @@ def test_a_causa_vem_com_uma_aba_por_dimensao_util(sessao, sociedade_de_junho):
     assert "autor" in chaves
 
 
-def test_a_dimensao_de_UM_VALOR_SO_nao_e_aba(sessao, sociedade_de_junho):
-    """Uma dimensão com um valor só não explica nada: a barra ocuparia a largura
-    inteira e diria "100% de tudo é isto". No fixture, a rede é só Instagram."""
+def test_a_dimensao_de_UM_VALOR_SO_CONTINUA_sendo_aba(sessao, sociedade_de_junho):
+    """A FILEIRA DE ABAS É A MESMA EM TODO MÊS — decisão do dono do produto, e ela
+    substitui as "dimensões úteis" do pacote.
+
+    Antes eu escondia a dimensão de um valor só, com o argumento de que uma barra
+    de 100% não informa nada. O argumento continua verdadeiro e a conclusão era
+    errada: no fixture a rede é só Instagram, e num mês com duas redes a aba
+    apareceria — uma aba que vai e volta se lê como tela quebrada. A barra de 100%
+    custa uma linha; a fileira instável custa a confiança na tela."""
     dossie = _da_sociedade(sessao)
 
-    assert "veiculo" not in [bloco.recorta for bloco in dossie.onde_esta_a_causa]
+    assert "veiculo" in [bloco.recorta for bloco in dossie.onde_esta_a_causa]
 
 
-def test_a_dimensao_com_MUITO_NULO_nao_e_aba(sessao):
-    """O critério do pacote: nulos abaixo de 60%. Uma dimensão que a fonte quase
-    não classificou não é causa, é lacuna — e a tela que a mostra como causa diz
-    que "a maior parte do mês é Sem classificação", o que não ajuda ninguém."""
+def test_a_dimensao_SEM_DADO_NENHUM_e_uma_aba_VAZIA(sessao):
+    """O CASO QUE O DONO DO PRODUTO ENCONTROU, e que mudou a regra: ele abriu
+    junho/2026 pelo ponto da Jornada e disse "não tenho a opção de tema como
+    aparece nos demais meses".
+
+    O DADO EXPLICA: até maio só a Approach entregava, e o tema vinha em 97% a 100%
+    dos itens; em junho a Bites entra com 4.973 posts sem tema, o tema cai para
+    28% do mês e a aba saía pelo critério do pacote (nulo abaixo de 60%).
+
+    A DECISÃO: as mesmas abas em todo mês, e a que não tem dado fica VAZIA — com a
+    ficha dizendo que a fonte não classificou. Um quadro em branco com uma frase é
+    um fato sobre a fonte; uma aba que desaparece é uma tela quebrada."""
     bites = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "bites")).one()
     for i in range(10):
         sessao.add(
@@ -650,9 +664,9 @@ def test_a_dimensao_com_MUITO_NULO_nao_e_aba(sessao):
                 fonte_id=bites.id,
                 mes=MES,
                 sentimento="neg",
-                perfil_autor="Cidadão" if i < 4 else None,
-                tema_texto="Saneamento",
+                #: NENHUMA com subtema, e a UF em todas.
                 uf="RJ" if i % 2 else "SP",
+                perfil_autor="Cidadão",
             )
         )
     sessao.add(
@@ -665,11 +679,17 @@ def test_a_dimensao_com_MUITO_NULO_nao_e_aba(sessao):
     sessao.flush()
 
     dossie = _da_sociedade(sessao)
+    por_chave = {bloco.recorta: bloco for bloco in dossie.onde_esta_a_causa}
 
-    #: Perfil em 4 de 10 — 60% de nulo — fica fora. A UF, em todas, entra.
-    chaves = [bloco.recorta for bloco in dossie.onde_esta_a_causa]
-    assert "perfil_autor" not in chaves
-    assert "uf" in chaves
+    #: A ABA EXISTE, mesmo sem um único valor.
+    do_subtema = por_chave["subtema"]
+    assert do_subtema.dados == []
+    #: E DIZ POR QUÊ, na ficha — é o que separa "a fonte não mandou" de "não
+    #: houve".
+    assert any("não classificou subtema" in frase for frase in do_subtema.ficha.lacunas)
+
+    #: A QUE TEM DADO segue com as linhas dela.
+    assert {linha["rotulo"] for linha in por_chave["uf"].dados} == {"RJ", "SP"}
 
 
 def test_cada_aba_traz_as_linhas_e_o_que_ela_recorta(sessao, sociedade_de_junho):
@@ -844,15 +864,14 @@ def test_a_aba_de_JORNALISTA_respeita_ve_diretorio(sessao, imprensa_de_junho):
     _ = bites
 
 
-def test_a_dimensao_ESPERADA_que_nao_explica_vira_AVISO(sessao):
-    """O PACOTE PEDE ISTO (FRONTEND §40), e o caso é real, não hipotético: o tema
-    é a PRIMEIRA dimensão prioritária da Sociedade digital e chega em 1.959 dos
-    6.932 itens de junho — uma das duas fontes não classifica assunto.
+def test_a_ficha_da_aba_diz_QUANTO_do_mes_o_campo_cobre(sessao):
+    """O aviso âmbar que eu havia criado (uma lista de dimensões ausentes, no pé
+    do cartão) SAIU: com a aba sempre presente, o lugar certo da informação é a
+    ficha DELA — ali ela não concorre com a navegação, e não há como ler a aba sem
+    ter a frase a um clique.
 
-    SEM O AVISO, a tela mostra um cartão "onde está a causa" SEM aba de tema logo
-    acima de um painel "Temas × sentimento". Quem lê conclui que a tela está
-    quebrada. A frase transforma um buraco inexplicável em um fato sobre a
-    fonte — e esse fato é acionável: dá para cobrar do fornecedor."""
+    E A FRASE IMPORTA MESMO QUANDO A ABA TEM LINHAS: um corte que cobre 2 de 10
+    itens desenha barras que somam 100% de um décimo do mês."""
     bites = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "bites")).one()
     for i in range(10):
         sessao.add(
@@ -877,61 +896,12 @@ def test_a_dimensao_ESPERADA_que_nao_explica_vira_AVISO(sessao):
     sessao.flush()
 
     dossie = _da_sociedade(sessao)
+    do_tema = next(b for b in dossie.onde_esta_a_causa if b.recorta == "tema")
 
-    assert "tema" not in [bloco.recorta for bloco in dossie.onde_esta_a_causa]
-    #: E A TELA SABE DIZER POR QUÊ, com o número na frase.
-    do_tema = next(frase for frase in dossie.lacunas_da_causa if frase.startswith("Tema"))
-    assert "2 de 10" in do_tema
-
-    #: O VALOR ÚNICO TEM FRASE PRÓPRIA: o perfil está em todas as menções, mas com
-    #: um valor só — não é falta de classificação, é dimensão que não separa nada.
-    do_perfil = next(
-        frase for frase in dossie.lacunas_da_causa if frase.startswith("Perfil de quem fala")
-    )
-    assert "um valor só" in do_perfil
-
-
-def test_a_tabela_de_mencoes_DIZ_qual_coluna_e_o_endereco_da_linha(sessao, sociedade_de_junho):
-    """O DONO DO PRODUTO PEDIU A LINHA, E NÃO O LINK: "não precisa ter o link no
-    modal, mas se clicar gostaria de acessar a página".
-
-    UMA COLUNA "LINK" COM "ABRIR ↗" EM CADA LINHA É RUÍDO: a coluna existe só
-    para repetir, trinta vezes, a mesma palavra — e rouba largura do texto da
-    menção, que é o que se lê. O endereço continua vindo no dado; o que muda é
-    que ele passa a ser o DESTINO DA LINHA, e não uma célula.
-
-    QUEM DECIDE É O SERVIDOR, pelo mesmo motivo de `recorta`: a alternativa é a
-    tela procurar uma coluna chamada "link" — adivinhação pelo nome, que é
-    exatamente como a escolha do schema da tabela já quebrou uma vez."""
-    bites = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "bites")).one()
-    sessao.add(
-        Mencao(
-            fonte_id=bites.id,
-            mes=MES,
-            sentimento="neg",
-            titulo_texto="Falta de água no bairro",
-            link="https://exemplo.com/post/1",
-            uf="RJ",
-        )
-    )
-    sessao.flush()
-
-    dossie = _da_sociedade(sessao)
-    tabela = dossie.materias_recentes
-
-    assert tabela.coluna_do_link == "link"
-    #: A COLUNA SAI DA TELA, mas o endereço CONTINUA NO DADO — é ele que a linha
-    #: usa para levar à página.
-    assert "link" not in [coluna.chave for coluna in tabela.colunas]
-    assert tabela.dados[0]["link"] == "https://exemplo.com/post/1"
-
-
-def test_a_tabela_que_nao_tem_endereco_nao_promete_nenhum(sessao, imprensa_de_junho):
-    """A tabela de matérias da Imprensa não traz link — e uma linha que parece
-    clicável e não leva a lugar nenhum custa mais do que uma que não parece."""
-    dossie = _dossie(sessao)
-
-    assert dossie.materias_recentes.coluna_do_link is None
+    #: A ABA TEM OS DOIS TEMAS...
+    assert {linha["rotulo"] for linha in do_tema.dados} == {"Abastecimento", "Obras"}
+    #: ...E A FICHA DIZ DE QUE PEDAÇO DO MÊS ELES FALAM.
+    assert any("2 das 10" in frase for frase in do_tema.ficha.lacunas)
 
 
 def test_o_bloco_dos_TEMAS_MAIS_FALADOS_recorta_por_tema(sessao, sociedade_de_junho):
