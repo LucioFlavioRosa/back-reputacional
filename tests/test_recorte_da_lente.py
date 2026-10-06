@@ -348,3 +348,25 @@ def test_o_historico_NAO_deriva_a_nota_do_mes(sessao, sociedade_de_junho):
 
     assert "nota" not in deste_mes
     assert set(deste_mes) == {"mes", "impacto", "itens", "sem_base"}
+
+
+def test_cada_lente_NAO_repete_campo_entre_as_dimensoes():
+    """A PREMISSA DO CASAMENTO POR ÍNDICE, travada aqui.
+
+    `presenca_das_dimensoes` monta um `select` com `count` e `count(distinct)` por
+    campo e casa o resultado com a lista de campos por posição — uma leitura só
+    para todas as dimensões, que é o que torna as abas viáveis. Duas dimensões da
+    mesma lente apontando para o MESMO campo fariam a segunda sobrescrever a
+    presença da primeira no dicionário, e o corte sairia medido pelo campo errado.
+
+    SEM BANCO: é conferência entre declarações, e um teste que precisa de banco
+    para isso não roda quando mais importa."""
+    from app.dominio.causa_da_lente import DIMENSOES_POR_LENTE
+
+    for codigo, dimensoes in DIMENSOES_POR_LENTE.items():
+        campos = [dimensao.campo for dimensao in dimensoes]
+        assert len(campos) == len(set(campos)), codigo
+        #: E a chave também: ela é o parâmetro da rota, e duas abas com a mesma
+        #: chave recortariam a mesma coisa com nomes diferentes.
+        chaves = [dimensao.chave for dimensao in dimensoes]
+        assert len(chaves) == len(set(chaves)), codigo
