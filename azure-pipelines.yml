@@ -152,6 +152,21 @@ stages:
                 # `isOutput=true` para a próxima etapa ler.
                 echo "##vso[task.setvariable variable=digest;isOutput=true]$digest"
 
+          # O DIGEST COMO ARTEFATO, e não só como variável de etapa: é assim que o
+          # pipeline de AKS (`infra-reputacional/azure-pipelines-aks.yml`) o recebe.
+          # O release no AKS é UM com DUAS imagens, e a variável de etapa não
+          # atravessa a fronteira de um pipeline para outro — o artefato atravessa, e
+          # o Azure DevOps entrega o do último run bem-sucedido quando este
+          # pipeline não foi o que disparou o deploy.
+          - bash: |
+              set -euo pipefail
+              mkdir -p "$(Build.ArtifactStagingDirectory)/digest"
+              echo "$(construir.digest)" > "$(Build.ArtifactStagingDirectory)/digest/digest.txt"
+              cat "$(Build.ArtifactStagingDirectory)/digest/digest.txt"
+            displayName: Gravar o digest
+          - publish: $(Build.ArtifactStagingDirectory)/digest
+            artifact: digest-back
+
   # ---------------------------------------------------------------------------
   - stage: implantar
     displayName: Migrations e implantação

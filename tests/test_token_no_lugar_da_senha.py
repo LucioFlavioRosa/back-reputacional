@@ -109,6 +109,53 @@ def test_o_token_entra_como_senha(engine_de, monkeypatch):
 # -- qual credencial, e por quê ------------------------------------------------
 
 
+def test_no_KUBERNETES_a_credencial_e_de_WORKLOAD_IDENTITY(monkeypatch, tmp_path):
+    """NO AKS A IDENTIDADE NÃO VEM DO HOST, e sem este ramo o deploy no cluster não
+    sai do lugar: `ManagedIdentityCredential` pergunta ao IMDS do NÓ, que responde
+    pela identidade do nó — ou não responde. O sintoma seria "autenticou, mas sem
+    permissão no banco", longe da causa.
+
+    O WEBHOOK DO AKS DEFINE `AZURE_CLIENT_ID` TAMBÉM, e é por isso que este ramo
+    vem ANTES do de identidade gerenciada: as duas condições seriam verdade ao
+    mesmo tempo, e a ordem é o que decide."""
+    from azure.identity import WorkloadIdentityCredential
+
+    from app.seguranca import identidade_azure
+
+    arquivo = tmp_path / "token"
+    arquivo.write_text("o-token-projetado", encoding="utf-8")
+
+    monkeypatch.setenv("AZURE_CLIENT_ID", "id-da-identidade-do-pod")
+    monkeypatch.setenv("AZURE_TENANT_ID", "tenant")
+    monkeypatch.setenv("AZURE_FEDERATED_TOKEN_FILE", str(arquivo))
+    monkeypatch.delenv("AZURE_CLIENT_SECRET", raising=False)
+    identidade_azure.credencial.cache_clear()
+    try:
+        assert isinstance(identidade_azure.credencial(), WorkloadIdentityCredential)
+    finally:
+        identidade_azure.credencial.cache_clear()
+
+
+def test_sem_o_arquivo_do_token_NAO_e_workload_identity(monkeypatch):
+    """O CONJUNTO, e não uma variável: `AZURE_CLIENT_ID` e `AZURE_TENANT_ID` sozinhos
+    descrevem outras coisas (um service principal, por exemplo). Sem o arquivo
+    projetado não há Workload Identity, e escolher esse caminho faria o back pedir
+    um token com um arquivo que não existe."""
+    from azure.identity import ManagedIdentityCredential
+
+    from app.seguranca import identidade_azure
+
+    monkeypatch.setenv("AZURE_CLIENT_ID", "id-da-identidade-do-conteiner")
+    monkeypatch.setenv("AZURE_TENANT_ID", "tenant")
+    monkeypatch.delenv("AZURE_FEDERATED_TOKEN_FILE", raising=False)
+    monkeypatch.delenv("AZURE_CLIENT_SECRET", raising=False)
+    identidade_azure.credencial.cache_clear()
+    try:
+        assert isinstance(identidade_azure.credencial(), ManagedIdentityCredential)
+    finally:
+        identidade_azure.credencial.cache_clear()
+
+
 def test_no_conteiner_a_credencial_e_deterministica(monkeypatch):
     """`DefaultAzureCredential` é para desenvolvimento, e não para produção.
 

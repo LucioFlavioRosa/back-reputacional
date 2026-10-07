@@ -17,7 +17,11 @@ import time
 from functools import lru_cache
 
 from azure.core.exceptions import ClientAuthenticationError
-from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
+from azure.identity import (
+    DefaultAzureCredential,
+    ManagedIdentityCredential,
+    WorkloadIdentityCredential,
+)
 
 #: O escopo do token que o Postgres Flexible Server aceita NO LUGAR DA SENHA.
 ESCOPO_POSTGRES = "https://ossrdbms-aad.database.windows.net/.default"
@@ -60,9 +64,45 @@ def credencial():
     desenvolvimento.
     """
     identidade = os.environ.get("AZURE_CLIENT_ID")
+    if identidade and _e_workload_identity():
+        #: NO KUBERNETES A IDENTIDADE NÃO VEM DO HOST, e é por isso que este ramo
+        #: existe: `ManagedIdentityCredential` pergunta ao IMDS do nó, que no AKS
+        #: responde pela identidade do NÓ (ou não responde) — nunca pela do pod.
+        #: Com Workload Identity, quem prova quem é o pod é um token projetado em
+        #: arquivo, que se troca por um token do Entra.
+        #:
+        #: DETERMINÍSTICA pelo mesmo motivo do ramo de baixo: a cadeia do
+        #: `DefaultAzureCredential` acharia este caminho, mas depois de tentar
+        #: outros — e a falha viria no fim, sem dizer qual elo era o certo.
+        return WorkloadIdentityCredential(
+            client_id=identidade,
+            tenant_id=os.environ["AZURE_TENANT_ID"],
+            token_file_path=os.environ["AZURE_FEDERATED_TOKEN_FILE"],
+        )
     if identidade and not _e_service_principal():
         return ManagedIdentityCredential(client_id=identidade)
     return DefaultAzureCredential()
+
+
+def _e_workload_identity() -> bool:
+    """O pod recebeu uma identidade do Kubernetes (AKS Workload Identity).
+
+    AS TRÊS JUNTAS, e não só o arquivo: o webhook do AKS injeta `AZURE_CLIENT_ID`,
+    `AZURE_TENANT_ID` e `AZURE_FEDERATED_TOKEN_FILE` num pod cujo ServiceAccount
+    está anotado. Exigir as três evita escolher este caminho num ambiente que tenha
+    só uma delas sobrando — o mesmo cuidado que `_e_service_principal` já tomava.
+
+    ANTES DO RAMO DE IDENTIDADE GERENCIADA porque os dois seriam verdade ao mesmo
+    tempo: o webhook também define `AZURE_CLIENT_ID`, e sem esta precedência o
+    back iria perguntar ao IMDS do nó — que responde pela identidade do NÓ, não
+    pela do pod. O sintoma seria "autenticou, mas sem permissão no banco", longe
+    da causa.
+    """
+    return bool(
+        os.environ.get("AZURE_CLIENT_ID")
+        and os.environ.get("AZURE_TENANT_ID")
+        and os.environ.get("AZURE_FEDERATED_TOKEN_FILE")
+    )
 
 
 def _e_service_principal() -> bool:
