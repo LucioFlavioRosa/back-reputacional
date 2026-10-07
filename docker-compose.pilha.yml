@@ -36,11 +36,19 @@
 # `import.meta.env` na compilação, e o mesmo valor vira `connect-src` na CSP do
 # nginx. Trocar a porta sem `--build` deixa a tela vazia SEM erro no servidor.
 # ---------------------------------------------------------------------------
-# POR QUE `VITE_API_URL` É `localhost` E NÃO `http://api:8000`
+# POR QUE NÃO HÁ `VITE_API_URL` AQUI
 #
-# Quem chama a API é o NAVEGADOR, não o contêiner do front. O nginx só entrega
-# arquivos estáticos; o `fetch` sai da máquina de quem abriu a página, e para
-# ela `api` não resolve. O endereço tem de ser o que funciona no navegador.
+# O navegador chama `/api/...` NA MESMA ORIGEM do painel, e o nginx do front
+# encaminha para `api:8000` (o `API_UPSTREAM` padrão da imagem). Assim a pilha
+# local exercita o MESMO caminho que a implantação usa — e é o que torna a imagem
+# neutra de ambiente: o mesmo digest serve aqui, na homologação e no cluster do
+# cliente, mudando só a variável de execução.
+#
+# ANTES ELE ERA `http://localhost:8001`, com o argumento de que "quem chama é o
+# navegador, e para ele `api` não resolve". Verdade — mas o nginx do front proxia
+# `/api/`, então o navegador nunca precisa resolver `api`: ele fala com o próprio
+# painel. O efeito colateral bom é que a sessão passa a ser mesma-origem, em vez
+# de cookie entre duas portas.
 
 name: painel-reputacional
 
@@ -174,8 +182,8 @@ services:
     build:
       context: ../front-reputacional
       args:
-        # Ver o bloco no topo: este valor entra no bundle E na CSP.
-        VITE_API_URL: http://localhost:${PORTA_API:-8001}
+        # Ver o bloco no topo: o endereço da API NÃO entra aqui — o bundle chama
+        # `/api` na mesma origem, e o nginx encaminha.
         # HSTS desligado: em http, e com certificado que o navegador não
         # aceitaria, ligá-lo deixaria o host inacessível pelo prazo inteiro.
         HSTS: "off"

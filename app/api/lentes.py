@@ -2175,13 +2175,18 @@ def obter_recorte(
                 #:
                 #: 21 ms PARA OS OITO MESES, medido: a nota de um pedaço não
                 #: existe em lugar nenhum senão medindo.
+                #: O MÊS ALVO JÁ FOI MEDIDO para o topo do painel — achado de
+                #: revisão: ele lia as somas filtradas três vezes (a medida, o
+                #: impacto e esta nota). Os outros sete se medem aqui.
                 "nota": (
-                    repositorio_score.medir_uma_lente(
+                    medida.score
+                    if linha["mes"] == alvo
+                    else repositorio_score.medir_uma_lente(
                         sessao, lente, linha["mes"], calibracao, filtro
                     ).score
-                    if filtro.ativo and not linha["sem_base"]
-                    else None
-                ),
+                )
+                if filtro.ativo and not linha["sem_base"]
+                else None,
             }
         )
 
