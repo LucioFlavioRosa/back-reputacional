@@ -58,7 +58,8 @@ def test_migration_criou_os_tipos_de_interacao_direto_no_banco(sessao):
 
     A ORDEM É O CONTRATO: é ela que o formulário e o filtro exibem. "Consulta
     recebida" entra no fim (0046) porque é o tipo mais novo, não porque é o
-    menos importante.
+    menos importante. "Conferência" (0057) entra depois dela, pelo mesmo
+    motivo.
     """
     formatos = sessao.scalars(
         select(FormatoInteracao).order_by(FormatoInteracao.ordem)
@@ -66,12 +67,12 @@ def test_migration_criou_os_tipos_de_interacao_direto_no_banco(sessao):
     assert [f.codigo for f in formatos] == [
         "midia", "agenda_de_mercado", "agenda_publica",
         "manifestacao_formal", "evento", "visita", "reuniao",
-        "consulta_recebida",
+        "consulta_recebida", "conferencia",
     ]
     assert [f.nome for f in formatos] == [
         "Mídia", "Agenda de mercado", "Agenda pública",
         "Manifestação formal", "Evento", "Visita", "Reunião",
-        "Consulta recebida",
+        "Consulta recebida", "Conferência",
     ]
     assert all(f.ativo for f in formatos)
 
@@ -84,7 +85,7 @@ def test_formatos_interacao_aparece_nos_dicionarios(cliente):
     assert codigos == {
         "midia", "agenda_de_mercado", "agenda_publica",
         "manifestacao_formal", "evento", "visita", "reuniao",
-        "consulta_recebida",
+        "consulta_recebida", "conferencia",
     }
 
 
