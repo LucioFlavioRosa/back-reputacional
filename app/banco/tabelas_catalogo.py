@@ -158,6 +158,10 @@ class Tema(Tabela):
     #: legitimidade | credibilidade | confianca | nao_se_aplica — dimensão da
     #: taxonomia v1.3, distinta de `tipo`. Cadastro, não derivação. Ver `migrations/0053`.
     camada_lso: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Se este tema representa exposição de risco (taxonomia v3, Risco/Outros).
+    #: Cadastro, não derivação. Nulo em quem não foi reconciliado com a
+    #: taxonomia v4. Ver `migrations/0058`.
+    e_risco: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     #: Nulo em toda a carga inicial da taxonomia v1.3: a planilha de origem
     #: sugere mais de uma área em várias linhas, e a decisão de qual
     #: prevalece ainda não foi tomada. Ver `migrations/0053`.

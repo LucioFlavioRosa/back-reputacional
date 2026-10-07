@@ -733,6 +733,9 @@ class TemaEntrada(BaseModel):
     #: `references area_pessoa`. Nulo ate a validacao por area decidir o dono
     #: unico onde a planilha de origem sugere mais de uma. Ver `migrations/0053`.
     area_dona_id: int | None = None
+    #: Classificacao binaria Risco/Outros da taxonomia v3. Nulo em quem nao foi
+    #: reconciliado com a taxonomia v4. Ver `migrations/0058`.
+    e_risco: bool | None = None
 
 
 class TemaSaida(BaseModel):
@@ -744,6 +747,7 @@ class TemaSaida(BaseModel):
     macro_tema_id: int | None
     camada_lso: str | None
     area_dona_id: int | None
+    e_risco: bool | None
 
 
 #: OS TRÊS NÍVEIS, na ordem do mais restrito ao mais aberto.
@@ -796,6 +800,7 @@ def criar_tema(
         macro_tema_id=entrada.macro_tema_id,
         camada_lso=entrada.camada_lso,
         area_dona_id=entrada.area_dona_id,
+        e_risco=entrada.e_risco,
     )
     return gravar(
         sessao,
@@ -838,6 +843,8 @@ def editar_tema(
         registro.camada_lso = entrada.camada_lso
     if "area_dona_id" in campos_enviados:
         registro.area_dona_id = entrada.area_dona_id
+    if "e_risco" in campos_enviados:
+        registro.e_risco = entrada.e_risco
     return gravar(
         sessao,
         registro,

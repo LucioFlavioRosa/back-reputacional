@@ -81,7 +81,13 @@ def semente(sessao):
     sessao.flush()
 
     def primeiro(tabela):
-        linha = sessao.scalars(select(tabela).limit(1)).first()
+        # SÓ ATIVO, quando a tabela tem a coluna: a importação rejeita
+        # vocabulário desativado, e desde a 0058 a maior parte de `tema` está
+        # desativada (a taxonomia v4 substituiu o rascunho da v1.3).
+        consulta = select(tabela).limit(1)
+        if hasattr(tabela, "ativo"):
+            consulta = select(tabela).where(tabela.ativo.is_(True)).limit(1)
+        linha = sessao.scalars(consulta).first()
         assert linha is not None, f"o banco de teste está sem {tabela.__name__} semeado"
         return linha
 
