@@ -26,8 +26,8 @@ colunas que ele preenche:
 `codigo`), porque quem revisa isto abre a planilha, não o banco.
 
 DUAS CONFIANÇAS, NÃO UMA — de propósito: `tipo='veiculo'` diz, sem
-ambiguidade nenhuma, que a categoria é "Imprensa e Formadores de Opinião"
-(confiança alta), mas não diz NADA sobre qual das 4 linhas editoriais é essa
+ambiguidade nenhuma, que a categoria é "Imprensa" (confiança alta), mas não
+diz NADA sobre qual das 4 linhas editoriais é essa
 — aí a confiança da subcategoria é baixa. Se as duas saíssem numa coluna só,
 quem revisasse desconfiaria à toa da categoria (que já está certa) por causa
 da subcategoria (que é, de fato, um chute).
@@ -174,7 +174,7 @@ def sugerir(
 
     if tipo == "veiculo":
         # A CATEGORIA é certa pelo tipo; a linha editorial, ninguém disse.
-        return "Imprensa e Formadores de Opinião", "alta", None, "baixa"
+        return "Imprensa", "alta", None, "baixa"
     if tipo == "investidor":
         return (
             "Mercado Financeiro e de Capitais", "alta",

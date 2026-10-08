@@ -59,7 +59,9 @@ def test_migration_criou_os_tipos_de_interacao_direto_no_banco(sessao):
     A ORDEM É O CONTRATO: é ela que o formulário e o filtro exibem. "Consulta
     recebida" entra no fim (0046) porque é o tipo mais novo, não porque é o
     menos importante. "Conferência" (0057) entra depois dela, pelo mesmo
-    motivo.
+    motivo. "Encontro de relacionamento" e "Solicitação de Posicionamento/
+    Entrevista" (0060) entram depois de todos; "Mídia" (mesma migration) fica
+    na lista — é aposentado (`ativo = false`), não apagado.
     """
     formatos = sessao.scalars(
         select(FormatoInteracao).order_by(FormatoInteracao.ordem)
@@ -68,13 +70,17 @@ def test_migration_criou_os_tipos_de_interacao_direto_no_banco(sessao):
         "midia", "agenda_de_mercado", "agenda_publica",
         "manifestacao_formal", "evento", "visita", "reuniao",
         "consulta_recebida", "conferencia",
+        "encontro_relacionamento", "solicitacao_posicionamento_entrevista",
     ]
     assert [f.nome for f in formatos] == [
         "Mídia", "Agenda de mercado", "Agenda pública",
         "Manifestação formal", "Evento", "Visita", "Reunião",
         "Consulta recebida", "Conferência",
+        "Encontro de relacionamento", "Solicitação de Posicionamento/Entrevista",
     ]
-    assert all(f.ativo for f in formatos)
+    ativos = {f.codigo: f.ativo for f in formatos}
+    assert ativos.pop("midia") is False, "aposentado, não apagado"
+    assert all(ativos.values()), "os demais continuam ativos"
 
 
 def test_formatos_interacao_aparece_nos_dicionarios(cliente):
@@ -82,10 +88,12 @@ def test_formatos_interacao_aparece_nos_dicionarios(cliente):
     assert resposta.status_code == 200
     formatos = resposta.json()["formatos_interacao"]
     codigos = {f["codigo"] for f in formatos}
+    # "midia" não aparece: o dicionário só expõe os ativos.
     assert codigos == {
-        "midia", "agenda_de_mercado", "agenda_publica",
+        "agenda_de_mercado", "agenda_publica",
         "manifestacao_formal", "evento", "visita", "reuniao",
         "consulta_recebida", "conferencia",
+        "encontro_relacionamento", "solicitacao_posicionamento_entrevista",
     }
 
 

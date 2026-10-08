@@ -109,7 +109,7 @@ def test_veiculo_vira_imprensa_com_categoria_certa_mas_subcategoria_incerta():
     # faria a categoria (certa) parecer tão duvidosa quanto a subcategoria
     # (um chute).
     assert sugerir("veiculo", None, "Valor Econômico") == (
-        "Imprensa e Formadores de Opinião", "alta", None, "baixa",
+        "Imprensa", "alta", None, "baixa",
     )
 
 

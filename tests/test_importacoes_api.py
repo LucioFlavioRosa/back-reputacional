@@ -1476,7 +1476,7 @@ def test_a_instituicao_criada_DERIVA_o_tipo_da_categoria(cliente_admin, sessao, 
     from sqlalchemy import select as sel
 
     conteudo = _com_declaracao(
-        sessao, semente, "Valor Novo", tipo="Imprensa e Formadores de Opinião"
+        sessao, semente, "Valor Novo", tipo="Imprensa"
     )
     criada = cliente_admin.post(
         "/api/importacoes", files={"arquivo": ("a.xlsx", conteudo, TIPO_XLSX)}

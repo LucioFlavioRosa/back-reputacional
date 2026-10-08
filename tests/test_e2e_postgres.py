@@ -1581,7 +1581,7 @@ def test_sem_tipo_a_categoria_de_publico_decide(cliente_admin, semente):
     assert resposta.status_code == 201, resposta.text
     assert resposta.json()["tipo"] == "orgao"
 
-    imprensa = _categoria(cliente_admin, "imprensa_formadores_opiniao")
+    imprensa = _categoria(cliente_admin, "imprensa")
     economica = next(
         s for s in cliente_admin.get("/api/dicionarios").json()["subcategorias_publico"]
         if s["categoria_publico_id"] == imprensa["id"]
