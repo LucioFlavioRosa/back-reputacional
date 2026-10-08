@@ -47,9 +47,6 @@ insert into subcategoria_publico (categoria_publico_id, codigo, nome, ordem) val
     'municipal_local', 'Municipal / local', 4)
 on conflict (categoria_publico_id, codigo) do nothing;
 
-update categoria_publico set frente_padrao_id = (select id from frente where codigo = 'imprensa')
-  where codigo in ('imprensa', 'formadores_opiniao');
-
 update subcategoria_publico set ativo = false
   where categoria_publico_id = (select id from categoria_publico where codigo = 'imprensa_formadores_opiniao');
 
