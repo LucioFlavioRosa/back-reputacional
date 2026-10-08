@@ -198,18 +198,41 @@ def test_risco_desativado_sai_das_opcoes(sessao):
     """Mesma regra dos outros dicionários: desativar tira do formulário e o
     histórico de quem já aponta para ele continua intacto.
     """
+    # UM RISCO QUE ALGUM TEMA USA, e não qualquer um: o que está sob teste é o
+    # enquadramento sobreviver ao aposentamento, e um risco sem tema não mediria
+    # isso.
     alvo = sessao.execute(
-        text("select id from risco_reputacional order by nome limit 1")
+        text("select risco_id from tema where risco_id is not null limit 1")
     ).scalar_one()
+    antes = sessao.execute(
+        text("select count(*) from tema where risco_id = :i"), {"i": alvo}
+    ).scalar_one()
+    assert antes >= 1
+
     sessao.execute(
         text("update risco_reputacional set ativo = false where id = :i"), {"i": alvo}
     )
     sessao.flush()
 
-    ids = {r["id"] for r in listar_dicionarios(sessao)["riscos_reputacionais"]}
-    assert alvo not in ids
-    # e o tema que o usava continua apontando
-    ainda = sessao.execute(
+    dicionarios = listar_dicionarios(sessao)
+    ativos = {r["id"] for r in dicionarios["riscos_reputacionais"]}
+    inativos = {r["id"] for r in dicionarios["riscos_inativos"]}
+
+    assert alvo not in ativos, "aposentado não pode ser oferecido no formulário"
+    # E APARECE NA OUTRA LISTA, que é o que permite a edição resolver cluster e
+    # severidade de um enquadramento antigo. Sem isto a tela abriria o seletor
+    # vazio para o assunto preso ao risco aposentado — e salvar dali apagaria o
+    # enquadramento. Achado de revisão de 08/10/2026, a mesma forma de
+    # `temas_inativos`.
+    assert alvo in inativos
+    assert not (ativos & inativos), "um risco não pode estar nas duas listas"
+    for r in dicionarios["riscos_inativos"]:
+        assert {"id", "nome", "cluster", "severidade"} <= set(r)
+        assert "ativo" not in r
+
+    # O ENQUADRAMENTO NÃO SE MEXE: aposentar o risco não desclassifica o que já
+    # foi classificado com ele.
+    depois = sessao.execute(
         text("select count(*) from tema where risco_id = :i"), {"i": alvo}
     ).scalar_one()
-    assert ainda >= 0
+    assert depois == antes

@@ -243,4 +243,28 @@ update tema set risco_id = r.id
   join risco_reputacional r on r.nome = v.risco
  where tema.nome = v.subtema;
 
+-- A GUARDA DO CASAMENTO POR NOME.
+--
+-- Achado de revisão: o `update` acima não falha se casar MENOS do que deveria.
+-- Aqui o casamento foi conferido antes de escrever (os 104 subtemas da aba são
+-- os 104 `tema` ativos, sem sobra), mas num banco onde alguém renomeou um tema
+-- antes desta migration ele aplicaria em silêncio com buraco — e o buraco só
+-- apareceria meses depois, como um assunto sem enquadramento que deveria ter um.
+--
+-- 100 é o número da planilha: 104 subtemas menos os 4 com "Sem enquadramento".
+-- Se este número mudar, é porque a planilha mudou, e aí a migration nova é que
+-- deve dizer o novo número — não esta.
+do $$
+declare
+  enquadrados int;
+begin
+  select count(*) into enquadrados from tema where risco_id is not null;
+  if enquadrados <> 100 then
+    raise exception
+      'A 0060 enquadrou % subtemas, e a planilha enquadra 100. O casamento e por '
+      'NOME: confira se algum tema foi renomeado antes desta migration. Nenhuma '
+      'linha foi gravada.', enquadrados;
+  end if;
+end $$;
+
 commit;

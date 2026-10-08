@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencias import obter_usuario_atual
 from app.banco.sessao import SessaoDoPedido
-from app.banco.tabelas_catalogo import DICIONARIOS, Tema
+from app.banco.tabelas_catalogo import DICIONARIOS, RiscoReputacional, Tema
 from app.dominio.recorte import ABRANGENCIAS_VALIDAS, INTERNACIONAL, NACIONAL
 
 rotas = APIRouter(
@@ -96,6 +96,28 @@ def listar_dicionarios(sessao: Sessao) -> dict[str, list[dict[str, Any]]]:
         }
         for linha in sessao.scalars(
             select(Tema).where(Tema.ativo.is_(False)).order_by(Tema.nome)
+        )
+    ]
+
+    # OS RISCOS APOSENTADOS, pela MESMA razão dos temas acima e com a mesma
+    # forma de item: um assunto classificado em 2026 aponta para o risco que o
+    # mapa tinha então, e a próxima versão da planilha vai aposentar riscos.
+    #
+    # SEM ISTO A EDIÇÃO MENTIRIA, e é achado de revisão de 08/10/2026: a tela
+    # resolve cluster e severidade procurando o `risco_id` nesta lista. Com só os
+    # ativos, abrir um assunto preso a risco aposentado mostraria o seletor vazio
+    # — e quem edita não teria como distinguir "a opção não carregou" de "não há
+    # enquadramento". Pior: salvar a partir dali apagaria o enquadramento.
+    resposta["riscos_inativos"] = [
+        {
+            coluna.name: getattr(linha, coluna.name)
+            for coluna in RiscoReputacional.__table__.columns
+            if coluna.name != "ativo"
+        }
+        for linha in sessao.scalars(
+            select(RiscoReputacional)
+            .where(RiscoReputacional.ativo.is_(False))
+            .order_by(RiscoReputacional.cluster, RiscoReputacional.nome)
         )
     ]
 
