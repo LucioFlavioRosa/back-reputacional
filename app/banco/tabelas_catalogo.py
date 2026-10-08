@@ -138,6 +138,37 @@ class UnidadeNegocio(Tabela):
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class RiscoReputacional(Tabela):
+    """A aba `Risk tracking map` da planilha de taxonomia (set/2026).
+
+    32 riscos, cada um num de 8 clusters e com uma de três severidades. O
+    subtema se liga a um risco por `Tema.risco_id`.
+
+    POR QUE `nome` É ÚNICO: no mapa os 32 riscos são distintos e cada um
+    determina o seu cluster e a sua severidade, sem ambiguidade. Então escolher
+    o risco preenche os outros dois campos da tela — e a unicidade é o que
+    garante que continue assim.
+
+    O CLUSTER É COLUNA, não tabela: não tem atributo além do nome, nada o
+    referencia, e as opções do formulário saem de um `distinct`. Um `check` no
+    banco impede nome novo por erro de digitação. Ver `migrations/0060`.
+    """
+
+    __tablename__ = "risco_reputacional"
+
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True)
+    #: O agrupamento do RepRisk: 8 valores, de 2 a 7 riscos cada.
+    cluster: Mapped[str] = mapped_column(Text)
+    nome: Mapped[str] = mapped_column(Text, unique=True)
+    #: moderado | alto | critico — escala, e por isso domínio fechado no banco.
+    severidade: Mapped[str] = mapped_column(Text)
+    ativo: Mapped[bool] = mapped_column(Boolean, default=True)
+    #: A carga da planilha nasce datada — é o rastro de quando o mapa entrou.
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class Tema(Tabela):
     __tablename__ = "tema"
 
@@ -162,6 +193,21 @@ class Tema(Tabela):
     #: Cadastro, não derivação. Nulo em quem não foi reconciliado com a
     #: taxonomia v4. Ver `migrations/0058`.
     e_risco: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    #: O risco do `Risk tracking map` que enquadra este subtema.
+    #:
+    #: NULO É RESPOSTA: 4 dos 104 subtemas vêm da planilha com "Sem
+    #: enquadramento" — a Aegea olhou e decidiu que não há risco a rastrear
+    #: ali. Nulo também em tema que não vem da planilha.
+    #:
+    #: NÃO CONFUNDIR COM `e_risco`, e os dois existem ao mesmo tempo de
+    #: propósito: `e_risco` é a binária Risco/Outros da taxonomia v3
+    #: (Peers/Comms) e isto é o eixo do RepRisk. Vêm de fontes diferentes e
+    #: divergem em 21 dos 104 — 18 que a planilha enquadra e o `e_risco` diz
+    #: que não é risco, 3 o contrário. Reconciliar é decisão do dono do
+    #: produto. Ver `migrations/0060`.
+    risco_id: Mapped[int | None] = mapped_column(
+        SmallInteger, ForeignKey("risco_reputacional.id"), nullable=True
+    )
     #: Nulo em toda a carga inicial da taxonomia v1.3: a planilha de origem
     #: sugere mais de uma área em várias linhas, e a decisão de qual
     #: prevalece ainda não foi tomada. Ver `migrations/0053`.
@@ -263,6 +309,7 @@ DICIONARIOS: dict[str, type[Tabela]] = {
     "stakeholders": Stakeholder,
     "unidades_negocio": UnidadeNegocio,
     "temas": Tema,
+    "riscos_reputacionais": RiscoReputacional,
     "blocos_tema": BlocoTema,
     "macro_temas": MacroTema,
     "areas_pessoa": AreaPessoa,

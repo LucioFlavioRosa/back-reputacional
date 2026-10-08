@@ -100,6 +100,10 @@ FECHADOS: dict[str, str] = {
         "mudar é migration."
     ),
     "macro_temas": "Subdivisão da taxonomia de temas v1.3; mudar é migration.",
+    "riscos_reputacionais": (
+        "O `Risk tracking map` da planilha de taxonomia: cada risco traz o cluster "
+        "e a severidade que a Aegea definiu; mudar é migration."
+    ),
 }
 
 #: Administrados em OUTRA aba da Administração: não repetem aqui.
@@ -118,6 +122,7 @@ ROTULOS: dict[str, str] = {
     "formatos_interacao": "Formatos de interação",
     "formatos": "Formatos (imprensa e investidores)",
     "tipos_investidor": "Tipos de investidor",
+    "riscos_reputacionais": "Riscos reputacionais (Risk tracking map)",
     "esferas": "Esferas",
     "casas": "Casas legislativas",
     "tramitacoes": "Tramitações",

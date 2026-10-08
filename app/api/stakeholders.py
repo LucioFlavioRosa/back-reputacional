@@ -28,6 +28,7 @@ from app.banco.tabelas_catalogo import (
     CategoriaPublico,
     MacroTema,
     Relevancia,
+    RiscoReputacional,
     SubcategoriaPublico,
     Tema,
 )
@@ -736,6 +737,11 @@ class TemaEntrada(BaseModel):
     #: Classificacao binaria Risco/Outros da taxonomia v3. Nulo em quem nao foi
     #: reconciliado com a taxonomia v4. Ver `migrations/0058`.
     e_risco: bool | None = None
+    #: O risco do `Risk tracking map` que enquadra este subtema. Escolher o
+    #: risco define tambem o cluster e a severidade, que o mapa determina — a
+    #: tela mostra os tres e grava um. Nulo = "Sem enquadramento", que e
+    #: resposta e nao falta de dado. Ver `migrations/0060`.
+    risco_id: int | None = None
 
 
 class TemaSaida(BaseModel):
@@ -748,6 +754,7 @@ class TemaSaida(BaseModel):
     camada_lso: str | None
     area_dona_id: int | None
     e_risco: bool | None
+    risco_id: int | None
 
 
 #: OS TRÊS NÍVEIS, na ordem do mais restrito ao mais aberto.
@@ -771,6 +778,8 @@ def _validar_hierarquia_de_tema(sessao, entrada: TemaEntrada) -> None:
         )
     if entrada.macro_tema_id is not None and sessao.get(MacroTema, entrada.macro_tema_id) is None:
         raise RegraViolada(f"Macro tema {entrada.macro_tema_id} nao encontrado.")
+    if entrada.risco_id is not None and sessao.get(RiscoReputacional, entrada.risco_id) is None:
+        raise RegraViolada(f"Risco {entrada.risco_id} nao encontrado.")
 
 
 @rotas.get("/temas", response_model=list[TemaSaida])
@@ -799,6 +808,7 @@ def criar_tema(
         ativo=entrada.ativo,
         macro_tema_id=entrada.macro_tema_id,
         camada_lso=entrada.camada_lso,
+        risco_id=entrada.risco_id,
         area_dona_id=entrada.area_dona_id,
         e_risco=entrada.e_risco,
     )
@@ -845,6 +855,8 @@ def editar_tema(
         registro.area_dona_id = entrada.area_dona_id
     if "e_risco" in campos_enviados:
         registro.e_risco = entrada.e_risco
+    if "risco_id" in campos_enviados:
+        registro.risco_id = entrada.risco_id
     return gravar(
         sessao,
         registro,
