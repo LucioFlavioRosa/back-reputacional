@@ -37,8 +37,15 @@ subia uma base pela metade e descobria pela tela vazia.
 A ordem acima é a que foi exercitada: cada semeador só depende do que vem antes.
 `referencias` antes de `enredos` porque é o terceiro que deriva do acervo (ver
 abaixo); `taxonomia_de_temas` depois de `enredos` porque reaproveita a
-infraestrutura de conteúdo dele; `mencoes` e `score` por último porque escrevem
-`score_mes_fonte`, de onde a nota das lentes sai.
+infraestrutura de conteúdo dele; `mencoes` e `score` por último porque alimentam
+o Score.
+
+QUEM ESCREVE O QUÊ, no Score, porque a frase anterior aqui estava errada e um
+achado de revisão a pegou: só `semear_mencoes` grava `score_mes_fonte` (o
+agregado MEDIDO); `semear_score` grava `score_estimativa`, que é outra tabela.
+Na leitura, medido ganha de estimado — então a ordem entre esses dois não
+arrisca sobrescrever nada, e está como está por narrativa de carga, não por
+risco.
 
 O que cada um traz, num banco recriado em 08/10/2026:
 

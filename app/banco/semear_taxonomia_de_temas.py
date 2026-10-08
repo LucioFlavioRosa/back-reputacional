@@ -1,4 +1,18 @@
-"""Dados fake para exercitar a taxonomia de temas v1.3 (`migrations/0053`).
+"""Dados fake para exercitar a taxonomia de temas.
+
+O ALCANCE DESTE SEMEADOR TRIPLICOU SOZINHO, e é bom saber antes de estranhar o
+número de agendas. O critério dele é "os temas que têm `macro_tema_id`", escrito
+quando isso significava os 38 da v1.3 (`migrations/0053`). A `0058` fechou a
+taxonomia v4 e reconciliou os 104 subtemas ativos — todos com `macro_tema_id`.
+O arquivo não mudou, o critério não mudou, e a saída passou de 38 para 104 temas
+cobertos: num banco recriado em 08/10/2026 são 544 interações no total, contra as
+319 de antes.
+
+Isso é desejável, e não acidente a corrigir: a v4 é a taxonomia de verdade agora,
+e cobrir todos os subtemas dela é exatamente o que este semeador existe para
+fazer. O texto abaixo foi escrito quando a v1.3 ainda estava em validação; a
+parte sobre "não vale o investimento narrativo antes disso fechar" continua
+valendo como razão para o semeador ser mecânico.
 
 POR QUE UM QUARTO SEMEADOR, E NÃO ENREDOS NOVOS
 ------------------------------------------------
