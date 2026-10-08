@@ -15,6 +15,7 @@ from app.api import (
     catalogo,
     dicionarios,
     exportacoes,
+    importacao_de_subtemas,
     importacoes,
     interacoes,
     lentes,
@@ -148,6 +149,10 @@ def criar_app() -> FastAPI:
     app.include_router(catalogo.rotas)
     app.include_router(dicionarios.rotas)
     app.include_router(importacoes.rotas)
+    # Prefixo PROPRIO (/api/taxonomia/subtemas), e nao sob /api/importacoes:
+    # la existe POST /api/importacoes/{importacao_id}/confirmacao, e o
+    # parametro casa com qualquer literal. Ver o cabecalho do modulo.
+    app.include_router(importacao_de_subtemas.rotas)
 
     @app.get("/api/saude", tags=["plataforma"])
     def saude() -> dict[str, str]:

@@ -31,7 +31,6 @@ from app.banco.tabelas_catalogo import (
     Risco,
     SubcategoriaPublico,
     Tema,
-    TemaRisco,
 )
 from app.banco.tabelas_stakeholders import (
     Instituicao,
@@ -40,7 +39,9 @@ from app.banco.tabelas_stakeholders import (
     PessoaAegeaTema,
 )
 from app.casos_de_uso.derivar_tipo import derivar_tipo
+from app.casos_de_uso.vinculos_de_risco import aplicar_riscos_do_tema
 from app.dominio.erros import NaoEncontrado, RegraViolada
+from app.dominio.vocabulario_de_temas import CAMADAS_DE_LSO, NIVEIS_DE_TEMA
 
 rotas = APIRouter(
     prefix="/api",
@@ -758,18 +759,15 @@ class TemaSaida(BaseModel):
     riscos: list[int]
 
 
-#: OS TRÊS NÍVEIS, na ordem do mais restrito ao mais aberto.
+#: OS DOIS VOCABULÁRIOS VIVEM NO DOMÍNIO, e aqui são só reexportados.
 #:
-#: `sensivel` é o que exige alinhamento antes de alguém falar; `estrategico` é
-#: agenda da companhia; `gerais` é o que aparece sem ter sido planejado.
+#: `app/dominio/vocabulario_de_temas.py` explica a mudança: o leitor da planilha
+#: de subtemas precisa dos dois, e um caso de uso importando de `app/api/`
+#: inverteria a dependência. Os nomes seguem alcançáveis por este caminho
+#: porque as mensagens de erro destas rotas e três testes os usam daqui.
 #:
-#: `gerais` se chamava `livre` até a 0022. A migração trocou o código junto com
-#: o rótulo: rótulo novo sobre código velho vira duas escritas da mesma coisa.
-NIVEIS_DE_TEMA = ("sensivel", "estrategico", "gerais")
-
-#: Legitimidade / Credibilidade / Confiança / Não se aplica — a dimensão nova
-#: da taxonomia v1.3, distinta de `tipo` (0048). Ver `migrations/0053`.
-CAMADAS_DE_LSO = ("legitimidade", "credibilidade", "confianca", "nao_se_aplica")
+#: `gerais` se chamava `livre` até a 0022; `camada_lso` é a dimensão da v1.3,
+#: distinta de `tipo` (0048). Ver `migrations/0053`.
 
 
 def _validar_hierarquia_de_tema(sessao, entrada: TemaEntrada) -> None:
@@ -784,23 +782,6 @@ def _validar_hierarquia_de_tema(sessao, entrada: TemaEntrada) -> None:
             raise RegraViolada(f"Risco {risco_id} nao encontrado.")
 
 
-def _aplicar_riscos_do_tema(sessao, tema_id: int, riscos: list[int]) -> None:
-    """Substitui a lista inteira, casando por (tema, risco).
-
-    Mesmo raciocinio de `_aplicar_temas_da_pessoa`: nao apaga e recria tudo.
-    """
-    atuais = {
-        v.risco_id: v
-        for v in sessao.scalars(select(TemaRisco).where(TemaRisco.tema_id == tema_id))
-    }
-    desejados = set(riscos)
-
-    for risco_id, vinculo in atuais.items():
-        if risco_id not in desejados:
-            sessao.delete(vinculo)
-    for risco_id in desejados - set(atuais):
-        sessao.add(TemaRisco(tema_id=tema_id, risco_id=risco_id))
-    sessao.flush()
 
 
 @rotas.get("/temas", response_model=list[TemaSaida])
@@ -838,7 +819,7 @@ def criar_tema(
         novo=True,
         ao_colidir=f"Ja existe um assunto chamado {entrada.nome!r}.",
     )
-    _aplicar_riscos_do_tema(sessao, registro.id, entrada.riscos)
+    aplicar_riscos_do_tema(sessao, registro.id, entrada.riscos)
     return registro
 
 
@@ -883,5 +864,5 @@ def editar_tema(
         ao_colidir=f"Ja existe outro assunto chamado {entrada.nome!r}.",
     )
     if "riscos" in campos_enviados:
-        _aplicar_riscos_do_tema(sessao, registro.id, entrada.riscos)
+        aplicar_riscos_do_tema(sessao, registro.id, entrada.riscos)
     return registro
