@@ -20,12 +20,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, and_, exists, false, or_, select
+from sqlalchemy import ColumnElement, Select, and_, exists, false, or_, select
 
 from app.banco.tabelas_catalogo import (
     Clima,
     Esfera,
     Frente,
+    MacroTema,
     Resultado,
     Status,
     Tema,
@@ -145,6 +146,37 @@ def _tratou_de_algum(nomes: Sequence[str]) -> ColumnElement[bool]:
             and_(
                 InteracaoTema.interacao_id == InteracaoRegistro.id,
                 InteracaoTema.tema_id.in_(select(Tema.id).where(Tema.nome.in_(nomes))),
+            )
+        )
+    )
+
+
+def _tratou_de_algum_tema_em(temas_ids: Select[tuple[int]]) -> ColumnElement[bool]:
+    """Entra quem tiver qualquer tema (N3) da subconsulta — a mesma forma de
+    `_tratou_de_algum`, só que o conjunto de temas vem da taxonomia, e não
+    de nomes escolhidos um a um."""
+    return exists(
+        select(InteracaoTema.interacao_id).where(
+            and_(
+                InteracaoTema.interacao_id == InteracaoRegistro.id,
+                InteracaoTema.tema_id.in_(temas_ids),
+            )
+        )
+    )
+
+
+def _de_algum_tema_estrategico(ids: Sequence[int]) -> ColumnElement[bool]:
+    """N2: as interações com algum tema cujo tema estratégico está entre `ids`."""
+    return _tratou_de_algum_tema_em(select(Tema.id).where(Tema.macro_tema_id.in_(ids)))
+
+
+def _de_algum_pilar(ids: Sequence[int]) -> ColumnElement[bool]:
+    """N1: as interações com algum tema cujo tema estratégico pertence a um
+    dos pilares em `ids`."""
+    return _tratou_de_algum_tema_em(
+        select(Tema.id).where(
+            Tema.macro_tema_id.in_(
+                select(MacroTema.id).where(MacroTema.bloco_tema_id.in_(ids))
             )
         )
     )
@@ -357,6 +389,13 @@ def condicoes(
         onde.append(_teve_porta_voz(recorte.porta_voz))
     if recorte.tags:
         onde.append(_tratou_de_algum(recorte.tags))
+    # CADA NÍVEL É UM `exists` PRÓPRIO, e não um só com OR entre os níveis:
+    # escolher o pilar "Governança" e o tema estratégico "Ética" quer dizer
+    # as interações de Ética, e não tudo de Governança somado a Ética.
+    if recorte.temas_n2:
+        onde.append(_de_algum_tema_estrategico(recorte.temas_n2))
+    if recorte.temas_n1:
+        onde.append(_de_algum_pilar(recorte.temas_n1))
     if recorte.areas:
         onde.append(_de_alguma_area(recorte.areas))
     if recorte.alegacao:
