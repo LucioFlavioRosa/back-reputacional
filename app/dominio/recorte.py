@@ -86,6 +86,12 @@ class Recorte:
     #: Categoria de público da INSTITUIÇÃO da interação — ids de
     #: `categoria_publico`, OR entre eles. Mesma origem e mesmo motivo.
     categorias_publico: tuple[int, ...] = ()
+    #: A taxonomia de temas acima do tema (N3): o tema estratégico (N2, ids de
+    #: `macro_tema`) e o pilar (N1, ids de `bloco_tema`). OR dentro de cada
+    #: nível, E entre os níveis e com `tags` — escolher um pilar e um tema
+    #: estratégico estreita, não soma.
+    temas_n2: tuple[int, ...] = ()
+    temas_n1: tuple[int, ...] = ()
     busca: str | None = None
 
     #: Os campos que chegam como TEXTO da URL e podem chegar vazios.
@@ -184,6 +190,10 @@ class Recorte:
             ativos += 1
         if self.categorias_publico:
             ativos += 1
+        if self.temas_n2:
+            ativos += 1
+        if self.temas_n1:
+            ativos += 1
         return ativos
 
     def com(self, **alteracoes: object) -> Recorte:
@@ -244,6 +254,8 @@ class Recorte:
         areas = _ids(filtros.pop("areas", ()), "Área")
         formatos_interacao = _ids(filtros.pop("formatos_interacao", ()), "Formato de interação")
         categorias_publico = _ids(filtros.pop("categorias_publico", ()), "Categoria de público")
+        temas_n2 = _ids(filtros.pop("temas_n2", ()), "Tema estratégico (N2)")
+        temas_n1 = _ids(filtros.pop("temas_n1", ()), "Pilar (N1)")
 
         # Ordenadas para que dois Recortes com as mesmas tags/áreas sejam
         # iguais, independentemente da ordem em que o usuário clicou nelas.
@@ -253,6 +265,8 @@ class Recorte:
             areas=areas,
             formatos_interacao=formatos_interacao,
             categorias_publico=categorias_publico,
+            temas_n2=temas_n2,
+            temas_n1=temas_n1,
             **filtros,
         )  # type: ignore[arg-type]
 
