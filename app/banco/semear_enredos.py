@@ -63,7 +63,7 @@ from sqlalchemy.orm import Session
 
 from app.banco.repositorio_interacoes import RepositorioSQL
 from app.banco.tabelas_acesso import Papel, Usuario
-from app.banco.tabelas_catalogo import AreaPessoa, Esfera, Tema, UnidadeNegocio
+from app.banco.tabelas_catalogo import AreaPessoa, Esfera, UnidadeNegocio
 from app.banco.tabelas_catalogo import Frente as FrenteTabela
 from app.banco.tabelas_interacoes import InteracaoArea, InteracaoRegistro
 from app.banco.tabelas_stakeholders import (
@@ -72,6 +72,7 @@ from app.banco.tabelas_stakeholders import (
     PessoaAegea,
     PessoaAegeaTema,
 )
+from app.banco.temas_de_demonstracao import id_de_tema_por_nome_antigo
 from app.dominio.frentes import (
     TIPO_DE_INSTITUICAO,
     Frente,
@@ -2743,8 +2744,14 @@ def _do_passo(passo: Passo, elenco: dict, autor: UUID, ids: dict) -> Interacao:
         local=passo.local,
         declinado_por=passo.declinado_por,
         motivo_declinio=passo.motivo_declinio,
+        # `dict.fromkeys` DEDUPLICA preservando ordem: dois nomes antigos de
+        # `passo.temas` podem traduzir para o MESMO subtema novo (ver
+        # `temas_de_demonstracao.py` — não é 1 para 1), e `InteracaoTema` tem
+        # chave composta — um id repetido quebraria a gravação.
         temas=tuple(
-            elenco["temas"][nome] for nome in passo.temas if nome in elenco["temas"]
+            dict.fromkeys(
+                elenco["temas"][nome] for nome in passo.temas if nome in elenco["temas"]
+            )
         ),
         participacoes=tuple(
             ParticipacaoAegea(
@@ -2836,9 +2843,14 @@ def _uma_solta(
 
     # Espalhadas pelo ano corrente, e não amontoadas: o painel mostra série
     # mensal, e nove meses com o mesmo número não se distinguem de um erro.
+    # `dict.fromkeys`: dois nomes sorteados podem traduzir para o mesmo
+    # subtema novo (ver `temas_de_demonstracao.py`) — dedupe pelo mesmo motivo
+    # do `_do_passo` acima.
     temas_da_agenda = temas_forcados or tuple(
-        elenco["temas"][nome]
-        for nome in sorte.sample(list(elenco["temas"]), sorte.choice([1, 2, 2, 3]))
+        dict.fromkeys(
+            elenco["temas"][nome]
+            for nome in sorte.sample(list(elenco["temas"]), sorte.choice([1, 2, 2, 3]))
+        )
     )
     quando = date(2026, 1, 5) + timedelta(days=sorte.randrange(0, 245))
     ja_aconteceu = quando <= HOJE
@@ -3022,7 +3034,7 @@ def _elenco(sessao: Session) -> dict:
             sessao.flush()
         interlocutores[nome] = achado
 
-    temas_por_nome = {t.nome: t.id for t in sessao.scalars(select(Tema))}
+    temas_por_nome = id_de_tema_por_nome_antigo(sessao)
 
     pessoas: dict[str, PessoaAegea] = {}
     for nome, cargo, porta_voz, assuntos in PESSOAS_AEGEA:
@@ -3060,10 +3072,15 @@ def _elenco(sessao: Session) -> dict:
         )
         for assunto in assuntos:
             tema_id = temas_por_nome.get(assunto)
+            # `ja_tem` CRESCE DENTRO DO LAÇO: dois nomes antigos de `assuntos`
+            # podem traduzir para o MESMO subtema novo (ver
+            # `temas_de_demonstracao.py` — não é 1 para 1), e sem marcar aqui
+            # o segundo tentaria inserir o mesmo par duas vezes.
             if tema_id is not None and tema_id not in ja_tem:
                 sessao.add(
                     PessoaAegeaTema(pessoa_aegea_id=achada.id, tema_id=tema_id)
                 )
+                ja_tem.add(tema_id)
 
     sessao.flush()
 
@@ -3079,16 +3096,14 @@ def _elenco(sessao: Session) -> dict:
                 PESSOAS_AEGEA, pessoas.values(), strict=True
             )
         },
-        # SÓ OS ATIVOS: `_uma_solta` sorteia um tema qualquer deste dicionário
-        # (ver linha ~2828) — sem este filtro, a partir da 0053 esse sorteio
-        # passaria a gravar `interacao_tema` apontando para um dos temas
-        # rascunho da taxonomia v1.3, que `GET /api/dicionarios` não oferece
-        # (só devolve `ativo = true`). O vínculo por NOME em `_do_passo`
-        # continua funcionando igual: os 17 temas de fundação citados nos
-        # enredos estão todos ativos.
-        "temas": {
-            t.nome: t.id for t in sessao.scalars(select(Tema).where(Tema.ativo.is_(True)))
-        },
+        # TRADUZIDO PELO CATÁLOGO DE DEMONSTRAÇÃO (ver `temas_de_demonstracao.py`):
+        # os enredos e `PESSOAS_AEGEA` citam os 17 nomes "de fundação", que a
+        # 0058 aposentou. `temas_por_nome` já resolve pelo nome antigo até o
+        # id do subtema ativo equivalente da v4 — reaproveitado aqui para que
+        # `_uma_solta` (que sorteia uma chave deste dicionário, ver linha
+        # ~2828) só sorteie temas ativos, com Pilar/Tema estratégico de
+        # verdade.
+        "temas": temas_por_nome,
         "esferas": {e.codigo: e.id for e in sessao.scalars(select(Esfera))},
         "unidades": {u.nome: u.id for u in sessao.scalars(select(UnidadeNegocio))},
     }
