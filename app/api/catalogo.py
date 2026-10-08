@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencias import obter_usuario_atual
 from app.banco.sessao import SessaoDoPedido
-from app.banco.tabelas_catalogo import DICIONARIOS
+from app.banco.tabelas_catalogo import DICIONARIOS, Tema
 from app.dominio.recorte import ABRANGENCIAS_VALIDAS, INTERNACIONAL, NACIONAL
 
 rotas = APIRouter(
@@ -67,6 +67,37 @@ def listar_dicionarios(sessao: Sessao) -> dict[str, list[dict[str, Any]]]:
             }
             for linha in sessao.scalars(consulta)
         ]
+
+    # OS TEMAS DESATIVADOS, e SÓ para resolver nome de registro antigo.
+    #
+    # `temas` acima continua sendo o vocabulário de escrita e de filtro — só os
+    # ativos, como o docstring promete. Mas uma agenda de 2025 aponta para o
+    # tema com que foi classificada, e esse tema pode ter sido desativado desde
+    # então: a `0058` desativou 45 de uma vez ao trocar a taxonomia pela v4.
+    #
+    # SEM ESTA CHAVE OS DOIS LADOS DISCORDAVAM, e era um achado de revisão de
+    # 08/10/2026: `consultas_metricas.serie_mensal` e `repositorio_lentes`
+    # agrupam por `Tema.nome` sem filtrar `ativo`, então a série mensal mostrava
+    # "Regulação" e "Leilões"; o front resolvia nome pelo dicionário de ativos e
+    # descartava o que não achava, então a MESMA agenda aparecia sem tema na
+    # tela e não entrava no KPI por tema. Três respostas para um dado só.
+    #
+    # Esconder nos dois lados também igualaria, e foi recusado: a agenda FOI
+    # classificada como "Regulação", e omitir isso faria o painel afirmar menos
+    # do que sabe. Preservar o nome é o lado honesto.
+    #
+    # O front não oferece estes como opção de filtro nem de formulário — para
+    # isso existe `temas`. Ver `nomesDosTemas` em `src/dominio/derivacoes.ts`.
+    resposta["temas_inativos"] = [
+        {
+            coluna.name: getattr(linha, coluna.name)
+            for coluna in Tema.__table__.columns
+            if coluna.name != "ativo"
+        }
+        for linha in sessao.scalars(
+            select(Tema).where(Tema.ativo.is_(False)).order_by(Tema.nome)
+        )
+    ]
 
     # Os dois abaixo NÃO são tabelas, e por isso são montados à mão. Saem por
     # aqui mesmo assim: o front precisa de uma fonte só para as opções de
