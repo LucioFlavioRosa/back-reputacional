@@ -144,6 +144,60 @@ def test_nivel_desativado_some_do_filtro_e_o_historico_fica(sessao):
     assert [r["id"] for r in relevancias] == [1, 2, 3]
 
 
+def test_tema_desativado_sai_do_filtro_e_entra_em_temas_inativos(sessao):
+    """O tema aposentado sai de `temas` e aparece em `temas_inativos`.
+
+    POR QUE AS DUAS LISTAS. `temas` é vocabulário de escrita e de filtro: quem
+    classifica uma agenda hoje não pode escolher um tema aposentado. Mas uma
+    agenda de 2025 APONTA para o tema com que foi classificada, e a tela precisa
+    saber o nome dele para mostrar — senão o campo aparece vazio e parece que a
+    agenda nunca teve tema.
+
+    Isto não é hipotético: a `0058` desativou 45 temas de uma vez ao trocar a
+    taxonomia pela v4, e as agendas que os usavam continuaram apontando para
+    eles.
+    """
+    alvo = _UM_TEMA_ATIVO(sessao)
+
+    antes = listar_dicionarios(sessao)
+    assert alvo in {t["nome"] for t in antes["temas"]}
+    assert alvo not in {t["nome"] for t in antes["temas_inativos"]}
+
+    sessao.execute(
+        text("update tema set ativo = false where nome = :nome"), {"nome": alvo}
+    )
+    sessao.flush()
+
+    depois = listar_dicionarios(sessao)
+    ativos = {t["nome"] for t in depois["temas"]}
+    inativos = {t["nome"] for t in depois["temas_inativos"]}
+
+    # O ALVO TROCOU DE LISTA — e é isto que o teste mede. Afirmar só
+    # "existe algum inativo" passaria sozinho: o banco de teste já nasce com os
+    # 45 que a `0058` desativou, então a asserção não dependeria da mudança.
+    assert alvo not in ativos
+    assert alvo in inativos
+    assert not (ativos & inativos), "um tema não pode estar nas duas listas"
+
+
+def test_temas_inativos_nao_traz_a_coluna_ativo(sessao):
+    """A mesma forma de item de `temas`, para o front resolver nome com um mapa
+    só. `ativo` não vai em nenhuma das duas: a lista em que o item está já diz.
+    """
+    for item in listar_dicionarios(sessao)["temas_inativos"]:
+        assert "ativo" not in item
+        assert {"id", "nome"} <= set(item)
+
+
+def test_todo_tema_do_banco_esta_numa_das_duas_listas(sessao):
+    """A união das duas é a tabela inteira — é isso que garante que nenhum id
+    gravado numa agenda fique sem nome na tela.
+    """
+    do_banco = sessao.execute(text("select count(*) from tema")).scalar_one()
+    dicionarios = listar_dicionarios(sessao)
+    assert len(dicionarios["temas"]) + len(dicionarios["temas_inativos"]) == do_banco
+
+
 def test_as_ufs_e_os_grupos_saem_na_mesma_resposta(sessao):
     """Uma fonte só para as opções de filtro.
 
@@ -200,3 +254,17 @@ def test_toda_area_do_seed_existe_no_dicionario(sessao):
 
     nomes = set(sessao.execute(text("select nome from area_pessoa")).scalars())
     assert set(AREA_POR_FRENTE.values()) <= nomes
+
+
+def _UM_TEMA_ATIVO(sessao) -> str:
+    """Um tema ativo qualquer, lido do banco.
+
+    Lido, e não escrito à mão: o conteúdo de `tema` mudou duas vezes em outubro
+    de 2026 (0053 e 0058), e um nome fixo aqui faria o teste falhar pela
+    taxonomia nova em vez de pelo comportamento que ele mede.
+    """
+    nome = sessao.execute(
+        text("select nome from tema where ativo order by nome limit 1")
+    ).scalar_one_or_none()
+    assert nome is not None, "o banco de teste está sem tema ativo semeado"
+    return nome
