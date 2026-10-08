@@ -92,16 +92,21 @@ class TestImpressaoDasMigrations:
         assert impressao_das_migrations(a) != impressao_das_migrations(b)
 
     def test_a_ordem_dos_arquivos_nao_muda_a_impressao(self, tmp_path):
-        """O script sempre ordena; se um dia alguém passar fora de ordem, a
-        impressão não deve virar outra — senão a guarda acusa mudança que não
-        houve.
+        """A impressão é da ÁRVORE, e árvore não tem ordem de leitura.
+
+        A PRIMEIRA VERSÃO DESTE TESTE NÃO PROVAVA NADA, e foi achado de revisão:
+        ela comparava a lista com `sorted(lista)`, mas o ajudante já entregava
+        ordenado — os dois lados eram a mesma coisa. Agora a lista vai
+        INVERTIDA, e a igualdade só vale porque a função passou a ordenar por
+        conta.
         """
         arquivos = _migrations(tmp_path, {
             "0001_a.sql": "select 1;",
             "0002_b.sql": "select 2;",
         })
+        assert arquivos != list(reversed(arquivos))
         assert impressao_das_migrations(arquivos) == impressao_das_migrations(
-            sorted(arquivos)
+            list(reversed(arquivos))
         )
 
     def test_arvore_vazia_nao_estoura(self, tmp_path):

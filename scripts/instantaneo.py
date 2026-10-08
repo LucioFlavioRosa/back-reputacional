@@ -139,15 +139,35 @@ def _banco_no_ar() -> None:
         "inspect", "-f",
         '{{index .Config.Labels "com.docker.compose.project"}}'
         "\t"
-        '{{index .Config.Labels "com.docker.compose.service"}}',
+        '{{index .Config.Labels "com.docker.compose.service"}}'
+        "\t"
+        '{{index .Config.Labels "com.docker.compose.project.working_dir"}}',
         CONTAINER,
     )
-    projeto, _, servico = rotulos.stdout.decode("utf-8", "replace").strip().partition("\t")
+    partes = rotulos.stdout.decode("utf-8", "replace").strip().split("\t")
+    projeto, servico, pasta = (partes + ["", "", ""])[:3]
+
     if (projeto, servico) != (PROJETO, SERVICO_ESPERADO):
         raise SystemExit(
             f"O container {CONTAINER} existe, mas é do projeto {projeto!r}/"
             f"serviço {servico!r} — esperado {PROJETO!r}/{SERVICO_ESPERADO!r}.\n"
             "Isto apagaria o banco errado. Nada foi tocado."
+        )
+
+    # E DE QUAL CHECKOUT, que os rótulos de projeto e serviço NÃO provam.
+    #
+    # Achado de revisão: outro clone do repositório, noutra pasta, sobe um
+    # container com o mesmo nome de projeto, o mesmo serviço e o mesmo nome de
+    # banco. Os três rótulos acima batem, `current_database()` bate, e o
+    # `drop schema public cascade` cairia no banco do clone errado — com as
+    # migrations dele, que podem ser outras.
+    if pasta and not _mesma_pasta(pasta, RAIZ):
+        raise SystemExit(
+            f"O container {CONTAINER} foi subido de outra pasta:\n"
+            f"  dele:  {pasta}\n"
+            f"  aqui:  {RAIZ}\n"
+            "São dois checkouts do mesmo projeto, e as migrations podem diferir.\n"
+            "Nada foi tocado. Rode de dentro da pasta que subiu a pilha."
         )
 
     # E O BANCO, de dentro da conexão: o `-d` acima podia estar apontando para
@@ -157,6 +177,21 @@ def _banco_no_ar() -> None:
         raise SystemExit(
             f"Conectei e o banco é {atual!r}, não {BANCO!r}. Nada foi tocado."
         )
+
+
+def _mesma_pasta(a: str | Path, b: str | Path) -> bool:
+    """Dois caminhos apontam para o mesmo lugar?
+
+    `os.path.realpath` em vez de comparar texto: o rótulo do Compose vem do
+    daemon, e no Windows chega com a caixa e os separadores que o Docker usou —
+    `C:\\Users\\...` contra `C:/Users/...`, `Área` contra `A%CC%81rea`. Comparar
+    string crua reprovaria o próprio checkout, que é o pior dos dois erros: a
+    ferramenta de segurança recusando o caso legítimo ensina a desligá-la.
+    """
+    try:
+        return Path(a).resolve() == Path(b).resolve()
+    except OSError:
+        return False
 
 
 def _git(*args: str) -> str:
@@ -187,11 +222,22 @@ def impressao_das_migrations(arquivos: list[Path] | None = None) -> str:
     neste projeto: a `0044` foi alterada depois de aplicada, trocando um
     mapeamento. Mesmo nome, schema diferente — e só o conteúdo denuncia.
     """
+    # ORDENA AQUI, e não só em `_arquivos_de_migration`: um achado de revisão
+    # notou que o teste de ordem não provava nada porque o ajudante dele já
+    # entregava ordenado. Em vez de corrigir só o teste, a invariante passou a
+    # valer para qualquer chamador — a impressão é da ÁRVORE, e árvore não tem
+    # ordem de leitura.
     resumo = hashlib.sha256()
-    for caminho in arquivos if arquivos is not None else _arquivos_de_migration():
+    for caminho in sorted(
+        arquivos if arquivos is not None else _arquivos_de_migration(),
+        key=lambda c: c.name,
+    ):
         resumo.update(caminho.name.encode("utf-8"))
         resumo.update(hashlib.sha256(caminho.read_bytes()).digest())
-    return resumo.hexdigest()[:16]
+    # O HASH INTEIRO, e não truncado: guardá-lo por extenso custa 48 bytes no
+    # manifesto e dispensa defender o truncamento depois. Quem lê na tela vê os
+    # 16 primeiros, que é o que `listar` imprime.
+    return resumo.hexdigest()
 
 
 def _contagens() -> dict[str, int]:
@@ -266,7 +312,7 @@ def criar(rotulo: str | None) -> None:
     print(f"instantâneo {ident}")
     print(f"  {destino.stat().st_size / 1_048_576:.1f} MB  commit {manifesto['commit']}"
           f"  {manifesto['migrations_no_disco']} migrations"
-          f"  impressão {manifesto['impressao_das_migrations']}")
+          f"  impressão {manifesto['impressao_das_migrations'][:16]}")
     if manifesto["arvore_suja"]:
         print("  AVISO: árvore com mudança não commitada — este estado não é"
               " reproduzível a partir do commit.")
@@ -306,7 +352,8 @@ def listar() -> None:
         print(f"  {ident}")
         print(f"     {m['quando']}  commit {m.get('commit', '?')}"
               f"  {m.get('migrations_no_disco', '?')} migrations"
-              f"  impressão {m.get('impressao_das_migrations', '?')}{sujo}")
+              f"  impressão {str(m.get('impressao_das_migrations', '?'))[:16]}"
+              f"{sujo}")
         if m.get("rotulo"):
             print(f"     {m['rotulo']}")
         contagens = m.get("contagens", {})
@@ -349,8 +396,9 @@ def restaurar(ident: str, mesmo_assim: bool) -> None:
         raise SystemExit(
             f"As migrations mudaram desde este instantâneo.\n"
             f"  instantâneo: {m.get('migrations_no_disco', '?')} arquivos,"
-            f" impressão {entao}\n"
-            f"  hoje:        {_migrations_no_disco()} arquivos, impressão {agora}\n\n"
+            f" impressão {str(entao)[:16]}\n"
+            f"  hoje:        {_migrations_no_disco()} arquivos,"
+            f" impressão {agora[:16]}\n\n"
             "A impressão é do NOME e do CONTEÚDO de cada migration, em ordem — ela\n"
             "muda tanto quando uma nasce quanto quando uma publicada é editada (o\n"
             "que acontece neste projeto: a `0044` foi alterada depois de aplicada).\n"
@@ -383,7 +431,13 @@ def restaurar(ident: str, mesmo_assim: bool) -> None:
     # toca.
     for sql in (
         "drop schema public cascade",
-        "create schema public",
+        # `authorization pg_database_owner` para o dono bater com o de um banco
+        # recém-migrado: do Postgres 15 em diante o `public` nasce desse papel, e
+        # um `create schema public` simples o deixaria com `postgres`. Não muda o
+        # fluxo (as migrations rodam como `postgres`), mas a diferença seria uma
+        # pegadinha para quem comparasse os dois bancos — e a graça do
+        # instantâneo é justamente poder comparar.
+        "create schema public authorization pg_database_owner",
         f"grant all on schema public to {USUARIO}",
         "grant usage on schema public to public",
         "revoke create on schema public from public",
