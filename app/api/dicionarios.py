@@ -100,6 +100,11 @@ FECHADOS: dict[str, str] = {
         "mudar é migration."
     ),
     "macro_temas": "Subdivisão da taxonomia de temas v1.3; mudar é migration.",
+    "risk_clusters": "O agrupador dos riscos da matriz corporativa da Aegea; mudar é migration.",
+    "riscos": (
+        "A matriz de risco corporativo da Aegea, com a severidade já atribuída; "
+        "mudar é migration. Quais riscos um tema toca se edita na Aba Temas."
+    ),
 }
 
 #: Administrados em OUTRA aba da Administração: não repetem aqui.
@@ -134,6 +139,8 @@ ROTULOS: dict[str, str] = {
     "subcategorias_publico": "Subcategorias de público",
     "blocos_tema": "Blocos de tema",
     "macro_temas": "Macro temas",
+    "risk_clusters": "Clusters de risco",
+    "riscos": "Riscos (matriz corporativa)",
     "naturezas_orgao": "Natureza do órgão (aposentado)",
     "stakeholders": "Stakeholder (aposentado)",
 }

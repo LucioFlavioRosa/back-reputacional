@@ -18,7 +18,7 @@ from sqlalchemy import (
     Text,
     func,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.banco.sessao import Tabela
 
@@ -174,6 +174,19 @@ class Tema(Tabela):
         DateTime(timezone=True), server_default=func.now()
     )
 
+    #: QUAIS RISCOS DA MATRIZ CORPORATIVA ESTE TEMA TOCA. `selectin` carrega os
+    #: vínculos de toda a lista numa consulta a mais, não uma por tema — mesmo
+    #: raciocínio de `PessoaAegea.vinculos_de_tema`. Só leitura: quem escreve é
+    #: `_aplicar_riscos_do_tema`, na API. Ver `migrations/0059`.
+    vinculos_de_risco: Mapped[list[TemaRisco]] = relationship(
+        "TemaRisco", viewonly=True, lazy="selectin"
+    )
+
+    @property
+    def riscos(self) -> list[int]:
+        """Os ids dos riscos associados, como a tela os quer."""
+        return sorted(vinculo.risco_id for vinculo in self.vinculos_de_risco)
+
 
 class BlocoTema(_Dicionario, Tabela):
     """O nível mais alto da taxonomia de temas v1.3 (Peers/Comms) — 4 blocos.
@@ -196,6 +209,42 @@ class MacroTema(Tabela):
     nome: Mapped[str] = mapped_column(Text)
     ordem: Mapped[int] = mapped_column(SmallInteger)
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class RiskCluster(_Dicionario, Tabela):
+    """O agrupador dos 32 riscos da matriz corporativa da Aegea — 8 clusters.
+    Ver `migrations/0059`."""
+
+    __tablename__ = "risk_cluster"
+
+
+class Risco(Tabela):
+    """Um dos 32 riscos da matriz corporativa — severidade já atribuída pela
+    Aegea (não é derivada). Mesmo raciocínio de `MacroTema`: existe para
+    agrupar, aqui sob um `RiskCluster`. Ver `migrations/0059`."""
+
+    __tablename__ = "risco"
+
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, autoincrement=True)
+    risk_cluster_id: Mapped[int] = mapped_column(SmallInteger, ForeignKey("risk_cluster.id"))
+    codigo: Mapped[str] = mapped_column(Text, unique=True)
+    nome: Mapped[str] = mapped_column(Text)
+    #: critico | alto | moderado.
+    severidade: Mapped[str] = mapped_column(Text)
+    ordem: Mapped[int] = mapped_column(SmallInteger)
+    ativo: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class TemaRisco(Tabela):
+    """Quais riscos da matriz um tema (subtema da taxonomia v5) toca. N:N de
+    propósito — um tema pode tocar mais de um risco. Ver `migrations/0059`."""
+
+    __tablename__ = "tema_risco"
+
+    tema_id: Mapped[int] = mapped_column(Integer, ForeignKey("tema.id"), primary_key=True)
+    risco_id: Mapped[int] = mapped_column(
+        SmallInteger, ForeignKey("risco.id"), primary_key=True
+    )
 
 
 class AreaPessoa(_Dicionario, Tabela):
@@ -265,6 +314,8 @@ DICIONARIOS: dict[str, type[Tabela]] = {
     "temas": Tema,
     "blocos_tema": BlocoTema,
     "macro_temas": MacroTema,
+    "risk_clusters": RiskCluster,
+    "riscos": Risco,
     "areas_pessoa": AreaPessoa,
     "categorias_publico": CategoriaPublico,
     "subcategorias_publico": SubcategoriaPublico,
