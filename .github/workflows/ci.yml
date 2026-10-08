@@ -265,17 +265,58 @@ jobs:
             -v "$PWD/app/banco/migrations:/docker-entrypoint-initdb.d:ro" \
             postgres:18-alpine >/dev/null
 
-          for _ in $(seq 1 30); do
-            docker exec banco pg_isready -U postgres -d painel >/dev/null 2>&1 && break
+          # ESPERAR POR TCP DE FORA, e não pelo socket de dentro.
+          #
+          # O entrypoint do Postgres sobe o servidor escutando SÓ o socket unix,
+          # roda os scripts de `/docker-entrypoint-initdb.d`, e só então reinicia
+          # aceitando TCP. Os três sinais possíveis não valem o mesmo:
+          #
+          #   `pg_isready` por `docker exec`    responde no socket, antes da carga
+          #   `select 1 from papel`             `papel` nasce na 0003, de 63 —
+          #                                     passa com 5% das migrations
+          #   `pg_isready -h banco` de outro    só responde depois de TODAS
+          #   container
+          #
+          # ERA ISSO QUE QUEBRAVA: medido nesta máquina, com as 63 migrations, o
+          # `select 1 from papel` passa em 6s e o TCP abre em 12s. A largada era
+          # dada aos 6s, a API subia, conectava por TCP e tomava
+          # "Connection refused" — e as sete rotas vinham 500 enquanto
+          # `/api/saude`, que não toca o banco, vinha 200. Quanto mais migration
+          # o projeto ganha, maior a janela; o sinal estava errado desde sempre e
+          # só passou a doer com o volume.
+          pronto=0
+          for _ in $(seq 1 60); do
+            if docker run --rm --network ci postgres:18-alpine \
+                 pg_isready -h banco -U postgres -d painel >/dev/null 2>&1; then
+              pronto=1
+              break
+            fi
             sleep 2
           done
-          # `pg_isready` responde antes de as migrations terminarem. Consultar
-          # uma tabela do schema é o que garante que a carga acabou.
-          for _ in $(seq 1 30); do
-            docker exec banco psql -U postgres -d painel -tAc \
-              'select 1 from papel limit 1' >/dev/null 2>&1 && break
-            sleep 2
-          done
+          if [ "$pronto" -ne 1 ]; then
+            echo "O Postgres nao aceitou conexao TCP em 120s." >&2
+            echo "--- log do banco ---" >&2
+            docker logs banco >&2
+            exit 1
+          fi
+
+          # E AS MIGRATIONS RODARAM MESMO?
+          #
+          # O entrypoint IGNORA EM SILÊNCIO um `/docker-entrypoint-initdb.d`
+          # vazio — ele escreve "ignoring /docker-entrypoint-initdb.d/*" no log e
+          # segue, com o banco pronto e sem uma única tabela. Um `COPY` ou um
+          # mount errado passaria por todas as esperas acima e só apareceria como
+          # 500 nas rotas, bem longe da causa. Encontrei esse modo de falha ao
+          # medir a corrida, e ele custou meia hora.
+          tabelas=$(docker exec banco psql -U postgres -d painel -tAc \
+            "select count(*) from information_schema.tables where table_schema='public'")
+          if [ "${tabelas:-0}" -lt 60 ]; then
+            echo "O banco subiu com $tabelas tabelas; as migrations nao rodaram." >&2
+            echo "--- log do banco ---" >&2
+            docker logs banco >&2
+            exit 1
+          fi
+          echo "  banco pronto, $tabelas tabelas"
 
           docker run -d --name api --network ci -p 8000:8000 \
             -e BANCO_URL="postgresql+psycopg2://postgres:x@banco:5432/painel" \
@@ -284,10 +325,23 @@ jobs:
             -e ORIGENS_PERMITIDAS='["http://localhost:5173"]' \
             back-reputacional:ci >/dev/null
 
+          # `/api/saude` NÃO TOCA O BANCO, de propósito: ele responde se o
+          # processo subiu. Serve para esperar o uvicorn, e não para dizer que a
+          # aplicação funciona — quem diz isso são as sete rotas abaixo.
+          subiu=0
           for _ in $(seq 1 30); do
-            curl -fsS http://127.0.0.1:8000/api/saude >/dev/null 2>&1 && break
+            if curl -fsS http://127.0.0.1:8000/api/saude >/dev/null 2>&1; then
+              subiu=1
+              break
+            fi
             sleep 2
           done
+          if [ "$subiu" -ne 1 ]; then
+            echo "A API nao respondeu /api/saude em 60s." >&2
+            echo "--- log da API ---" >&2
+            docker logs api >&2
+            exit 1
+          fi
 
           falhou=0
           for rota in /api/saude /api/eu /api/interacoes /api/metricas/kpis \
