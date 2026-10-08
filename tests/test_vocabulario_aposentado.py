@@ -35,6 +35,40 @@ decide (corrigir o dado, ou expor a lista de inativos como `tema` fez).
 O TESTE DESCOBRE OS CAMINHOS, em vez de listá-los. Uma lista escrita à mão aqui
 envelheceria na primeira FK nova — e o custo de envelhecer é exatamente o
 silêncio que o teste existe para quebrar.
+
+O QUE ESTE TESTE **NÃO** PEGA, e é limitação de desenho, não descuido: ele roda
+contra o banco de teste, que nasce das migrations e não tem histórico. Uma
+migration que aposente valor em uso passa aqui se os semeadores não reproduzirem
+aquele uso — foi exatamente o caso do formato `midia`, que tinha 106 interações
+na base acumulada e zero na recriada. Achado de revisão.
+
+Então o CI é a primeira barreira, não a única. Antes de aplicar migration que
+aposente vocabulário numa base com histórico, rode esta consulta CONTRA AQUELA
+BASE (ou contra um instantâneo restaurado dela — ver `scripts/instantaneo.py`):
+
+    select filho.relname as tabela, coluna.attname as coluna,
+           pai.relname as dicionario
+      from pg_constraint c
+      join pg_class filho on filho.oid = c.conrelid
+      join pg_class pai   on pai.oid   = c.confrelid
+      join pg_namespace n on n.oid = filho.relnamespace
+      join unnest(c.conkey) with ordinality as k(attnum, ord) on true
+      join pg_attribute coluna
+        on coluna.attrelid = c.conrelid and coluna.attnum = k.attnum
+     where c.contype = 'f' and n.nspname = 'public'
+       and array_length(c.conkey, 1) = 1
+       and exists (select 1 from pg_attribute a
+                    where a.attrelid = pai.oid and a.attname = 'ativo'
+                      and not a.attisdropped);
+
+e, para cada caminho, conte os registros presos:
+
+    select count(*) from <tabela> r
+      join <dicionario> d on d.id = r.<coluna>
+     where not d.ativo;
+
+É a mesma conferência que o teste faz. A diferença é a base onde ela roda, e é
+essa diferença que decide se o campo vai aparecer vazio para alguém.
 """
 
 from __future__ import annotations
@@ -53,7 +87,27 @@ _engine = create_engine(URL)
 #: Pôr um dicionário aqui é dizer "a tela sabe mostrar o nome de um valor
 #: aposentado deste". Se não souber, o nome aparece vazio e o teste tem razão em
 #: reprovar.
-COM_LISTA_DE_INATIVOS = {"tema"}
+COM_LISTA_DE_INATIVOS = {"tema", "formato_interacao"}
+
+#: As tabelas que a aplicação EXIBE mesmo quando a linha está inativa.
+#:
+#: ACHADO DE REVISÃO, e ele derrubou meu recorte anterior. Eu havia escrito
+#: "registro inativo não chega à tela, então o pai irresolvível dele não mostra
+#: campo vazio" — verdade para `subcategoria_publico`, falso para `tema`:
+#: `/api/stakeholders/temas` devolve a lista COMPLETA de propósito ("quem
+#: administra precisa ver o que desativou"), e o Cadastro de Assuntos resolve o
+#: `macro_tema_id` no catálogo de ATIVOS. No dia em que um macro tema for
+#: aposentado, abrir um tema inativo que aponta para ele mostraria o eixo em
+#: branco — e o recorte por `r.ativo` deixaria isso passar calado.
+#:
+#: Então a pergunta certa não é "esta tabela tem `ativo`?", é "esta tabela é
+#: EXIBIDA mesmo inativa?". Para as de baixo, a conferência ignora o `ativo` do
+#: próprio registro e cobra a resolução do que ele aponta.
+#:
+#: Pôr uma tabela aqui é dizer "existe tela que mostra isto aposentado". Hoje é
+#: uma; `subcategoria_publico` não entra porque só aparece pelo dicionário de
+#: ativos, e o teste de baixo prova que ela seria falso positivo se entrasse.
+EXIBIDOS_MESMO_INATIVOS = {"tema"}
 
 
 @pytest.fixture
@@ -144,7 +198,12 @@ def test_nenhum_registro_preso_a_vocabulario_aposentado(sessao):
         #
         # A regra é "registro que a tela MOSTRA apontando para valor que a tela
         # NÃO resolve", e não "qualquer FK para valor inativo".
-        vivo = " and r.ativo" if _tem_ativo(sessao, tabela) else ""
+        exibe_inativo = tabela in EXIBIDOS_MESMO_INATIVOS
+        vivo = (
+            " and r.ativo"
+            if _tem_ativo(sessao, tabela) and not exibe_inativo
+            else ""
+        )
         quantos = sessao.execute(
             text(
                 f"select count(*) from {tabela} r"  # noqa: S608 — nomes vêm do catálogo
@@ -172,7 +231,11 @@ def test_o_tema_esta_na_lista_de_isentos_porque_a_api_o_resolve(sessao):
     """
     from app.api.catalogo import listar_dicionarios
 
-    assert "temas_inativos" in listar_dicionarios(sessao)
+    dicionarios = listar_dicionarios(sessao)
+    assert "temas_inativos" in dicionarios
+    # E o conserto preventivo do bloco 3: a `0060` aposentou `midia`, e a carga
+    # real traz de volta as agendas classificadas com ele.
+    assert "formatos_interacao_inativos" in dicionarios
 
 
 def test_o_guarda_dispara_quando_a_condicao_acontece(sessao):
@@ -208,6 +271,74 @@ def test_o_guarda_dispara_quando_a_condicao_acontece(sessao):
         test_nenhum_registro_preso_a_vocabulario_aposentado(sessao)
 
     sessao.rollback()
+
+
+def test_tema_inativo_tambem_e_cobrado_porque_a_tela_o_mostra(sessao):
+    """O buraco que o recorte por `r.ativo` abria, agora fechado.
+
+    `tema` está em `EXIBIDOS_MESMO_INATIVOS`, então a conferência cobra a
+    resolução do `macro_tema_id` dele mesmo quando o tema está inativo. Aqui o
+    cenário é criado: aposenta um macro tema que um tema INATIVO usa, e exige
+    que o guarda acuse.
+
+    Sem a lista, isto passaria — e no Cadastro de Assuntos, que lista os
+    aposentados de propósito, o eixo apareceria em branco.
+    """
+    alvo = sessao.execute(
+        text(
+            "select t.id, t.macro_tema_id from tema t"
+            " join macro_tema m on m.id = t.macro_tema_id"
+            " where m.ativo limit 1"
+        )
+    ).first()
+    assert alvo is not None, "o banco de teste está sem tema ligado a macro tema"
+    tema_id, macro_id = alvo
+
+    sessao.execute(text("update tema set ativo = false where id = :i"), {"i": tema_id})
+    sessao.execute(
+        text("update macro_tema set ativo = false where id = :i"), {"i": macro_id}
+    )
+    sessao.flush()
+
+    with pytest.raises(AssertionError, match="macro_tema"):
+        test_nenhum_registro_preso_a_vocabulario_aposentado(sessao)
+
+    sessao.rollback()
+
+
+def test_nenhuma_fk_composta_aponta_para_dicionario(sessao):
+    """A descoberta ignora FK composta — e o silêncio não pode virar contrato.
+
+    `_CAMINHOS` filtra `array_length(conkey, 1) = 1` porque todo dicionário deste
+    schema é referenciado por uma coluna só. Isso é verdade hoje, não é lei: uma
+    FK composta para tabela com `ativo` sairia do radar do guarda principal sem
+    ninguém perceber.
+
+    Achado de revisão. Se este teste falhar, ou a FK nova não é para dicionário,
+    ou `_CAMINHOS` precisa aprender a tratá-la.
+    """
+    compostas = sessao.execute(
+        text("""
+            select filho.relname, pai.relname, array_length(c.conkey, 1)
+              from pg_constraint c
+              join pg_class filho on filho.oid = c.conrelid
+              join pg_class pai   on pai.oid   = c.confrelid
+              join pg_namespace n on n.oid = filho.relnamespace
+             where c.contype = 'f'
+               and n.nspname = 'public'
+               and array_length(c.conkey, 1) > 1
+               and exists (
+                 select 1 from pg_attribute a
+                  where a.attrelid = pai.oid and a.attname = 'ativo'
+                    and not a.attisdropped
+               )
+        """)
+    ).all()
+
+    assert not compostas, (
+        "FK composta para tabela com `ativo`, que o guarda principal não vê:\n  "
+        + "\n  ".join(f"{f} -> {p} ({n} colunas)" for f, p, n in compostas)
+    )
 
 
 def test_a_descoberta_de_caminhos_acha_algo(sessao):
