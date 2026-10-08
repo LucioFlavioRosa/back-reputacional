@@ -28,8 +28,10 @@ from app.banco.tabelas_catalogo import (
     CategoriaPublico,
     MacroTema,
     Relevancia,
+    Risco,
     SubcategoriaPublico,
     Tema,
+    TemaRisco,
 )
 from app.banco.tabelas_stakeholders import (
     Instituicao,
@@ -736,6 +738,11 @@ class TemaEntrada(BaseModel):
     #: Classificacao binaria Risco/Outros da taxonomia v3. Nulo em quem nao foi
     #: reconciliado com a taxonomia v4. Ver `migrations/0058`.
     e_risco: bool | None = None
+    #: Os riscos da matriz corporativa (0059) que este tema toca. N:N de
+    #: proposito — pode ser mais de um. Lista vazia, e nao None: "nenhum
+    #: risco" e "nao mandou o campo" precisam ser distinguiveis (ver
+    #: `model_fields_set` em `editar_tema`).
+    riscos: list[int] = Field(default_factory=list)
 
 
 class TemaSaida(BaseModel):
@@ -748,6 +755,7 @@ class TemaSaida(BaseModel):
     camada_lso: str | None
     area_dona_id: int | None
     e_risco: bool | None
+    riscos: list[int]
 
 
 #: OS TRÊS NÍVEIS, na ordem do mais restrito ao mais aberto.
@@ -771,6 +779,28 @@ def _validar_hierarquia_de_tema(sessao, entrada: TemaEntrada) -> None:
         )
     if entrada.macro_tema_id is not None and sessao.get(MacroTema, entrada.macro_tema_id) is None:
         raise RegraViolada(f"Macro tema {entrada.macro_tema_id} nao encontrado.")
+    for risco_id in entrada.riscos:
+        if sessao.get(Risco, risco_id) is None:
+            raise RegraViolada(f"Risco {risco_id} nao encontrado.")
+
+
+def _aplicar_riscos_do_tema(sessao, tema_id: int, riscos: list[int]) -> None:
+    """Substitui a lista inteira, casando por (tema, risco).
+
+    Mesmo raciocinio de `_aplicar_temas_da_pessoa`: nao apaga e recria tudo.
+    """
+    atuais = {
+        v.risco_id: v
+        for v in sessao.scalars(select(TemaRisco).where(TemaRisco.tema_id == tema_id))
+    }
+    desejados = set(riscos)
+
+    for risco_id, vinculo in atuais.items():
+        if risco_id not in desejados:
+            sessao.delete(vinculo)
+    for risco_id in desejados - set(atuais):
+        sessao.add(TemaRisco(tema_id=tema_id, risco_id=risco_id))
+    sessao.flush()
 
 
 @rotas.get("/temas", response_model=list[TemaSaida])
@@ -802,12 +832,14 @@ def criar_tema(
         area_dona_id=entrada.area_dona_id,
         e_risco=entrada.e_risco,
     )
-    return gravar(
+    gravar(
         sessao,
         registro,
         novo=True,
         ao_colidir=f"Ja existe um assunto chamado {entrada.nome!r}.",
     )
+    _aplicar_riscos_do_tema(sessao, registro.id, entrada.riscos)
+    return registro
 
 
 @rotas.put("/temas/{id}", response_model=TemaSaida)
@@ -845,8 +877,11 @@ def editar_tema(
         registro.area_dona_id = entrada.area_dona_id
     if "e_risco" in campos_enviados:
         registro.e_risco = entrada.e_risco
-    return gravar(
+    gravar(
         sessao,
         registro,
         ao_colidir=f"Ja existe outro assunto chamado {entrada.nome!r}.",
     )
+    if "riscos" in campos_enviados:
+        _aplicar_riscos_do_tema(sessao, registro.id, entrada.riscos)
+    return registro
