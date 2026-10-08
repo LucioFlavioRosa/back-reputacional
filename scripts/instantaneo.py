@@ -46,9 +46,12 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import hashlib
 import json
+import os
 import subprocess
 import sys
+import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -59,22 +62,43 @@ RAIZ = Path(__file__).resolve().parent.parent
 #: e versioná-los faria todo clone baixar o lixo de quem gerou.
 PASTA = RAIZ / ".instantaneos"
 
-CONTAINER = "painel-reputacional-banco-1"
+#: O PROJETO DO COMPOSE, e por consequência o container.
+#:
+#: Vem do ambiente para o ENSAIO ser possível: antes de confiar nesta ferramenta
+#: é preciso exercitar `criar -> down -v -> restaurar` de verdade, e fazer isso
+#: contra a pilha de trabalho é apostar o dado que se quer proteger. Com
+#: `INSTANTANEO_PROJETO=ensaio` sobe-se uma pilha paralela (portas próprias,
+#: volume próprio) e o ciclo roda inteiro sem tocar no que importa.
+#:
+#: A SEGURANÇA NÃO VEM DO NOME FIXO, e é por isso que abrir isto não a enfraquece:
+#: `_banco_no_ar` confere que o container é mesmo daquele projeto do Compose, que
+#: o serviço é `banco`, e que `current_database()` é o esperado. Um nome
+#: reaproveitado por outra coisa é recusado pelos rótulos, não pelo nome.
+PROJETO = os.environ.get("INSTANTANEO_PROJETO", "painel-reputacional")
+CONTAINER = f"{PROJETO}-banco-1"
 BANCO = "painel_reputacional"
 USUARIO = "postgres"
 
 #: As tabelas cuja contagem diz se a restauração trouxe o que se esperava.
 #:
 #: NÃO É TODA TABELA, de propósito: a lista existe para ser LIDA por quem
-#: restaura. Trinta números ninguém confere; estes sete respondem "a base está
-#: inteira?" — cadastro, agenda, taxonomia, risco e o volume das Lentes.
+#: restaura, e trinta números ninguém confere. Mas eram sete e passaram a ser
+#: onze, por achado de revisão: faltavam sentinelas para "voltou, mas voltou
+#: capado" — permissão (`usuario_escopo`), importação em andamento
+#: (`importacao`, `importacao_linha`) e o catálogo de risco (`risk_cluster`,
+#: `risco`). Um banco sem `usuario_escopo` abre e deixa todo mundo ver tudo.
 TABELAS_DE_CONFERENCIA = (
     "usuario",
+    "usuario_escopo",
     "instituicao",
     "interlocutor",
     "interacao",
     "tema",
+    "risk_cluster",
+    "risco",
     "tema_risco",
+    "importacao",
+    "importacao_linha",
     "mencao",
 )
 
@@ -94,12 +118,44 @@ def _psql(sql: str) -> str:
     return r.stdout.decode("utf-8", "replace").strip()
 
 
+#: O que identifica O BANCO CERTO, e não um container que por acaso tem o nome.
+#:
+#: ACHADO DE REVISÃO: confiar só no nome é frágil para uma operação que roda
+#: `drop schema public cascade`. Um container reaproveitado, ou outro compose com
+#: o mesmo nome de projeto, receberia o drop. Então se confere o rótulo do
+#: Compose (projeto e serviço) e o nome do banco de dentro da conexão.
+SERVICO_ESPERADO = "banco"
+
+
 def _banco_no_ar() -> None:
     r = _docker("inspect", "-f", "{{.State.Running}}", CONTAINER)
     if r.returncode != 0 or r.stdout.decode().strip() != "true":
         raise SystemExit(
             f"O container {CONTAINER} não está no ar. Suba a pilha antes:\n"
             "  docker compose -f docker-compose.pilha.yml up -d"
+        )
+
+    rotulos = _docker(
+        "inspect", "-f",
+        '{{index .Config.Labels "com.docker.compose.project"}}'
+        "\t"
+        '{{index .Config.Labels "com.docker.compose.service"}}',
+        CONTAINER,
+    )
+    projeto, _, servico = rotulos.stdout.decode("utf-8", "replace").strip().partition("\t")
+    if (projeto, servico) != (PROJETO, SERVICO_ESPERADO):
+        raise SystemExit(
+            f"O container {CONTAINER} existe, mas é do projeto {projeto!r}/"
+            f"serviço {servico!r} — esperado {PROJETO!r}/{SERVICO_ESPERADO!r}.\n"
+            "Isto apagaria o banco errado. Nada foi tocado."
+        )
+
+    # E O BANCO, de dentro da conexão: o `-d` acima podia estar apontando para
+    # outro lugar por variável de ambiente do container.
+    atual = _psql("select current_database()")
+    if atual != BANCO:
+        raise SystemExit(
+            f"Conectei e o banco é {atual!r}, não {BANCO!r}. Nada foi tocado."
         )
 
 
@@ -111,7 +167,31 @@ def _git(*args: str) -> str:
 
 
 def _migrations_no_disco() -> int:
-    return len(list((RAIZ / "app" / "banco" / "migrations").glob("*.sql")))
+    return len(_arquivos_de_migration())
+
+
+def _arquivos_de_migration() -> list[Path]:
+    return sorted((RAIZ / "app" / "banco" / "migrations").glob("*.sql"))
+
+
+def impressao_das_migrations(arquivos: list[Path] | None = None) -> str:
+    """Um hash do NOME e do CONTEÚDO de cada migration, em ordem.
+
+    A CONTAGEM NÃO SERVIA COMO GUARDA, e isto é correção de achado de revisão.
+    Este repositório tem três colisões de número — duas `0055`, duas `0060`,
+    duas `0061`, de branches paralelos —, então duas árvores podem ter a MESMA
+    quantidade de arquivos e schemas diferentes. Um instantâneo de um branch
+    restaurado no outro passaria pela guarda e quebraria na tela.
+
+    O CONTEÚDO entra junto do nome porque editar migration publicada acontece
+    neste projeto: a `0044` foi alterada depois de aplicada, trocando um
+    mapeamento. Mesmo nome, schema diferente — e só o conteúdo denuncia.
+    """
+    resumo = hashlib.sha256()
+    for caminho in arquivos if arquivos is not None else _arquivos_de_migration():
+        resumo.update(caminho.name.encode("utf-8"))
+        resumo.update(hashlib.sha256(caminho.read_bytes()).digest())
+    return resumo.hexdigest()[:16]
 
 
 def _contagens() -> dict[str, int]:
@@ -173,6 +253,9 @@ def criar(rotulo: str | None) -> None:
         "branch": _git("rev-parse", "--abbrev-ref", "HEAD"),
         "arvore_suja": bool(sujo),
         "migrations_no_disco": _migrations_no_disco(),
+        # A GUARDA DE VERDADE. A contagem fica por legibilidade; é esta que
+        # `restaurar` compara — ver `impressao_das_migrations`.
+        "impressao_das_migrations": impressao_das_migrations(),
         "contagens": _contagens(),
         "bytes_comprimidos": destino.stat().st_size,
     }
@@ -182,7 +265,8 @@ def criar(rotulo: str | None) -> None:
 
     print(f"instantâneo {ident}")
     print(f"  {destino.stat().st_size / 1_048_576:.1f} MB  commit {manifesto['commit']}"
-          f"  {manifesto['migrations_no_disco']} migrations")
+          f"  {manifesto['migrations_no_disco']} migrations"
+          f"  impressão {manifesto['impressao_das_migrations']}")
     if manifesto["arvore_suja"]:
         print("  AVISO: árvore com mudança não commitada — este estado não é"
               " reproduzível a partir do commit.")
@@ -191,8 +275,20 @@ def criar(rotulo: str | None) -> None:
 
 
 def _limpar(rotulo: str) -> str:
-    """Rótulo vira parte de nome de arquivo: só o que é seguro em todo sistema."""
-    seguro = "".join(c if c.isalnum() or c in "-_" else "-" for c in rotulo.lower())
+    """Rótulo vira parte de nome de arquivo: só ASCII, e só o que é seguro.
+
+    O ACENTO SAI, e isto é conserto de defeito que um teste pegou: `isalnum()`
+    é VERDADEIRO para letra acentuada em Python, então a versão anterior deixava
+    `ç` e `á` passarem para o nome do arquivo. Num caminho que já mora sob
+    "Área de Trabalho" no OneDrive, acrescentar acento ao nome do instantâneo é
+    pedir para a ferramenta de recuperação falhar justamente na hora em que se
+    precisa dela.
+    """
+    sem_acento = unicodedata.normalize("NFKD", rotulo.lower())
+    sem_acento = "".join(c for c in sem_acento if not unicodedata.combining(c))
+    seguro = "".join(
+        c if (c.isalnum() and c.isascii()) or c in "-_" else "-" for c in sem_acento
+    )
     return "-".join(p for p in seguro.split("-") if p)[:40]
 
 
@@ -209,7 +305,8 @@ def listar() -> None:
         sujo = "  (árvore suja)" if m.get("arvore_suja") else ""
         print(f"  {ident}")
         print(f"     {m['quando']}  commit {m.get('commit', '?')}"
-              f"  {m.get('migrations_no_disco', '?')} migrations{sujo}")
+              f"  {m.get('migrations_no_disco', '?')} migrations"
+              f"  impressão {m.get('impressao_das_migrations', '?')}{sujo}")
         if m.get("rotulo"):
             print(f"     {m['rotulo']}")
         contagens = m.get("contagens", {})
@@ -228,16 +325,37 @@ def restaurar(ident: str, mesmo_assim: bool) -> None:
     if not dump.exists():
         raise SystemExit(f"não achei {dump.name}. `listar` mostra o que existe.")
 
+    # SEM MANIFESTO NÃO RESTAURA, e isto é correção de achado de revisão. Sem
+    # ele, pulavam-se as DUAS proteções — a guarda do schema e a conferência das
+    # contagens — e sobrava um `drop schema` destrutivo guiado por um arquivo
+    # sobre o qual não se sabe nada. Um `.sql.gz` órfão existe: basta a escrita
+    # do `.json` falhar entre o dump e o manifesto.
+    if not manifesto.exists():
+        if not mesmo_assim:
+            raise SystemExit(
+                f"{dump.name} não tem manifesto ({manifesto.name}).\n"
+                "Sem ele não há como conferir se o schema daquele estado casa com o\n"
+                "código de hoje, nem se a restauração trouxe tudo — e o caminho\n"
+                "começa apagando o banco atual. Se você sabe de onde veio esse\n"
+                "arquivo, repita com --mesmo-assim."
+            )
+        print(f"  AVISO: {ident} sem manifesto — restaurando às cegas.")
+
     m = _manifesto(manifesto) if manifesto.exists() else {}
-    agora = _migrations_no_disco()
-    entao = m.get("migrations_no_disco")
+    agora = impressao_das_migrations()
+    entao = m.get("impressao_das_migrations")
 
     if entao is not None and entao != agora and not mesmo_assim:
         raise SystemExit(
-            f"O instantâneo foi tirado com {entao} migrations no disco; hoje são"
-            f" {agora}.\n"
+            f"As migrations mudaram desde este instantâneo.\n"
+            f"  instantâneo: {m.get('migrations_no_disco', '?')} arquivos,"
+            f" impressão {entao}\n"
+            f"  hoje:        {_migrations_no_disco()} arquivos, impressão {agora}\n\n"
+            "A impressão é do NOME e do CONTEÚDO de cada migration, em ordem — ela\n"
+            "muda tanto quando uma nasce quanto quando uma publicada é editada (o\n"
+            "que acontece neste projeto: a `0044` foi alterada depois de aplicada).\n"
             "Restaurar por cima traz de volta um schema que o código atual pode não\n"
-            "entender — a falha apareceria como coluna inexistente numa tela, longe\n"
+            "entender, e a falha apareceria como coluna inexistente numa tela, longe\n"
             "daqui. Se é isso mesmo que você quer (voltar o código também, por\n"
             "exemplo), repita com --mesmo-assim."
         )
@@ -249,11 +367,26 @@ def restaurar(ident: str, mesmo_assim: bool) -> None:
     # abertas (a API, o front, talvez um psql), e o Postgres recusa derrubar uma
     # base em uso. Trocar o conteúdo do schema `public` tem o mesmo efeito para
     # o que nos interessa e não exige derrubar a pilha.
+    #
+    # NÃO HÁ `grant all on schema public to public` AQUI, e a ausência é o
+    # conserto de um achado de revisão — a versão anterior tinha essa linha e
+    # ela REABRIA um buraco que a migration fecha. A `0005_auditoria` faz
+    # `revoke create on schema public from public` porque as funções
+    # `security definer` dela usam `search_path = public`: com CREATE liberado,
+    # um papel qualquer planta uma função com nome de built-in e a função
+    # privilegiada passa a chamá-la. O `pg_dump` NÃO grava esse `revoke` (ele
+    # dumpa grants, não a ausência deles), então quem reconstrói o schema tem de
+    # refazê-lo — e é o que a última linha abaixo faz.
+    #
+    # Os `grant usage` das roles `painel_*` vêm no dump; elas são objetos de
+    # CLUSTER, criadas pelas migrations 0005/0006/0009, e o `drop schema` não as
+    # toca.
     for sql in (
         "drop schema public cascade",
         "create schema public",
         f"grant all on schema public to {USUARIO}",
-        "grant all on schema public to public",
+        "grant usage on schema public to public",
+        "revoke create on schema public from public",
     ):
         r = _docker("exec", CONTAINER, "psql", "-U", USUARIO, "-d", BANCO,
                     "-v", "ON_ERROR_STOP=1", "-q", "-c", sql)
@@ -287,6 +420,26 @@ def restaurar(ident: str, mesmo_assim: bool) -> None:
         raise SystemExit(
             "\nAs contagens não batem com o manifesto. O dump pode estar truncado."
         )
+
+    # E A PERMISSÃO DE `public`, que é invariante de segurança e não contagem.
+    #
+    # Vira asserção aqui porque já falhou uma vez: a versão anterior deste script
+    # restaurava com CREATE liberado para PUBLIC e ninguém notava — o banco
+    # abria, as telas funcionavam, e só a garantia em que as funções
+    # `security definer` se apoiam tinha ido embora. Um banco restaurado mais
+    # permissivo que o migrado é defeito, não detalhe.
+    if _psql("select has_schema_privilege('public', 'public', 'CREATE')") != "f":
+        raise SystemExit(
+            "\nO schema `public` ficou com CREATE para PUBLIC depois da"
+            " restauração.\n"
+            "A `0005_auditoria` revoga isso de propósito: as funções"
+            " `security definer`\n"
+            "dela usam `search_path = public`, e com CREATE liberado um papel"
+            " qualquer\n"
+            "planta uma função com nome de built-in. Rode à mão e confira:\n"
+            "  revoke create on schema public from public"
+        )
+    print("    permissão de `public`  sem CREATE para PUBLIC (como a 0005 exige)")
     print("\n  Reinicie a API para ela soltar as conexões do schema antigo:")
     print("    docker compose -f docker-compose.pilha.yml restart api")
 
