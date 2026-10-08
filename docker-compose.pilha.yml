@@ -8,11 +8,21 @@
 #   cd back-reputacional
 #   docker compose -f docker-compose.pilha.yml up -d --build
 #
-# Depois, para povoar o banco (as três, nesta ordem):
+# Depois, para povoar o banco. SÃO SETE, E A ORDEM IMPORTA:
 #
 #   docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_desenvolvimento
-#   docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_enredos
 #   docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_referencias
+#   docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_enredos
+#   docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_taxonomia_de_temas
+#   docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_lentes
+#   docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_mencoes
+#   docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_score
+#
+# ESTE BLOCO LISTAVA TRÊS, E EM OUTRA ORDEM que a do README — `enredos` antes de
+# `referencias`, quando é `enredos` que deriva do acervo. Os outros quatro não
+# estavam documentados em lugar nenhum, então quem recriava o banco subia uma
+# base pela metade e descobria pela tela vazia. Corrigido em 08/10/2026, com a
+# ordem exercitada num banco do zero; o README explica o que cada um traz.
 #
 # Abra http://localhost:8081 e entre com o que o primeiro semeador imprimiu.
 #

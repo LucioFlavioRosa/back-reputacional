@@ -23,7 +23,40 @@ docker compose -f docker-compose.pilha.yml up -d --build
 docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_desenvolvimento
 docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_referencias
 docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_enredos
+docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_taxonomia_de_temas
+docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_lentes
+docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_mencoes
+docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_score
 ```
+
+SÃO SETE, E A ORDEM IMPORTA. Até 08/10/2026 o README listava três e o
+`docker-compose.pilha.yml` listava os mesmos três **em outra ordem** — e os
+outros quatro não estavam documentados em lugar nenhum. Quem recriava o banco
+subia uma base pela metade e descobria pela tela vazia.
+
+A ordem acima é a que foi exercitada: cada semeador só depende do que vem antes.
+`referencias` antes de `enredos` porque é o terceiro que deriva do acervo (ver
+abaixo); `taxonomia_de_temas` depois de `enredos` porque reaproveita a
+infraestrutura de conteúdo dele; `mencoes` e `score` por último porque escrevem
+`score_mes_fonte`, de onde a nota das lentes sai.
+
+O que cada um traz, num banco recriado em 08/10/2026:
+
+| semeador | o que povoa |
+|---|---|
+| `desenvolvimento` | as 8 contas e o cadastro mínimo |
+| `referencias` | a biblioteca: 67 referências |
+| `enredos` | a base narrativa: 99 instituições, 129 interlocutores |
+| `taxonomia_de_temas` | cobertura mecânica dos temas da taxonomia — 544 interações no total |
+| `lentes` | o conteúdo das Lentes v2: 35 linhas de exemplo |
+| `mencoes` | 4.392 menções de mentira para as quatro lentes sem dado medido |
+| `score` | 10 estimativas (jan–mai/2026) |
+
+E O QUE NÃO VOLTA: histórico de importação (`importacao`), carga real do pacote
+das Lentes (`carregar_pacote_das_lentes`, que pede o `.xlsx` do handoff) e
+qualquer cadastro feito à mão. Para esses casos existe
+`python -m scripts.instantaneo`, que tira e restaura instantâneos locais do
+banco — ver o docstring dele.
 
 O terceiro semeador termina derivando o que o acervo não trouxe — relevância
 da instituição (moda das agendas dela), categoria de público (o sugeridor,
