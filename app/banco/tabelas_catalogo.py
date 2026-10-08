@@ -255,9 +255,10 @@ class AreaPessoa(_Dicionario, Tabela):
 
 
 class CategoriaPublico(_Dicionario, Tabela):
-    """A taxonomia de públicos — 10 categorias (Poder Executivo, Imprensa e
-    Formadores de Opinião...). Vive em `instituicao`, não em `interacao`: ver
-    `0036_categoria_de_publico.sql`."""
+    """A taxonomia de públicos — 11 categorias (Poder Executivo, Imprensa,
+    Formadores de Opinião...; a 0061 separou Imprensa de Formadores de
+    Opinião, antes uma categoria só). Vive em `instituicao`, não em
+    `interacao`: ver `0036_categoria_de_publico.sql` e `0061`."""
 
     __tablename__ = "categoria_publico"
     #: esfera | logica_de_relacao | posicao_de_capital | logica_editorial | sem_quebra

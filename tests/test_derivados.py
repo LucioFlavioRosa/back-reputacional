@@ -122,8 +122,12 @@ def test_formato_da_interacao_segue_a_frente_so_onde_falta(sessao, autor):
 
     assert formato_das_interacoes_pela_frente(sessao) >= 1
     sessao.expire_all()
-    midia = sessao.scalar(select(FormatoInteracao.id).where(FormatoInteracao.codigo == "midia"))
-    assert sessao.get(InteracaoRegistro, sem_formato.id).formato_interacao_id == midia
+    padrao_imprensa = sessao.scalar(
+        select(FormatoInteracao.id).where(
+            FormatoInteracao.codigo == "solicitacao_posicionamento_entrevista"
+        )
+    )
+    assert sessao.get(InteracaoRegistro, sem_formato.id).formato_interacao_id == padrao_imprensa
     assert sessao.get(InteracaoRegistro, com_formato.id).formato_interacao_id == reuniao
     assert formato_das_interacoes_pela_frente(sessao) == 0, "idempotente"
 

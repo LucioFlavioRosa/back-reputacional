@@ -202,7 +202,8 @@ TIPO_DA_CATEGORIA_DE_PUBLICO: dict[str, str] = {
     "controle_fiscalizacao": "orgao",
     "reguladores": "orgao",
     "mercado_financeiro_capitais": "investidor",
-    "imprensa_formadores_opiniao": "veiculo",
+    "imprensa": "veiculo",
+    "formadores_opiniao": "veiculo",
     "entidades_setoriais_representativas": "entidade",
     "sociedade_civil_comunidade": "entidade",
     "parceiros_cadeia_valor": "entidade",
@@ -217,12 +218,13 @@ TIPO_DA_CATEGORIA_DE_PUBLICO: dict[str, str] = {
 #: contraparte" — são ortogonais, e quem cadastra escolhe o formato. Mas o
 #: acervo importado nasceu sem formato, e "Tipo de Interação" (filtro e
 #: gráfico) ficava vazio para ele. Isto é o palpite mais provável por frente,
-#: gravado UMA vez onde falta (`0044`, `derivados.py`) e corrigível pela
-#: edição: uma demanda de imprensa foi Mídia; um evento, Evento; investidor e
-#: credor, Agenda de mercado; governo e legislativo, Agenda pública; o resto,
+#: gravado onde falta (`0044`, `derivados.py`) e corrigível pela edição: uma
+#: demanda de imprensa foi Solicitação de Posicionamento/Entrevista (até a
+#: `0060`, era Mídia — aposentado); um evento, Evento; investidor e credor,
+#: Agenda de mercado; governo e legislativo, Agenda pública; o resto,
 #: Reunião. Chave: `Frente`; valor: `formato_interacao.codigo`.
 FORMATO_PADRAO_DA_FRENTE: dict[Frente, str] = {
-    Frente.IMPRENSA: "midia",
+    Frente.IMPRENSA: "solicitacao_posicionamento_entrevista",
     Frente.EVENTOS: "evento",
     Frente.INVESTIDORES: "agenda_de_mercado",
     Frente.BANCOS_CREDORES: "agenda_de_mercado",

@@ -84,7 +84,7 @@ def test_categoria_alta_com_subcategoria_baixa_grava_so_a_categoria(sessao):
     aplicar_sugestoes(sessao, gerar_sugestoes(sessao))
 
     categoria = sessao.scalars(
-        select(CategoriaPublico).where(CategoriaPublico.codigo == "imprensa_formadores_opiniao")
+        select(CategoriaPublico).where(CategoriaPublico.codigo == "imprensa")
     ).one()
 
     sessao.refresh(veiculo)

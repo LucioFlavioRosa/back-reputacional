@@ -49,7 +49,7 @@ def test_tipo_informado_invalido_e_recusado(sessao):
 
 
 def test_sem_tipo_a_categoria_decide(sessao):
-    imprensa = _categoria(sessao, "imprensa_formadores_opiniao")
+    imprensa = _categoria(sessao, "imprensa")
     assert derivar_tipo(sessao, tipo=None, categoria_publico_id=imprensa, atual=None) == "veiculo"
 
 
