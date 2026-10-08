@@ -16,3 +16,7 @@ venv/
 package.json
 package-lock.json
 node_modules/
+
+# Instantâneos locais do banco (ver `scripts/instantaneo.py`). São megabytes de
+# dado de trabalho: versioná-los faria todo clone baixar o lixo de quem gerou.
+.instantaneos/
