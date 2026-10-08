@@ -72,11 +72,27 @@ services:
       # Não rodam de novo enquanto o volume existir — use `down -v` para recriar.
       - ./app/banco/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      # `pg_isready` responde antes de as migrations terminarem. Consultar uma
-      # tabela do schema é o que garante que a carga inicial de fato acabou.
+      # `-h 127.0.0.1` FORÇA TCP, e é o ponto deste healthcheck.
+      #
+      # O entrypoint do Postgres sobe o servidor escutando SÓ o socket unix
+      # (`listen_addresses=''`), roda os scripts de
+      # `/docker-entrypoint-initdb.d`, e só então reinicia aceitando TCP. Sem o
+      # `-h`, tanto `pg_isready` quanto `psql` falam pelo socket e respondem no
+      # MEIO da carga — o container vira `healthy`, o `depends_on` libera a API,
+      # e ela toma "Connection refused" porque conecta por TCP.
+      #
+      # A VERSÃO ANTERIOR TENTAVA RESOLVER consultando `select 1 from papel`,
+      # com o comentário de que isso garantia o fim da carga. Não garantia:
+      # `papel` nasce na migration 0003, e hoje são 63. Medido nesta máquina,
+      # aquele sinal passava em 6s e o TCP abria em 12s — seis segundos de
+      # janela, que crescem a cada migration nova. Foi exatamente assim que o CI
+      # quebrou, com as sete rotas em 500 e `/api/saude` em 200.
+      #
+      # Com o `-h`, a espera não precisa saber nada sobre o schema: aceitar TCP
+      # já significa que todos os scripts de carga terminaram.
       test:
         - CMD-SHELL
-        - pg_isready -U postgres -d painel_reputacional && psql -U postgres -d painel_reputacional -c 'select 1 from papel limit 1'
+        - pg_isready -h 127.0.0.1 -U postgres -d painel_reputacional
       interval: 5s
       timeout: 5s
       retries: 20
