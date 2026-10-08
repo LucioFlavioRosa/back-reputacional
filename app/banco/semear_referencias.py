@@ -28,13 +28,13 @@ from sqlalchemy.orm import Session
 
 from app.armazenamento import blob
 from app.banco.tabelas_acesso import Papel, Usuario
-from app.banco.tabelas_catalogo import Tema
 from app.banco.tabelas_interacoes import Arquivo
 from app.banco.tabelas_referencias import (
     Referencia,
     ReferenciaTema,
     ReferenciaVersao,
 )
+from app.banco.temas_de_demonstracao import id_de_tema_por_nome_antigo
 
 #: (título, tipo, resumo, assuntos, última atualização do arquivo)
 #:
@@ -662,7 +662,7 @@ def semear(sessao: Session) -> dict[str, int]:
     duplicata que a biblioteca existe para impedir.
     """
     autor = _autor(sessao)
-    id_do_tema = {t.nome: t.id for t in sessao.scalars(select(Tema))}
+    id_do_tema = id_de_tema_por_nome_antigo(sessao)
 
     ja_existem = {
         titulo.strip().lower()
@@ -692,8 +692,13 @@ def semear(sessao: Session) -> dict[str, int]:
             tema_principal_id=id_do_tema[assuntos[0]],
             criado_por=autor,
         )
+        # `dict.fromkeys` DEDUPLICA preservando ordem: dois nomes antigos de
+        # `assuntos` podem traduzir para o MESMO subtema novo (ver
+        # `temas_de_demonstracao.py` — não é 1 para 1), e `ReferenciaTema` tem
+        # chave composta — um id repetido quebraria a gravação.
         registro.vinculos.extend(
-            ReferenciaTema(tema_id=id_do_tema[nome]) for nome in assuntos
+            ReferenciaTema(tema_id=tema_id)
+            for tema_id in dict.fromkeys(id_do_tema[nome] for nome in assuntos)
         )
         sessao.add(registro)
         sessao.flush()
