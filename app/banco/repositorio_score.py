@@ -397,13 +397,19 @@ def condicoes_do_filtro(filtro: FiltroDeMencoes | None) -> list:
             )
         )
     if filtro.tema_n1:
+        #: O TEMA DO FORNECEDOR É O PILAR (N1) — definição do dono do produto.
+        #: A menção entra pelo tema que o fornecedor escreveu OU pelo pilar do
+        #: tema do cadastro a que está ligada, quando estiver.
         condicoes.append(
-            Mencao.tema_id.in_(
-                select(Tema.id)
-                .join(MacroTema, MacroTema.id == Tema.macro_tema_id)
-                .join(BlocoTema, BlocoTema.id == MacroTema.bloco_tema_id)
-                .where(BlocoTema.nome == filtro.tema_n1)
-                .scalar_subquery()
+            or_(
+                Mencao.tema_texto == filtro.tema_n1,
+                Mencao.tema_id.in_(
+                    select(Tema.id)
+                    .join(MacroTema, MacroTema.id == Tema.macro_tema_id)
+                    .join(BlocoTema, BlocoTema.id == MacroTema.bloco_tema_id)
+                    .where(BlocoTema.nome == filtro.tema_n1)
+                    .scalar_subquery()
+                ),
             )
         )
     return condicoes
