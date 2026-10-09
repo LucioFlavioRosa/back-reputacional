@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import StrEnum
@@ -119,8 +119,23 @@ class Descarte(StrEnum):
     """
 
     FORA_DO_FILTRO = "fora_do_filtro"
+    #: A LINHA É DE UM VEÍCULO QUE NÃO ESTÁ NA LISTA desta fonte — motivo
+    #: próprio, e não `fora_do_filtro`, porque a tela mostra os descartes por
+    #: motivo e as duas causas se consertam em lugares diferentes: filtro de
+    #: coluna é cadastro da fonte, lista de veículos é cadastro compartilhado.
+    FORA_DA_LISTA_DE_VEICULOS = "fora_da_lista_de_veiculos"
     SEM_DATA = "sem_data"
     SEM_SENTIMENTO = "sem_sentimento"
+
+
+#: AS LISTAS DE VEÍCULOS QUE UMA FONTE PODE RECORTAR, pelo nome.
+#:
+#: O MOTOR NÃO SABE O QUE CADA UMA SIGNIFICA, de propósito: a tradução de
+#: `imprensa_economica` para o par (categoria, subcategoria) do cadastro mora
+#: em `casos_de_uso/veiculos_da_imprensa.py`, que é quem tem banco. Aqui só se
+#: declara quais nomes existem — um nome errado no mapeamento tem de doer no
+#: cadastro da fonte, e não aparecer depois como recorte misteriosamente vazio.
+LISTAS_DE_VEICULOS = frozenset({"imprensa_economica"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,9 +151,25 @@ class Mapeamento:
     #: uma das fontes deixaria a irmã com o mês antigo, e as duas lentes
     #: passariam a ler versões diferentes do mesmo arquivo.
     arquivo: str | None = None
-    #: Recorta a planilha ANTES de contar — é o que faz a lente Mercado sair
-    #: do mesmo arquivo da Clipei, só com `Público-alvo = Investidores`.
+    #: Recorta a planilha ANTES de contar, por VALOR DE COLUNA.
     filtros: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    #: Recorta a planilha pela LISTA DE VEÍCULOS do cadastro compartilhado.
+    #:
+    #: POR QUE NÃO BASTAVA `filtros`. A lente Mercado se recortava por
+    #: `Público-alvo = Investidores`, coluna que o fornecedor preenche. Medido
+    #: contra o export de 08–09/2026: a coluna captura 80 linhas onde a lista
+    #: de veículos que a Aegea mantém captura 323, e as duas discordam em 267
+    #: das 335 linhas envolvidas — a coluna perde Valor Econômico (49 menções),
+    #: InfoMoney (25), Expert XP (20) e Times Brasil (15).
+    #:
+    #: QUEM DECIDE PASSA A SER A AEGEA, pela tela: a lista é a subcategoria de
+    #: público do veículo no cadastro, mantida na aba Base. Um filtro de coluna
+    #: não daria isso — ele depende de o fornecedor classificar, e ele
+    #: classifica pelo critério dele.
+    #:
+    #: A LINHA SEM VEÍCULO NÃO ENTRA: não há como afirmar que ela é de um
+    #: veículo de mercado, e supor que é inventaria menção.
+    lista_de_veiculos: str | None = None
     #: Sinônimos de sentimento deste fornecedor, além dos conhecidos.
     sentimentos: Mapping[str, str] = field(default_factory=dict)
     #: O PREFIXO DE TAXONOMIA QUE O FORNECEDOR CARIMBA no rótulo. A Approach
@@ -193,6 +224,11 @@ class Mapeamento:
                 "mapeamento marca como opcional campo que não existe em mencao: "
                 f"{sorted(fora_do_vocabulario)}"
             )
+        if self.lista_de_veiculos and self.lista_de_veiculos not in LISTAS_DE_VEICULOS:
+            raise ValueError(
+                "mapeamento recorta por uma lista de veículos que não existe: "
+                f"{self.lista_de_veiculos!r}; conhecidas: {sorted(LISTAS_DE_VEICULOS)}"
+            )
         # Os sinônimos entram achatados SEMPRE, seja o mapeamento montado à mão
         # ou lido do banco: a busca é pela forma achatada, e um `Favorável`
         # gravado com acento nunca casaria com o `favoravel` da procura.
@@ -214,12 +250,14 @@ class Mapeamento:
         }
         aba = dados.get("aba")
         arquivo = dados.get("arquivo")
+        lista = dados.get("lista_de_veiculos")
         prefixo = dados.get("prefixo_a_remover")
         return cls(
             colunas=dict(dados.get("colunas") or {}),
             aba=str(aba) if aba else None,
             arquivo=str(arquivo) if arquivo else None,
             filtros=filtros,
+            lista_de_veiculos=str(lista) if lista else None,
             sentimentos=dict(dados.get("sentimentos") or {}),  # type: ignore[arg-type]
             prefixo_a_remover=str(prefixo) if prefixo else None,
             apelidos={
@@ -623,9 +661,28 @@ def ler_linha(
 
 
 def ler_planilha(
-    linhas: Iterable[Mapping[str, object]], mapeamento: Mapeamento
+    linhas: Iterable[Mapping[str, object]],
+    mapeamento: Mapeamento,
+    veiculo_na_lista: Callable[[str | None], bool] | None = None,
 ) -> Leitura:
-    """A planilha inteira, com a contagem do que ficou de fora."""
+    """A planilha inteira, com a contagem do que ficou de fora.
+
+    `veiculo_na_lista` RESPONDE SE O VEÍCULO DAQUELA LINHA ESTÁ NA LISTA da
+    fonte, e só é usado quando o mapeamento declara `lista_de_veiculos`. Entra
+    por parâmetro porque a resposta está no banco, e este módulo é o motor:
+    quem tem sessão monta o predicado (ver `casos_de_uso/ingerir_mencoes`).
+    """
+    if mapeamento.lista_de_veiculos and veiculo_na_lista is None:
+        #: FALHA ALTO em vez de ingerir sem recorte. Uma fonte que declara
+        #: recortar por lista e é lida sem o predicado traria o arquivo
+        #: INTEIRO: a lente Mercado passaria a contar as 25.457 menções de
+        #: Imprensa, e o índice subiria por um erro de ligação que não dá
+        #: nenhum sinal. É exatamente o tipo de silêncio que já custou os
+        #: campos zerados de `ler_linha`.
+        raise ValueError(
+            f"a fonte recorta pela lista {mapeamento.lista_de_veiculos!r} e "
+            "`ler_planilha` foi chamada sem `veiculo_na_lista`"
+        )
     mencoes: list[MencaoLida] = []
     descartes: dict[str, int] = {motivo.value: 0 for motivo in Descarte}
     avisos: dict[str, int] = {AVISO_DE_TIER: 0}
@@ -646,6 +703,10 @@ def ler_planilha(
                     mes = data.replace(day=1)
                     nao_classificadas[mes] = nao_classificadas.get(mes, 0) + 1
             continue
+        if veiculo_na_lista is not None and mapeamento.lista_de_veiculos:
+            if not veiculo_na_lista(lido.veiculo):
+                descartes[Descarte.FORA_DA_LISTA_DE_VEICULOS.value] += 1
+                continue
         mencoes.append(lido)
         # A fonte mapeia tier, a célula tem texto, e o texto não é nenhum dos
         # três valores da escala: alguém trocou a coluna, ou o fornecedor mudou

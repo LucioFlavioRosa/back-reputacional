@@ -592,22 +592,73 @@ DUAS_MATERIAS = [
 ]
 
 
-def test_um_arquivo_alimenta_as_duas_fontes_que_o_leem(cliente_do_score):
-    """Duas lentes, um arquivo: Mercado é o clipping filtrado por público.
+#: AS MESMAS DUAS MATÉRIAS, com a coluna `Público-alvo` CONTRA o cadastro: a de
+#: investidor vem de um veículo que NÃO está na lista, e a que está na lista vem
+#: marcada como população em geral. É o par que separa os dois critérios.
+MATERIAS_CONTRA_A_COLUNA = [
+    [date(2026, 6, 1), "POSITIVA", "Muito Relevante", "Gestão",
+     "Valor Econômico", "População em geral", "Resultados"],
+    [date(2026, 6, 2), "NEGATIVA", "Relevante", "Tarifa",
+     "Jornal Local", "Investidores", "Tarifa"],
+]
+
+
+def _na_lista_do_mercado(sessao, nome: str) -> None:
+    """Põe o veículo na lista que a lente Mercado considera."""
+    from app.banco.tabelas_catalogo import CategoriaPublico, SubcategoriaPublico
+    from app.dominio.texto import normalizar
+
+    alvo = sessao.scalar(
+        select(SubcategoriaPublico.id)
+        .join(
+            CategoriaPublico,
+            CategoriaPublico.id == SubcategoriaPublico.categoria_publico_id,
+        )
+        .where(
+            CategoriaPublico.nome == "Imprensa",
+            SubcategoriaPublico.nome == "Econômica e de negócios",
+        )
+    )
+    assert alvo is not None
+    sessao.add(
+        Instituicao(
+            nome=nome,
+            nome_normalizado=normalizar(nome),
+            tipo="veiculo",
+            subcategoria_publico_id=alvo,
+        )
+    )
+    sessao.flush()
+
+
+def test_um_arquivo_alimenta_as_duas_fontes_que_o_leem(cliente_do_score, sessao):
+    """Duas lentes, um arquivo: Mercado é o clipping recortado pela LISTA.
 
     O UPLOAD TRATA AS DUAS. Importar por uma só deixaria a irmã com o mês
     anterior, e Imprensa e Mercado passariam a ler versões diferentes do MESMO
     arquivo — divergência que a tela não teria como mostrar, porque cada lente
     exibiria um número plausível.
+
+    E O RECORTE É O CADASTRO, não a coluna do fornecedor. Este teste afirma a
+    troca de dono com as duas em conflito: a matéria do Valor Econômico (na
+    lista) vem marcada como "População em geral" e entra; a do Jornal Local
+    (fora da lista) vem marcada como "Investidores" e NÃO entra. Medido contra o
+    export de 08–09/2026, a diferença entre os dois critérios é de 271 linhas.
     """
-    resposta = _subir(cliente_do_score, "clipei", _clipping(DUAS_MATERIAS))
+    _na_lista_do_mercado(sessao, "Valor Econômico")
+
+    resposta = _subir(cliente_do_score, "clipei", _clipping(MATERIAS_CONTRA_A_COLUNA))
     assert resposta.status_code == 201
 
     por_fonte = {resumo["fonte"]: resumo for resumo in resposta.json()}
     assert set(por_fonte) == {"clipei", "clipei_investidores"}
     assert por_fonte["clipei"]["ingeridas"] == 2
     assert por_fonte["clipei_investidores"]["ingeridas"] == 1
-    assert por_fonte["clipei_investidores"]["descartes"]["fora_do_filtro"] == 1
+    assert (
+        por_fonte["clipei_investidores"]["descartes"]["fora_da_lista_de_veiculos"] == 1
+    )
+    #: E A COLUNA NÃO DECIDE MAIS NADA: nenhuma linha saiu por filtro de coluna.
+    assert por_fonte["clipei_investidores"]["descartes"]["fora_do_filtro"] == 0
 
 
 def test_subir_pela_fonte_irma_da_no_mesmo(cliente_do_score):

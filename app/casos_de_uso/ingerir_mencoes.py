@@ -40,7 +40,7 @@ grão para reprocessar, se um dia for preciso, está inteiro em `mencao`.
 from __future__ import annotations
 
 import io
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -50,6 +50,7 @@ from sqlalchemy.orm import Session
 from app.banco.tabelas_lentes import MencaoNaoClassificada
 from app.banco.tabelas_score import Mencao, ScoreFonte, ScoreMesFonte
 from app.casos_de_uso import veiculos_da_imprensa
+from app.casos_de_uso.veiculos_da_imprensa import nomes_da_lista
 from app.dominio.erros import RegraViolada
 from app.dominio.ingestao_score import Leitura, Mapeamento, ler_planilha, somar
 
@@ -318,6 +319,33 @@ def _mapeamento_de(fonte: ScoreFonte) -> Mapeamento:
         ) from erro
 
 
+def _recorte_por_lista(
+    sessao: Session, mapeamento: Mapeamento
+) -> Callable[[str | None], bool] | None:
+    """O predicado que diz se o veículo da linha está na lista desta fonte.
+
+    `None` quando a fonte não recorta por lista — e aí `ler_planilha` lê tudo,
+    como sempre leu.
+
+    LÊ O CADASTRO UMA VEZ, e não uma consulta por linha: o export da Clipei tem
+    25.597 linhas, e perguntar ao banco por cada uma faria da subida um
+    problema de rede. São 2.670 veículos cadastrados; o conjunto cabe na
+    memória com folga.
+    """
+    if not mapeamento.lista_de_veiculos:
+        return None
+    permitidos = nomes_da_lista(sessao, mapeamento.lista_de_veiculos)
+
+    def na_lista(veiculo: str | None) -> bool:
+        #: SEM VEÍCULO NÃO ENTRA: não há como afirmar que a linha é de um
+        #: veículo de mercado, e supor que é inventaria menção na lente.
+        if not veiculo:
+            return False
+        return normalizar(veiculo) in permitidos
+
+    return na_lista
+
+
 def _ingerir_uma(
     sessao: Session,
     fonte: ScoreFonte,
@@ -332,8 +360,19 @@ def _ingerir_uma(
     não a fonte pela qual a pessoa subiu. A diferença está no vazio — ver abaixo.
     """
     mapeamento = _mapeamento_de(fonte)
-    leitura = ler_planilha(_linhas_da_aba(conteudo, mapeamento), mapeamento)
-    if not leitura.mencoes and not e_recorte:
+    leitura = ler_planilha(
+        _linhas_da_aba(conteudo, mapeamento),
+        mapeamento,
+        _recorte_por_lista(sessao, mapeamento),
+    )
+    #: RECORTAR POR LISTA JÁ FAZ DA FONTE UM RECORTE, mesmo que tenha sido ela
+    #: a escolhida na tela: um mês em que nenhum veículo da lista foi mencionado
+    #: é um mês de zero menções de Mercado, e não um arquivo que não serve.
+    #: Sem isto, subir pela própria fonte do Mercado derrubaria a subida inteira
+    #: no mês fraco — e, na primeira subida de uma base sem veículo
+    #: classificado, em todos eles.
+    pode_vir_vazia = e_recorte or bool(mapeamento.lista_de_veiculos)
+    if not leitura.mencoes and not pode_vir_vazia:
         #: ZERO NA FONTE PELA QUAL SE SUBIU É ERRO: o arquivo não serve, e
         #: aceitar em silêncio apagaria o mês trocando-o por nada.
         raise RegraViolada(
@@ -562,7 +601,15 @@ def conferir(
 def _prever_uma(sessao: Session, fonte: ScoreFonte, conteudo: bytes) -> Resumo:
     """O resumo de uma fonte sem gravar — o mesmo cálculo de `_ingerir_uma`."""
     mapeamento = _mapeamento_de(fonte)
-    leitura = ler_planilha(_linhas_da_aba(conteudo, mapeamento), mapeamento)
+    #: A CONFERÊNCIA RECORTA IGUAL À SUBIDA. Se a previsão lesse o arquivo sem
+    #: a lista, a tela prometeria 25.457 menções de Mercado e o banco gravaria
+    #: 323 — e a conferência existe justamente para prometer o que vai
+    #: acontecer.
+    leitura = ler_planilha(
+        _linhas_da_aba(conteudo, mapeamento),
+        mapeamento,
+        _recorte_por_lista(sessao, mapeamento),
+    )
     return Resumo(
         fonte=fonte.codigo,
         nome=fonte.nome,

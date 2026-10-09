@@ -36,8 +36,9 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.banco.tabelas_catalogo import CategoriaPublico, Esfera
+from app.banco.tabelas_catalogo import CategoriaPublico, Esfera, SubcategoriaPublico
 from app.banco.tabelas_stakeholders import Instituicao
+from app.dominio.erros import RegraViolada
 from app.dominio.ingestao_score import para_sigla
 from app.dominio.texto import normalizar
 
@@ -47,6 +48,17 @@ from app.dominio.texto import normalizar
 #: aqui apontaria para outra categoria na base do cliente. O nome é o contrato
 #: que a `0061` fixou ao separar Imprensa de Formadores de Opinião.
 CATEGORIA_DA_IMPRENSA = "Imprensa"
+
+#: O QUE CADA LISTA DE VEÍCULOS É, no cadastro compartilhado.
+#:
+#: O MOTOR SÓ CONHECE O NOME (`LISTAS_DE_VEICULOS`, em `dominio/ingestao_score`);
+#: a tradução para o par (categoria, subcategoria) mora aqui, que é a camada com
+#: banco. Pelo PAR, e não pelo nome da subcategoria sozinho:
+#: `subcategoria_publico` repete nome entre categorias de propósito ("federal"
+#: aparece em três), então a chave real é sempre (categoria, subcategoria).
+LISTAS_DE_VEICULOS: dict[str, tuple[str, str]] = {
+    "imprensa_economica": (CATEGORIA_DA_IMPRENSA, "Econômica e de negócios"),
+}
 
 #: `Abrangência` da Clipei -> `esfera` do cadastro.
 #:
@@ -186,6 +198,50 @@ def criar(sessao: Session, novos: tuple[VeiculoNovo, ...]) -> dict[str, str]:
         criados[normalizar(nome)] = registro
     sessao.flush()
     return {chave: str(registro.id) for chave, registro in criados.items()}
+
+
+def nomes_da_lista(sessao: Session, lista: str) -> frozenset[str]:
+    """Os nomes NORMALIZADOS dos veículos que estão na lista pedida.
+
+    NORMALIZADOS porque é assim que nome de veículo se compara em todo o
+    sistema: `instituicao` tem índice único em `(nome_normalizado, tipo)`, e o
+    texto que o fornecedor manda vem com acento, caixa e espaço variando. A
+    comparação por `nome` cru marcaria "Valor Econômico" e "VALOR ECONOMICO"
+    como veículos diferentes — foi exatamente o que aconteceu na primeira
+    versão da `0066`, que casou 78 de 81 por usar `lower()`.
+
+    LISTA VAZIA É RESPOSTA LEGÍTIMA, e não erro: numa base onde ninguém
+    classificou veículo nenhum, a lente Mercado recorta para zero. É o estado
+    da primeira subida, e `_ingerir_uma` já sabe que recorte vazio numa fonte
+    irmã é fato, não falha.
+    """
+    par = LISTAS_DE_VEICULOS.get(lista)
+    if par is None:
+        #: Nome que o motor aceitou e esta camada não conhece: as duas listas
+        #: saíram de sincronia, e seguir devolveria "nenhum veículo" — um
+        #: recorte vazio que ninguém saberia explicar.
+        raise RegraViolada(
+            f"a lista de veículos {lista!r} não tem tradução para o cadastro. "
+            f"Conhecidas: {sorted(LISTAS_DE_VEICULOS)}."
+        )
+    categoria, subcategoria = par
+    nomes = sessao.scalars(
+        select(Instituicao.nome_normalizado)
+        .join(
+            SubcategoriaPublico,
+            SubcategoriaPublico.id == Instituicao.subcategoria_publico_id,
+        )
+        .join(
+            CategoriaPublico,
+            CategoriaPublico.id == SubcategoriaPublico.categoria_publico_id,
+        )
+        .where(
+            Instituicao.tipo == "veiculo",
+            CategoriaPublico.nome == categoria,
+            SubcategoriaPublico.nome == subcategoria,
+        )
+    )
+    return frozenset(nome for nome in nomes if nome)
 
 
 def _texto(valor: object) -> str | None:
