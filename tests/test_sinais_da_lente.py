@@ -651,7 +651,8 @@ class TestProxy:
         assert sinal.tipo == TIPO_DE_LACUNA
         assert sinal.secao is Secao.GERAL
         assert sinal.intensidade == 0
-        assert "proxy dos veículos Tier 1" in sinal.frase
+        assert "proxy da imprensa econômica" in sinal.frase
+        assert "todos os tiers" in sinal.frase
 
 
 RECEBIDAS = [497, 513, 799, 802, 1016, 886, 799, 776]

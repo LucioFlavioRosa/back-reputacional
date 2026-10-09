@@ -813,8 +813,9 @@ def sinal_de_proxy() -> Sinal:
     """A lente de mercado não tem série de sentimento — e precisa dizer isso.
 
     É UMA LACUNA, e por isso vai para o fim da lista com intensidade zero: a
-    nota existe e é defensável, mas quem a lê tem de saber que ela mede os
-    veículos econômicos de Tier 1, e não o que o mercado disse.
+    nota existe e é defensável, mas quem a lê tem de saber que ela mede a
+    imprensa econômica — todos os tiers, ponderados —, e não o que o mercado
+    disse.
     """
     return Sinal(
         tipo=TIPO_DE_LACUNA,

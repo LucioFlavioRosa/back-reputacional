@@ -265,7 +265,8 @@ def rating(quantas: int, desde: date, com_perspectiva_negativa: list[str]) -> st
 
 def proxy_sem_serie() -> str:
     return (
-        "Mercado sem série mensal de sentimento: a nota é um proxy dos veículos Tier 1 econômicos."
+        "Mercado sem série mensal de sentimento: a nota é um proxy da imprensa econômica "
+        "(matérias para investidores), de todos os tiers, cada uma ponderada pelo seu tier."
     )
 
 
