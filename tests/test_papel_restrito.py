@@ -450,22 +450,52 @@ def test_papel_da_aplicacao_nao_altera_autorizacao_direto(sessao_restrita, semen
         sessao_restrita.execute(text("update usuario set acesso_irrestrito = true"))
 
 
-@pytest.mark.parametrize("tabela", ["importacao", "importacao_linha"])
-def test_nao_escreve_no_schema_sem_aplicacao(sessao_restrita, semente, tabela):
-    """Permissão sem caso de uso é permissão que ninguém revisa.
+def test_subir_importacao_funciona_com_o_papel_restrito(sessao_restrita, semente):
+    """`importacao`/`importacao_linha` ganharam `insert, update` na 0068.
 
-    A importação da planilha não foi implementada. As tabelas existem, e o
-    `grant insert, update on all tables` da 0009 as alcançaria — a aplicação
-    ganharia escrita numa área que nenhum código toca.
+    Até ali, isto era proposital: a 0009 revogou a escrita nas duas tabelas
+    porque a importação ainda não tinha caso de uso algum — e o teste que
+    ficava aqui (`test_nao_escreve_no_schema_sem_aplicacao`) confirmava essa
+    ausência, com o aviso no próprio docstring de que ele devia sumir no dia
+    em que a importação fosse implementada. Esse dia chegou tarde: a
+    funcionalidade já estava no ar (upload, conferência, confirmação) quando
+    alguém tentou usá-la em produção e caiu em "permission denied for table
+    importacao" — o mesmo ponto cego que a 0041 já tinha descrito para
+    `interacao_area`.
 
-    Quem for implementar a importação vai ver este teste falhar, e é o
-    comportamento desejado: a concessão passa a ser uma decisão explícita na
-    migration, e não um efeito colateral do `grant on all tables`.
+    Este teste chama a ROTA inteira (`subir`), não um `insert` cru: é o único
+    jeito de provar que o caminho de verdade — `propor_com_as_declaracoes` +
+    `repositorio_importacao.criar/gravar_linha/gravar_declaracoes` — funciona
+    de ponta a ponta com a conta restrita, não só que a tabela aceita escrita.
     """
-    with pytest.raises(ProgrammingError, match="permission denied"), _isolado(sessao_restrita):
-        sessao_restrita.execute(
-            text(f"insert into {tabela} default values")  # noqa: S608 - nome vem do parametrize
-        )
+    import io
+    from types import SimpleNamespace
+
+    from openpyxl import load_workbook
+
+    from app.api import importacoes
+    from app.banco.tabelas_stakeholders import Instituicao
+    from app.casos_de_uso import importar_agendas, modelo_de_importacao
+
+    instituicao = sessao_restrita.scalars(select(Instituicao).limit(1)).first()
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao_restrita))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    valores = {"Data": date(2026, 9, 21), "Instituição": instituicao.nome, "UF": "SP"}
+    folha.append([valores.get(coluna) for coluna in cabecalho])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    usuario = SimpleNamespace(id=semente.id)
+    arquivo = SimpleNamespace(file=io.BytesIO(saida.getvalue()), filename="teste.xlsx")
+
+    saida_da_rota = importacoes.subir(sessao_restrita, usuario, arquivo)
+    sessao_restrita.flush()
+
+    assert saida_da_rota.situacao == "aguardando_conferencia"
+    assert len(saida_da_rota.linhas) == 1
 
 
 def test_papel_da_aplicacao_executa_a_funcao_de_concessao(sessao_restrita, semente):
