@@ -265,10 +265,17 @@ def composicao_por_tier(
     return sorted(linhas, key=lambda linha: ordem.get(linha["tier"], 9))
 
 
-def taxonomia_n1_n2(sessao: Session) -> dict[str, list[str]]:
-    """Os 7 pilares (N1) e os temas estratégicos (N2), na ordem da taxonomia."""
+def taxonomia_n1_n2(sessao: Session, do_fornecedor: list[str] | None = None) -> dict[str, list[str]]:
+    """Os pilares (N1) e os temas estratégicos (N2), na ordem da taxonomia.
+
+    `do_fornecedor`: os temas que os fornecedores escreveram no período. O TEMA
+    DO FORNECEDOR É O PILAR (N1), e por isso entra na lista de N1 — depois dos 7
+    da taxonomia, sem repetir o que já está lá."""
+    pilares = list(sessao.scalars(select(BlocoTema.nome).order_by(BlocoTema.ordem)))
+    vistos = {p.casefold() for p in pilares}
+    extras = [t for t in (do_fornecedor or []) if t.casefold() not in vistos]
     return {
-        "temas_n1": list(sessao.scalars(select(BlocoTema.nome).order_by(BlocoTema.ordem))),
+        "temas_n1": pilares + sorted(set(extras), key=str.casefold),
         "temas_n2": list(
             sessao.scalars(
                 select(MacroTema.nome)
@@ -387,7 +394,7 @@ def opcoes_de_filtro(sessao: Session, lente_id: int, mes: date) -> dict[str, lis
         # toda lente, por pedido, e precisam estar lá mesmo quando o mês ainda
         # não tem menção ligada a tema do cadastro; escolher um sem menção
         # devolve a lista vazia, que é a resposta verdadeira.
-        **taxonomia_n1_n2(sessao),
+        **taxonomia_n1_n2(sessao, _distintos(Mencao.tema_texto)),
         "temas_n3": _da_taxonomia(Tema.nome),
     }
 

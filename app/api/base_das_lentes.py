@@ -266,7 +266,9 @@ def listar_mencoes(
             sentimento=m.sentimento,
             atributo=m.atributo,
             tema=tema_mostrado,
-            tema_n1=n1,
+            #: O PILAR DA LINHA: o do tema do cadastro, ou — o mais comum hoje —
+            #: o tema que o fornecedor escreveu, que é o N1.
+            tema_n1=n1 or m.tema_texto,
             tema_n2=n2,
             tema_n3=n3,
             subtema=m.subtema,
@@ -326,7 +328,7 @@ def opcoes_da_base(
         temas=distintos(Mencao.tema_texto),
         #: PILAR E TEMA ESTRATÉGICO: a taxonomia inteira, sempre — são filtros
         #: rápidos fixos (ver `repositorio_lentes.taxonomia_n1_n2`).
-        **repositorio_lentes.taxonomia_n1_n2(sessao),
+        **repositorio_lentes.taxonomia_n1_n2(sessao, distintos(Mencao.tema_texto)),
         temas_n3=distintos(Tema.nome),
         subtemas=distintos(Mencao.subtema),
         empresas=distintos(Mencao.unidade_texto, 100),

@@ -104,7 +104,9 @@ def test_niveis_juntos_estreitam(sessao, ligadas):
 def test_as_opcoes_n3_sao_as_que_as_mencoes_alcancam_e_n1_n2_a_taxonomia_inteira(sessao, ligadas):
     opcoes = opcoes_de_filtro(sessao, ligadas["lente_id"], MES)
     # Pilar e tema estratégico são filtros rápidos fixos: a taxonomia inteira.
-    assert set(opcoes["temas_n1"]) >= set(ligadas["n1"]) and len(opcoes["temas_n1"]) == 7
+    # Os 7 pilares e, depois deles, o tema que o fornecedor escreveu (que é N1).
+    assert set(opcoes["temas_n1"]) >= set(ligadas["n1"]) | {"Texto do fornecedor"}
+    assert len(opcoes["temas_n1"]) == 8 and opcoes["temas_n1"][-1] == "Texto do fornecedor"
     assert set(opcoes["temas_n2"]) >= set(ligadas["n2"]) and len(opcoes["temas_n2"]) == 41
     assert set(opcoes["temas_n3"]) == set(ligadas["n3"])
 
@@ -117,4 +119,13 @@ def test_sem_mencao_ligada_so_o_n3_vem_vazio(sessao):
     opcoes = opcoes_de_filtro(sessao, lente_id, MES)
     assert opcoes["temas_n3"] == []
     # Pilar e tema estratégico continuam oferecidos — são filtros fixos.
-    assert len(opcoes["temas_n1"]) == 7 and len(opcoes["temas_n2"]) == 41
+    assert len(opcoes["temas_n2"]) == 41
+    assert opcoes["temas_n1"][-1] == "Só texto" and len(opcoes["temas_n1"]) == 8
+
+
+def test_o_tema_do_fornecedor_e_o_pilar(sessao, ligadas):
+    """O tema que o fornecedor escreve É o Pilar (N1): filtrar por ele acha a
+    menção mesmo sem vínculo com o cadastro."""
+    lente = ligadas["lente_id"]
+    # As três menções da fixture trazem "Texto do fornecedor" como tema.
+    assert _quantas(sessao, lente, tema_n1="Texto do fornecedor") == 3
