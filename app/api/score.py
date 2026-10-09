@@ -21,7 +21,7 @@ from datetime import date
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, select
 
@@ -1052,6 +1052,82 @@ class ImportacaoSaida(BaseModel):
     descartes: dict[str, int]
     avisos: dict[str, int]
     meses: list[str]
+    #: Quantos veículos nasceram no cadastro nesta subida, e quantas menções
+    #: ficaram ligadas a ele. Zero nos dois é o estado de quem subiu sem
+    #: autorizar criação — o padrão da rota.
+    veiculos_criados: int = 0
+    mencoes_ligadas: int = 0
+
+
+class VeiculoNovoSaida(BaseModel):
+    """Um veículo que a planilha traz e o cadastro não tem.
+
+    A TELA MARCA TODOS e deixa desmarcar — pedido do dono do produto. Por isso
+    cada um vem com a praça, o alcance e quantas menções o citam: é com esses
+    três que alguém decide tirar a marca de um rádio de bairro sem precisar
+    procurar o que ele é.
+    """
+
+    nome: str
+    uf: str | None = None
+    esfera: str | None = None
+    mencoes: int
+
+
+class ConferenciaSaida(BaseModel):
+    """O que a subida FARIA, antes de gravar.
+
+    `previsao` tem uma linha por fonte irmã, como a importação; `veiculos_novos`
+    é o que nasceria no cadastro. Medido no primeiro arquivo da Clipei: 2.631
+    veículos. É esse número que a pessoa vê antes de decidir.
+    """
+
+    previsao: list[ImportacaoSaida]
+    veiculos_novos: list[VeiculoNovoSaida]
+    #: Quantos veículos da planilha o cadastro JÁ reconhece. Com os novos, dá o
+    #: total — e a razão entre os dois é o quanto a ponte cobre hoje.
+    veiculos_reconhecidos: int
+
+
+@rotas.post("/fontes/{codigo}/conferencia")
+def conferir_planilha(
+    sessao: Sessao,
+    usuario: UsuarioQueAdministraCadastros,
+    codigo: str,
+    arquivo: Annotated[UploadFile, File()],
+) -> ConferenciaSaida:
+    """Lê o export e diz o que a subida faria. NADA É GRAVADO.
+
+    POR QUE ELA EXISTE. O dono do produto pediu que o veículo sem cadastro nasça
+    junto com a subida, e pediu que a conta apareça antes — o que é o que torna
+    a coisa segura. A importação de agendas tem escrito no próprio código por
+    quê: "importação de planilha sem conferência humana cria duplicata de
+    instituição em massa, e desfazer isso depois é pior que digitar de novo".
+
+    AS RECUSAS ESTRUTURAIS APARECEM AQUI, antes de a pessoa escolher nada:
+    arquivo que não abre, aba que falta, coluna que o cadastro espera e não
+    existe. `app/api/erros.py` as traduz para 422.
+    """
+    fonte = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == codigo))
+    if fonte is None:
+        raise NaoEncontrado("Fonte não encontrada.")
+
+    previsao, reconhecimento = ingerir_mencoes.conferir(
+        sessao, fonte, arquivo.file.read()
+    )
+    return ConferenciaSaida(
+        previsao=[_saida_da_importacao(resumo) for resumo in previsao],
+        veiculos_novos=[
+            VeiculoNovoSaida(
+                nome=veiculo.nome,
+                uf=veiculo.uf,
+                esfera=veiculo.esfera,
+                mencoes=veiculo.mencoes,
+            )
+            for veiculo in reconhecimento.novos
+        ],
+        veiculos_reconhecidos=len(reconhecimento.cadastrados),
+    )
 
 
 @rotas.post("/fontes/{codigo}/planilha", status_code=status.HTTP_201_CREATED)
@@ -1060,6 +1136,7 @@ def importar_planilha(
     usuario: UsuarioQueAdministraCadastros,
     codigo: str,
     arquivo: Annotated[UploadFile, File()],
+    veiculos_a_criar: Annotated[list[str] | None, Form()] = None,
 ) -> list[ImportacaoSaida]:
     """Lê o export do fornecedor e substitui os meses que ele traz.
 
@@ -1077,18 +1154,31 @@ def importar_planilha(
         raise NaoEncontrado("Fonte não encontrada.")
 
     return [
-        ImportacaoSaida(
-            fonte=resumo.fonte,
-            nome=resumo.nome,
-            linhas=resumo.linhas,
-            ingeridas=resumo.ingeridas,
-            antes=resumo.antes,
-            descartes=dict(resumo.descartes),
-            avisos=dict(resumo.avisos),
-            meses=[f"{mes:%Y-%m}" for mes in resumo.meses],
+        _saida_da_importacao(resumo)
+        for resumo in ingerir_mencoes.ingerir(
+            sessao, fonte, arquivo.file.read(), veiculos_a_criar or ()
         )
-        for resumo in ingerir_mencoes.ingerir(sessao, fonte, arquivo.file.read())
     ]
+
+
+def _saida_da_importacao(resumo: ingerir_mencoes.Resumo) -> ImportacaoSaida:
+    """O resumo no formato da tela — de uma conferência ou de uma subida.
+
+    O MESMO MOLDE PARA AS DUAS, de propósito: a conferência promete o que a
+    subida faz, e dois moldes divergiriam no primeiro campo novo.
+    """
+    return ImportacaoSaida(
+        fonte=resumo.fonte,
+        nome=resumo.nome,
+        linhas=resumo.linhas,
+        ingeridas=resumo.ingeridas,
+        antes=resumo.antes,
+        descartes=dict(resumo.descartes),
+        avisos=dict(resumo.avisos),
+        meses=[f"{mes:%Y-%m}" for mes in resumo.meses],
+        veiculos_criados=resumo.veiculos_criados,
+        mencoes_ligadas=resumo.mencoes_ligadas,
+    )
 
 
 class OpcoesSaida(BaseModel):
