@@ -558,10 +558,19 @@ def _conferir_sob_bloqueio(sessao: Session, propostas: Sequence[Proposta]) -> No
     ).all():
         agora.setdefault(tema_id, set()).add(risco_id)
 
-    # `populate_existing` É O PONTO DESTA LEITURA. Sem ele a sessão devolve o
-    # objeto que já está no mapa de identidade — a versão lida na conferência —,
-    # e a comparação abaixo compararia o `antes` com ele mesmo: um guarda que
-    # nunca dispara. Isto força a releitura sob a tranca.
+    # `populate_existing` GARANTE A RELEITURA, e a garantia é o ponto.
+    #
+    # Sem ele, `select(Tema)` pode devolver o objeto que já está no mapa de
+    # identidade — a versão lida na conferência — e a comparação abaixo
+    # compararia o `antes` com ele mesmo: um guarda que não dispara. Medido em
+    # ensaio direto: sessão A lê, sessão B altera e commita, A relê; sem a opção
+    # vem `confianca` (o valor velho), com a opção vem `credibilidade`.
+    #
+    # PODE, E NÃO SEMPRE: em outros arranjos de sessão a releitura simples volta
+    # fresca, e foi medido também. É justamente por depender do estado da sessão
+    # que isto não fica por sorte — a opção custa nada e torna a leitura sempre
+    # a do banco. `test_a_tranca_enxerga_o_valor_do_banco_e_nao_o_da_sessao`
+    # fixa o mecanismo de forma determinística.
     presentes = list(
         sessao.scalars(select(Tema).where(Tema.id.in_(ids)).execution_options(populate_existing=True))
     )

@@ -18,7 +18,7 @@ import io
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app.api import importacao_de_subtemas as rota
@@ -913,6 +913,13 @@ def test_aplicar_recusa_quando_o_subtema_mudou_sob_a_proposta(sessao, taxonomia)
     commit ganha" — a edição feita pelo Cadastro de Assuntos somia sem ninguém
     saber. Este teste monta a proposta, muda o tema por baixo dela e exige que
     `aplicar` recuse em vez de sobrescrever.
+
+    O QUE ELE **NÃO** PROVA, e a revisão do bloco apanhou: a mudança é feita na
+    MESMA sessão, então o mapa de identidade já carrega o valor novo e o teste
+    passaria mesmo sem o `populate_existing` da releitura. Ele prova a
+    comparação, não a releitura. Quem prova a releitura é
+    `test_aplicar_recusa_mudanca_commitada_em_outra_sessao`, com duas conexões
+    de verdade — e esse falha se o `populate_existing` sair.
     """
     tema = Tema(
         nome="Assunto Mexido Por Baixo 42", nivel="estrategico", camada_lso="confianca"
@@ -938,7 +945,12 @@ def test_aplicar_recusa_quando_o_subtema_mudou_sob_a_proposta(sessao, taxonomia)
 def test_aplicar_recusa_quando_os_riscos_mudaram_sob_a_proposta(sessao, taxonomia):
     """`tema_risco` TAMBÉM ENTRA NA TRANCA. Trancar só `tema` deixaria passar
     quem mexe nos vínculos de risco sem tocar na linha do tema — e é o que
-    `aplicar_riscos_do_tema` faz quando a lista de riscos é a única mudança."""
+    `aplicar_riscos_do_tema` faz quando a lista de riscos é a única mudança.
+
+    MESMA RESSALVA do teste acima: a mudança é na mesma sessão, e a releitura dos
+    vínculos é consulta própria — então este também passaria sem
+    `populate_existing`. Ele prova que os riscos entram na comparação.
+    """
     tema = Tema(nome="Assunto Com Risco Mexido 42", nivel="estrategico")
     sessao.add(tema)
     sessao.flush()
@@ -1006,6 +1018,10 @@ def test_novo_que_colide_no_indice_unico_da_frase_e_nao_500(sessao, taxonomia):
     `NOVO` para um nome que o índice único de `tema.nome` considera diferente de
     um já existente — e a gravação estoura. Com `gravar`, a pessoa lê o que
     aconteceu em vez de "erro interno".
+
+    ESTE TESTE PROVA A TRADUÇÃO DO ERRO, não a corrida: ele forja a `Proposta`
+    porque `propor` nunca devolveria `NOVO` para um nome que já existe. A corrida
+    de verdade está em `test_duas_confirmacoes_simultaneas_a_segunda_recusa`.
     """
     sessao.add(Tema(nome="Assunto Com Caixa 42", nivel="estrategico"))
     sessao.flush()
@@ -1027,3 +1043,186 @@ def test_novo_que_colide_no_indice_unico_da_frase_e_nao_500(sessao, taxonomia):
     with pytest.raises(RegraViolada) as erro:
         aplicar(sessao, [forjada])
     assert "já existe" in str(erro.value)
+
+
+# ================================================= com DUAS sessões de verdade
+#
+# OS TESTES ACIMA MEXEM NA MESMA SESSÃO, e a revisão do bloco mostrou o que isso
+# lhes custa: o mapa de identidade já carrega o valor novo, então eles passariam
+# mesmo sem a releitura sob a tranca. Eles provam a COMPARAÇÃO; estes dois
+# provam a RELEITURA e a CORRIDA, que é o que a tranca existe para resolver.
+#
+# O PREÇO É COMMITAR DE VERDADE. A fixture `sessao` desfaz tudo no fim, e
+# transação desfeita nunca é vista por outra conexão — exatamente o que estes
+# testes precisam que seja vista. Então eles commitam, e limpam pelo prefixo do
+# nome no `finally`.
+
+#: O prefixo dos temas que estes testes criam, para a limpeza achá-los.
+#:
+#: PELO NOME e não pelos ids coletados: se o teste morre no meio, os ids ficam
+#: na variável local do teste morto e o tema fica no banco de alguém.
+PREFIXO_DA_CORRIDA = "ZZ corrida "
+
+
+@pytest.fixture
+def duas_sessoes():
+    """Duas sessões independentes, e a limpeza do que elas commitarem."""
+    a = Session(_engine, expire_on_commit=False)
+    b = Session(_engine, expire_on_commit=False)
+    try:
+        yield a, b
+    finally:
+        a.rollback()
+        b.rollback()
+        a.close()
+        b.close()
+        with Session(_engine) as limpeza:
+            alvos = list(
+                limpeza.scalars(
+                    select(Tema.id).where(Tema.nome.like(f"{PREFIXO_DA_CORRIDA}%"))
+                )
+            )
+            if alvos:
+                limpeza.execute(delete(TemaRisco).where(TemaRisco.tema_id.in_(alvos)))
+                limpeza.execute(delete(Tema).where(Tema.id.in_(alvos)))
+                limpeza.commit()
+
+
+@pytest.fixture
+def hierarquia_commitada():
+    """Um (pilar, tema estratégico) que JÁ está commitado no banco.
+
+    A fixture `taxonomia` cria o par dentro da transação que será desfeita, e
+    outra conexão não o veria — a planilha sairia recusada por "pilar não
+    cadastrado" e o teste passaria pelo motivo errado.
+    """
+    with Session(_engine) as leitura:
+        linha = leitura.execute(
+            select(BlocoTema.nome, MacroTema.nome)
+            .join(MacroTema, MacroTema.bloco_tema_id == BlocoTema.id)
+            .where(BlocoTema.ativo, MacroTema.ativo)
+            .order_by(MacroTema.id)
+            .limit(1)
+        ).first()
+    assert linha is not None, "o banco de teste não tem hierarquia de temas"
+    return {"pilar": linha[0], "macro": linha[1]}
+
+
+def _planilha_de_um(nome: str, hierarquia, lso: str = "", risco: str = "", codigos: str = ""):
+    return _planilha(
+        [[nome, hierarquia["pilar"], hierarquia["macro"], lso, risco, codigos]]
+    )
+
+
+def test_aplicar_recusa_mudanca_commitada_em_outra_sessao(
+    duas_sessoes, hierarquia_commitada
+):
+    """O TESTE QUE A REVISÃO PEDIU: a recusa atravessando um COMMIT de verdade.
+
+    A confere; B altera e COMMITA; A aplica, e tem de recusar em vez de gravar
+    em cima da edição de B. Os testes de mesma sessão não cobrem isto — lá o
+    valor novo já está no mapa de identidade de quem compara.
+
+    O QUE ELE AINDA NÃO FIXA, e eu medi antes de escrever isto: tirar o
+    `populate_existing` da releitura NÃO faz este teste falhar. Neste arranjo de
+    sessão a releitura simples volta fresca; noutro, volta velha. Quem fixa o
+    mecanismo é `test_a_tranca_enxerga_o_valor_do_banco_e_nao_o_da_sessao`.
+    """
+    a, b = duas_sessoes
+    nome = f"{PREFIXO_DA_CORRIDA}altera"
+
+    a.add(Tema(nome=nome, nivel="estrategico", camada_lso="confianca"))
+    a.commit()
+
+    planilha = _planilha_de_um(nome, hierarquia_commitada, lso="legitimidade")
+    propostas = propor(a, ler(planilha))
+    assert propostas[0].decisao is Decisao.ALTERA, propostas[0].divergencias
+
+    alheio = b.scalar(select(Tema).where(Tema.nome == nome))
+    alheio.camada_lso = "credibilidade"
+    b.commit()
+
+    with pytest.raises(RegraViolada) as erro:
+        aplicar(a, propostas)
+    assert "Confira de novo" in str(erro.value)
+
+    a.rollback()
+    with Session(_engine) as conferencia:
+        guardado = conferencia.scalar(select(Tema).where(Tema.nome == nome))
+        assert guardado.camada_lso == "credibilidade", "a edição de B foi preservada"
+
+
+def test_duas_confirmacoes_simultaneas_a_segunda_recusa(
+    duas_sessoes, hierarquia_commitada
+):
+    """A CORRIDA DE VERDADE no `NOVO`, que o teste do `IntegrityError` forjava.
+
+    As duas sessões leem a MESMA planilha com um subtema que não existe, e as
+    duas decidem `NOVO` — é o que acontece quando duas pessoas confirmam a mesma
+    revisão. A primeira grava; a segunda tem de ler uma frase, não um 500.
+    """
+    a, b = duas_sessoes
+    nome = f"{PREFIXO_DA_CORRIDA}novo"
+    planilha = _planilha_de_um(nome, hierarquia_commitada)
+
+    de_a = propor(a, ler(planilha))
+    de_b = propor(b, ler(planilha))
+    assert de_a[0].decisao is Decisao.NOVO
+    assert de_b[0].decisao is Decisao.NOVO, "B precisa ter decidido NOVO ANTES de A gravar"
+
+    assert aplicar(a, de_a).criados == 1
+    a.commit()
+
+    with pytest.raises(RegraViolada) as erro:
+        aplicar(b, de_b)
+    assert "já existe" in str(erro.value)
+    b.rollback()
+
+    with Session(_engine) as conferencia:
+        quantos = conferencia.scalar(
+            select(func.count()).select_from(Tema).where(Tema.nome == nome)
+        )
+        assert quantos == 1, "a corrida não pode deixar dois subtemas com o mesmo nome"
+
+
+def test_a_tranca_enxerga_o_valor_do_banco_e_nao_o_da_sessao(sessao, taxonomia):
+    """O TESTE QUE FIXA O `populate_existing`, e o único que falha sem ele.
+
+    Os de duas sessões provam a recusa atravessando um commit, mas não pinam a
+    releitura: medido, eles passam com a opção removida, porque naquele arranjo
+    a leitura simples já volta fresca. Isso é o oposto de uma garantia — depende
+    do estado da sessão.
+
+    AQUI A DEFASAGEM É FABRICADA, de propósito e por um caminho determinístico:
+    um `UPDATE` do Core com `synchronize_session=False` muda a LINHA e deixa o
+    objeto do mapa de identidade intacto. É exatamente a situação que a opção
+    existe para resolver, e a asserção do meio prova que a defasagem é real
+    antes de exigir que a tranca a enxergue.
+    """
+    tema = Tema(nome="Assunto Defasado 42", nivel="estrategico", camada_lso="confianca")
+    sessao.add(tema)
+    sessao.flush()
+
+    propostas = propor(
+        sessao, ler(_planilha([_linha(tema.nome, taxonomia, lso="legitimidade")]))
+    )
+    assert propostas[0].decisao is Decisao.ALTERA
+    assert propostas[0].antes["camada_lso"] == "confianca"
+
+    sessao.execute(
+        update(Tema)
+        .where(Tema.id == tema.id)
+        .values(camada_lso="credibilidade")
+        .execution_options(synchronize_session=False)
+    )
+    # A DEFASAGEM É REAL: a linha diz uma coisa, o objeto da sessão diz outra.
+    # Sem esta asserção o teste poderia passar por o `UPDATE` não ter pegado.
+    assert tema.camada_lso == "confianca", "a sessão tinha de estar defasada aqui"
+    assert (
+        sessao.execute(select(Tema.camada_lso).where(Tema.id == tema.id)).scalar_one()
+        == "credibilidade"
+    )
+
+    with pytest.raises(RegraViolada) as erro:
+        aplicar(sessao, propostas)
+    assert "Confira de novo" in str(erro.value)
