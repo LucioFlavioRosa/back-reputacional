@@ -139,13 +139,7 @@ def _linhas_da_aba(
             aba = planilha[planilha.sheetnames[0]]
 
         linhas = aba.iter_rows(values_only=True)
-        try:
-            cabecalho = [
-                str(celula).strip() if celula is not None else ""
-                for celula in next(linhas)
-            ]
-        except StopIteration:
-            raise RegraViolada("A planilha está vazia.") from None
+        cabecalho = _achar_o_cabecalho(linhas, mapeamento)
 
         faltando = sorted(mapeamento.colunas_necessarias - set(cabecalho))
         if faltando:
@@ -158,6 +152,53 @@ def _linhas_da_aba(
             yield dict(zip(cabecalho, linha, strict=False))
     finally:
         planilha.close()
+
+
+#: Quantas linhas do topo o leitor examina procurando o cabeçalho.
+#:
+#: O EXPORT DA CLIPEI TEM UMA LINHA ACIMA DO CABEÇALHO: três marcadores de nível
+#: (`N1`, `N2`, `N3`) sobre as colunas Atributo, Categoria e Subcategoria. O
+#: leitor assumia a linha 1 e recusava o arquivo inteiro com "a planilha não tem
+#: as colunas que o cadastro desta fonte espera" — a mensagem certa para um
+#: arquivo errado, e a errada para um arquivo CERTO com uma linha de título.
+#:
+#: VINTE É FOLGA, e é o mesmo número da importação de subtemas: fornecedor que
+#: põe logotipo e data antes do cabeçalho cabe, e um arquivo que realmente não
+#: tem as colunas ainda é recusado — com a mesma mensagem, que volta a ser
+#: verdade.
+LINHAS_ATE_O_CABECALHO = 20
+
+
+def _achar_o_cabecalho(
+    linhas: Iterator[tuple], mapeamento: Mapeamento
+) -> list[str]:
+    """A primeira linha do topo que traz as colunas que o cadastro espera.
+
+    CONSOME O ITERADOR ATÉ O CABEÇALHO, e é o que faz o `for` seguinte começar
+    nos DADOS: o chamador continua lendo do mesmo iterador, e se este devolvesse
+    o cabeçalho sem consumi-lo a primeira linha de dado seria o próprio
+    cabeçalho.
+
+    RECONHECE PELAS COLUNAS NECESSÁRIAS, e não por "a linha tem muitas células":
+    uma linha de título com cinco células passaria no segundo critério. Aqui ela
+    só passa se trouxer o que o cadastro desta fonte precisa.
+    """
+    procuradas = mapeamento.colunas_necessarias
+    candidata: list[str] | None = None
+    for numero, linha in enumerate(linhas, start=1):
+        nomes = [str(celula).strip() if celula is not None else "" for celula in linha]
+        if candidata is None:
+            candidata = nomes  # a primeira linha, para a mensagem de erro
+        if procuradas <= set(nomes):
+            return nomes
+        if numero >= LINHAS_ATE_O_CABECALHO:
+            break
+    if candidata is None:
+        raise RegraViolada("A planilha está vazia.")
+    #: DEVOLVE A PRIMEIRA LINHA quando não achou: quem confere as colunas é o
+    #: chamador, e a mensagem dele nomeia o que falta. Levantar aqui duplicaria
+    #: a regra em dois lugares — e esta função não sabe o nome da fonte.
+    return candidata
 
 
 def _quanto_havia(sessao: Session, fonte: ScoreFonte, meses: list[date]) -> int:

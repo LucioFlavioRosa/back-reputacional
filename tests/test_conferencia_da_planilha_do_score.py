@@ -324,3 +324,81 @@ def test_zero_na_fonte_da_subida_CONTINUA_sendo_erro(sessao, clipei):
         ingerir_mencoes.ingerir(
             sessao, clipei, _planilha([_linha("Veículo Sem Data 42", Data="ontem")])
         )
+
+
+def _planilha_com_titulo(linhas: list[dict], titulo: list) -> bytes:
+    """Um `.xlsx` com uma linha ACIMA do cabeçalho, como a Clipei manda."""
+    from openpyxl import Workbook
+
+    pasta = Workbook()
+    pasta.remove(pasta.active)
+    aba = pasta.create_sheet("Clipping")
+    aba.append(titulo)
+    aba.append(_CABECALHO)
+    for linha in linhas:
+        aba.append([linha.get(coluna, "") for coluna in _CABECALHO])
+    arquivo = io.BytesIO()
+    pasta.save(arquivo)
+    return arquivo.getvalue()
+
+
+def test_o_cabecalho_e_PROCURADO_e_nao_assumido_na_linha_1(sessao, clipei):
+    """O EXPORT DA CLIPEI TEM UMA LINHA ACIMA DO CABEÇALHO.
+
+    São três marcadores de nível (`N1`, `N2`, `N3`) sobre as colunas Atributo,
+    Categoria e Subcategoria. O leitor assumia a linha 1 e recusava o arquivo
+    inteiro com "a planilha não tem as colunas que o cadastro desta fonte
+    espera" — a mensagem certa para um arquivo errado, e a errada para um
+    arquivo CERTO com uma linha de título.
+
+    Era isso que impedia a planilha de subir como o fornecedor a manda.
+    """
+    conteudo = _planilha_com_titulo(
+        [_linha("Veículo Sob Título 42")], ["N2", "N3", "N1"]
+    )
+
+    previsao, _ = ingerir_mencoes.conferir(sessao, clipei, conteudo)
+
+    assert next(r for r in previsao if r.fonte == "clipei").ingeridas == 1
+
+
+def test_arquivo_que_REALMENTE_nao_tem_as_colunas_segue_recusado(sessao, clipei):
+    """O CONTRAPESO. Procurar o cabeçalho não pode virar aceitar qualquer coisa:
+    a recusa com o nome das colunas que faltam é o que diz à pessoa que ela
+    pegou o arquivo errado.
+    """
+    from openpyxl import Workbook
+
+    from app.dominio.erros import RegraViolada
+
+    pasta = Workbook()
+    pasta.remove(pasta.active)
+    aba = pasta.create_sheet("Clipping")
+    aba.append(["Assunto", "Grupo", "Outra Coisa"])
+    aba.append(["x", "y", "z"])
+    arquivo = io.BytesIO()
+    pasta.save(arquivo)
+
+    with pytest.raises(RegraViolada, match="não tem as colunas"):
+        ingerir_mencoes.conferir(sessao, clipei, arquivo.getvalue())
+
+
+def test_a_rota_de_conferencia_esta_isenta_do_teto_de_1_MB():
+    """O DEFEITO QUE A PESSOA ENCONTROU AO USAR A TELA.
+
+    Eu criei a rota e esqueci de isentá-la do teto genérico de 1 MB. O export da
+    Clipei tem 3,8 MB, e o sintoma NÃO foi um 413 legível: o middleware recusa
+    pelo `Content-Length` e fecha a conexão enquanto o navegador ainda envia,
+    então o `fetch` falha em nível de rede e a tela mostrou "não foi possível
+    falar com o servidor" — mandando procurar um backend derrubado quando o
+    problema era o tamanho do arquivo.
+
+    Este teste é estrutural de propósito: a próxima rota de upload que nascer
+    sob este prefixo não vai descobrir isso pela tela de alguém.
+    """
+    from app.seguranca.protecao_http import _fora_do_limite_de_corpo
+
+    assert _fora_do_limite_de_corpo("/api/score/fontes/clipei/conferencia")
+    assert _fora_do_limite_de_corpo("/api/score/fontes/clipei/planilha")
+    # E o que NÃO recebe arquivo continua com teto.
+    assert not _fora_do_limite_de_corpo("/api/score/fontes")
