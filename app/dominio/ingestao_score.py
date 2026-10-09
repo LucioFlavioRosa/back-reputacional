@@ -487,6 +487,43 @@ _NOME_CANONICO: dict[str, str] = {
 }
 
 
+#: Nome do estado -> sigla, o caminho inverso de `_NOME_POR_SIGLA`.
+#:
+#: AS DUAS FORMAS CONVIVEM NO BANCO, e não por descuido:
+#:
+#:     mencao.uf       `text`, guarda o NOME ("Santa Catarina")
+#:     instituicao.uf  domínio `abrangencia`, CHECK das 29 SIGLAS
+#:     interacao.uf    o mesmo domínio
+#:
+#: A primeira é decisão do dono do produto (09/10/2026) sobre a menção. As duas
+#: outras são contrato do CRM, com restrição no próprio banco — escrever "Santa
+#: Catarina" ali é RECUSADO pelo Postgres, não é questão de estilo.
+#:
+#: Então quem cria VEÍCULO a partir da planilha precisa do caminho inverso, e é
+#: melhor tê-lo aqui, ao lado do mapa que o origina, do que uma segunda tabela
+#: de siglas noutro módulo — duas listas divergiriam na primeira mudança.
+_SIGLA_POR_NOME: dict[str, str] = {
+    achatar(nome): sigla for sigla, nome in _NOME_POR_SIGLA.items()
+}
+
+
+def para_sigla(valor: object) -> str | None:
+    """A sigla de duas letras, para as colunas cujo CHECK a exige.
+
+    Aceita nome ou sigla, e devolve NULO para o que não é estado brasileiro — ao
+    contrário de `para_uf`, que preserva o texto. A diferença é a coluna de
+    destino: `mencao.uf` é texto livre e ganha informação guardando "Comunidade
+    de Madrid"; `instituicao.uf` tem CHECK, e valor fora da lista não entra.
+    Nulo ali é "sem praça definida", que é verdade e passa.
+    """
+    texto = _texto(valor)
+    if texto is None:
+        return None
+    if len(texto) == 2 and texto.upper() in _NOME_POR_SIGLA:
+        return texto.upper()
+    return _SIGLA_POR_NOME.get(achatar(texto))
+
+
 def para_uf(valor: object) -> str | None:
     """O estado da menção, pelo NOME por extenso.
 

@@ -93,6 +93,25 @@ class Mencao(Tabela):
         SmallInteger, ForeignKey("unidade_negocio.id"), nullable=True
     )
     tema_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("tema.id"), nullable=True)
+    #: O VEÍCULO NO CADASTRO COMPARTILHADO — `instituicao` com `tipo='veiculo'`.
+    #:
+    #: A terceira ponte para o cadastro, e a última a existir (`0065`). As outras
+    #: duas (`tema_id`, `unidade_negocio_id`) foram projetadas e nunca
+    #: atravessadas: medido em 4.392 menções, zero preenchidas nas duas.
+    #:
+    #: É ELA QUE DÁ O CRITÉRIO DA LENTE MERCADO. A subcategoria de público do
+    #: veículo ("Econômica e de negócios", sob Imprensa, cuja `padrao_de_quebra`
+    #: é `logica_editorial`) substitui o filtro por `Público-alvo =
+    #: Investidores`, que capturava 80 linhas onde a lista de veículos do mercado
+    #: financeiro captura 323.
+    #:
+    #: `ondelete="SET NULL"`: apagar um veículo do cadastro não pode apagar a
+    #: menção — ela é fato do mês, e o vínculo é enriquecimento.
+    instituicao_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("instituicao.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     #: O assunto no vocabulário do FORNECEDOR, que não é o do CRM.
     tema_texto: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: A concessionária como o fornecedor a nomeia — idem.
