@@ -265,6 +265,20 @@ def composicao_por_tier(
     return sorted(linhas, key=lambda linha: ordem.get(linha["tier"], 9))
 
 
+def taxonomia_n1_n2(sessao: Session) -> dict[str, list[str]]:
+    """Os 7 pilares (N1) e os temas estratégicos (N2), na ordem da taxonomia."""
+    return {
+        "temas_n1": list(sessao.scalars(select(BlocoTema.nome).order_by(BlocoTema.ordem))),
+        "temas_n2": list(
+            sessao.scalars(
+                select(MacroTema.nome)
+                .join(BlocoTema, BlocoTema.id == MacroTema.bloco_tema_id)
+                .order_by(BlocoTema.ordem, MacroTema.ordem)
+            )
+        ),
+    }
+
+
 def opcoes_de_filtro(sessao: Session, lente_id: int, mes: date) -> dict[str, list[str]]:
     """Os valores de veículo/atributo/tema que REALMENTE aparecem no mês desta
     lente — e não um dicionário fechado, porque nenhum dos três é um: são
@@ -368,8 +382,12 @@ def opcoes_de_filtro(sessao: Session, lente_id: int, mes: date) -> dict[str, lis
         # estratégicos e temas das menções que têm `tema_id`. Sem menção ligada
         # (a base que só traz o texto do fornecedor), as três vêm vazias e a
         # tela não oferece o filtro.
-        "temas_n1": _da_taxonomia(BlocoTema.nome),
-        "temas_n2": _da_taxonomia(MacroTema.nome),
+        # PILAR E TEMA ESTRATÉGICO: A TAXONOMIA INTEIRA, sempre — e é a única
+        # exceção ao "só o que aparece no mês". São filtros rápidos fixos em
+        # toda lente, por pedido, e precisam estar lá mesmo quando o mês ainda
+        # não tem menção ligada a tema do cadastro; escolher um sem menção
+        # devolve a lista vazia, que é a resposta verdadeira.
+        **taxonomia_n1_n2(sessao),
         "temas_n3": _da_taxonomia(Tema.nome),
     }
 

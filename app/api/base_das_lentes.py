@@ -71,7 +71,7 @@ class MencaoDaBase(BaseModel):
     tier: str | None
     sentimento: str | None
     atributo: str | None
-    #: O tema como a tela mostra: o nome do cadastro, ou o texto do fornecedor.
+    #: O tema COMO O FORNECEDOR O ESCREVEU. O do cadastro vem em `tema_n3`.
     tema: str | None
     #: A taxonomia do CRM, quando a menção está ligada a um tema do cadastro.
     tema_n1: str | None
@@ -237,7 +237,7 @@ def listar_mencoes(
             Mencao,
             ScoreFonte.nome,
             ScoreFonte.codigo,
-            func.coalesce(Tema.nome, Mencao.tema_texto),
+            Mencao.tema_texto,
             Tema.nome,
             MacroTema.nome,
             BlocoTema.nome,
@@ -323,9 +323,10 @@ def opcoes_da_base(
         tiers=distintos(Mencao.tier),
         veiculos=distintos(Mencao.veiculo, 200),
         atributos=distintos(Mencao.atributo),
-        temas=distintos(func.coalesce(Tema.nome, Mencao.tema_texto)),
-        temas_n1=distintos(BlocoTema.nome),
-        temas_n2=distintos(MacroTema.nome),
+        temas=distintos(Mencao.tema_texto),
+        #: PILAR E TEMA ESTRATÉGICO: a taxonomia inteira, sempre — são filtros
+        #: rápidos fixos (ver `repositorio_lentes.taxonomia_n1_n2`).
+        **repositorio_lentes.taxonomia_n1_n2(sessao),
         temas_n3=distintos(Tema.nome),
         subtemas=distintos(Mencao.subtema),
         empresas=distintos(Mencao.unidade_texto, 100),

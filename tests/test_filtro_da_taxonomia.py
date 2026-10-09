@@ -101,17 +101,20 @@ def test_niveis_juntos_estreitam(sessao, ligadas):
     assert _quantas(sessao, lente, tema_n1=ligadas["n1"][1], tema_n2=ligadas["n2"][1]) == 1
 
 
-def test_as_opcoes_do_mes_trazem_so_o_que_as_mencoes_ligadas_alcancam(sessao, ligadas):
+def test_as_opcoes_n3_sao_as_que_as_mencoes_alcancam_e_n1_n2_a_taxonomia_inteira(sessao, ligadas):
     opcoes = opcoes_de_filtro(sessao, ligadas["lente_id"], MES)
-    assert set(opcoes["temas_n1"]) == set(ligadas["n1"])
-    assert set(opcoes["temas_n2"]) == set(ligadas["n2"])
+    # Pilar e tema estratégico são filtros rápidos fixos: a taxonomia inteira.
+    assert set(opcoes["temas_n1"]) >= set(ligadas["n1"]) and len(opcoes["temas_n1"]) == 7
+    assert set(opcoes["temas_n2"]) >= set(ligadas["n2"]) and len(opcoes["temas_n2"]) == 41
     assert set(opcoes["temas_n3"]) == set(ligadas["n3"])
 
 
-def test_sem_mencao_ligada_as_opcoes_vem_vazias(sessao):
+def test_sem_mencao_ligada_so_o_n3_vem_vazio(sessao):
     lente_id = sessao.scalar(select(Lente.id).where(Lente.codigo == "sociedade"))
     bites = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "bites")).one()
     sessao.add(Mencao(fonte_id=bites.id, mes=MES, sentimento="pos", tema_texto="Só texto"))
     sessao.flush()
     opcoes = opcoes_de_filtro(sessao, lente_id, MES)
-    assert opcoes["temas_n1"] == opcoes["temas_n2"] == opcoes["temas_n3"] == []
+    assert opcoes["temas_n3"] == []
+    # Pilar e tema estratégico continuam oferecidos — são filtros fixos.
+    assert len(opcoes["temas_n1"]) == 7 and len(opcoes["temas_n2"]) == 41
