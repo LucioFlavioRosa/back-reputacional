@@ -358,6 +358,7 @@ def condicoes_do_filtro(filtro: FiltroDeMencoes | None) -> list:
         (Mencao.subtema, filtro.subtema),
         (Mencao.autor, filtro.autor),
         (Mencao.unidade_texto, filtro.empresa),
+        (Mencao.sentimento, filtro.sentimento),
     )
     condicoes = [coluna == valor for coluna, valor in de_cada if valor]
     if filtro.tema_texto:
