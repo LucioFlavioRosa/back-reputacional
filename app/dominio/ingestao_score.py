@@ -160,6 +160,12 @@ class Mapeamento:
     #: de casar as listas com o dicionário do CRM: aqui se resolve a colisão que
     #: atrapalha a leitura, sem esperar a taxonomia inteira ser conciliada.
     apelidos: Mapping[str, str] = field(default_factory=dict)
+    #: OS CAMPOS CUJA COLUNA PODE FALTAR no arquivo sem parar a subida.
+    #:
+    #: Nomes de CAMPO (`link`, `titulo_texto`), não de coluna: é o campo que o
+    #: cadastro conhece, e a coluna pode mudar de nome no export. Ver
+    #: `colunas_necessarias`, que explica por que o padrão é o contrário.
+    colunas_opcionais: frozenset[str] = frozenset()
     #: Os teores que NÃO contam como contato de verdade nesta fonte, já
     #: achatados. Vazio usa `TEORES_NAO_ACIONAVEIS` — o vocabulário de hoje.
     #: Declarável porque é convenção do fornecedor, como o resto do mapeamento.
@@ -207,6 +213,9 @@ class Mapeamento:
                 str(de): str(para)
                 for de, para in dict(dados.get("apelidos") or {}).items()
             },
+            colunas_opcionais=frozenset(
+                str(campo) for campo in (dados.get("colunas_opcionais") or [])
+            ),
             teores_nao_acionaveis=frozenset(
                 achatar(teor) for teor in (dados.get("teores_nao_acionaveis") or [])
             ),
@@ -214,8 +223,29 @@ class Mapeamento:
 
     @property
     def colunas_necessarias(self) -> frozenset[str]:
-        """Os cabeçalhos que a planilha precisa ter — filtros inclusive."""
-        return frozenset(self.colunas.values()) | frozenset(self.filtros)
+        """Os cabeçalhos que a planilha precisa ter — filtros inclusive.
+
+        MAPEADA É EXIGIDA, por padrão, e isso é de propósito: o cadastro declara
+        o que o arquivo tem, e uma coluna que desaparece do export tem de parar
+        a subida com o nome dela na mensagem. O silêncio é o que custou 4.392
+        menções sem `link` — ver a `0063`.
+
+        `colunas_opcionais` ABRE A EXCEÇÃO, e também pelo cadastro. Decisão do
+        dono do produto (09/10/2026): "pode ter casos sem link". Uma coluna
+        opcional ausente não para o mês — as menções entram sem aquele campo, e
+        é melhor que 25 mil menções paradas porque o fornecedor renomeou uma
+        coluna de enriquecimento.
+
+        `data` E `sentimento` NUNCA SÃO OPCIONAIS, mesmo declarados: sem eles não
+        há menção, e `__post_init__` já exige os dois no mapeamento. Deixar que o
+        cadastro os afrouxasse seria oferecer um jeito de gravar menção sem mês.
+        """
+        obrigatorias = {
+            coluna
+            for campo, coluna in self.colunas.items()
+            if campo not in self.colunas_opcionais or campo in CAMPOS_OBRIGATORIOS
+        }
+        return frozenset(obrigatorias) | frozenset(self.filtros)
 
 
 @dataclass(frozen=True, slots=True)
@@ -390,6 +420,87 @@ def sem_prefixo(valor: str | None, prefixo: str | None) -> str | None:
     return limpo or valor
 
 
+#: Sigla -> nome do estado, para a forma canônica de `mencao.uf` ser o NOME.
+#:
+#: POR QUE O NOME E NÃO A SIGLA. Decisão do dono do produto (09/10/2026): a UF da
+#: menção sobe por extenso. A primeira versão disto fazia o contrário — traduzia
+#: "Santa Catarina" para `SC`, porque a coluna era `char(2)`. A `0064` alargou a
+#: coluna para `text`, e o nome passou a caber.
+#:
+#: E ISSO NÃO QUEBRA FILTRO NENHUM, verificado antes de mudar: as opções de UF da
+#: lente saem do PRÓPRIO DADO (`_distintos(Mencao.uf)` em
+#: `repositorio_lentes.py`) e o recorte compara por igualdade. A validação contra
+#: as 27 siglas (`ABRANGENCIAS_VALIDAS`) é de `Recorte`, o filtro do CRM, que
+#: lê `interacao.uf` — não `mencao.uf`. São duas dimensões com o mesmo nome.
+#:
+#: O MAPA EXISTE PARA CONVERGIR, não para converter: fornecedor que manda sigla
+#: grava o mesmo valor de quem manda o nome. Sem isto, `SC` e `Santa Catarina`
+#: virariam duas opções de filtro para o mesmo estado — a fragmentação que
+#: `apelidos` existe para resolver no vocabulário de unidade e tema.
+_NOME_POR_SIGLA: dict[str, str] = {
+    "AC": "Acre",
+    "AL": "Alagoas",
+    "AP": "Amapá",
+    "AM": "Amazonas",
+    "BA": "Bahia",
+    "CE": "Ceará",
+    "DF": "Distrito Federal",
+    "ES": "Espírito Santo",
+    "GO": "Goiás",
+    "MA": "Maranhão",
+    "MT": "Mato Grosso",
+    "MS": "Mato Grosso do Sul",
+    "MG": "Minas Gerais",
+    "PA": "Pará",
+    "PB": "Paraíba",
+    "PR": "Paraná",
+    "PE": "Pernambuco",
+    "PI": "Piauí",
+    "RJ": "Rio de Janeiro",
+    "RN": "Rio Grande do Norte",
+    "RS": "Rio Grande do Sul",
+    "RO": "Rondônia",
+    "RR": "Roraima",
+    "SC": "Santa Catarina",
+    "SP": "São Paulo",
+    "SE": "Sergipe",
+    "TO": "Tocantins",
+}
+
+#: O nome canônico de cada estado, pela forma achatada — para "SÃO PAULO",
+#: "sao paulo" e "São  Paulo" gravarem o mesmo valor.
+_NOME_CANONICO: dict[str, str] = {
+    achatar(nome): nome for nome in _NOME_POR_SIGLA.values()
+}
+
+
+def para_uf(valor: object) -> str | None:
+    """O estado da menção, pelo NOME por extenso.
+
+    TRÊS ENTRADAS, e as três aparecem entre fornecedores:
+
+      "Santa Catarina"        -> "Santa Catarina"   (canonizado: caixa e espaço)
+      "SC"                    -> "Santa Catarina"   (sigla converge para o nome)
+      "Comunidade de Madrid"  -> "Comunidade de Madrid"
+
+    A TERCEIRA FICA COMO VEIO, e é a vantagem de guardar nome em vez de sigla: a
+    versão anterior achatava tudo que não fosse estado brasileiro em `IN`, e
+    "Comunidade de Madrid" dizia mais do que "internacional". Inventar categoria
+    para o que o fornecedor já nomeou é perder informação por arrumação.
+
+    Vazio devolve nulo, e é diferente de "não se aplica": nulo é "o fornecedor
+    não disse" — afirmação que só quem cadastra pode fazer.
+    """
+    texto = _texto(valor)
+    if texto is None:
+        return None
+    if len(texto) == 2:
+        pelo_codigo = _NOME_POR_SIGLA.get(texto.upper())
+        if pelo_codigo is not None:
+            return pelo_codigo
+    return _NOME_CANONICO.get(achatar(texto), texto)
+
+
 def _rotulo(valor: object, mapeamento: Mapeamento) -> str | None:
     """O rótulo do fornecedor já sem prefixo e sob o nome combinado."""
     limpo = sem_prefixo(_texto(valor), mapeamento.prefixo_a_remover)
@@ -440,6 +551,24 @@ def ler_linha(
         teor=teor,
         acionavel=None if teor is None else achatar(teor) not in nao_acionaveis,
         autor=_texto(opcional("autor")),
+        # -- OS SEIS QUE ESTAVAM DECLARADOS E NUNCA ERAM LIDOS ---------------
+        #
+        # `CAMPOS` aceitava os seis no mapeamento, `MencaoLida` tinha o campo,
+        # a tabela tinha a coluna e `ingerir_mencoes` passava o valor adiante —
+        # e `ler_linha` nunca os preenchia. Resultado medido no banco: `link`,
+        # `id_fonte`, `titulo_texto` e `uf` ZERADOS nas cinco fontes, 4.392
+        # menções. O silêncio era perfeito: nenhum erro, nenhum aviso, e
+        # `app/api/lentes.py` já pedindo `coluna_do_link="link"` para o dossiê.
+        #
+        # Só o que estiver MAPEADO chega: `opcional` devolve nulo para campo
+        # que o cadastro da fonte não cita, então fonte que não manda o dado
+        # continua entrando igual.
+        id_fonte=_texto(opcional("id_fonte")),
+        uf=para_uf(opcional("uf")),
+        subtema=_rotulo(opcional("subtema"), mapeamento),
+        perfil_autor=_texto(opcional("perfil_autor")),
+        titulo_texto=_texto(opcional("titulo_texto")),
+        link=_texto(opcional("link")),
     )
 
 
