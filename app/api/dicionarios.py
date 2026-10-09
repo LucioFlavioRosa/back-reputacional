@@ -131,7 +131,7 @@ ROTULOS: dict[str, str] = {
     "apuracoes": "Apurações de alegação",
     "frentes": "Frentes",
     "status": "Situações",
-    "climas": "Climas",
+    "climas": "Termômetros",
     "resultados": "Desfechos",
     "relevancias": "Relevância (tiers)",
     "iniciativas": "Iniciativas",
