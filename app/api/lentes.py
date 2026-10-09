@@ -1022,6 +1022,7 @@ def _trilha_do_recorte(codigo_da_lente: str, filtro: FiltroDeMencoes) -> list[Pa
         "uf": filtro.uf,
         "tier": filtro.tier,
         "atributo": filtro.atributo,
+        "sentimento": filtro.sentimento,
     }
     #: PRIMEIRO AS DA LENTE, NA ORDEM DELA; depois TODAS as outras que o filtro
     #: aceita, na ordem do dicionário de rótulos.
@@ -1789,6 +1790,7 @@ def obter_dossie(
     tema_n1: Annotated[str | None, Query(description="pilar (N1) da taxonomia, pelo nome")] = None,
     tema_n2: Annotated[str | None, Query(description="tema estratégico (N2), pelo nome")] = None,
     tema_n3: Annotated[str | None, Query(description="tema (N3) do cadastro, pelo nome")] = None,
+    sentimento: Annotated[str | None, Query(description="pos, neu ou neg")] = None,
 ) -> DossieSaida:
     """A lente inteira: nota, KPIs, evolução, dois painéis, texto e ações.
 
@@ -1815,6 +1817,7 @@ def obter_dossie(
         tema_n1=tema_n1,
         tema_n2=tema_n2,
         tema_n3=tema_n3,
+        sentimento=sentimento,
     )
     calibracao = repositorio_score.calibracao_vigente(sessao)
     meses = repositorio_lentes.meses_ate(alvo, MESES_DA_EVOLUCAO)
@@ -2041,6 +2044,7 @@ def obter_recorte(
     tema_n1: Annotated[str | None, Query(description="pilar (N1) da taxonomia, pelo nome")] = None,
     tema_n2: Annotated[str | None, Query(description="tema estratégico (N2), pelo nome")] = None,
     tema_n3: Annotated[str | None, Query(description="tema (N3) do cadastro, pelo nome")] = None,
+    sentimento: Annotated[str | None, Query(description="pos, neu ou neg")] = None,
 ) -> RecorteSaida:
     """O nível 3 do pacote: o que o drawer abre quando alguém clica num dado.
 
@@ -2073,6 +2077,7 @@ def obter_recorte(
         tema_n1=tema_n1,
         tema_n2=tema_n2,
         tema_n3=tema_n3,
+        sentimento=sentimento,
     )
     calibracao = repositorio_score.calibracao_vigente(sessao)
     meses = repositorio_lentes.meses_ate(alvo, MESES_DA_EVOLUCAO)
@@ -2238,6 +2243,8 @@ class OpcoesDeFiltroSaida(BaseModel):
     veiculos: list[str]
     atributos: list[str]
     temas: list[str]
+    #: Os sentimentos (pos/neu/neg) que aparecem no mês — filtro rápido da Imprensa.
+    sentimentos: list[str] = []
     #: Os cortes que o padrão Aegea trouxe (0055). VAZIOS na lente que não tem o
     #: campo — a Imprensa não manda perfil do autor —, e é assim que a tela sabe
     #: não oferecer um seletor que não escolhe nada.

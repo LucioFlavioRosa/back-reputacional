@@ -359,6 +359,8 @@ def opcoes_de_filtro(sessao: Session, lente_id: int, mes: date) -> dict[str, lis
         "veiculos": _distintos(Mencao.veiculo),
         "atributos": _distintos(Mencao.atributo),
         "temas": _distintos(Mencao.tema_texto),
+        #: O sentimento da menção, filtro rápido da Imprensa (pos/neu/neg).
+        "sentimentos": _distintos(Mencao.sentimento),
         # -- os cortes que o padrão Aegea trouxe (0055) ----------------------
         #
         # O PACOTE DE PRODUÇÃO LISTA AS DIMENSÕES ÚTEIS DE CADA LENTE, e as da
