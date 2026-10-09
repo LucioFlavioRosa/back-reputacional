@@ -39,10 +39,22 @@ class _QuemOlha:
 def imprensa(sessao):
     clipei = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "clipei")).one()
     linhas = [
-        (date(2026, 8, 3), "Folha de S.Paulo", "muito_relevante", "neg", "Água turva em São Gonçalo", "Ana Lima"),
-        (date(2026, 8, 10), "Valor Econômico", "relevante", "pos", "Aegea capta R$ 2 bi", "Bruno Reis"),
-        (date(2026, 8, 20), "G1", "muito_relevante", "neu", "Obras de esgoto avançam", "Carla Dias"),
-        (date(2026, 7, 15), "O Globo", "relevante", "neg", "Falta d'água no Rio", "Dani Souza"),
+        (
+            date(2026, 8, 3), "Folha de S.Paulo", "muito_relevante", "neg",
+            "Água turva em São Gonçalo", "Ana Lima",
+        ),
+        (
+            date(2026, 8, 10), "Valor Econômico", "relevante", "pos",
+            "Aegea capta R$ 2 bi", "Bruno Reis",
+        ),
+        (
+            date(2026, 8, 20), "G1", "muito_relevante", "neu",
+            "Obras de esgoto avançam", "Carla Dias",
+        ),
+        (
+            date(2026, 7, 15), "O Globo", "relevante", "neg",
+            "Falta d'água no Rio", "Dani Souza",
+        ),
     ]
     for data, veiculo, tier, sentimento, titulo, autor in linhas:
         sessao.add(
@@ -70,13 +82,17 @@ def _listar(sessao, ve_diretorio=True, **params):
         pagina=1, tamanho=50, ordenacao="-data",
     )
     padrao.update(params)
-    return listar_mencoes(sessao=sessao, usuario=_QuemOlha(ve_diretorio), codigo="imprensa", **padrao)
+    return listar_mencoes(
+        sessao=sessao, usuario=_QuemOlha(ve_diretorio), codigo="imprensa", **padrao
+    )
 
 
 def test_lista_o_periodo_da_mais_recente_para_a_mais_antiga(sessao, imprensa):
     pagina = _listar(sessao)
     assert pagina.total == 4
-    assert [m.veiculo for m in pagina.itens] == ["G1", "Valor Econômico", "Folha de S.Paulo", "O Globo"]
+    assert [m.veiculo for m in pagina.itens] == [
+        "G1", "Valor Econômico", "Folha de S.Paulo", "O Globo",
+    ]
     assert pagina.itens[0].link == "https://exemplo.com/G1"
     assert pagina.itens[0].fonte == "Clipei"
 
@@ -109,13 +125,19 @@ def test_o_jornalista_so_para_quem_ve_o_diretorio(sessao, imprensa):
     assert all(m.autor is None for m in sem.itens)
     # Nem filtrar por ele: senão a contagem revelaria o nome.
     assert _listar(sessao, ve_diretorio=False, autor="Carla Dias").total == 4
-    opcoes = opcoes_da_base(sessao=sessao, usuario=_QuemOlha(False), codigo="imprensa", de=None, ate=None)
+    opcoes = opcoes_da_base(
+        sessao=sessao, usuario=_QuemOlha(False), codigo="imprensa", de=None, ate=None
+    )
     assert opcoes.autores == []
 
 
 def test_as_opcoes_do_periodo(sessao, imprensa):
     opcoes = opcoes_da_base(
-        sessao=sessao, usuario=_QuemOlha(), codigo="imprensa", de=date(2026, 8, 1), ate=date(2026, 8, 31)
+        sessao=sessao,
+        usuario=_QuemOlha(),
+        codigo="imprensa",
+        de=date(2026, 8, 1),
+        ate=date(2026, 8, 31),
     )
     assert set(opcoes.veiculos) >= {"Folha de S.Paulo", "Valor Econômico", "G1"}
     assert "O Globo" not in opcoes.veiculos

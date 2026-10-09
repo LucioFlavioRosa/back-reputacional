@@ -265,7 +265,9 @@ def composicao_por_tier(
     return sorted(linhas, key=lambda linha: ordem.get(linha["tier"], 9))
 
 
-def taxonomia_n1_n2(sessao: Session, do_fornecedor: list[str] | None = None) -> dict[str, list[str]]:
+def taxonomia_n1_n2(
+    sessao: Session, do_fornecedor: list[str] | None = None
+) -> dict[str, list[str]]:
     """Os pilares (N1) e os temas estratégicos (N2), na ordem da taxonomia.
 
     `do_fornecedor`: os temas que os fornecedores escreveram no período. O TEMA
