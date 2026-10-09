@@ -31,8 +31,11 @@ from dataclasses import dataclass
 #: A CHAVE É A DO PARÂMETRO DA ROTA. Toda dimensão que `FiltroDeMencoes` aceita
 #: tem de estar aqui, e é isto que o teste da trilha trava.
 ROTULO_DA_DIMENSAO: dict[str, str] = {
-    "tema": "Tema",
-    "subtema": "Subtema",
+    #: "(FORNECEDOR)" NO NOME, por pedido: o tema que o fornecedor escreve não
+    #: é o Pilar (N1) nem o Tema estratégico (N2) da taxonomia do CRM, e a tela
+    #: precisa dizer qual "tema" está em jogo.
+    "tema": "Tema (fornecedor)",
+    "subtema": "Subtema (fornecedor)",
     "empresa": "Concessionária",
     "veiculo": "Veículo",
     "perfil_autor": "Perfil de quem fala",
@@ -99,8 +102,8 @@ class Presenca:
 #: cortes devolveria zero, e zero numa tela se lê como "não houve".
 DIMENSOES_POR_LENTE: dict[str, tuple[Dimensao, ...]] = {
     "sociedade": (
-        Dimensao("tema", "Tema", "tema_texto"),
-        Dimensao("subtema", "Subtema", "subtema"),
+        Dimensao("tema", "Tema (fornecedor)", "tema_texto"),
+        Dimensao("subtema", "Subtema (fornecedor)", "subtema"),
         Dimensao("empresa", "Concessionária", "unidade_texto"),
         Dimensao("veiculo", "Rede", "veiculo"),
         Dimensao("perfil_autor", "Perfil de quem fala", "perfil_autor"),
@@ -108,15 +111,15 @@ DIMENSOES_POR_LENTE: dict[str, tuple[Dimensao, ...]] = {
         Dimensao("uf", "UF", "uf"),
     ),
     "imprensa": (
-        Dimensao("tema", "Tema", "tema_texto"),
+        Dimensao("tema", "Tema (fornecedor)", "tema_texto"),
         Dimensao("atributo", "Atributo", "atributo"),
         Dimensao("veiculo", "Veículo", "veiculo"),
         Dimensao("uf", "UF", "uf"),
         Dimensao("autor", "Jornalista", "autor", nomeia_o_diretorio=True),
     ),
     "clientes": (
-        Dimensao("tema", "Tema", "tema_texto"),
-        Dimensao("subtema", "Subtema", "subtema"),
+        Dimensao("tema", "Tema (fornecedor)", "tema_texto"),
+        Dimensao("subtema", "Subtema (fornecedor)", "subtema"),
         Dimensao("empresa", "Concessionária", "unidade_texto"),
         Dimensao("uf", "UF", "uf"),
     ),
