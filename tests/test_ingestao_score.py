@@ -584,3 +584,18 @@ def test_o_id_do_fornecedor_e_a_chave_que_impede_a_mesma_mencao_duas_vezes():
 
     assert isinstance(lido, MencaoLida)
     assert lido.id_fonte, "sem id_fonte o índice único do banco fica desligado"
+
+
+def test_mapeamento_recusa_opcional_que_nao_e_campo():
+    """ACHADO DE REVISÃO: `["linnk"]` passava sem queixa.
+
+    O efeito aparecia depois como "a planilha não tem a coluna Arquivo/Link" —
+    a mensagem certa para um arquivo errado, e a errada para um CADASTRO
+    errado. Quem lê a segunda procura na planilha um problema que está no
+    cadastro.
+    """
+    with pytest.raises(ValueError, match="opcional"):
+        Mapeamento(
+            colunas={"data": "Data", "sentimento": "S", "link": "L"},
+            colunas_opcionais=frozenset({"linnk"}),
+        )

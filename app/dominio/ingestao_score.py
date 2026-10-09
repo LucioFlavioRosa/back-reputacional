@@ -180,6 +180,19 @@ class Mapeamento:
         faltando = CAMPOS_OBRIGATORIOS - set(self.colunas)
         if faltando:
             raise ValueError(f"mapeamento sem os campos {sorted(faltando)}")
+        # OPCIONAL TAMBÉM É NOME DE CAMPO, e um nome errado tem de doer aqui.
+        #
+        # Achado de revisão: `colunas_opcionais=["linnk"]` passava sem queixa, e
+        # o efeito aparecia depois como "a planilha não tem a coluna
+        # Arquivo/Link" — a mensagem certa para um arquivo errado, e a mensagem
+        # errada para um cadastro errado. Quem lê a segunda vai procurar na
+        # planilha um problema que está no cadastro.
+        fora_do_vocabulario = set(self.colunas_opcionais) - CAMPOS
+        if fora_do_vocabulario:
+            raise ValueError(
+                "mapeamento marca como opcional campo que não existe em mencao: "
+                f"{sorted(fora_do_vocabulario)}"
+            )
         # Os sinônimos entram achatados SEMPRE, seja o mapeamento montado à mão
         # ou lido do banco: a busca é pela forma achatada, e um `Favorável`
         # gravado com acento nunca casaria com o `favoravel` da procura.

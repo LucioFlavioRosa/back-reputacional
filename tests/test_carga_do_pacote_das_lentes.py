@@ -138,7 +138,10 @@ def test_le_os_campos_do_padrao_e_traduz_os_nomes():
     assert lida.cargo == "Deputado Estadual"
     assert lida.engajamento == 9926
     assert lida.id_fonte == "soc-2026-06-00001"
-    assert lida.uf == "RJ"
+    # A SIGLA DO PACOTE CONVERGE PARA O NOME, como na ingestao mensal: sem
+    # isto a base teria "RJ" do pacote e "Rio de Janeiro" da Clipei, duas
+    # opcoes de filtro para o mesmo estado. Ver `para_uf` e a `0064`.
+    assert lida.uf == "Rio de Janeiro"
     assert lida.subtema == "Ampliacao do Acesso"
     assert lida.perfil_autor == "Figura pública"
     assert lida.titulo_texto == "Obra atrasada na zona norte"
