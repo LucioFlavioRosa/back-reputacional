@@ -416,6 +416,26 @@ def test_as_fontes_trazem_cobertura_e_volume_do_mes(cliente_do_score, junho):
     assert clipei["ligada"] is True
 
 
+def test_a_listagem_sobrevive_a_fonte_sem_planilha(cliente_do_score):
+    """A fonte INTERNA tem mapeamento vazio, e a listagem tem de trazê-la.
+
+    O QUE ISTO PEGOU: `arquivo` (qual export a fonte lê) foi acrescentado
+    lendo o mapeamento por `Mapeamento.de_json`, que exige `data` e
+    `sentimento` — com razão, para quem vai LER planilha. O `crm` não lê
+    nenhuma: o mapeamento dele é `{}`. A listagem inteira estourava por causa
+    da única fonte que não tem arquivo, e com ela caíam a Calibração e a Base.
+    """
+    fontes = cliente_do_score.get("/api/score/fontes?mes=2026-06").json()
+
+    por_codigo = {f["codigo"]: f for f in fontes}
+    assert por_codigo["crm"]["interna"] is True
+    assert por_codigo["crm"]["arquivo"] is None
+    #: E AS DUAS FONTES DA CLIPEI DIZEM O MESMO ARQUIVO — é o que permite a
+    #: tela oferecer uma opção só para as duas.
+    assert por_codigo["clipei"]["arquivo"] == "clipei"
+    assert por_codigo["clipei_investidores"]["arquivo"] == "clipei"
+
+
 def test_as_opcoes_da_calibracao_vem_do_servidor(cliente_do_score):
     """A tela não tem lista fixa de régua nem de lente: uma régua nova passa a
     ser oferecida sem build do front."""

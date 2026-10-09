@@ -33,7 +33,9 @@ from app.api.dependencias import (
 )
 from app.banco import repositorio_score
 from app.banco.sessao import SessaoDoPedido
+from app.banco.tabelas_catalogo import CategoriaPublico, SubcategoriaPublico
 from app.banco.tabelas_score import Lente, ScoreConfig, ScoreFato, ScoreFonte, ScoreMesFonte
+from app.banco.tabelas_stakeholders import Instituicao
 from app.casos_de_uso import ingerir_mencoes
 from app.casos_de_uso.ler_sinais_da_lente import regua_dos_sinais
 from app.dominio.erros import NaoEncontrado, RegraViolada
@@ -575,6 +577,21 @@ class FonteSaida(BaseModel):
     nome: str
     fornecedor: str
     lente: str
+    #: QUAL EXPORT ESTA FONTE LÊ — `clipei`, `approach`, `bites`.
+    #:
+    #: EXISTE PARA A TELA AGRUPAR, e a pergunta do dono do produto é a razão:
+    #: "por que tem clipei e clipei investidores?". Porque `score_fonte` é a
+    #: alimentação de uma LENTE, não um fornecedor — `clipei` alimenta Imprensa
+    #: (peso 30) e `clipei_investidores` alimenta Mercado (peso 20), com o mesmo
+    #: arquivo. Sem a segunda, 20% do índice fica sem alimentação.
+    #:
+    #: Mas ninguém SOBE pela segunda: ela é alimentada junto, e expor as duas
+    #: num seletor de upload oferece uma escolha que não existe. Com este campo
+    #: a tela oferece o ARQUIVO e diz quais lentes ele alimenta.
+    #:
+    #: Nulo na fonte que anda sozinha — é o fornecedor que entrega um arquivo só
+    #: dele, e aí o próprio código serve de agrupador.
+    arquivo: str | None
     interna: bool
     ativo: bool
     #: Se a calibração vigente a desligou.
@@ -583,6 +600,18 @@ class FonteSaida(BaseModel):
     #: Quantos meses têm dado desta fonte, e quantas menções no mês pedido.
     meses_com_dado: int
     mencoes_no_mes: int
+
+
+def _arquivo_do_mapeamento(bruto: dict | None) -> str | None:
+    """Qual export a fonte lê, como o cadastro o guarda.
+
+    SÓ A CHAVE, sem validar o resto: a listagem é LEITURA, e uma fonte com
+    mapeamento incompleto tem de aparecer na tela de cadastro — é justamente
+    lá que alguém vai consertá-la. Validar aqui esconderia o problema atrás de
+    um 500 na tela que o mostraria.
+    """
+    valor = (bruto or {}).get("arquivo")
+    return valor if isinstance(valor, str) and valor else None
 
 
 @rotas.get("/fontes")
@@ -611,6 +640,12 @@ def listar_fontes(
             nome=fonte.nome,
             fornecedor=fonte.fornecedor,
             lente=lentes.get(fonte.lente_id, "—"),
+            # DIRETO DA CHAVE, e não por `Mapeamento.de_json`: o mapeamento da
+            # fonte INTERNA (`crm`) é `{}` — ela não lê planilha nenhuma —, e
+            # `Mapeamento` exige `data` e `sentimento`, com razão. Montá-lo só
+            # para ler uma chave fazia a LISTAGEM INTEIRA estourar por causa da
+            # fonte que nem tem arquivo, levando com ela a Calibração e a Base.
+            arquivo=_arquivo_do_mapeamento(fonte.mapeamento_colunas),
             interna=fonte.interna,
             ativo=fonte.ativo,
             ligada=calibracao.ligada(fonte.codigo),
@@ -1088,6 +1123,101 @@ class ConferenciaSaida(BaseModel):
     #: Quantos veículos da planilha o cadastro JÁ reconhece. Com os novos, dá o
     #: total — e a razão entre os dois é o quanto a ponte cobre hoje.
     veiculos_reconhecidos: int
+
+
+#: A subcategoria de público que define a lente Mercado.
+#:
+#: PELO NOME, e não pelo id: ids são do banco de cada ambiente. O par
+#: (Imprensa, "Econômica e de negócios") é o contrato que a `0061` fixou ao
+#: separar Imprensa de Formadores de Opinião, e a `0066` semeou.
+CATEGORIA_DA_IMPRENSA = "Imprensa"
+SUBCATEGORIA_DO_MERCADO = "Econômica e de negócios"
+
+
+class VeiculosDoMercadoEntrada(BaseModel):
+    """A lista COMPLETA de veículos que a lente Mercado considera.
+
+    DECLARATIVA, e não um alternador por veículo. Duas razões:
+
+    O `PUT /api/instituicoes/{id}` existente exige o cadastro inteiro
+    (`extra="forbid"`), então alternar um campo obrigaria a tela a reenviar nome,
+    tipo, UF, tier e categoria — e esquecer um deles apagaria o dado sem
+    ninguém notar.
+
+    E porque é assim que a pessoa pensa: ela tem uma LISTA de veículos de
+    mercado, mantida numa planilha, e quer que o sistema reflita essa lista.
+    "Estes 81 são" é a frase dela; "marque o 37º" não é.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ids: list[UUID]
+
+
+class VeiculosDoMercadoSaida(BaseModel):
+    marcados: int
+    #: Quantos saíram da lista nesta gravação. É o número que a tela repete de
+    #: volta, porque remover é a operação que a pessoa quer ver confirmada.
+    desmarcados: int
+
+
+@rotas.put("/veiculos-de-investidores")
+def definir_veiculos_de_investidores(
+    sessao: Sessao,
+    usuario: UsuarioQueAdministraCadastros,
+    entrada: VeiculosDoMercadoEntrada,
+) -> VeiculosDoMercadoSaida:
+    """Define quais veículos a lente Mercado considera.
+
+    O QUE ISTO RESOLVE. A lente Mercado se separava por `Público-alvo =
+    Investidores`, coluna que o fornecedor preenche: medido contra o export de
+    08–09/2026, captura 80 linhas onde a lista de veículos que a Aegea mantém
+    captura 323. O critério passa a ser o cadastro, e esta rota é como a lista
+    se mantém — por tela, não por SQL.
+
+    SÓ MEXE NA SUBCATEGORIA DO MERCADO. Um veículo classificado à mão como
+    "Geral nacional" ou "Regional das concessões" não é tocado: tirá-lo da lista
+    de mercado não pode apagar uma classificação que alguém fez. Quem sai da
+    lista e tinha a subcategoria DO MERCADO fica sem subcategoria — que é o
+    estado de "ainda não classificado", e é verdade.
+
+    SÓ VEÍCULO. Um id de órgão ou de entidade é ignorado em silêncio: a lente lê
+    `mencao`, que aponta para veículo, e marcar um órgão como imprensa econômica
+    seria cadastro errado sem efeito nenhum.
+    """
+    alvo = sessao.scalar(
+        select(SubcategoriaPublico.id)
+        .join(CategoriaPublico, CategoriaPublico.id == SubcategoriaPublico.categoria_publico_id)
+        .where(
+            CategoriaPublico.nome == CATEGORIA_DA_IMPRENSA,
+            SubcategoriaPublico.nome == SUBCATEGORIA_DO_MERCADO,
+        )
+    )
+    if alvo is None:
+        raise RegraViolada(
+            f"A subcategoria {SUBCATEGORIA_DO_MERCADO!r} da {CATEGORIA_DA_IMPRENSA} "
+            "não está cadastrada. Cadastre-a antes de definir a lista."
+        )
+
+    pedidos = set(entrada.ids)
+    marcados = 0
+    desmarcados = 0
+    for instituicao in sessao.scalars(
+        select(Instituicao).where(Instituicao.tipo == "veiculo")
+    ):
+        quer = instituicao.id in pedidos
+        tem = instituicao.subcategoria_publico_id == alvo
+        if quer and not tem:
+            #: NÃO SOBRESCREVE outra subcategoria: ela é decisão de alguém, e a
+            #: tela mostra o que vai acontecer antes de gravar.
+            if instituicao.subcategoria_publico_id is None:
+                instituicao.subcategoria_publico_id = alvo
+                marcados += 1
+        elif tem and not quer:
+            instituicao.subcategoria_publico_id = None
+            desmarcados += 1
+    sessao.flush()
+    return VeiculosDoMercadoSaida(marcados=marcados, desmarcados=desmarcados)
 
 
 @rotas.post("/fontes/{codigo}/conferencia")
