@@ -28,6 +28,7 @@ import openpyxl
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.banco.gravar import gravar
 from app.banco.tabelas_catalogo import (
     BlocoTema,
     MacroTema,
@@ -387,10 +388,18 @@ def impressao_das_propostas(propostas: Iterable[Proposta]) -> str:
     reconferência transacional que a importação de agendas faz com estado, feita
     aqui sem estado.
 
-    ENTRA O QUE MUDA A DECISÃO, e não a planilha inteira: a linha, o nome, a
-    decisão e o par antes/depois. Reordenar a planilha sem mudar nada muda a
-    impressão (a linha entra), e isso é desejado — a conferência mostra números
-    de linha, e a pessoa aprovou AQUELAS linhas.
+    ENTRA O QUE MUDA A DECISÃO, e não a planilha inteira: a linha, o nome, o
+    `tema_id`, a decisão e o par antes/depois. Reordenar a planilha sem mudar
+    nada muda a impressão (a linha entra), e isso é desejado — a conferência
+    mostra números de linha, e a pessoa aprovou AQUELAS linhas.
+
+    O `tema_id` ENTROU DEPOIS, e a revisão do bloco o provou necessário com um
+    cenário reproduzido contra o banco: conferiu-se um `ALTERA` do tema 159;
+    antes de confirmar, aquele tema foi RENOMEADO e um outro, com o nome e os
+    campos que o 159 tinha, foi criado como 160. A planilha segue falando do
+    mesmo nome, e com nome normalizado a impressão batia — mas `aplicar` ia
+    alterar o 160. A pessoa teria aprovado uma mudança num subtema e aplicado
+    noutro. A identidade do registro é parte do que ela aprovou, não só o nome.
     """
     resumo = hashlib.sha256()
     for proposta in propostas:
@@ -399,6 +408,7 @@ def impressao_das_propostas(propostas: Iterable[Proposta]) -> str:
                 [
                     proposta.lido.linha,
                     normalizar_nome(proposta.lido.nome),
+                    proposta.tema_id,
                     str(proposta.decisao),
                     proposta.antes,
                     proposta.depois,
@@ -422,7 +432,8 @@ def aplicar(sessao: Session, propostas: Iterable[Proposta]) -> ResumoDaAplicacao
     do sistema: a pessoa corrige a PLANILHA e sobe de novo. Duas tabelas e uma
     migration para guardar um rascunho que vive três minutos seriam a cerimônia
     que o docstring do domínio recusa — e o custo real, a reconferência, está
-    resolvido por `impressao_das_propostas`.
+    resolvido por `impressao_das_propostas` mais o bloqueio de
+    `_conferir_sob_bloqueio`, aqui embaixo.
 
     `RECUSADA` E `IGUAL` NÃO GERAM ESCRITA, e uma linha recusada não impede as
     outras. A alternativa — recusar o arquivo inteiro por uma célula errada —
@@ -435,6 +446,9 @@ def aplicar(sessao: Session, propostas: Iterable[Proposta]) -> ResumoDaAplicacao
     de apagar. Em registro NOVO o nível vem de `NIVEL_PADRAO_DA_TAXONOMIA`, que
     explica a escolha.
     """
+    propostas = list(propostas)
+    _conferir_sob_bloqueio(sessao, propostas)
+
     criados = alterados = iguais = recusadas = 0
 
     for proposta in propostas:
@@ -460,8 +474,21 @@ def aplicar(sessao: Session, propostas: Iterable[Proposta]) -> ResumoDaAplicacao
                 camada_lso=depois.get("camada_lso"),
                 e_risco=depois.get("e_risco"),
             )
-            sessao.add(tema)
-            sessao.flush()  # para o id existir antes dos vínculos de risco
+            # `gravar` E NÃO `add` + `flush`: `tema.nome` tem índice único, e a
+            # comparação desta importação é por nome NORMALIZADO (caixa e espaço
+            # colapsado) enquanto o índice é exato. Duas confirmações
+            # simultâneas, ou um nome que já existe com outra caixa, estouram
+            # `IntegrityError` — que sem isto sairia como 500 e "erro interno"
+            # para quem subiu, em vez da frase que resolve.
+            gravar(
+                sessao,
+                tema,
+                novo=True,
+                ao_colidir=(
+                    f"A linha {proposta.lido.linha} tenta criar o subtema "
+                    f"{tema.nome!r}, que já existe. Confira de novo."
+                ),
+            )
             aplicar_riscos_do_tema(sessao, tema.id, riscos)
             criados += 1
             continue
@@ -483,3 +510,80 @@ def aplicar(sessao: Session, propostas: Iterable[Proposta]) -> ResumoDaAplicacao
     return ResumoDaAplicacao(
         criados=criados, alterados=alterados, iguais=iguais, recusadas=recusadas
     )
+
+
+def _conferir_sob_bloqueio(sessao: Session, propostas: Sequence[Proposta]) -> None:
+    """Tranca as linhas que vão mudar e confirma que o `antes` ainda é o antes.
+
+    A IMPRESSÃO SOZINHA NÃO BASTA, e a revisão do bloco mostrou por quê: ela é
+    calculada ANTES de gravar, e nada impede outra transação de entrar entre o
+    cálculo e os `UPDATE`. A janela é pequena e o efeito é "o último commit
+    ganha" — a edição feita pelo Cadastro de Assuntos some sem ninguém saber.
+
+    A TRANCA É `FOR UPDATE` NAS LINHAS AFETADAS, e não um bloqueio da tabela
+    inteira: revisar a taxonomia não pode impedir alguém de cadastrar um
+    assunto que esta planilha não menciona. Depois de trancar, o estado é LIDO
+    DE NOVO e comparado com o `antes` que a pessoa aprovou:
+
+      - mudou antes da tranca -> a comparação falha, e a importação recusa
+      - mudou depois da tranca -> impossível: o outro lado espera o nosso commit
+
+    `tema_risco` TAMBÉM ENTRA. Trancar só `tema` deixaria passar quem mexe nos
+    vínculos de risco sem tocar na linha do tema — e é exatamente o que
+    `aplicar_riscos_do_tema` faz quando a lista de riscos é a única coisa que
+    muda.
+    """
+    alvos = {
+        proposta.tema_id: proposta
+        for proposta in propostas
+        if proposta.decisao is Decisao.ALTERA and proposta.tema_id is not None
+    }
+    if not alvos:
+        return
+
+    ids = sorted(alvos)
+    # ORDENADOS, para duas confirmações simultâneas trancarem na mesma ordem e
+    # não se abraçarem num impasse (`deadlock detected`).
+    sessao.execute(select(Tema.id).where(Tema.id.in_(ids)).order_by(Tema.id).with_for_update())
+    sessao.execute(
+        select(TemaRisco.tema_id)
+        .where(TemaRisco.tema_id.in_(ids))
+        .order_by(TemaRisco.tema_id, TemaRisco.risco_id)
+        .with_for_update()
+    )
+
+    agora: dict[int, set[int]] = {}
+    for tema_id, risco_id in sessao.execute(
+        select(TemaRisco.tema_id, TemaRisco.risco_id).where(TemaRisco.tema_id.in_(ids))
+    ).all():
+        agora.setdefault(tema_id, set()).add(risco_id)
+
+    # `populate_existing` É O PONTO DESTA LEITURA. Sem ele a sessão devolve o
+    # objeto que já está no mapa de identidade — a versão lida na conferência —,
+    # e a comparação abaixo compararia o `antes` com ele mesmo: um guarda que
+    # nunca dispara. Isto força a releitura sob a tranca.
+    presentes = list(
+        sessao.scalars(select(Tema).where(Tema.id.in_(ids)).execution_options(populate_existing=True))
+    )
+    for tema in presentes:
+        proposta = alvos[tema.id]
+        encontrado = {
+            "macro_tema_id": tema.macro_tema_id,
+            "camada_lso": tema.camada_lso,
+            "e_risco": tema.e_risco,
+            "riscos": sorted(agora.get(tema.id, set())),
+        }
+        if encontrado != proposta.antes:
+            raise RegraViolada(
+                f"O subtema da linha {proposta.lido.linha} "
+                f"({proposta.lido.nome!r}) mudou depois que você conferiu esta "
+                "planilha. Confira de novo antes de aplicar."
+            )
+
+    faltando = set(ids) - {tema.id for tema in presentes}
+    if faltando:
+        linhas = sorted(alvos[tema_id].lido.linha for tema_id in faltando)
+        raise RegraViolada(
+            f"O subtema da linha {linhas[0]} foi apagado enquanto esta planilha "
+            "estava em conferência. Confira de novo."
+        )

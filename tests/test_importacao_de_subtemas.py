@@ -23,7 +23,14 @@ from sqlalchemy.orm import Session
 
 from app.api import importacao_de_subtemas as rota
 from app.banco.sessao import obter_sessao
-from app.banco.tabelas_catalogo import BlocoTema, MacroTema, Risco, Tema, TemaRisco
+from app.banco.tabelas_catalogo import (
+    AreaPessoa,
+    BlocoTema,
+    MacroTema,
+    Risco,
+    Tema,
+    TemaRisco,
+)
 from app.casos_de_uso import modelo_de_subtemas
 from app.casos_de_uso.importar_subtemas import (
     TETO_DE_LINHAS,
@@ -556,11 +563,22 @@ def test_aplicar_nao_toca_no_que_a_planilha_nao_tem(sessao, taxonomia):
     """`nivel`, `tipo`, `ativo` e `area_dona_id` não estão na planilha, e em
     registro que já existe silêncio na planilha não é instrução de apagar.
 
+    OS QUATRO SÃO VERIFICADOS. A primeira versão prometia os quatro no docstring
+    e só media três — `area_dona_id` ficava de fora, e a revisão do bloco pegou.
+    Era lacuna de teste e não defeito, mas um teste que promete mais do que mede
+    é pior que um teste que não existe: ele faz alguém confiar.
+
     Medido na base: dos 45 subtemas sem reconciliação, 16 são `sensivel` e 5
     `gerais` — reconciliar um deles com a taxonomia nova não diz nada sobre o
     nível dele."""
+    area = sessao.scalars(select(AreaPessoa).limit(1)).first()
+    assert area is not None, "o banco de teste não tem área cadastrada"
     tema = Tema(
-        nome="Assunto Sensivel 42", nivel="sensivel", tipo="estruturante", ativo=False
+        nome="Assunto Sensivel 42",
+        nivel="sensivel",
+        tipo="estruturante",
+        ativo=False,
+        area_dona_id=area.id,
     )
     sessao.add(tema)
     sessao.flush()
@@ -569,6 +587,7 @@ def test_aplicar_nao_toca_no_que_a_planilha_nao_tem(sessao, taxonomia):
     aplicar(sessao, propor(sessao, lidas))
     sessao.expire(tema)
     assert (tema.nivel, tema.tipo, tema.ativo) == ("sensivel", "estruturante", False)
+    assert tema.area_dona_id == area.id
     assert tema.macro_tema_id == taxonomia["macro"].id
 
 
@@ -851,3 +870,160 @@ def test_confirmacao_com_impressao_velha_e_recusada(cliente_admin, taxonomia):
     )
     assert resposta.status_code == 422
     assert "Confira de novo" in resposta.text
+
+
+# ======================================= a identidade do registro, e a tranca
+def test_a_impressao_muda_quando_o_nome_passa_a_apontar_outro_registro(
+    sessao, taxonomia
+):
+    """O CENÁRIO QUE A REVISÃO DO BLOCO REPRODUZIU, e que a impressão sem
+    `tema_id` não pegava.
+
+    Confere-se um `ALTERA` do tema A. Antes de confirmar, A é RENOMEADO e um
+    tema B nasce com o nome e os campos que A tinha. A planilha segue falando do
+    mesmo NOME, e com nome normalizado a impressão batia — mas a aplicação ia
+    alterar B. A pessoa teria aprovado uma mudança num subtema e aplicado noutro.
+    """
+    a = Tema(nome="Assunto Trocado 42", nivel="estrategico", camada_lso="confianca")
+    sessao.add(a)
+    sessao.flush()
+
+    conteudo = _planilha([_linha("Assunto Trocado 42", taxonomia, lso="legitimidade")])
+    conferida = propor(sessao, ler(conteudo))
+    assert conferida[0].decisao is Decisao.ALTERA
+    assert conferida[0].tema_id == a.id
+    impressao_conferida = impressao_das_propostas(conferida)
+
+    a.nome = "Assunto Trocado 42 (antigo)"
+    sessao.flush()
+    b = Tema(nome="Assunto Trocado 42", nivel="estrategico", camada_lso="confianca")
+    sessao.add(b)
+    sessao.flush()
+
+    agora = propor(sessao, ler(conteudo))
+    assert agora[0].tema_id == b.id, "o nome passou a apontar outro registro"
+    assert impressao_das_propostas(agora) != impressao_conferida
+
+
+def test_aplicar_recusa_quando_o_subtema_mudou_sob_a_proposta(sessao, taxonomia):
+    """A TRANCA, e a janela que a impressão sozinha não fecha.
+
+    A impressão é recalculada na confirmação ANTES de gravar; entre o cálculo e
+    os `UPDATE` nada impedia outra transação de entrar, e o efeito era "o último
+    commit ganha" — a edição feita pelo Cadastro de Assuntos somia sem ninguém
+    saber. Este teste monta a proposta, muda o tema por baixo dela e exige que
+    `aplicar` recuse em vez de sobrescrever.
+    """
+    tema = Tema(
+        nome="Assunto Mexido Por Baixo 42", nivel="estrategico", camada_lso="confianca"
+    )
+    sessao.add(tema)
+    sessao.flush()
+
+    propostas = propor(
+        sessao, ler(_planilha([_linha(tema.nome, taxonomia, lso="legitimidade")]))
+    )
+    assert propostas[0].decisao is Decisao.ALTERA
+
+    tema.camada_lso = "credibilidade"  # alguém editou pelo Cadastro de Assuntos
+    sessao.flush()
+
+    with pytest.raises(RegraViolada) as erro:
+        aplicar(sessao, propostas)
+    assert "Confira de novo" in str(erro.value)
+    sessao.expire(tema)
+    assert tema.camada_lso == "credibilidade", "a edição alheia foi preservada"
+
+
+def test_aplicar_recusa_quando_os_riscos_mudaram_sob_a_proposta(sessao, taxonomia):
+    """`tema_risco` TAMBÉM ENTRA NA TRANCA. Trancar só `tema` deixaria passar
+    quem mexe nos vínculos de risco sem tocar na linha do tema — e é o que
+    `aplicar_riscos_do_tema` faz quando a lista de riscos é a única mudança."""
+    tema = Tema(nome="Assunto Com Risco Mexido 42", nivel="estrategico")
+    sessao.add(tema)
+    sessao.flush()
+
+    propostas = propor(
+        sessao,
+        ler(
+            _planilha(
+                [_linha(tema.nome, taxonomia, codigos=taxonomia["riscos"][0].codigo)]
+            )
+        ),
+    )
+    assert propostas[0].decisao is Decisao.ALTERA
+    assert propostas[0].antes["riscos"] == []
+
+    sessao.add(TemaRisco(tema_id=tema.id, risco_id=taxonomia["riscos"][1].id))
+    sessao.flush()
+
+    with pytest.raises(RegraViolada):
+        aplicar(sessao, propostas)
+
+
+def test_aplicar_segue_normal_quando_nada_mudou(sessao, taxonomia):
+    """O CONTRAPESO DOS DOIS ACIMA: a tranca não pode recusar o caminho feliz.
+
+    Sem este teste, um `antes` montado com chave diferente da do confronto faria
+    toda confirmação recusar — e os dois testes de recusa passariam.
+    """
+    tema = Tema(
+        nome="Assunto Que Nao Mexeu 42", nivel="estrategico", camada_lso="confianca"
+    )
+    sessao.add(tema)
+    sessao.flush()
+
+    propostas = propor(
+        sessao, ler(_planilha([_linha(tema.nome, taxonomia, lso="legitimidade")]))
+    )
+    resumo = aplicar(sessao, propostas)
+    assert resumo.alterados == 1
+    sessao.expire(tema)
+    assert tema.camada_lso == "legitimidade"
+
+
+def test_aplicar_recusa_quando_o_subtema_foi_apagado(sessao, taxonomia):
+    tema = Tema(nome="Assunto Apagado 42", nivel="estrategico")
+    sessao.add(tema)
+    sessao.flush()
+    propostas = propor(
+        sessao, ler(_planilha([_linha(tema.nome, taxonomia, lso="confianca")]))
+    )
+    assert propostas[0].decisao is Decisao.ALTERA
+
+    sessao.delete(tema)
+    sessao.flush()
+
+    with pytest.raises(RegraViolada) as erro:
+        aplicar(sessao, propostas)
+    assert "apagado" in str(erro.value)
+
+
+def test_novo_que_colide_no_indice_unico_da_frase_e_nao_500(sessao, taxonomia):
+    """A COMPARAÇÃO É POR NOME NORMALIZADO; O ÍNDICE É EXATO.
+
+    `normalizar_nome` colapsa caixa e espaço, então a conferência pode decidir
+    `NOVO` para um nome que o índice único de `tema.nome` considera diferente de
+    um já existente — e a gravação estoura. Com `gravar`, a pessoa lê o que
+    aconteceu em vez de "erro interno".
+    """
+    sessao.add(Tema(nome="Assunto Com Caixa 42", nivel="estrategico"))
+    sessao.flush()
+
+    propostas = propor(sessao, ler(_planilha([_linha("Assunto Com Caixa 42", taxonomia)])))
+    assert propostas[0].decisao is Decisao.ALTERA  # casa por nome normalizado
+
+    # Agora o caso que o índice separa e o normalizador junta é impossível de
+    # montar por `propor` — então se prova pela via direta: um `NOVO` cujo nome
+    # já existe no banco com a MESMA grafia é o que a corrida entre duas
+    # confirmações produz.
+    from app.dominio.importacao_de_subtemas import Proposta
+
+    forjada = Proposta(
+        lido=propostas[0].lido,
+        decisao=Decisao.NOVO,
+        depois={"macro_tema_id": None, "camada_lso": None, "e_risco": None, "riscos": []},
+    )
+    with pytest.raises(RegraViolada) as erro:
+        aplicar(sessao, [forjada])
+    assert "já existe" in str(erro.value)
