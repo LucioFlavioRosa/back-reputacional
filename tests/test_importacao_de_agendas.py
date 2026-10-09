@@ -9,6 +9,7 @@ from app.dominio.importacao_de_agendas import (
     COLUNA_DE_REPETICAO,
     FORMATO,
     ROTULO_DO_VOCABULARIO,
+    TETO_DE_TEMAS_POR_AGENDA,
     VOCABULARIOS_EDITAVEIS,
     VOCABULARIOS_FECHADOS,
     aba_de,
@@ -399,9 +400,10 @@ def test_a_ordem_das_colunas_segue_o_FORMULARIO():
         "Instituição",
         "UF",
         "Unidade de negócio",
-        "Tema 1",
-        "Tema 2",
-        "Tema 3",
+        # AS 18 COLUNAS DE TEMA SAEM DA CONSTANTE, e não escritas uma a uma: o
+        # teto é ampliável de propósito, e dezoito nomes copiados aqui fariam
+        # este teste virar o lugar onde a próxima ampliação é esquecida.
+        *(f"Tema {numero}" for numero in range(1, TETO_DE_TEMAS_POR_AGENDA + 1)),
         # 5. Onde será ou foi realizada
         "Modalidade",
         "Local",
@@ -518,6 +520,23 @@ def test_os_dois_modelos_recortam_a_MESMA_descricao():
     for nome_do_modelo, colunas in MODELOS.items():
         desconhecidas = set(colunas) - todas
         assert desconhecidas == set(), (nome_do_modelo, desconhecidas)
+
+
+def test_o_completo_tem_74_colunas_e_o_front_diz_esse_numero():
+    """O NÚMERO ESTÁ ESCRITO À MÃO NO FRONT, e é isto que impede a divergência.
+
+    `front-reputacional/src/paginas/importacao/BotaoDeImportar.tsx` mostra "74
+    colunas" no cartão do modelo completo, para a pessoa escolher sabendo o que
+    vai baixar. O front não importa a descrição do formato, então o número é
+    texto — e texto não acompanha uma coluna nova.
+
+    Quando este teste falhar, são DOIS arquivos a mudar: o número aqui e o
+    rótulo lá. É de propósito que dê trabalho: o rótulo existe para ser verdade.
+    """
+    from app.dominio.importacao_de_agendas import MODELOS
+
+    assert len(MODELOS["completo"]) == 74
+    assert len(MODELOS["simplificado"]) == 22
 
 
 def test_o_modelo_completo_e_a_descricao_inteira_na_ordem_dela():
