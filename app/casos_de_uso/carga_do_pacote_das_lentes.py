@@ -42,6 +42,7 @@ from app.dominio.ingestao_score import (
     achatar,
     para_data,
     para_inteiro,
+    para_uf,
 )
 
 
@@ -215,6 +216,16 @@ def ler_aba_da_lente(conteudo: bytes, lente: str) -> LeituraDoPacote:
             if coluna in ("classificacao", "data", "engajamento", "peso_tier"):
                 continue
             valores[campo] = _texto(celula(coluna))
+
+        # A UF PASSA PELA MESMA CANONIZAÇÃO DA INGESTÃO MENSAL, e isto é conserto
+        # de um achado de revisão: este é o SEGUNDO caminho de carga, e ele
+        # gravava o texto cru. O pacote traz `RJ`; a ingestão mensal da Clipei
+        # traz "Rio de Janeiro". Com os dois na base, `_distintos(Mencao.uf)`
+        # passaria a oferecer DUAS opções de filtro para o mesmo estado, e
+        # `uf_mais_negativa` mostraria sigla ou nome dependendo de quem carregou
+        # — que é exatamente a fragmentação que `para_uf` existe para evitar.
+        if "uf" in valores:
+            valores["uf"] = para_uf(valores["uf"])
 
         por_fonte[codigo].append(
             MencaoLida(

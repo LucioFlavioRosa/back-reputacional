@@ -25,6 +25,7 @@ from app.dominio.ingestao_score import (
     normalizar_cargo,
     para_data,
     para_inteiro,
+    para_uf,
     sem_prefixo,
     somar,
 )
@@ -402,3 +403,199 @@ def test_mencao_sem_engajamento_ainda_conta_um_na_regua_log():
     somas = somar([MencaoLida(mes=date(2026, 6, 1), sentimento="pos")])
     assert somas[0].soma_log == pytest.approx(1.0)
     assert somas[0].mencoes == 1
+
+
+# =========================================== os campos que ninguém lia (0063)
+#
+# `CAMPOS` aceitava seis campos do "padrão Aegea" no mapeamento, `MencaoLida`
+# tinha o atributo, `mencao` tinha a coluna e `ingerir_mencoes` passava o valor
+# adiante — e `ler_linha` nunca os preenchia. Medido no banco antes do conserto:
+# `link`, `id_fonte`, `titulo_texto` e `uf` ZERADOS nas cinco fontes, 4.392
+# menções. E `app/api/lentes.py` já pedia `coluna_do_link="link"` para o dossiê.
+#
+# O silêncio era o problema: nenhum erro, nenhum aviso, nenhum teste.
+
+#: O mapeamento da Clipei DEPOIS da 0063 — as cinco colunas que ela sempre
+#: mandou e o cadastro ignorava.
+CLIPEI_COMPLETO = Mapeamento(
+    aba="Clipping",
+    colunas={
+        "data": "Data",
+        "sentimento": "Classificação",
+        "tier": "Aegea Tier",
+        "veiculo": "Veículo",
+        "publico_alvo": "Público-alvo",
+        "tema": "Subcategoria",
+        "atributo": "Atributo",
+        "id_fonte": "ID",
+        "link": "Arquivo/Link",
+        "titulo_texto": "Título",
+        "uf": "Estado do Veículo",
+        "unidade": "Empresa",
+    },
+)
+
+#: Uma linha como a Clipei a manda, com os nomes de coluna dela.
+LINHA_DA_CLIPEI = {
+    "Data": datetime(2026, 8, 1),
+    "Classificação": "POSITIVA",
+    "Aegea Tier": "Menos Relevante",
+    "Veículo": "Rádio Betel 87.9 FM | São Francisco do Sul",
+    "Público-alvo": "Opinião Pública",
+    "Subcategoria": "Universalização e metas de cobertura",
+    "Atributo": "7. Prosperidade Compartilhada",
+    "ID": "1733052",
+    "Arquivo/Link": "https://painel.clipei.com.br/anexo-email/1733052-4-34",
+    "Título": "Águas de São Francisco do Sul reforça importância do investimento",
+    "Estado do Veículo": "Santa Catarina",
+    "Empresa": "Águas de São Francisco do Sul",
+}
+
+
+def test_os_cinco_campos_novos_chegam_quando_mapeados():
+    lido = ler_linha(LINHA_DA_CLIPEI, CLIPEI_COMPLETO)
+
+    assert isinstance(lido, MencaoLida)
+    assert lido.id_fonte == "1733052"
+    assert lido.link == "https://painel.clipei.com.br/anexo-email/1733052-4-34"
+    assert lido.titulo_texto.startswith("Águas de São Francisco do Sul reforça")
+    # O NOME, e nao a sigla: ver `para_uf` e a `0064`.
+    assert lido.uf == "Santa Catarina"
+    assert lido.unidade_texto == "Águas de São Francisco do Sul"
+
+
+def test_fonte_que_NAO_mapeia_os_campos_segue_sem_eles():
+    """O CONTRAPESO, e ele é o que protege as outras fontes.
+
+    A Bites e a Approach não mandam essas colunas. Se `ler_linha` passasse a
+    exigi-las, ou a inventar valor, a carga delas quebraria ou ganharia dado
+    falso. `opcional` devolve nulo para campo que o cadastro não cita — e este
+    teste é o que impede alguém de "melhorar" isso com um valor padrão.
+    """
+    sem_os_campos = Mapeamento(
+        colunas={"data": "Data", "sentimento": "Classificação"}
+    )
+
+    lido = ler_linha(LINHA_DA_CLIPEI, sem_os_campos)
+
+    assert isinstance(lido, MencaoLida)
+    assert lido.id_fonte is None
+    assert lido.link is None
+    assert lido.titulo_texto is None
+    assert lido.uf is None
+    assert lido.unidade_texto is None
+
+
+@pytest.mark.parametrize(
+    "escrito, esperado",
+    [
+        # O NOME É A FORMA CANÔNICA. Decisão do dono (09/10/2026), e a `0064`
+        # alargou `mencao.uf` de `char(2)` para `text` para o nome caber.
+        ("Santa Catarina", "Santa Catarina"),
+        # Caixa e espaço convergem, senão "SÃO PAULO" e "São Paulo" virariam
+        # duas opções de filtro do mesmo estado.
+        ("são paulo", "São Paulo"),
+        ("SÃO PAULO", "São Paulo"),
+        ("  Mato Grosso do Sul  ", "Mato Grosso do Sul"),
+        # A SIGLA CONVERGE PARA O NOME: fornecedor que manda `SC` grava o mesmo
+        # valor de quem manda "Santa Catarina". Mesma razão de `apelidos`.
+        ("SC", "Santa Catarina"),
+        ("sc", "Santa Catarina"),
+        ("DF", "Distrito Federal"),
+        # O QUE NÃO É ESTADO BRASILEIRO FICA COMO VEIO, e é o ganho de guardar
+        # nome em vez de sigla: a versão anterior achatava isto em `IN`, e
+        # "Comunidade de Madrid" diz mais do que "internacional".
+        ("Comunidade de Madrid", "Comunidade de Madrid"),
+        # Vazio é nulo, e é DIFERENTE de "não se aplica": nulo é "o fornecedor
+        # não disse" — afirmação que só quem cadastra pode fazer.
+        ("", None),
+        ("   ", None),
+        (None, None),
+    ],
+)
+def test_para_uf(escrito, esperado):
+    assert para_uf(escrito) == esperado
+
+
+def test_a_coluna_opcional_que_falta_NAO_para_a_subida():
+    """"Pode ter casos sem link" — decisao do dono (09/10/2026).
+
+    Mapear uma coluna a tornava exigida, e isso e certo para `Data` e
+    `Classificacao`. Para enriquecimento e duro demais: 25 mil mencoes paradas
+    porque o fornecedor renomeou a coluna do link.
+    """
+    mapeamento = Mapeamento(
+        colunas={
+            "data": "Data",
+            "sentimento": "Classificação",
+            "link": "Arquivo/Link",
+            "id_fonte": "ID",
+        },
+        colunas_opcionais=frozenset({"link", "id_fonte"}),
+    )
+
+    assert mapeamento.colunas_necessarias == frozenset({"Data", "Classificação"})
+
+
+def test_data_e_sentimento_NAO_podem_ser_declarados_opcionais():
+    """O CONTRAPESO: sem isto, o cadastro teria um jeito de gravar mencao sem mes.
+
+    `colunas_necessarias` reexige os dois mesmo quando declarados — e nao e
+    cerimonia: e a unica coisa que impede um JSON de cadastro de desligar a
+    regra que `__post_init__` protege na criacao.
+    """
+    mapeamento = Mapeamento(
+        colunas={"data": "Data", "sentimento": "Classificação"},
+        colunas_opcionais=frozenset({"data", "sentimento"}),
+    )
+
+    assert mapeamento.colunas_necessarias == frozenset({"Data", "Classificação"})
+
+
+def test_sem_declarar_opcionais_a_exigencia_segue_como_era():
+    """As outras fontes nao podem ter afrouxado por tabela."""
+    assert CLIPEI_COMPLETO.colunas_opcionais == frozenset()
+    assert "Arquivo/Link" in CLIPEI_COMPLETO.colunas_necessarias
+
+
+def test_o_cadastro_le_colunas_opcionais_do_json():
+    mapeamento = Mapeamento.de_json(
+        {
+            "colunas": {"data": "Data", "sentimento": "S", "link": "L"},
+            "colunas_opcionais": ["link"],
+        }
+    )
+
+    assert mapeamento.colunas_opcionais == frozenset({"link"})
+    assert mapeamento.colunas_necessarias == frozenset({"Data", "S"})
+
+
+def test_o_id_do_fornecedor_e_a_chave_que_impede_a_mesma_mencao_duas_vezes():
+    """POR QUE O `id_fonte` É O MAIS IMPORTANTE DOS CINCO.
+
+    O índice `mencao_do_fornecedor_uma_vez` existe desde a `0055` com
+    `where id_fonte is not null` — então, sem o campo preenchido, ele nunca
+    protegeu nada. Duas cargas do mesmo mês criavam duplicata, e só a
+    regravação por mês escondia isso.
+
+    Medido no arquivo de 08–09/2026: 25.597 IDs distintos em 25.597 linhas.
+    """
+    lido = ler_linha(LINHA_DA_CLIPEI, CLIPEI_COMPLETO)
+
+    assert isinstance(lido, MencaoLida)
+    assert lido.id_fonte, "sem id_fonte o índice único do banco fica desligado"
+
+
+def test_mapeamento_recusa_opcional_que_nao_e_campo():
+    """ACHADO DE REVISÃO: `["linnk"]` passava sem queixa.
+
+    O efeito aparecia depois como "a planilha não tem a coluna Arquivo/Link" —
+    a mensagem certa para um arquivo errado, e a errada para um CADASTRO
+    errado. Quem lê a segunda procura na planilha um problema que está no
+    cadastro.
+    """
+    with pytest.raises(ValueError, match="opcional"):
+        Mapeamento(
+            colunas={"data": "Data", "sentimento": "S", "link": "L"},
+            colunas_opcionais=frozenset({"linnk"}),
+        )

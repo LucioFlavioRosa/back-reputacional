@@ -40,7 +40,7 @@ grão para reprocessar, se um dia for preciso, está inteiro em `mencao`.
 from __future__ import annotations
 
 import io
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -49,8 +49,22 @@ from sqlalchemy.orm import Session
 
 from app.banco.tabelas_lentes import MencaoNaoClassificada
 from app.banco.tabelas_score import Mencao, ScoreFonte, ScoreMesFonte
+from app.casos_de_uso import veiculos_da_imprensa
+from app.casos_de_uso.veiculos_da_imprensa import nomes_da_lista
 from app.dominio.erros import RegraViolada
-from app.dominio.ingestao_score import Leitura, Mapeamento, ler_planilha, somar
+from app.dominio.ingestao_score import (
+    Descarte,
+    Leitura,
+    Mapeamento,
+    ler_planilha,
+    somar,
+)
+
+# `normalizar` É A MESMA DOS DOIS LADOS: o nome que vem da planilha e o
+# `nome_normalizado` gravado em `instituicao`. É isso que faz a menção achar o
+# veículo criado a partir dela — e não `normalizar` ser igual ao `achatar` da
+# ingestão, que ela não é (divergem em caractere não-ASCII; ver `reconhecer`).
+from app.dominio.texto import normalizar
 
 #: Abrir uma planilha de 10 mil linhas é barato; abrir um arquivo de 200 MB
 #: enviado por engano não é. O maior dos quatro exports de hoje tem 1,4 MB.
@@ -79,6 +93,23 @@ class Resumo:
     #: É o que deixa visível um export parcial encolhendo um mês fechado.
     antes: int = 0
     avisos: Mapping[str, int] = field(default_factory=dict)
+    #: QUANTOS VEÍCULOS NASCERAM NESTA SUBIDA — e é da SUBIDA, não desta fonte.
+    #:
+    #: Os veículos são criados UMA vez, antes das fontes irmãs, porque as duas
+    #: leem o mesmo arquivo e veriam os mesmos veículos. Então este número vem
+    #: REPETIDO em cada resumo da lista, com o mesmo valor.
+    #:
+    #: NÃO SOME A LISTA: duas fontes irmãs com 2.628 criações cada dariam 5.256,
+    #: e nasceram 2.628. A tela mostra uma vez — é o número que a pessoa acabou
+    #: de autorizar na conferência, e ele tem de bater com o que ela marcou.
+    veiculos_criados: int = 0
+    #: Quantas menções DESTA fonte acharam veículo no cadastro. Esta é por
+    #: fonte, e somar não faz sentido por outro motivo: as irmãs recortam o
+    #: mesmo arquivo, então a menção da lente Mercado também está na Imprensa.
+    #:
+    #: É o número que diz o quanto a ponte cobre, e o que cresce a cada subida
+    #: com criação: medido depois da primeira carga, 76,7%.
+    mencoes_ligadas: int = 0
 
 
 def _linhas_da_aba(
@@ -115,13 +146,7 @@ def _linhas_da_aba(
             aba = planilha[planilha.sheetnames[0]]
 
         linhas = aba.iter_rows(values_only=True)
-        try:
-            cabecalho = [
-                str(celula).strip() if celula is not None else ""
-                for celula in next(linhas)
-            ]
-        except StopIteration:
-            raise RegraViolada("A planilha está vazia.") from None
+        cabecalho = _achar_o_cabecalho(linhas, mapeamento)
 
         faltando = sorted(mapeamento.colunas_necessarias - set(cabecalho))
         if faltando:
@@ -136,6 +161,53 @@ def _linhas_da_aba(
         planilha.close()
 
 
+#: Quantas linhas do topo o leitor examina procurando o cabeçalho.
+#:
+#: O EXPORT DA CLIPEI TEM UMA LINHA ACIMA DO CABEÇALHO: três marcadores de nível
+#: (`N1`, `N2`, `N3`) sobre as colunas Atributo, Categoria e Subcategoria. O
+#: leitor assumia a linha 1 e recusava o arquivo inteiro com "a planilha não tem
+#: as colunas que o cadastro desta fonte espera" — a mensagem certa para um
+#: arquivo errado, e a errada para um arquivo CERTO com uma linha de título.
+#:
+#: VINTE É FOLGA, e é o mesmo número da importação de subtemas: fornecedor que
+#: põe logotipo e data antes do cabeçalho cabe, e um arquivo que realmente não
+#: tem as colunas ainda é recusado — com a mesma mensagem, que volta a ser
+#: verdade.
+LINHAS_ATE_O_CABECALHO = 20
+
+
+def _achar_o_cabecalho(
+    linhas: Iterator[tuple], mapeamento: Mapeamento
+) -> list[str]:
+    """A primeira linha do topo que traz as colunas que o cadastro espera.
+
+    CONSOME O ITERADOR ATÉ O CABEÇALHO, e é o que faz o `for` seguinte começar
+    nos DADOS: o chamador continua lendo do mesmo iterador, e se este devolvesse
+    o cabeçalho sem consumi-lo a primeira linha de dado seria o próprio
+    cabeçalho.
+
+    RECONHECE PELAS COLUNAS NECESSÁRIAS, e não por "a linha tem muitas células":
+    uma linha de título com cinco células passaria no segundo critério. Aqui ela
+    só passa se trouxer o que o cadastro desta fonte precisa.
+    """
+    procuradas = mapeamento.colunas_necessarias
+    candidata: list[str] | None = None
+    for numero, linha in enumerate(linhas, start=1):
+        nomes = [str(celula).strip() if celula is not None else "" for celula in linha]
+        if candidata is None:
+            candidata = nomes  # a primeira linha, para a mensagem de erro
+        if procuradas <= set(nomes):
+            return nomes
+        if numero >= LINHAS_ATE_O_CABECALHO:
+            break
+    if candidata is None:
+        raise RegraViolada("A planilha está vazia.")
+    #: DEVOLVE A PRIMEIRA LINHA quando não achou: quem confere as colunas é o
+    #: chamador, e a mensagem dele nomeia o que falta. Levantar aqui duplicaria
+    #: a regra em dois lugares — e esta função não sabe o nome da fonte.
+    return candidata
+
+
 def _quanto_havia(sessao: Session, fonte: ScoreFonte, meses: list[date]) -> int:
     total = sessao.scalar(
         select(func.count())
@@ -145,8 +217,19 @@ def _quanto_havia(sessao: Session, fonte: ScoreFonte, meses: list[date]) -> int:
     return int(total or 0)
 
 
-def regravar(sessao: Session, fonte: ScoreFonte, leitura: Leitura) -> None:
+def regravar(
+    sessao: Session,
+    fonte: ScoreFonte,
+    leitura: Leitura,
+    veiculos: Mapping[str, str] | None = None,
+) -> None:
     """Troca os meses que o arquivo traz — menções, agregado e não classificadas.
+
+    `veiculos` é nome normalizado -> id de `instituicao`, e chega vazio em dois
+    casos normais: fonte sem veículo (as de rede social não têm) e subida em que
+    ninguém autorizou criação. Vazio liga nada, e a menção fica com
+    `instituicao_id` nulo — o estado normal enquanto o cadastro não cobre o
+    fornecedor.
 
     PÚBLICA PORQUE SÃO DOIS CHAMADORES: o importador mensal (aqui) e a carga
     inicial do pacote (`carga_do_pacote_das_lentes`). As duas leem planilhas de
@@ -155,7 +238,25 @@ def regravar(sessao: Session, fonte: ScoreFonte, leitura: Leitura) -> None:
     Uma segunda cópia desta função seria a segunda definição de "o que é um mês
     no banco".
     """
-    meses = list(leitura.meses)
+    mapeamento = _mapeamento_de(fonte)
+    if mapeamento.lista_de_veiculos and not leitura.recortada_por_lista:
+        #: A GUARDA MORA AQUI, e não só em `ler_planilha`, porque é AQUI que a
+        #: escrita acontece. `carga_do_pacote_das_lentes` monta a `Leitura` à
+        #: mão e chama esta função direto: no dia em que a imprensa entrar
+        #: naquele pacote, a fonte do Mercado seria gravada com o clipping
+        #: inteiro — a lente contaria 25.457 menções em vez de 327, e nada
+        #: daria sinal. Quem grava numa fonte que recorta por lista tem de ter
+        #: recortado.
+        raise RegraViolada(
+            f"{fonte.nome} recorta pela lista {mapeamento.lista_de_veiculos!r} e "
+            "a leitura recebida não foi recortada."
+        )
+
+    de_cadastro = dict(veiculos or {})
+    #: OS MESES DO ARQUIVO para quem recorta por lista — ver
+    #: `Leitura.meses_a_substituir`. Apagar por `meses` deixaria o mês sem
+    #: veículo da lista com o que o critério anterior gravou.
+    meses = list(leitura.meses_a_substituir(mapeamento))
     sessao.execute(
         delete(MencaoNaoClassificada).where(
             MencaoNaoClassificada.fonte_id == fonte.id,
@@ -183,6 +284,10 @@ def regravar(sessao: Session, fonte: ScoreFonte, leitura: Leitura) -> None:
             atributo=mencao.atributo,
             veiculo=mencao.veiculo,
             publico_alvo=mencao.publico_alvo,
+            # O VEÍCULO DO CADASTRO, quando ele existe. Nulo é o normal por um
+            # bom tempo: a Clipei traz 2.648 veículos distintos e o cadastro
+            # começou com 39. A cada subida com criação a cobertura sobe.
+            instituicao_id=de_cadastro.get(normalizar(mencao.veiculo or "")),
             tema_texto=mencao.tema_texto,
             unidade_texto=mencao.unidade_texto,
             teor=mencao.teor,
@@ -237,27 +342,157 @@ def _mapeamento_de(fonte: ScoreFonte) -> Mapeamento:
         ) from erro
 
 
-def _ingerir_uma(sessao: Session, fonte: ScoreFonte, conteudo: bytes) -> Resumo:
-    """Lê a planilha pelo mapeamento desta fonte e substitui os meses dela."""
+def _recorte_por_lista(
+    sessao: Session, mapeamento: Mapeamento
+) -> Callable[[str | None], bool] | None:
+    """O predicado que diz se o veículo da linha está na lista desta fonte.
+
+    `None` quando a fonte não recorta por lista — e aí `ler_planilha` lê tudo,
+    como sempre leu.
+
+    LÊ O CADASTRO UMA VEZ, e não uma consulta por linha: o export da Clipei tem
+    25.597 linhas, e perguntar ao banco por cada uma faria da subida um
+    problema de rede. São 2.670 veículos cadastrados; o conjunto cabe na
+    memória com folga.
+    """
+    if not mapeamento.lista_de_veiculos:
+        return None
+    permitidos = nomes_da_lista(sessao, mapeamento.lista_de_veiculos)
+
+    def na_lista(veiculo: str | None) -> bool:
+        #: SEM VEÍCULO NÃO ENTRA: não há como afirmar que a linha é de um
+        #: veículo de mercado, e supor que é inventaria menção na lente.
+        if not veiculo:
+            return False
+        return normalizar(veiculo) in permitidos
+
+    return na_lista
+
+
+def _ingerir_uma(
+    sessao: Session,
+    fonte: ScoreFonte,
+    conteudo: bytes,
+    veiculos: Mapping[str, str] | None = None,
+    criados: int = 0,
+    e_recorte: bool = False,
+) -> Resumo:
+    """Lê a planilha pelo mapeamento desta fonte e substitui os meses dela.
+
+    `e_recorte` diz que esta fonte é uma IRMÃ que recorta o arquivo de outra, e
+    não a fonte pela qual a pessoa subiu. A diferença está no vazio — ver abaixo.
+    """
     mapeamento = _mapeamento_de(fonte)
-    leitura = ler_planilha(_linhas_da_aba(conteudo, mapeamento), mapeamento)
-    if not leitura.mencoes:
+    leitura = ler_planilha(
+        _linhas_da_aba(conteudo, mapeamento),
+        mapeamento,
+        _recorte_por_lista(sessao, mapeamento),
+    )
+    #: RECORTAR POR LISTA JÁ FAZ DA FONTE UM RECORTE, mesmo que tenha sido ela
+    #: a escolhida na tela: um mês em que nenhum veículo da lista foi mencionado
+    #: é um mês de zero menções de Mercado, e não um arquivo que não serve.
+    #: Sem isto, subir pela própria fonte do Mercado derrubaria a subida inteira
+    #: no mês fraco — e, na primeira subida de uma base sem veículo
+    #: classificado, em todos eles.
+    #:
+    #: MAS SÓ O RECORTE PODE EXPLICAR O VAZIO. O que o recorte não explica é
+    #: arquivo ILEGÍVEL: aba e cabeçalho certos, datas que o parser não lê ou
+    #: vocabulário de sentimento que o mapeamento não conhece. Aí nenhuma linha
+    #: chegou a ser candidata, e aceitar em silêncio é a falha para a qual esta
+    #: guarda foi escrita — subir pela fonte do Mercado a desligava inteira.
+    legiveis = len(leitura.mencoes) + leitura.descartes.get(
+        Descarte.FORA_DA_LISTA_DE_VEICULOS.value, 0
+    )
+    pode_vir_vazia = e_recorte or (
+        bool(mapeamento.lista_de_veiculos) and legiveis > 0
+    )
+    if not leitura.mencoes and not pode_vir_vazia:
+        #: ZERO NA FONTE PELA QUAL SE SUBIU É ERRO: o arquivo não serve, e
+        #: aceitar em silêncio apagaria o mês trocando-o por nada.
         raise RegraViolada(
             f"Nenhuma linha da planilha virou menção em {fonte.nome}. "
             f"Lidas {leitura.linhas}; descartes: {dict(leitura.descartes)}."
         )
+    if not leitura.mencoes and mapeamento.lista_de_veiculos:
+        #: ZERO NUMA FONTE QUE RECORTA POR LISTA SUBSTITUI O MÊS. "Nenhum
+        #: veículo meu foi mencionado em setembro" é um zero da Aegea, medido
+        #: pela régua da Aegea — e setembro tem de ficar zerado, não com o que a
+        #: régua antiga gravou. Sem isto, resubir o arquivo para aplicar o
+        #: critério novo deixava o mês fraco no critério velho, e a série do
+        #: Mercado passava a misturar os dois sem nada em tela.
+        #:
+        #: Segue para `regravar`, que apaga os meses DO ARQUIVO e grava zero
+        #: menções.
+        antes_do_vazio = _quanto_havia(
+            sessao, fonte, list(leitura.meses_a_substituir(mapeamento))
+        )
+        regravar(sessao, fonte, leitura, veiculos)
+        return Resumo(
+            fonte=fonte.codigo,
+            nome=fonte.nome,
+            linhas=leitura.linhas,
+            ingeridas=0,
+            descartes=leitura.descartes,
+            meses=leitura.meses_a_substituir(mapeamento),
+            antes=antes_do_vazio,
+            avisos={motivo: total for motivo, total in leitura.avisos.items() if total},
+            veiculos_criados=criados,
+        )
 
-    antes = _quanto_havia(sessao, fonte, list(leitura.meses))
-    regravar(sessao, fonte, leitura)
+    if not leitura.mencoes:
+        #: ZERO NUMA IRMÃ QUE RECORTA É FATO, e não erro — e isto é conserto de
+        #: um defeito que vem do commit original da ingestão.
+        #:
+        #: A lente Mercado é a Clipei recortada por público investidor. Um mês
+        #: sem nenhuma menção de investidor é perfeitamente normal, e o erro
+        #: derrubava A SUBIDA INTEIRA: as 25.457 menções de Imprensa não
+        #: entravam porque o recorte ficou vazio.
+        #:
+        #: E o problema ia piorar: quando o critério do Mercado virar a
+        #: subcategoria do veículo cadastrado, a primeira subida terá zero
+        #: veículos classificados — o recorte nasce vazio por construção, e
+        #: nenhuma carga da Clipei passaria.
+        #:
+        #: O MÊS DA IRMÃ NÃO É APAGADO quando o recorte vem vazio: sem meses na
+        #: leitura, `regravar` não tem o que substituir, e o que já estava lá
+        #: fica. Um recorte vazio num mês não é instrução de esquecer o mês.
+        return Resumo(
+            fonte=fonte.codigo,
+            nome=fonte.nome,
+            linhas=leitura.linhas,
+            ingeridas=0,
+            descartes=leitura.descartes,
+            meses=leitura.meses,
+            antes=_quanto_havia(sessao, fonte, list(leitura.meses)),
+            avisos={motivo: total for motivo, total in leitura.avisos.items() if total},
+            veiculos_criados=criados,
+        )
+
+    #: PELOS MESES QUE VÃO SER SUBSTITUÍDOS, que para quem recorta por lista
+    #: são os do arquivo: é esse o número que a tela compara para dizer "este
+    #: mês tinha 300 e vai encolher".
+    meses_substituidos = list(leitura.meses_a_substituir(mapeamento))
+    antes = _quanto_havia(sessao, fonte, meses_substituidos)
+    regravar(sessao, fonte, leitura, veiculos)
+    de_cadastro = dict(veiculos or {})
     return Resumo(
         fonte=fonte.codigo,
         nome=fonte.nome,
         linhas=leitura.linhas,
         ingeridas=len(leitura.mencoes),
         descartes=leitura.descartes,
-        meses=leitura.meses,
+        meses=tuple(meses_substituidos),
         antes=antes,
         avisos={motivo: total for motivo, total in leitura.avisos.items() if total},
+        veiculos_criados=criados,
+        # CONTA AS MENÇÕES QUE ACHARAM VEÍCULO, e não as que têm veículo: é o
+        # número que diz o quanto a ponte para o cadastro cobre, e é ele que
+        # cresce a cada subida com criação.
+        mencoes_ligadas=sum(
+            1
+            for mencao in leitura.mencoes
+            if normalizar(mencao.veiculo or "") in de_cadastro
+        ),
     )
 
 
@@ -285,8 +520,28 @@ def fontes_do_mesmo_arquivo(sessao: Session, fonte: ScoreFonte) -> list[ScoreFon
     return list(irmas) if fonte in irmas else [fonte, *irmas]
 
 
-def ingerir(sessao: Session, fonte: ScoreFonte, conteudo: bytes) -> list[Resumo]:
-    """Lê o export e substitui os meses dele em TODAS as fontes que o leem."""
+def ingerir(
+    sessao: Session,
+    fonte: ScoreFonte,
+    conteudo: bytes,
+    veiculos_a_criar: Sequence[str] = (),
+) -> list[Resumo]:
+    """Lê o export e substitui os meses dele em TODAS as fontes que o leem.
+
+    `veiculos_a_criar` são os nomes que a pessoa AUTORIZOU na conferência, e o
+    padrão é vazio — nenhuma criação.
+
+    O PADRÃO TEM DE SER VAZIO, e isto não é timidez. A tela de Calibração já tem
+    um botão "Importar planilha" por fonte, que chama esta função direto. Se o
+    padrão fosse "criar tudo", quem clicasse ali criaria 2.631 instituições sem
+    ter visto nada — a duplicata em massa que a importação de agendas documenta,
+    por uma mudança de assinatura. Quem quer criação pede, nomeando.
+
+    OS NOMES SÃO CONFERIDOS CONTRA A PLANILHA antes de virar cadastro: um nome
+    que a pessoa manda e o arquivo não tem é ignorado, não criado. Sem isso, a
+    rota seria um jeito de cadastrar instituição arbitrária por um campo de
+    formulário.
+    """
     if fonte.interna:
         raise RegraViolada(
             f"{fonte.nome} é fonte interna: o dado já está neste banco e não se importa."
@@ -301,7 +556,134 @@ def ingerir(sessao: Session, fonte: ScoreFonte, conteudo: bytes) -> list[Resumo]
             "Se ele veio em .xls ou .csv, salve como .xlsx e envie de novo."
         )
 
+    # OS VEÍCULOS NASCEM UMA VEZ, antes das fontes irmãs: as duas leem o mesmo
+    # arquivo e veriam os mesmos veículos. Criar por fonte faria a segunda achar
+    # tudo já cadastrado — inofensivo — e contaria a criação duas vezes no
+    # resumo, o que faria a tela mentir o número que a pessoa autorizou.
+    reconhecimento = veiculos_da_imprensa.reconhecer(
+        sessao, veiculos_da_planilha(sessao, fonte, conteudo)
+    )
+    autorizados = {normalizar(nome) for nome in veiculos_a_criar}
+    a_criar = tuple(
+        novo for novo in reconhecimento.novos if normalizar(novo.nome) in autorizados
+    )
+    criados = veiculos_da_imprensa.criar(sessao, a_criar)
+    de_cadastro = {**reconhecimento.cadastrados, **criados}
+
     return [
-        _ingerir_uma(sessao, irma, conteudo)
+        _ingerir_uma(
+            sessao,
+            irma,
+            conteudo,
+            de_cadastro,
+            len(criados),
+            e_recorte=irma.id != fonte.id,
+        )
         for irma in fontes_do_mesmo_arquivo(sessao, fonte)
     ]
+
+
+#: A coluna do alcance do veiculo, no nome que a Clipei usa.
+#:
+#: LIDA PELO NOME, e e a excecao do modulo: `Abrangencia` nao tem campo em
+#: `mencao`, entao nao ha o que mapear em `score_fonte`. Fonte que a chame de
+#: outra coisa simplesmente nao a traz, e o veiculo nasce sem esfera — o que e
+#: melhor que nao nascer.
+COLUNA_DA_ABRANGENCIA = "Abrangência"
+
+
+def veiculos_da_planilha(
+    sessao: Session, fonte: ScoreFonte, conteudo: bytes
+) -> dict[str, dict[str, object]]:
+    """Nome do veículo -> praça, alcance e quantas menções o citam.
+
+    LÊ PELO MAPEAMENTO DA FONTE, e não por nome de coluna fixo: a Clipei chama
+    de `Veículo`, e o dia em que outro fornecedor mandar veículo a coluna dele
+    vai ter outro nome. Fonte que não mapeia `veiculo` devolve vazio, e isso é
+    correto — a Approach e a Bites são redes sociais, não têm veículo.
+
+    `Estado do Veículo` e `Abrangência` SÃO LIDOS PELO NOME DA COLUNA, e é a
+    exceção: eles não têm campo em `mencao` (a abrangência não tem; o estado vai
+    para `uf`), então não há o que mapear. Ficam declarados aqui, com o nome que
+    a Clipei usa, e uma fonte que os chame de outra coisa simplesmente não os
+    traz — o veículo nasce sem praça, que é melhor que não nascer.
+    """
+    mapeamento = _mapeamento_de(fonte)
+    coluna_do_veiculo = mapeamento.colunas.get("veiculo")
+    if not coluna_do_veiculo:
+        return {}
+
+    coluna_do_estado = mapeamento.colunas.get("uf")
+    achados: dict[str, dict[str, object]] = {}
+    for linha in _linhas_da_aba(conteudo, mapeamento):
+        nome = str(linha.get(coluna_do_veiculo) or "").strip()
+        if not nome:
+            continue
+        registro = achados.setdefault(
+            nome,
+            {
+                "uf": str(linha.get(coluna_do_estado) or "").strip()
+                if coluna_do_estado
+                else "",
+                "abrangencia": str(linha.get(COLUNA_DA_ABRANGENCIA) or "").strip(),
+                "mencoes": 0,
+            },
+        )
+        registro["mencoes"] = int(registro["mencoes"]) + 1
+    return achados
+
+
+def conferir(
+    sessao: Session, fonte: ScoreFonte, conteudo: bytes
+) -> tuple[list[Resumo], veiculos_da_imprensa.Reconhecimento]:
+    """O que a subida FARIA, sem gravar nada.
+
+    POR QUE ELA EXISTE. O dono do produto pediu que o veículo sem cadastro nasça
+    junto com a subida, e pediu que a conta apareça ANTES — o que é o que torna
+    a coisa segura. Medido contra o export de 08–09/2026: 2.631 veículos
+    nasceriam numa subida só. A importação de agendas tem escrito no próprio
+    código por que isso precisa de conferência: "importação de planilha sem
+    conferência humana cria duplicata de instituição em massa, e desfazer isso
+    depois é pior que digitar de novo".
+
+    A LEITURA É A MESMA DA SUBIDA, de propósito: as recusas estruturais (arquivo
+    que não abre, aba que falta, coluna que o cadastro espera e não existe)
+    aparecem aqui, antes de a pessoa escolher nada. Conferir com um leitor
+    diferente do que grava seria conferir outra coisa.
+
+    NÃO ESCREVE, e há teste para isso. `_ingerir_uma` grava; esta só lê.
+    """
+    previsao = [
+        _prever_uma(sessao, irma, conteudo)
+        for irma in fontes_do_mesmo_arquivo(sessao, fonte)
+    ]
+    return previsao, veiculos_da_imprensa.reconhecer(
+        sessao, veiculos_da_planilha(sessao, fonte, conteudo)
+    )
+
+
+def _prever_uma(sessao: Session, fonte: ScoreFonte, conteudo: bytes) -> Resumo:
+    """O resumo de uma fonte sem gravar — o mesmo cálculo de `_ingerir_uma`."""
+    mapeamento = _mapeamento_de(fonte)
+    #: A CONFERÊNCIA RECORTA IGUAL À SUBIDA. Se a previsão lesse o arquivo sem
+    #: a lista, a tela prometeria 25.457 menções de Mercado e o banco gravaria
+    #: 323 — e a conferência existe justamente para prometer o que vai
+    #: acontecer.
+    leitura = ler_planilha(
+        _linhas_da_aba(conteudo, mapeamento),
+        mapeamento,
+        _recorte_por_lista(sessao, mapeamento),
+    )
+    return Resumo(
+        fonte=fonte.codigo,
+        nome=fonte.nome,
+        linhas=leitura.linhas,
+        ingeridas=len(leitura.mencoes),
+        #: PELOS MESES QUE A SUBIDA SUBSTITUIRIA, e não pelos que renderiam
+        #: menção: é o que faz a conferência prometer o que vai acontecer
+        #: quando o recorte por lista zera um mês.
+        antes=_quanto_havia(sessao, fonte, list(leitura.meses_a_substituir(mapeamento))),
+        descartes=leitura.descartes,
+        avisos={motivo: total for motivo, total in leitura.avisos.items() if total},
+        meses=leitura.meses_a_substituir(mapeamento),
+    )

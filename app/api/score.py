@@ -17,11 +17,12 @@ que todos leem.
 
 from __future__ import annotations
 
+import json
 from datetime import date
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, select
 
@@ -32,10 +33,12 @@ from app.api.dependencias import (
 )
 from app.banco import repositorio_score
 from app.banco.sessao import SessaoDoPedido
+from app.banco.tabelas_catalogo import CategoriaPublico, SubcategoriaPublico
 from app.banco.tabelas_score import Lente, ScoreConfig, ScoreFato, ScoreFonte, ScoreMesFonte
+from app.banco.tabelas_stakeholders import Instituicao
 from app.casos_de_uso import ingerir_mencoes
 from app.casos_de_uso.ler_sinais_da_lente import regua_dos_sinais
-from app.dominio.erros import NaoEncontrado, RegraViolada
+from app.dominio.erros import Conflito, NaoEncontrado, RegraViolada
 from app.dominio.score import (
     REGUAS_DE_ENGAJAMENTO,
     REGUAS_DE_TIER,
@@ -574,6 +577,21 @@ class FonteSaida(BaseModel):
     nome: str
     fornecedor: str
     lente: str
+    #: QUAL EXPORT ESTA FONTE LÊ — `clipei`, `approach`, `bites`.
+    #:
+    #: EXISTE PARA A TELA AGRUPAR, e a pergunta do dono do produto é a razão:
+    #: "por que tem clipei e clipei investidores?". Porque `score_fonte` é a
+    #: alimentação de uma LENTE, não um fornecedor — `clipei` alimenta Imprensa
+    #: (peso 30) e `clipei_investidores` alimenta Mercado (peso 20), com o mesmo
+    #: arquivo. Sem a segunda, 20% do índice fica sem alimentação.
+    #:
+    #: Mas ninguém SOBE pela segunda: ela é alimentada junto, e expor as duas
+    #: num seletor de upload oferece uma escolha que não existe. Com este campo
+    #: a tela oferece o ARQUIVO e diz quais lentes ele alimenta.
+    #:
+    #: Nulo na fonte que anda sozinha — é o fornecedor que entrega um arquivo só
+    #: dele, e aí o próprio código serve de agrupador.
+    arquivo: str | None
     interna: bool
     ativo: bool
     #: Se a calibração vigente a desligou.
@@ -582,6 +600,18 @@ class FonteSaida(BaseModel):
     #: Quantos meses têm dado desta fonte, e quantas menções no mês pedido.
     meses_com_dado: int
     mencoes_no_mes: int
+
+
+def _arquivo_do_mapeamento(bruto: dict | None) -> str | None:
+    """Qual export a fonte lê, como o cadastro o guarda.
+
+    SÓ A CHAVE, sem validar o resto: a listagem é LEITURA, e uma fonte com
+    mapeamento incompleto tem de aparecer na tela de cadastro — é justamente
+    lá que alguém vai consertá-la. Validar aqui esconderia o problema atrás de
+    um 500 na tela que o mostraria.
+    """
+    valor = (bruto or {}).get("arquivo")
+    return valor if isinstance(valor, str) and valor else None
 
 
 @rotas.get("/fontes")
@@ -610,6 +640,12 @@ def listar_fontes(
             nome=fonte.nome,
             fornecedor=fonte.fornecedor,
             lente=lentes.get(fonte.lente_id, "—"),
+            # DIRETO DA CHAVE, e não por `Mapeamento.de_json`: o mapeamento da
+            # fonte INTERNA (`crm`) é `{}` — ela não lê planilha nenhuma —, e
+            # `Mapeamento` exige `data` e `sentimento`, com razão. Montá-lo só
+            # para ler uma chave fazia a LISTAGEM INTEIRA estourar por causa da
+            # fonte que nem tem arquivo, levando com ela a Calibração e a Base.
+            arquivo=_arquivo_do_mapeamento(fonte.mapeamento_colunas),
             interna=fonte.interna,
             ativo=fonte.ativo,
             ligada=calibracao.ligada(fonte.codigo),
@@ -1052,6 +1088,252 @@ class ImportacaoSaida(BaseModel):
     descartes: dict[str, int]
     avisos: dict[str, int]
     meses: list[str]
+    #: Quantos veículos nasceram no cadastro nesta subida, e quantas menções
+    #: ficaram ligadas a ele. Zero nos dois é o estado de quem subiu sem
+    #: autorizar criação — o padrão da rota.
+    veiculos_criados: int = 0
+    mencoes_ligadas: int = 0
+
+
+class VeiculoNovoSaida(BaseModel):
+    """Um veículo que a planilha traz e o cadastro não tem.
+
+    A TELA MARCA TODOS e deixa desmarcar — pedido do dono do produto. Por isso
+    cada um vem com a praça, o alcance e quantas menções o citam: é com esses
+    três que alguém decide tirar a marca de um rádio de bairro sem precisar
+    procurar o que ele é.
+    """
+
+    nome: str
+    uf: str | None = None
+    esfera: str | None = None
+    mencoes: int
+
+
+class ConferenciaSaida(BaseModel):
+    """O que a subida FARIA, antes de gravar.
+
+    `previsao` tem uma linha por fonte irmã, como a importação; `veiculos_novos`
+    é o que nasceria no cadastro. Medido no primeiro arquivo da Clipei: 2.631
+    veículos. É esse número que a pessoa vê antes de decidir.
+    """
+
+    previsao: list[ImportacaoSaida]
+    veiculos_novos: list[VeiculoNovoSaida]
+    #: Quantos veículos da planilha o cadastro JÁ reconhece. Com os novos, dá o
+    #: total — e a razão entre os dois é o quanto a ponte cobre hoje.
+    veiculos_reconhecidos: int
+
+
+#: A subcategoria de público que define a lente Mercado.
+#:
+#: PELO NOME, e não pelo id: ids são do banco de cada ambiente. O par
+#: (Imprensa, "Econômica e de negócios") é o contrato que a `0061` fixou ao
+#: separar Imprensa de Formadores de Opinião, e a `0066` semeou.
+CATEGORIA_DA_IMPRENSA = "Imprensa"
+SUBCATEGORIA_DO_MERCADO = "Econômica e de negócios"
+
+
+class VeiculosDoMercadoEntrada(BaseModel):
+    """A lista COMPLETA de veículos que a lente Mercado considera.
+
+    DECLARATIVA, e não um alternador por veículo. Duas razões:
+
+    O `PUT /api/instituicoes/{id}` existente exige o cadastro inteiro
+    (`extra="forbid"`), então alternar um campo obrigaria a tela a reenviar nome,
+    tipo, UF, tier e categoria — e esquecer um deles apagaria o dado sem
+    ninguém notar.
+
+    E porque é assim que a pessoa pensa: ela tem uma LISTA de veículos de
+    mercado, mantida numa planilha, e quer que o sistema reflita essa lista.
+    "Estes 81 são" é a frase dela; "marque o 37º" não é.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ids: list[UUID]
+    #: A LISTA QUE A TELA TINHA EM MÃO quando a pessoa começou a editar.
+    #:
+    #: POR QUE ELA VEM NO PEDIDO. A gravação é declarativa sobre a tabela
+    #: inteira, e o catálogo que a tela lê é carregado no boot: duas pessoas
+    #: editando a mesma lista se destroem em silêncio. A abre a aba de manhã, B
+    #: acrescenta um veículo à tarde, A remove outro e salva — o pedido de A
+    #: chega sem o id do veículo de B, e "estes são os veículos de mercado"
+    #: desmarca o de B. A tela de A diz "0 entraram, 1 saíram": contagem
+    #: verdadeira de uma mudança que A não pediu.
+    #:
+    #: OBRIGATÓRIA, e não opcional: guarda que se pode esquecer de mandar é
+    #: guarda que não existe. Divergiu? 409, e a tela recarrega e mostra a
+    #: lista de agora — ninguém perde trabalho sem saber.
+    conhecidos: list[UUID]
+
+
+class VeiculosDoMercadoSaida(BaseModel):
+    marcados: int
+    #: Quantos saíram da lista nesta gravação. É o número que a tela repete de
+    #: volta, porque remover é a operação que a pessoa quer ver confirmada.
+    desmarcados: int
+    #: OS QUE NÃO ENTRARAM, pelo nome, por já terem outra classificação.
+    #:
+    #: EXISTE PORQUE A RECUSA ERA MUDA. O servidor não sobrescreve subcategoria
+    #: escolhida à mão — está certo —, mas devolvia `{marcados: 0}` sem dizer
+    #: de quem, e a tela imprimia "Nada mudou — a lista já estava assim" e
+    #: limpava a edição. A pessoa achava que salvou, e a lente seguia sem o
+    #: veículo. Nome, e não id: é o que ela reconhece na frase.
+    recusados: list[str] = []
+
+
+@rotas.put("/veiculos-de-investidores")
+def definir_veiculos_de_investidores(
+    sessao: Sessao,
+    usuario: UsuarioQueAdministraCadastros,
+    entrada: VeiculosDoMercadoEntrada,
+) -> VeiculosDoMercadoSaida:
+    """Define quais veículos a lente Mercado considera.
+
+    O QUE ISTO RESOLVE. A lente Mercado se separava por `Público-alvo =
+    Investidores`, coluna que o fornecedor preenche: medido contra o export de
+    08–09/2026, captura 80 linhas onde a lista de veículos que a Aegea mantém
+    captura 323. O critério passa a ser o cadastro, e esta rota é como a lista
+    se mantém — por tela, não por SQL.
+
+    SÓ MEXE NA SUBCATEGORIA DO MERCADO. Um veículo classificado à mão como
+    "Geral nacional" ou "Regional das concessões" não é tocado: tirá-lo da lista
+    de mercado não pode apagar uma classificação que alguém fez. Quem sai da
+    lista e tinha a subcategoria DO MERCADO fica sem subcategoria — que é o
+    estado de "ainda não classificado", e é verdade.
+
+    SÓ VEÍCULO. Um id de órgão ou de entidade é ignorado em silêncio: a lente lê
+    `mencao`, que aponta para veículo, e marcar um órgão como imprensa econômica
+    seria cadastro errado sem efeito nenhum.
+    """
+    alvo = sessao.scalar(
+        select(SubcategoriaPublico.id)
+        .join(CategoriaPublico, CategoriaPublico.id == SubcategoriaPublico.categoria_publico_id)
+        .where(
+            CategoriaPublico.nome == CATEGORIA_DA_IMPRENSA,
+            SubcategoriaPublico.nome == SUBCATEGORIA_DO_MERCADO,
+        )
+        #: DESEMPATE EXPLÍCITO: `categoria_publico.nome` e
+        #: `subcategoria_publico.nome` não têm índice único, e hoje nenhuma tela
+        #: os renomeia (as duas tabelas estão em `FECHADOS`) — mas migration
+        #: renomeia, e a 0061 renomeou. Sem ordem, duas linhas com o mesmo nome
+        #: fariam a rota e a ingestão escolherem subcategorias diferentes, cada
+        #: uma pela ordem que o banco devolvesse.
+        .order_by(SubcategoriaPublico.id)
+        .limit(1)
+    )
+    if alvo is None:
+        raise RegraViolada(
+            f"A subcategoria {SUBCATEGORIA_DO_MERCADO!r} da {CATEGORIA_DA_IMPRENSA} "
+            "não está cadastrada. Cadastre-a antes de definir a lista."
+        )
+
+    categoria = sessao.scalar(
+        select(CategoriaPublico.id).where(CategoriaPublico.nome == CATEGORIA_DA_IMPRENSA)
+    )
+
+    pedidos = set(entrada.ids)
+    #: TRAVA AS LINHAS ENVOLVIDAS ANTES DE DECIDIR, em ordem de id — a mesma
+    #: disciplina da reconferência da taxonomia. Sem trava, duas gravações
+    #: simultâneas leem a mesma lista e a segunda desfaz a primeira.
+    envolvidos = sorted(pedidos | set(entrada.conhecidos))
+    if envolvidos:
+        sessao.scalars(
+            select(Instituicao)
+            .where(Instituicao.id.in_(envolvidos))
+            .order_by(Instituicao.id)
+            .with_for_update()
+        ).all()
+
+    #: A LISTA DE AGORA, depois da trava.
+    atuais = {
+        instituicao.id: instituicao
+        for instituicao in sessao.scalars(
+            select(Instituicao).where(
+                Instituicao.tipo == "veiculo",
+                Instituicao.subcategoria_publico_id == alvo,
+            )
+        )
+    }
+    if set(entrada.conhecidos) != set(atuais):
+        raise Conflito(
+            "A lista de veículos de investidores mudou desde que esta tela "
+            f"carregou (agora são {len(atuais)}). Recarregue e refaça a edição — "
+            "salvar por cima desfaria o que a outra pessoa acabou de fazer."
+        )
+
+    marcados = 0
+    desmarcados = 0
+    recusados: list[str] = []
+    for instituicao in sessao.scalars(
+        select(Instituicao).where(Instituicao.tipo == "veiculo")
+    ):
+        quer = instituicao.id in pedidos
+        tem = instituicao.subcategoria_publico_id == alvo
+        if quer and not tem:
+            #: NÃO SOBRESCREVE outra subcategoria: ela é decisão de alguém. Mas
+            #: a recusa VOLTA COM NOME — ver `VeiculosDoMercadoSaida.recusados`.
+            if instituicao.subcategoria_publico_id is None:
+                instituicao.subcategoria_publico_id = alvo
+                #: E A CATEGORIA VAI JUNTO. A subcategoria é filha da categoria,
+                #: e gravar só a filha deixa um par que a tela de cadastro
+                #: recusa ("Subcategoria X não pertence à categoria Y") — quem
+                #: fosse editar aquele veículo teria de mudar a classificação,
+                #: e isso o tiraria da lente sem querer.
+                if instituicao.categoria_publico_id is None and categoria is not None:
+                    instituicao.categoria_publico_id = categoria
+                marcados += 1
+            else:
+                recusados.append(instituicao.nome)
+        elif tem and not quer:
+            instituicao.subcategoria_publico_id = None
+            desmarcados += 1
+    sessao.flush()
+    return VeiculosDoMercadoSaida(
+        marcados=marcados, desmarcados=desmarcados, recusados=recusados
+    )
+
+
+@rotas.post("/fontes/{codigo}/conferencia")
+def conferir_planilha(
+    sessao: Sessao,
+    usuario: UsuarioQueAdministraCadastros,
+    codigo: str,
+    arquivo: Annotated[UploadFile, File()],
+) -> ConferenciaSaida:
+    """Lê o export e diz o que a subida faria. NADA É GRAVADO.
+
+    POR QUE ELA EXISTE. O dono do produto pediu que o veículo sem cadastro nasça
+    junto com a subida, e pediu que a conta apareça antes — o que é o que torna
+    a coisa segura. A importação de agendas tem escrito no próprio código por
+    quê: "importação de planilha sem conferência humana cria duplicata de
+    instituição em massa, e desfazer isso depois é pior que digitar de novo".
+
+    AS RECUSAS ESTRUTURAIS APARECEM AQUI, antes de a pessoa escolher nada:
+    arquivo que não abre, aba que falta, coluna que o cadastro espera e não
+    existe. `app/api/erros.py` as traduz para 422.
+    """
+    fonte = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == codigo))
+    if fonte is None:
+        raise NaoEncontrado("Fonte não encontrada.")
+
+    previsao, reconhecimento = ingerir_mencoes.conferir(
+        sessao, fonte, arquivo.file.read()
+    )
+    return ConferenciaSaida(
+        previsao=[_saida_da_importacao(resumo) for resumo in previsao],
+        veiculos_novos=[
+            VeiculoNovoSaida(
+                nome=veiculo.nome,
+                uf=veiculo.uf,
+                esfera=veiculo.esfera,
+                mencoes=veiculo.mencoes,
+            )
+            for veiculo in reconhecimento.novos
+        ],
+        veiculos_reconhecidos=len(reconhecimento.cadastrados),
+    )
 
 
 @rotas.post("/fontes/{codigo}/planilha", status_code=status.HTTP_201_CREATED)
@@ -1060,6 +1342,7 @@ def importar_planilha(
     usuario: UsuarioQueAdministraCadastros,
     codigo: str,
     arquivo: Annotated[UploadFile, File()],
+    veiculos_a_criar: Annotated[str | None, Form()] = None,
 ) -> list[ImportacaoSaida]:
     """Lê o export do fornecedor e substitui os meses que ele traz.
 
@@ -1077,18 +1360,70 @@ def importar_planilha(
         raise NaoEncontrado("Fonte não encontrada.")
 
     return [
-        ImportacaoSaida(
-            fonte=resumo.fonte,
-            nome=resumo.nome,
-            linhas=resumo.linhas,
-            ingeridas=resumo.ingeridas,
-            antes=resumo.antes,
-            descartes=dict(resumo.descartes),
-            avisos=dict(resumo.avisos),
-            meses=[f"{mes:%Y-%m}" for mes in resumo.meses],
+        _saida_da_importacao(resumo)
+        for resumo in ingerir_mencoes.ingerir(
+            sessao, fonte, arquivo.file.read(), _nomes_autorizados(veiculos_a_criar)
         )
-        for resumo in ingerir_mencoes.ingerir(sessao, fonte, arquivo.file.read())
     ]
+
+
+def _nomes_autorizados(bruto: str | None) -> tuple[str, ...]:
+    """Os nomes que a pessoa marcou, de UM campo com a lista em JSON.
+
+    UM CAMPO, E NÃO UM POR NOME, e isto é conserto de um defeito que a pessoa
+    encontrou na tela: a primeira versão mandava `veiculos_a_criar` repetido,
+    uma vez por veículo, que é como o FastAPI lê `Form(list[str])`. Com 2.628
+    veículos na primeira carga da Clipei, o parser multipart do Starlette
+    recusou o pedido inteiro:
+
+        Too many fields. Maximum number of fields is 1000
+
+    O limite é proteção do servidor e está certo — quem estava errado era o
+    formato. Afrouxá-lo trocaria um defeito desta tela por uma porta aberta em
+    todas as outras.
+
+    OS MEUS TESTES NÃO PEGARAM porque chamavam `ingerir` direto em Python, e os
+    de HTTP usavam listas de dois nomes. O teste novo manda 2.000 pelo cliente
+    de verdade — o número é o que importa aqui, e testar com dois provava o
+    caminho e não o volume.
+
+    JSON INVÁLIDO É ERRO DE PEDIDO, não lista vazia: aceitar em silêncio faria a
+    tela dizer "2.628 cadastrados" e nada nascer.
+    """
+    if not bruto or not bruto.strip():
+        return ()
+    try:
+        lido = json.loads(bruto)
+    except json.JSONDecodeError as erro:
+        raise RegraViolada(
+            "A lista de veículos a cadastrar não chegou em formato válido. "
+            "Recarregue a página e tente de novo."
+        ) from erro
+    if not isinstance(lido, list):
+        raise RegraViolada(
+            "A lista de veículos a cadastrar precisa ser uma lista de nomes."
+        )
+    return tuple(str(nome) for nome in lido if str(nome).strip())
+
+
+def _saida_da_importacao(resumo: ingerir_mencoes.Resumo) -> ImportacaoSaida:
+    """O resumo no formato da tela — de uma conferência ou de uma subida.
+
+    O MESMO MOLDE PARA AS DUAS, de propósito: a conferência promete o que a
+    subida faz, e dois moldes divergiriam no primeiro campo novo.
+    """
+    return ImportacaoSaida(
+        fonte=resumo.fonte,
+        nome=resumo.nome,
+        linhas=resumo.linhas,
+        ingeridas=resumo.ingeridas,
+        antes=resumo.antes,
+        descartes=dict(resumo.descartes),
+        avisos=dict(resumo.avisos),
+        meses=[f"{mes:%Y-%m}" for mes in resumo.meses],
+        veiculos_criados=resumo.veiculos_criados,
+        mencoes_ligadas=resumo.mencoes_ligadas,
+    )
 
 
 class OpcoesSaida(BaseModel):

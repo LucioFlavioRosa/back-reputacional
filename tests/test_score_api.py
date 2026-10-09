@@ -416,6 +416,26 @@ def test_as_fontes_trazem_cobertura_e_volume_do_mes(cliente_do_score, junho):
     assert clipei["ligada"] is True
 
 
+def test_a_listagem_sobrevive_a_fonte_sem_planilha(cliente_do_score):
+    """A fonte INTERNA tem mapeamento vazio, e a listagem tem de trazê-la.
+
+    O QUE ISTO PEGOU: `arquivo` (qual export a fonte lê) foi acrescentado
+    lendo o mapeamento por `Mapeamento.de_json`, que exige `data` e
+    `sentimento` — com razão, para quem vai LER planilha. O `crm` não lê
+    nenhuma: o mapeamento dele é `{}`. A listagem inteira estourava por causa
+    da única fonte que não tem arquivo, e com ela caíam a Calibração e a Base.
+    """
+    fontes = cliente_do_score.get("/api/score/fontes?mes=2026-06").json()
+
+    por_codigo = {f["codigo"]: f for f in fontes}
+    assert por_codigo["crm"]["interna"] is True
+    assert por_codigo["crm"]["arquivo"] is None
+    #: E AS DUAS FONTES DA CLIPEI DIZEM O MESMO ARQUIVO — é o que permite a
+    #: tela oferecer uma opção só para as duas.
+    assert por_codigo["clipei"]["arquivo"] == "clipei"
+    assert por_codigo["clipei_investidores"]["arquivo"] == "clipei"
+
+
 def test_as_opcoes_da_calibracao_vem_do_servidor(cliente_do_score):
     """A tela não tem lista fixa de régua nem de lente: uma régua nova passa a
     ser oferecida sem build do front."""
@@ -462,6 +482,11 @@ CABECALHO_DA_BITES = [
 
 def _export_da_bites(linhas: list[list]) -> bytes:
     return _planilha("Posts", CABECALHO_DA_BITES, linhas)
+
+
+#: O tipo que o navegador manda para um .xlsx. Declarado uma vez, porque
+#:  o escrevia inteiro e os testes novos precisam dele tambem.
+_TIPO_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 def _subir(cliente, codigo: str, conteudo: bytes):
@@ -567,22 +592,73 @@ DUAS_MATERIAS = [
 ]
 
 
-def test_um_arquivo_alimenta_as_duas_fontes_que_o_leem(cliente_do_score):
-    """Duas lentes, um arquivo: Mercado é o clipping filtrado por público.
+#: AS MESMAS DUAS MATÉRIAS, com a coluna `Público-alvo` CONTRA o cadastro: a de
+#: investidor vem de um veículo que NÃO está na lista, e a que está na lista vem
+#: marcada como população em geral. É o par que separa os dois critérios.
+MATERIAS_CONTRA_A_COLUNA = [
+    [date(2026, 6, 1), "POSITIVA", "Muito Relevante", "Gestão",
+     "Valor Econômico", "População em geral", "Resultados"],
+    [date(2026, 6, 2), "NEGATIVA", "Relevante", "Tarifa",
+     "Jornal Local", "Investidores", "Tarifa"],
+]
+
+
+def _na_lista_do_mercado(sessao, nome: str) -> None:
+    """Põe o veículo na lista que a lente Mercado considera."""
+    from app.banco.tabelas_catalogo import CategoriaPublico, SubcategoriaPublico
+    from app.dominio.texto import normalizar
+
+    alvo = sessao.scalar(
+        select(SubcategoriaPublico.id)
+        .join(
+            CategoriaPublico,
+            CategoriaPublico.id == SubcategoriaPublico.categoria_publico_id,
+        )
+        .where(
+            CategoriaPublico.nome == "Imprensa",
+            SubcategoriaPublico.nome == "Econômica e de negócios",
+        )
+    )
+    assert alvo is not None
+    sessao.add(
+        Instituicao(
+            nome=nome,
+            nome_normalizado=normalizar(nome),
+            tipo="veiculo",
+            subcategoria_publico_id=alvo,
+        )
+    )
+    sessao.flush()
+
+
+def test_um_arquivo_alimenta_as_duas_fontes_que_o_leem(cliente_do_score, sessao):
+    """Duas lentes, um arquivo: Mercado é o clipping recortado pela LISTA.
 
     O UPLOAD TRATA AS DUAS. Importar por uma só deixaria a irmã com o mês
     anterior, e Imprensa e Mercado passariam a ler versões diferentes do MESMO
     arquivo — divergência que a tela não teria como mostrar, porque cada lente
     exibiria um número plausível.
+
+    E O RECORTE É O CADASTRO, não a coluna do fornecedor. Este teste afirma a
+    troca de dono com as duas em conflito: a matéria do Valor Econômico (na
+    lista) vem marcada como "População em geral" e entra; a do Jornal Local
+    (fora da lista) vem marcada como "Investidores" e NÃO entra. Medido contra o
+    export de 08–09/2026, a diferença entre os dois critérios é de 271 linhas.
     """
-    resposta = _subir(cliente_do_score, "clipei", _clipping(DUAS_MATERIAS))
+    _na_lista_do_mercado(sessao, "Valor Econômico")
+
+    resposta = _subir(cliente_do_score, "clipei", _clipping(MATERIAS_CONTRA_A_COLUNA))
     assert resposta.status_code == 201
 
     por_fonte = {resumo["fonte"]: resumo for resumo in resposta.json()}
     assert set(por_fonte) == {"clipei", "clipei_investidores"}
     assert por_fonte["clipei"]["ingeridas"] == 2
     assert por_fonte["clipei_investidores"]["ingeridas"] == 1
-    assert por_fonte["clipei_investidores"]["descartes"]["fora_do_filtro"] == 1
+    assert (
+        por_fonte["clipei_investidores"]["descartes"]["fora_da_lista_de_veiculos"] == 1
+    )
+    #: E A COLUNA NÃO DECIDE MAIS NADA: nenhuma linha saiu por filtro de coluna.
+    assert por_fonte["clipei_investidores"]["descartes"]["fora_do_filtro"] == 0
 
 
 def test_subir_pela_fonte_irma_da_no_mesmo(cliente_do_score):
@@ -1035,3 +1111,79 @@ def test_registro_nao_visivel_nao_nomeia_orgao_no_dossie(
 
     nomes = [linha["rotulo"] for linha in orgaos["dados"]]
     assert "Valor Econômico" not in nomes
+
+
+# ======================= o volume, pelo HTTP (o que meus testes não cobriam)
+#
+# A pessoa encontrou na tela: "Too many fields. Maximum number of fields is
+# 1000". A primeira versão mandava `veiculos_a_criar` repetido, um campo por
+# veículo — e a primeira carga da Clipei tem 2.628.
+#
+# MEUS TESTES NÃO PEGARAM por dois motivos, e os dois valem como lição: os de
+# unidade chamavam `ingerir` direto em Python, sem passar pelo multipart; e os
+# de HTTP mandavam listas de DOIS nomes. O caminho estava provado, o volume não.
+
+
+def test_a_lista_de_veiculos_vai_num_campo_so_e_aguenta_milhares(cliente_do_score):
+    """DOIS MIL NOMES PELO CLIENTE DE VERDADE.
+
+    O limite de 1.000 campos do parser multipart é proteção do servidor e está
+    certa — quem estava errado era o formato. Este teste é sobre o NÚMERO: com
+    dois nomes ele passaria em qualquer dos dois formatos, e não provaria nada.
+
+    Os nomes são de veículos que a planilha NÃO tem: a rota os ignora, e o que
+    se mede aqui é o pedido atravessar o parser.
+    """
+    import json
+
+    nomes = [f"Veículo Inexistente {i}" for i in range(2000)]
+
+    resposta = cliente_do_score.post(
+        "/api/score/fontes/clipei/planilha",
+        files={"arquivo": ("clipei.xlsx", _clipping(DUAS_MATERIAS), _TIPO_XLSX)},
+        data={"veiculos_a_criar": json.dumps(nomes)},
+    )
+
+    assert "Too many fields" not in resposta.text
+    assert resposta.status_code == 201, resposta.text
+
+
+def test_lista_de_veiculos_em_formato_invalido_e_erro_de_pedido(cliente_do_score):
+    """JSON QUEBRADO NÃO É LISTA VAZIA.
+
+    Aceitar em silêncio faria a tela dizer "2.628 cadastrados" e nada nascer —
+    o pior resultado possível, porque parece ter funcionado.
+    """
+    resposta = cliente_do_score.post(
+        "/api/score/fontes/clipei/planilha",
+        files={"arquivo": ("clipei.xlsx", _clipping(DUAS_MATERIAS), _TIPO_XLSX)},
+        data={"veiculos_a_criar": "{isto nao e json"},
+    )
+
+    assert resposta.status_code == 422
+    assert "formato válido" in resposta.text
+
+
+def test_o_campo_com_a_lista_cria_de_verdade(cliente_do_score, sessao):
+    """O CONTRAPESO dos dois acima: o formato novo não pode só passar pelo
+    parser — ele tem de criar. Sem isto, trocar JSON por campo nenhum passaria
+    nos três testes."""
+    import json
+
+    from app.dominio.texto import normalizar
+
+    resposta = cliente_do_score.post(
+        "/api/score/fontes/clipei/planilha",
+        files={"arquivo": ("clipei.xlsx", _clipping(DUAS_MATERIAS), _TIPO_XLSX)},
+        data={"veiculos_a_criar": json.dumps(["Jornal Local"])},
+    )
+
+    assert resposta.status_code == 201, resposta.text
+    criado = sessao.scalar(
+        select(Instituicao).where(
+            Instituicao.nome_normalizado == normalizar("Jornal Local"),
+            Instituicao.tipo == "veiculo",
+        )
+    )
+    assert criado is not None
+    assert resposta.json()[0]["veiculos_criados"] == 1

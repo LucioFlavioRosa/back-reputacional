@@ -170,6 +170,18 @@ _CAMINHOS_DE_UPLOAD = (
     re.compile(r"^/api/referencias$"),
     re.compile(rf"^/api/referencias/{_UUID}/versoes$"),
     re.compile(r"^/api/score/fontes/[^/]+/planilha$"),
+    #: A CONFERENCIA LE O MESMO ARQUIVO DA SUBIDA, e esquecê-la aqui foi erro
+    #: meu — o export da Clipei tem 3,8 MB e o teto genérico é 1 MB.
+    #:
+    #: O SINTOMA NÃO FOI 413. O middleware recusa pelo `Content-Length` e fecha
+    #: a conexão enquanto o navegador ainda envia o corpo; o `fetch` falha em
+    #: nível de rede, e a tela mostrou "não foi possível falar com o servidor"
+    #: — a pior mensagem possível, porque manda procurar o backend derrubado
+    #: quando o problema é o tamanho do arquivo.
+    #:
+    #: É A TERCEIRA VEZ que este comentário se cumpre: a planilha do Score e a
+    #: de agendas entraram aqui pelo mesmo motivo, depois de falharem assim.
+    re.compile(r"^/api/score/fontes/[^/]+/conferencia$"),
     re.compile(r"^/api/importacoes$"),
 )
 

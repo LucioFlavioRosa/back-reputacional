@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import StrEnum
@@ -119,8 +119,23 @@ class Descarte(StrEnum):
     """
 
     FORA_DO_FILTRO = "fora_do_filtro"
+    #: A LINHA É DE UM VEÍCULO QUE NÃO ESTÁ NA LISTA desta fonte — motivo
+    #: próprio, e não `fora_do_filtro`, porque a tela mostra os descartes por
+    #: motivo e as duas causas se consertam em lugares diferentes: filtro de
+    #: coluna é cadastro da fonte, lista de veículos é cadastro compartilhado.
+    FORA_DA_LISTA_DE_VEICULOS = "fora_da_lista_de_veiculos"
     SEM_DATA = "sem_data"
     SEM_SENTIMENTO = "sem_sentimento"
+
+
+#: AS LISTAS DE VEÍCULOS QUE UMA FONTE PODE RECORTAR, pelo nome.
+#:
+#: O MOTOR NÃO SABE O QUE CADA UMA SIGNIFICA, de propósito: a tradução de
+#: `imprensa_economica` para o par (categoria, subcategoria) do cadastro mora
+#: em `casos_de_uso/veiculos_da_imprensa.py`, que é quem tem banco. Aqui só se
+#: declara quais nomes existem — um nome errado no mapeamento tem de doer no
+#: cadastro da fonte, e não aparecer depois como recorte misteriosamente vazio.
+LISTAS_DE_VEICULOS = frozenset({"imprensa_economica"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,9 +151,25 @@ class Mapeamento:
     #: uma das fontes deixaria a irmã com o mês antigo, e as duas lentes
     #: passariam a ler versões diferentes do mesmo arquivo.
     arquivo: str | None = None
-    #: Recorta a planilha ANTES de contar — é o que faz a lente Mercado sair
-    #: do mesmo arquivo da Clipei, só com `Público-alvo = Investidores`.
+    #: Recorta a planilha ANTES de contar, por VALOR DE COLUNA.
     filtros: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    #: Recorta a planilha pela LISTA DE VEÍCULOS do cadastro compartilhado.
+    #:
+    #: POR QUE NÃO BASTAVA `filtros`. A lente Mercado se recortava por
+    #: `Público-alvo = Investidores`, coluna que o fornecedor preenche. Medido
+    #: contra o export de 08–09/2026: a coluna captura 80 linhas onde a lista
+    #: de veículos que a Aegea mantém captura 323, e as duas discordam em 267
+    #: das 335 linhas envolvidas — a coluna perde Valor Econômico (49 menções),
+    #: InfoMoney (25), Expert XP (20) e Times Brasil (15).
+    #:
+    #: QUEM DECIDE PASSA A SER A AEGEA, pela tela: a lista é a subcategoria de
+    #: público do veículo no cadastro, mantida na aba Base. Um filtro de coluna
+    #: não daria isso — ele depende de o fornecedor classificar, e ele
+    #: classifica pelo critério dele.
+    #:
+    #: A LINHA SEM VEÍCULO NÃO ENTRA: não há como afirmar que ela é de um
+    #: veículo de mercado, e supor que é inventaria menção.
+    lista_de_veiculos: str | None = None
     #: Sinônimos de sentimento deste fornecedor, além dos conhecidos.
     sentimentos: Mapping[str, str] = field(default_factory=dict)
     #: O PREFIXO DE TAXONOMIA QUE O FORNECEDOR CARIMBA no rótulo. A Approach
@@ -160,6 +191,12 @@ class Mapeamento:
     #: de casar as listas com o dicionário do CRM: aqui se resolve a colisão que
     #: atrapalha a leitura, sem esperar a taxonomia inteira ser conciliada.
     apelidos: Mapping[str, str] = field(default_factory=dict)
+    #: OS CAMPOS CUJA COLUNA PODE FALTAR no arquivo sem parar a subida.
+    #:
+    #: Nomes de CAMPO (`link`, `titulo_texto`), não de coluna: é o campo que o
+    #: cadastro conhece, e a coluna pode mudar de nome no export. Ver
+    #: `colunas_necessarias`, que explica por que o padrão é o contrário.
+    colunas_opcionais: frozenset[str] = frozenset()
     #: Os teores que NÃO contam como contato de verdade nesta fonte, já
     #: achatados. Vazio usa `TEORES_NAO_ACIONAVEIS` — o vocabulário de hoje.
     #: Declarável porque é convenção do fornecedor, como o resto do mapeamento.
@@ -174,6 +211,24 @@ class Mapeamento:
         faltando = CAMPOS_OBRIGATORIOS - set(self.colunas)
         if faltando:
             raise ValueError(f"mapeamento sem os campos {sorted(faltando)}")
+        # OPCIONAL TAMBÉM É NOME DE CAMPO, e um nome errado tem de doer aqui.
+        #
+        # Achado de revisão: `colunas_opcionais=["linnk"]` passava sem queixa, e
+        # o efeito aparecia depois como "a planilha não tem a coluna
+        # Arquivo/Link" — a mensagem certa para um arquivo errado, e a mensagem
+        # errada para um cadastro errado. Quem lê a segunda vai procurar na
+        # planilha um problema que está no cadastro.
+        fora_do_vocabulario = set(self.colunas_opcionais) - CAMPOS
+        if fora_do_vocabulario:
+            raise ValueError(
+                "mapeamento marca como opcional campo que não existe em mencao: "
+                f"{sorted(fora_do_vocabulario)}"
+            )
+        if self.lista_de_veiculos and self.lista_de_veiculos not in LISTAS_DE_VEICULOS:
+            raise ValueError(
+                "mapeamento recorta por uma lista de veículos que não existe: "
+                f"{self.lista_de_veiculos!r}; conhecidas: {sorted(LISTAS_DE_VEICULOS)}"
+            )
         # Os sinônimos entram achatados SEMPRE, seja o mapeamento montado à mão
         # ou lido do banco: a busca é pela forma achatada, e um `Favorável`
         # gravado com acento nunca casaria com o `favoravel` da procura.
@@ -195,18 +250,23 @@ class Mapeamento:
         }
         aba = dados.get("aba")
         arquivo = dados.get("arquivo")
+        lista = dados.get("lista_de_veiculos")
         prefixo = dados.get("prefixo_a_remover")
         return cls(
             colunas=dict(dados.get("colunas") or {}),
             aba=str(aba) if aba else None,
             arquivo=str(arquivo) if arquivo else None,
             filtros=filtros,
+            lista_de_veiculos=str(lista) if lista else None,
             sentimentos=dict(dados.get("sentimentos") or {}),  # type: ignore[arg-type]
             prefixo_a_remover=str(prefixo) if prefixo else None,
             apelidos={
                 str(de): str(para)
                 for de, para in dict(dados.get("apelidos") or {}).items()
             },
+            colunas_opcionais=frozenset(
+                str(campo) for campo in (dados.get("colunas_opcionais") or [])
+            ),
             teores_nao_acionaveis=frozenset(
                 achatar(teor) for teor in (dados.get("teores_nao_acionaveis") or [])
             ),
@@ -214,8 +274,29 @@ class Mapeamento:
 
     @property
     def colunas_necessarias(self) -> frozenset[str]:
-        """Os cabeçalhos que a planilha precisa ter — filtros inclusive."""
-        return frozenset(self.colunas.values()) | frozenset(self.filtros)
+        """Os cabeçalhos que a planilha precisa ter — filtros inclusive.
+
+        MAPEADA É EXIGIDA, por padrão, e isso é de propósito: o cadastro declara
+        o que o arquivo tem, e uma coluna que desaparece do export tem de parar
+        a subida com o nome dela na mensagem. O silêncio é o que custou 4.392
+        menções sem `link` — ver a `0063`.
+
+        `colunas_opcionais` ABRE A EXCEÇÃO, e também pelo cadastro. Decisão do
+        dono do produto (09/10/2026): "pode ter casos sem link". Uma coluna
+        opcional ausente não para o mês — as menções entram sem aquele campo, e
+        é melhor que 25 mil menções paradas porque o fornecedor renomeou uma
+        coluna de enriquecimento.
+
+        `data` E `sentimento` NUNCA SÃO OPCIONAIS, mesmo declarados: sem eles não
+        há menção, e `__post_init__` já exige os dois no mapeamento. Deixar que o
+        cadastro os afrouxasse seria oferecer um jeito de gravar menção sem mês.
+        """
+        obrigatorias = {
+            coluna
+            for campo, coluna in self.colunas.items()
+            if campo not in self.colunas_opcionais or campo in CAMPOS_OBRIGATORIOS
+        }
+        return frozenset(obrigatorias) | frozenset(self.filtros)
 
 
 @dataclass(frozen=True, slots=True)
@@ -294,10 +375,40 @@ class Leitura:
     #: permite a tela desenhar "houve volume, ninguém classificou" em vez de
     #: "não houve nada" — dois estados que a §2 separa de propósito.
     nao_classificadas: Mapping[date, int] = field(default_factory=dict)
+    #: OS MESES QUE O ARQUIVO TRAZ, e não os que renderam menção.
+    #:
+    #: POR QUE OS DOIS EXISTEM. `meses` é o que entrou; este é o que o arquivo
+    #: cobre, contando a linha que foi descartada. A diferença decide o que
+    #: `regravar` APAGA, e ela só aparece quando o recorte é a lista de
+    #: veículos: um mês em que nenhum veículo da lista foi mencionado rende
+    #: zero menções, e apagar por `meses` não apagaria nada — o mês ficaria
+    #: com o que a régua ANTERIOR gravou, e a série do Mercado passaria a
+    #: misturar dois critérios, mês a mês, sem nada em tela.
+    #:
+    #: Só entra mês de linha que PASSOU pelos filtros de coluna e tinha data:
+    #: linha que esta fonte nem considera não é instrução de apagar mês.
+    meses_do_arquivo: tuple[date, ...] = ()
+    #: SE A LISTA DE VEÍCULOS FOI APLICADA nesta leitura.
+    #:
+    #: EXISTE PARA `regravar` SE DEFENDER. A guarda de `ler_planilha` pega quem
+    #: lê sem o predicado, mas não pega quem monta uma `Leitura` à mão e grava
+    #: direto — é o que `carga_do_pacote_das_lentes` faz. Gravar sem recorte na
+    #: fonte do Mercado fazia a lente contar o clipping inteiro.
+    recortada_por_lista: bool = False
 
     @property
     def meses(self) -> tuple[date, ...]:
         return tuple(sorted({mencao.mes for mencao in self.mencoes}))
+
+    def meses_a_substituir(self, mapeamento: Mapeamento) -> tuple[date, ...]:
+        """Os meses que uma subida desta fonte troca no banco.
+
+        PARA QUEM RECORTA POR LISTA, são os meses DO ARQUIVO: "nenhum veículo
+        meu foi mencionado em setembro" é um zero verdadeiro, e tem de apagar
+        setembro. Para o resto, são os meses que renderam menção — mês que leu
+        vazio ali é arquivo suspeito, e apagar seria trocar dado por nada.
+        """
+        return self.meses_do_arquivo if mapeamento.lista_de_veiculos else self.meses
 
 
 def para_data(valor: object) -> date | None:
@@ -390,6 +501,124 @@ def sem_prefixo(valor: str | None, prefixo: str | None) -> str | None:
     return limpo or valor
 
 
+#: Sigla -> nome do estado, para a forma canônica de `mencao.uf` ser o NOME.
+#:
+#: POR QUE O NOME E NÃO A SIGLA. Decisão do dono do produto (09/10/2026): a UF da
+#: menção sobe por extenso. A primeira versão disto fazia o contrário — traduzia
+#: "Santa Catarina" para `SC`, porque a coluna era `char(2)`. A `0064` alargou a
+#: coluna para `text`, e o nome passou a caber.
+#:
+#: E ISSO NÃO QUEBRA FILTRO NENHUM, verificado antes de mudar: as opções de UF da
+#: lente saem do PRÓPRIO DADO (`_distintos(Mencao.uf)` em
+#: `repositorio_lentes.py`) e o recorte compara por igualdade. A validação contra
+#: as 27 siglas (`ABRANGENCIAS_VALIDAS`) é de `Recorte`, o filtro do CRM, que
+#: lê `interacao.uf` — não `mencao.uf`. São duas dimensões com o mesmo nome.
+#:
+#: O MAPA EXISTE PARA CONVERGIR, não para converter: fornecedor que manda sigla
+#: grava o mesmo valor de quem manda o nome. Sem isto, `SC` e `Santa Catarina`
+#: virariam duas opções de filtro para o mesmo estado — a fragmentação que
+#: `apelidos` existe para resolver no vocabulário de unidade e tema.
+_NOME_POR_SIGLA: dict[str, str] = {
+    "AC": "Acre",
+    "AL": "Alagoas",
+    "AP": "Amapá",
+    "AM": "Amazonas",
+    "BA": "Bahia",
+    "CE": "Ceará",
+    "DF": "Distrito Federal",
+    "ES": "Espírito Santo",
+    "GO": "Goiás",
+    "MA": "Maranhão",
+    "MT": "Mato Grosso",
+    "MS": "Mato Grosso do Sul",
+    "MG": "Minas Gerais",
+    "PA": "Pará",
+    "PB": "Paraíba",
+    "PR": "Paraná",
+    "PE": "Pernambuco",
+    "PI": "Piauí",
+    "RJ": "Rio de Janeiro",
+    "RN": "Rio Grande do Norte",
+    "RS": "Rio Grande do Sul",
+    "RO": "Rondônia",
+    "RR": "Roraima",
+    "SC": "Santa Catarina",
+    "SP": "São Paulo",
+    "SE": "Sergipe",
+    "TO": "Tocantins",
+}
+
+#: O nome canônico de cada estado, pela forma achatada — para "SÃO PAULO",
+#: "sao paulo" e "São  Paulo" gravarem o mesmo valor.
+_NOME_CANONICO: dict[str, str] = {
+    achatar(nome): nome for nome in _NOME_POR_SIGLA.values()
+}
+
+
+#: Nome do estado -> sigla, o caminho inverso de `_NOME_POR_SIGLA`.
+#:
+#: AS DUAS FORMAS CONVIVEM NO BANCO, e não por descuido:
+#:
+#:     mencao.uf       `text`, guarda o NOME ("Santa Catarina")
+#:     instituicao.uf  domínio `abrangencia`, CHECK das 29 SIGLAS
+#:     interacao.uf    o mesmo domínio
+#:
+#: A primeira é decisão do dono do produto (09/10/2026) sobre a menção. As duas
+#: outras são contrato do CRM, com restrição no próprio banco — escrever "Santa
+#: Catarina" ali é RECUSADO pelo Postgres, não é questão de estilo.
+#:
+#: Então quem cria VEÍCULO a partir da planilha precisa do caminho inverso, e é
+#: melhor tê-lo aqui, ao lado do mapa que o origina, do que uma segunda tabela
+#: de siglas noutro módulo — duas listas divergiriam na primeira mudança.
+_SIGLA_POR_NOME: dict[str, str] = {
+    achatar(nome): sigla for sigla, nome in _NOME_POR_SIGLA.items()
+}
+
+
+def para_sigla(valor: object) -> str | None:
+    """A sigla de duas letras, para as colunas cujo CHECK a exige.
+
+    Aceita nome ou sigla, e devolve NULO para o que não é estado brasileiro — ao
+    contrário de `para_uf`, que preserva o texto. A diferença é a coluna de
+    destino: `mencao.uf` é texto livre e ganha informação guardando "Comunidade
+    de Madrid"; `instituicao.uf` tem CHECK, e valor fora da lista não entra.
+    Nulo ali é "sem praça definida", que é verdade e passa.
+    """
+    texto = _texto(valor)
+    if texto is None:
+        return None
+    if len(texto) == 2 and texto.upper() in _NOME_POR_SIGLA:
+        return texto.upper()
+    return _SIGLA_POR_NOME.get(achatar(texto))
+
+
+def para_uf(valor: object) -> str | None:
+    """O estado da menção, pelo NOME por extenso.
+
+    TRÊS ENTRADAS, e as três aparecem entre fornecedores:
+
+      "Santa Catarina"        -> "Santa Catarina"   (canonizado: caixa e espaço)
+      "SC"                    -> "Santa Catarina"   (sigla converge para o nome)
+      "Comunidade de Madrid"  -> "Comunidade de Madrid"
+
+    A TERCEIRA FICA COMO VEIO, e é a vantagem de guardar nome em vez de sigla: a
+    versão anterior achatava tudo que não fosse estado brasileiro em `IN`, e
+    "Comunidade de Madrid" dizia mais do que "internacional". Inventar categoria
+    para o que o fornecedor já nomeou é perder informação por arrumação.
+
+    Vazio devolve nulo, e é diferente de "não se aplica": nulo é "o fornecedor
+    não disse" — afirmação que só quem cadastra pode fazer.
+    """
+    texto = _texto(valor)
+    if texto is None:
+        return None
+    if len(texto) == 2:
+        pelo_codigo = _NOME_POR_SIGLA.get(texto.upper())
+        if pelo_codigo is not None:
+            return pelo_codigo
+    return _NOME_CANONICO.get(achatar(texto), texto)
+
+
 def _rotulo(valor: object, mapeamento: Mapeamento) -> str | None:
     """O rótulo do fornecedor já sem prefixo e sob o nome combinado."""
     limpo = sem_prefixo(_texto(valor), mapeamento.prefixo_a_remover)
@@ -440,18 +669,58 @@ def ler_linha(
         teor=teor,
         acionavel=None if teor is None else achatar(teor) not in nao_acionaveis,
         autor=_texto(opcional("autor")),
+        # -- OS SEIS QUE ESTAVAM DECLARADOS E NUNCA ERAM LIDOS ---------------
+        #
+        # `CAMPOS` aceitava os seis no mapeamento, `MencaoLida` tinha o campo,
+        # a tabela tinha a coluna e `ingerir_mencoes` passava o valor adiante —
+        # e `ler_linha` nunca os preenchia. Resultado medido no banco: `link`,
+        # `id_fonte`, `titulo_texto` e `uf` ZERADOS nas cinco fontes, 4.392
+        # menções. O silêncio era perfeito: nenhum erro, nenhum aviso, e
+        # `app/api/lentes.py` já pedindo `coluna_do_link="link"` para o dossiê.
+        #
+        # Só o que estiver MAPEADO chega: `opcional` devolve nulo para campo
+        # que o cadastro da fonte não cita, então fonte que não manda o dado
+        # continua entrando igual.
+        id_fonte=_texto(opcional("id_fonte")),
+        uf=para_uf(opcional("uf")),
+        subtema=_rotulo(opcional("subtema"), mapeamento),
+        perfil_autor=_texto(opcional("perfil_autor")),
+        titulo_texto=_texto(opcional("titulo_texto")),
+        link=_texto(opcional("link")),
     )
 
 
 def ler_planilha(
-    linhas: Iterable[Mapping[str, object]], mapeamento: Mapeamento
+    linhas: Iterable[Mapping[str, object]],
+    mapeamento: Mapeamento,
+    veiculo_na_lista: Callable[[str | None], bool] | None = None,
 ) -> Leitura:
-    """A planilha inteira, com a contagem do que ficou de fora."""
+    """A planilha inteira, com a contagem do que ficou de fora.
+
+    `veiculo_na_lista` RESPONDE SE O VEÍCULO DAQUELA LINHA ESTÁ NA LISTA da
+    fonte, e só é usado quando o mapeamento declara `lista_de_veiculos`. Entra
+    por parâmetro porque a resposta está no banco, e este módulo é o motor:
+    quem tem sessão monta o predicado (ver `casos_de_uso/ingerir_mencoes`).
+    """
+    if mapeamento.lista_de_veiculos and veiculo_na_lista is None:
+        #: FALHA ALTO em vez de ingerir sem recorte. Uma fonte que declara
+        #: recortar por lista e é lida sem o predicado traria o arquivo
+        #: INTEIRO: a lente Mercado passaria a contar as 25.457 menções de
+        #: Imprensa, e o índice subiria por um erro de ligação que não dá
+        #: nenhum sinal. É exatamente o tipo de silêncio que já custou os
+        #: campos zerados de `ler_linha`.
+        raise ValueError(
+            f"a fonte recorta pela lista {mapeamento.lista_de_veiculos!r} e "
+            "`ler_planilha` foi chamada sem `veiculo_na_lista`"
+        )
     mencoes: list[MencaoLida] = []
     descartes: dict[str, int] = {motivo.value: 0 for motivo in Descarte}
     avisos: dict[str, int] = {AVISO_DE_TIER: 0}
     nao_classificadas: dict[date, int] = {}
+    meses_do_arquivo: set[date] = set()
     coluna_do_tier = mapeamento.colunas.get("tier")
+    coluna_do_veiculo = mapeamento.colunas.get("veiculo")
+    recorta = bool(mapeamento.lista_de_veiculos) and veiculo_na_lista is not None
     total = 0
     for linha in linhas:
         total += 1
@@ -465,8 +734,27 @@ def ler_planilha(
                 data = para_data(linha.get(mapeamento.colunas["data"]))
                 if data is not None:
                     mes = data.replace(day=1)
+                    meses_do_arquivo.add(mes)
+                    #: SÓ A NÃO CLASSIFICADA DESTA FONTE. O recorte acontece
+                    #: depois de `ler_linha`, e sem esta conferência a fonte do
+                    #: Mercado herdava as não classificadas do clipping
+                    #: INTEIRO: "houve volume e ninguém classificou" passaria a
+                    #: ser o volume da Imprensa, exibido na lente Mercado.
+                    #:
+                    #: Pela célula crua, porque a linha não virou menção: é o
+                    #: mesmo texto que `ler_linha` leria em `veiculo`.
+                    if recorta and coluna_do_veiculo is not None:
+                        assert veiculo_na_lista is not None
+                        if not veiculo_na_lista(_texto(linha.get(coluna_do_veiculo))):
+                            continue
                     nao_classificadas[mes] = nao_classificadas.get(mes, 0) + 1
             continue
+        meses_do_arquivo.add(lido.mes)
+        if recorta:
+            assert veiculo_na_lista is not None
+            if not veiculo_na_lista(lido.veiculo):
+                descartes[Descarte.FORA_DA_LISTA_DE_VEICULOS.value] += 1
+                continue
         mencoes.append(lido)
         # A fonte mapeia tier, a célula tem texto, e o texto não é nenhum dos
         # três valores da escala: alguém trocou a coluna, ou o fornecedor mudou
@@ -479,6 +767,8 @@ def ler_planilha(
         linhas=total,
         avisos=avisos,
         nao_classificadas=nao_classificadas,
+        meses_do_arquivo=tuple(sorted(meses_do_arquivo)),
+        recortada_por_lista=recorta,
     )
 
 
