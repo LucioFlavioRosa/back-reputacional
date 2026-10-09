@@ -30,7 +30,6 @@ from app.banco.tabelas_catalogo import (
     Esfera,
     Frente,
     Status,
-    Tema,
     UnidadeNegocio,
 )
 from app.banco.tabelas_interacoes import (
@@ -48,6 +47,7 @@ from app.banco.tabelas_stakeholders import (
     Interlocutor,
     PessoaAegea,
 )
+from app.banco.temas_de_demonstracao import id_de_tema_por_nome_antigo
 from app.casos_de_uso.autenticar_por_senha import definir_senha
 from app.dominio.frentes import (
     TIPO_DE_INSTITUICAO as _TIPO_DE_INSTITUICAO,
@@ -207,7 +207,7 @@ def semear(sessao: Session) -> dict[str, int]:
     id_de_status = {s.codigo: s.id for s in sessao.scalars(select(Status))}
     id_de_clima = {c.codigo: c.id for c in sessao.scalars(select(Clima))}
     id_de_esfera = {e.codigo: e.id for e in sessao.scalars(select(Esfera))}
-    id_de_tema = {t.nome: t.id for t in sessao.scalars(select(Tema))}
+    id_de_tema = id_de_tema_por_nome_antigo(sessao)
     areas = list(
         sessao.scalars(select(AreaPessoa).where(AreaPessoa.ativo).order_by(AreaPessoa.ordem))
     )
@@ -309,10 +309,17 @@ def semear(sessao: Session) -> dict[str, int]:
         sessao.add(interacao)
         sessao.flush()
 
-        for nome_do_tema in filter(None, tags.split(";")):
-            tema_id = id_de_tema.get(nome_do_tema.strip())
-            if tema_id:
-                sessao.add(InteracaoTema(interacao_id=interacao.id, tema_id=tema_id))
+        # `dict.fromkeys` DEDUPLICA preservando ordem: duas tags da amostra
+        # podem traduzir para o MESMO subtema novo (ver
+        # `temas_de_demonstracao.py` — não é 1 para 1), e `InteracaoTema` tem
+        # chave composta — um id repetido quebraria a gravação.
+        ids_de_tema = dict.fromkeys(
+            tema_id
+            for nome_do_tema in filter(None, tags.split(";"))
+            if (tema_id := id_de_tema.get(nome_do_tema.strip()))
+        )
+        for tema_id in ids_de_tema:
+            sessao.add(InteracaoTema(interacao_id=interacao.id, tema_id=tema_id))
 
         # Uma área a cada três registros — o suficiente para o filtro "Área" do
         # painel ter o que mostrar sem marcar a amostra inteira.

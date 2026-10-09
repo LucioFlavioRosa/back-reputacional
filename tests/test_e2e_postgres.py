@@ -313,6 +313,40 @@ def test_filtros_do_recorte_no_postgres(cliente, semente):
     assert total(q="Valor Econômico") == 2
 
 
+def test_filtro_por_pilar_n1_e_tema_estrategico_n2(cliente, semente, sessao):
+    """N1 e N2 filtram pelas interações com algum tema (N3) abaixo deles, e os
+    dois níveis juntos estreitam (E), não somam."""
+    linhas = sessao.execute(
+        text(
+            """
+            select distinct on (m.bloco_tema_id) t.id, t.macro_tema_id, m.bloco_tema_id
+            from tema t join macro_tema m on m.id = t.macro_tema_id
+            where t.ativo
+            order by m.bloco_tema_id, t.id
+            limit 2
+            """
+        )
+    ).all()
+    (tema_a, n2_a, n1_a), (tema_b, n2_b, n1_b) = linhas
+    assert n1_a != n1_b
+
+    cliente.post("/api/interacoes", json=corpo(semente, temas=[tema_a]))
+    cliente.post("/api/interacoes", json=corpo(semente, temas=[tema_b]))
+
+    def total(**params) -> int:
+        resposta = cliente.get("/api/interacoes", params=params)
+        assert resposta.status_code == 200, resposta.text
+        return resposta.json()["total"]
+
+    assert total() == 2
+    assert total(temasN1=str(n1_a)) == 1
+    assert total(temasN1=f"{n1_a},{n1_b}") == 2
+    assert total(temasN2=str(n2_b)) == 1
+    # Pilar de uma e tema estratégico da outra: nenhuma tem os dois.
+    assert total(temasN1=str(n1_a), temasN2=str(n2_b)) == 0
+    assert total(temasN1=str(n1_b), temasN2=str(n2_b)) == 1
+
+
 def test_o_filtro_por_grupo_acompanha_o_status(cliente, semente):
     """Os dois filtros existem, e hoje coincidem — de propósito.
 

@@ -9,13 +9,11 @@ DE ONDE VEM: `20260917_Aegea_Taxonomia_Publicos_v2.xlsx`, aba
 `Taxonomia de temas`, coluna `Risk tracking` — um risco por subtema. Dos 104
 subtemas, 100 trazem um risco e 4 trazem "Sem enquadramento".
 
-A DIVERGÊNCIA DO EXEMPLO, que é achado a reportar e não a corrigir: a `0059`
-liga "Resultados financeiros e operacionais" ao R27 "Cobertura de Seguros", e a
+O EXEMPLO DA 0059 FOI REMOVIDO (0062), por decisão do usuário: ele ligava
+"Resultados financeiros e operacionais" ao R27 "Cobertura de Seguros", mas a
 planilha diz que o `Risk tracking` desse subtema é "Integridade das Informações
-ao Mercado". Parece linha de teste de fumaça, não dado — mas é dado de outro PR
-já mesclado, e se a ligação foi deliberada, apagá-la seria desfazer decisão que
-não é nossa. Como o schema é muitos-para-muitos, os dois coexistem. Estes testes
-travam esse estado exato, para que mudá-lo seja uma escolha e não um acidente.
+ao Mercado" — a `0061` já trouxe o dado real; a `0062` tirou o que sobrava do
+exemplo. 100 subtemas, 100 vínculos, nenhum duplicado.
 """
 
 from __future__ import annotations
@@ -78,35 +76,32 @@ def test_os_quatro_sem_enquadramento_sao_os_da_planilha(sessao):
     }
 
 
-def test_um_vinculo_a_mais_que_os_cem_e_o_exemplo_da_0059(sessao):
-    """101 linhas, 100 subtemas — a diferença é o exemplo, e está nomeada.
+def test_cem_vinculos_exatos_depois_que_o_exemplo_saiu(sessao):
+    """100 linhas, 100 subtemas — a 0062 tirou o que sobrava do exemplo.
 
-    Este teste é o lugar onde a divergência fica registrada em código, e não só
-    em comentário: se alguém decidir tirar o exemplo, é aqui que o número muda, e
-    quem mudar tem de ler por quê.
+    Nenhum tema aponta para mais de um risco: a divergência que existia entre a
+    0059 (exemplo) e a 0061 (planilha) acabou com a remoção, não com um segundo
+    vínculo convivendo com o primeiro.
     """
     linhas = sessao.execute(text("select count(*) from tema_risco")).scalar_one()
-    assert linhas == 101
+    assert linhas == 100
 
-    com_dois = {
-        n
-        for (n,) in sessao.execute(
-            text("""
-                select t.nome from tema t
-                 where t.id in (
-                   select tema_id from tema_risco group by tema_id having count(*) > 1
-                 )
-            """)
-        )
-    }
-    assert com_dois == {"Resultados financeiros e operacionais"}
+    com_mais_de_um = sessao.execute(
+        text("""
+            select count(*) from (
+              select tema_id from tema_risco group by tema_id having count(*) > 1
+            ) t
+        """)
+    ).scalar_one()
+    assert com_mais_de_um == 0
 
 
-def test_o_exemplo_da_0059_contradiz_a_planilha(sessao):
-    """A contradição, dita por extenso.
+def test_resultados_financeiros_enquadra_so_pela_planilha(sessao):
+    """O que sobrou depois da 0062, dito por extenso.
 
-    A planilha enquadra esse subtema em "Integridade das Informações ao Mercado";
-    o exemplo da `0059` o liga a "Cobertura de Seguros". Os dois estão no banco.
+    Antes da 0062, este subtema apontava para dois riscos — o exemplo da 0059
+    ("Cobertura de Seguros") e o da planilha ("Integridade das Informações ao
+    Mercado"). Só o segundo continua.
     """
     riscos = {
         n
@@ -119,10 +114,7 @@ def test_o_exemplo_da_0059_contradiz_a_planilha(sessao):
             """)
         )
     }
-    assert riscos == {
-        "Integridade das Informações ao Mercado",  # o que a planilha diz
-        "Cobertura de Seguros",  # o exemplo da 0059
-    }
+    assert riscos == {"Integridade das Informações ao Mercado"}
 
 
 def test_todo_enquadramento_aponta_para_risco_da_matriz(sessao):

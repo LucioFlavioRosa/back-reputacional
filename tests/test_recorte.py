@@ -184,6 +184,17 @@ def test_formatos_e_categorias_chegam_como_ids_separados_por_virgula():
         Recorte.construir(formatos_interacao="midia")
 
 
+def test_temas_n1_e_n2_chegam_como_ids_e_contam_um_filtro_cada():
+    """Pilar (N1) e tema estratégico (N2): mesmo contrato de `areas`."""
+    recorte = Recorte.construir(temas_n2="12,3", temas_n1="2")
+    assert recorte.temas_n2 == (3, 12)
+    assert recorte.temas_n1 == (2,)
+    assert recorte.quantidade_de_filtros == 2
+
+    with pytest.raises(RegraViolada):
+        Recorte.construir(temas_n1="governanca")
+
+
 def test_clima_esperado_e_clima_registrado_sao_filtros_distintos():
     """Na tela Preparar agenda, a coluna "Antes" filtra pelo esperado e a
     coluna "Depois" pelo registrado — e os dois podem coexistir."""
