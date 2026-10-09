@@ -464,6 +464,11 @@ def _export_da_bites(linhas: list[list]) -> bytes:
     return _planilha("Posts", CABECALHO_DA_BITES, linhas)
 
 
+#: O tipo que o navegador manda para um .xlsx. Declarado uma vez, porque
+#:  o escrevia inteiro e os testes novos precisam dele tambem.
+_TIPO_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
 def _subir(cliente, codigo: str, conteudo: bytes):
     return cliente.post(
         f"/api/score/fontes/{codigo}/planilha",
@@ -1035,3 +1040,79 @@ def test_registro_nao_visivel_nao_nomeia_orgao_no_dossie(
 
     nomes = [linha["rotulo"] for linha in orgaos["dados"]]
     assert "Valor Econômico" not in nomes
+
+
+# ======================= o volume, pelo HTTP (o que meus testes não cobriam)
+#
+# A pessoa encontrou na tela: "Too many fields. Maximum number of fields is
+# 1000". A primeira versão mandava `veiculos_a_criar` repetido, um campo por
+# veículo — e a primeira carga da Clipei tem 2.628.
+#
+# MEUS TESTES NÃO PEGARAM por dois motivos, e os dois valem como lição: os de
+# unidade chamavam `ingerir` direto em Python, sem passar pelo multipart; e os
+# de HTTP mandavam listas de DOIS nomes. O caminho estava provado, o volume não.
+
+
+def test_a_lista_de_veiculos_vai_num_campo_so_e_aguenta_milhares(cliente_do_score):
+    """DOIS MIL NOMES PELO CLIENTE DE VERDADE.
+
+    O limite de 1.000 campos do parser multipart é proteção do servidor e está
+    certa — quem estava errado era o formato. Este teste é sobre o NÚMERO: com
+    dois nomes ele passaria em qualquer dos dois formatos, e não provaria nada.
+
+    Os nomes são de veículos que a planilha NÃO tem: a rota os ignora, e o que
+    se mede aqui é o pedido atravessar o parser.
+    """
+    import json
+
+    nomes = [f"Veículo Inexistente {i}" for i in range(2000)]
+
+    resposta = cliente_do_score.post(
+        "/api/score/fontes/clipei/planilha",
+        files={"arquivo": ("clipei.xlsx", _clipping(DUAS_MATERIAS), _TIPO_XLSX)},
+        data={"veiculos_a_criar": json.dumps(nomes)},
+    )
+
+    assert "Too many fields" not in resposta.text
+    assert resposta.status_code == 201, resposta.text
+
+
+def test_lista_de_veiculos_em_formato_invalido_e_erro_de_pedido(cliente_do_score):
+    """JSON QUEBRADO NÃO É LISTA VAZIA.
+
+    Aceitar em silêncio faria a tela dizer "2.628 cadastrados" e nada nascer —
+    o pior resultado possível, porque parece ter funcionado.
+    """
+    resposta = cliente_do_score.post(
+        "/api/score/fontes/clipei/planilha",
+        files={"arquivo": ("clipei.xlsx", _clipping(DUAS_MATERIAS), _TIPO_XLSX)},
+        data={"veiculos_a_criar": "{isto nao e json"},
+    )
+
+    assert resposta.status_code == 422
+    assert "formato válido" in resposta.text
+
+
+def test_o_campo_com_a_lista_cria_de_verdade(cliente_do_score, sessao):
+    """O CONTRAPESO dos dois acima: o formato novo não pode só passar pelo
+    parser — ele tem de criar. Sem isto, trocar JSON por campo nenhum passaria
+    nos três testes."""
+    import json
+
+    from app.dominio.texto import normalizar
+
+    resposta = cliente_do_score.post(
+        "/api/score/fontes/clipei/planilha",
+        files={"arquivo": ("clipei.xlsx", _clipping(DUAS_MATERIAS), _TIPO_XLSX)},
+        data={"veiculos_a_criar": json.dumps(["Jornal Local"])},
+    )
+
+    assert resposta.status_code == 201, resposta.text
+    criado = sessao.scalar(
+        select(Instituicao).where(
+            Instituicao.nome_normalizado == normalizar("Jornal Local"),
+            Instituicao.tipo == "veiculo",
+        )
+    )
+    assert criado is not None
+    assert resposta.json()[0]["veiculos_criados"] == 1

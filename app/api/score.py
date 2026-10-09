@@ -17,6 +17,7 @@ que todos leem.
 
 from __future__ import annotations
 
+import json
 from datetime import date
 from typing import Annotated
 from uuid import UUID
@@ -1136,7 +1137,7 @@ def importar_planilha(
     usuario: UsuarioQueAdministraCadastros,
     codigo: str,
     arquivo: Annotated[UploadFile, File()],
-    veiculos_a_criar: Annotated[list[str] | None, Form()] = None,
+    veiculos_a_criar: Annotated[str | None, Form()] = None,
 ) -> list[ImportacaoSaida]:
     """Lê o export do fornecedor e substitui os meses que ele traz.
 
@@ -1156,9 +1157,48 @@ def importar_planilha(
     return [
         _saida_da_importacao(resumo)
         for resumo in ingerir_mencoes.ingerir(
-            sessao, fonte, arquivo.file.read(), veiculos_a_criar or ()
+            sessao, fonte, arquivo.file.read(), _nomes_autorizados(veiculos_a_criar)
         )
     ]
+
+
+def _nomes_autorizados(bruto: str | None) -> tuple[str, ...]:
+    """Os nomes que a pessoa marcou, de UM campo com a lista em JSON.
+
+    UM CAMPO, E NÃO UM POR NOME, e isto é conserto de um defeito que a pessoa
+    encontrou na tela: a primeira versão mandava `veiculos_a_criar` repetido,
+    uma vez por veículo, que é como o FastAPI lê `Form(list[str])`. Com 2.628
+    veículos na primeira carga da Clipei, o parser multipart do Starlette
+    recusou o pedido inteiro:
+
+        Too many fields. Maximum number of fields is 1000
+
+    O limite é proteção do servidor e está certo — quem estava errado era o
+    formato. Afrouxá-lo trocaria um defeito desta tela por uma porta aberta em
+    todas as outras.
+
+    OS MEUS TESTES NÃO PEGARAM porque chamavam `ingerir` direto em Python, e os
+    de HTTP usavam listas de dois nomes. O teste novo manda 2.000 pelo cliente
+    de verdade — o número é o que importa aqui, e testar com dois provava o
+    caminho e não o volume.
+
+    JSON INVÁLIDO É ERRO DE PEDIDO, não lista vazia: aceitar em silêncio faria a
+    tela dizer "2.628 cadastrados" e nada nascer.
+    """
+    if not bruto or not bruto.strip():
+        return ()
+    try:
+        lido = json.loads(bruto)
+    except json.JSONDecodeError as erro:
+        raise RegraViolada(
+            "A lista de veículos a cadastrar não chegou em formato válido. "
+            "Recarregue a página e tente de novo."
+        ) from erro
+    if not isinstance(lido, list):
+        raise RegraViolada(
+            "A lista de veículos a cadastrar precisa ser uma lista de nomes."
+        )
+    return tuple(str(nome) for nome in lido if str(nome).strip())
 
 
 def _saida_da_importacao(resumo: ingerir_mencoes.Resumo) -> ImportacaoSaida:
