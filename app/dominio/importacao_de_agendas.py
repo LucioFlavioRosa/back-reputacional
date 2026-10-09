@@ -393,6 +393,44 @@ MATERIAIS_POR_AGENDA = 3
 PRIMEIRO_INTERLOCUTOR_E_PRINCIPAL = True
 
 
+#: O campo que as colunas `Tema N` alimentam.
+#:
+#: NOMEADO porque três lugares precisam reconhecê-las: o gerador (para marcar a
+#: repetição em vermelho), o leitor (para acumular numa lista só) e os testes.
+#: Procurar por `nome.startswith("Tema ")` funcionaria e seria frágil — o dia em
+#: que a coluna virar "Assunto 1" o gerador para de marcar em silêncio.
+CAMPO_DOS_TEMAS = "temas"
+
+#: Quantas colunas de tema a planilha de agendas oferece.
+#:
+#: ERAM TRÊS, e viraram 18 a pedido do dono do produto (08/10/2026). O banco
+#: nunca teve teto — `interacao_tema` é tabela de ligação —, e o limite era só o
+#: número de colunas que a planilha desenhava.
+#:
+#: POR QUE UM TETO AINDA EXISTE. A alternativa seria uma coluna só, com os temas
+#: separados por vírgula e sem teto nenhum — é o que a planilha de subtemas faz
+#: na coluna de riscos. Lá o preço é aceitável porque são 32 códigos curtos
+#: (`R01`); aqui são 149 nomes longos, e digitá-los à mão numa célula única
+#: trocaria a lista suspensa por erro de digitação em escala. Dezoito colunas com
+#: suspensa custam rolagem horizontal; uma coluna de texto livre custaria
+#: classificação errada — que é pior, porque é invisível.
+#:
+#: OS DOIS MODELOS as recebem. O simplificado recorta CAMPOS que um evento não
+#: precisa (aceite, expectativa, materiais), e não o número de assuntos que uma
+#: conversa pode cobrir — ver o comentário em `_SIMPLIFICADO`.
+TETO_DE_TEMAS_POR_AGENDA = 18
+
+#: As colunas de tema, GERADAS e não escritas uma a uma.
+#:
+#: Dezoito linhas repetidas seriam dezoito lugares para a décima nona esquecer de
+#: entrar — e a versão de três colunas cobrou exatamente isso: cada lugar que
+#: enumerava `Tema 1, Tema 2, Tema 3` à mão teve de ser caçado nesta mudança,
+#: no domínio, no recorte simplificado, em dois testes e num comentário do front.
+_COLUNAS_DE_TEMA: tuple[Coluna, ...] = tuple(
+    Coluna(nome=f"Tema {numero}", campo=CAMPO_DOS_TEMAS, vocabulario="temas")
+    for numero in range(1, TETO_DE_TEMAS_POR_AGENDA + 1)
+)
+
 _AGENDAS = Aba(
     nome="Agendas",
     colunas=(
@@ -439,13 +477,17 @@ _AGENDAS = Aba(
         Coluna(
             nome="Unidade de negócio", campo="unidade_negocio_id", vocabulario="unidades_negocio"
         ),
-        # Temas e áreas são COLUNAS, não abas: são poucos por agenda, e uma
-        # aba própria custaria duas abas a mais para um vocabulário que cabe
-        # em três/duas colunas com lista suspensa. O teto é arbitrário e
-        # ampliável — ver a seção "Abas de preenchimento" da spec.
-        Coluna(nome="Tema 1", campo="temas", vocabulario="temas"),
-        Coluna(nome="Tema 2", campo="temas", vocabulario="temas"),
-        Coluna(nome="Tema 3", campo="temas", vocabulario="temas"),
+        # Temas e áreas são COLUNAS, não abas: uma aba própria custaria duas
+        # abas a mais para um vocabulário que cabe em colunas com lista
+        # suspensa. O teto é arbitrário e ampliável — a seção "Abas de
+        # preenchimento" da spec já dizia isso, e em 08/10/2026 ele foi de 3
+        # para `TETO_DE_TEMAS_POR_AGENDA`.
+        #
+        # AS COLUNAS DE ÁREA FICAM NA SEÇÃO 2, acima, e não aqui: `Área` já foi
+        # a última coluna da planilha uma vez, o dono do produto procurou e não
+        # achou, e a ordem do formulário é o que a conserta. Ampliar os temas
+        # não pode reabrir isso.
+        *_COLUNAS_DE_TEMA,
         # -- 5. Onde será ou foi realizada ---------------------------------
         Coluna(nome="Modalidade", campo="modalidade", vocabulario="modalidade"),
         Coluna(nome="Local", campo="local"),
@@ -564,9 +606,21 @@ _SIMPLIFICADO: tuple[str, ...] = (
     "Instituição",
     "UF",
     "Unidade de negócio",
-    "Tema 1",
-    "Tema 2",
-    "Tema 3",
+    # AS MESMAS 18 DO COMPLETO, por decisão do dono do produto (08/10/2026).
+    #
+    # EU HAVIA DEIXADO TRÊS, argumentando que o simplificado existe para o evento
+    # de 54 conversas curtas e que 18 colunas de tema o tornariam mais largo que
+    # o problema que ele resolve. O dono decidiu o contrário, e a razão dele é
+    # mais forte que a minha: o recorte do simplificado é sobre QUAIS CAMPOS a
+    # pessoa não precisa preencher num evento — aceite, expectativa, materiais —,
+    # não sobre quantos assuntos uma conversa pode cobrir. Oferecer 18 num modelo
+    # e 3 no outro faria a MESMA agenda caber ou não caber dependendo do arquivo
+    # que a pessoa baixou, e descobrir isso no meio do preenchimento custa mais
+    # que a rolagem horizontal que eu estava economizando.
+    #
+    # Geradas, e não escritas: é a mesma razão de `_COLUNAS_DE_TEMA` — foi este
+    # recorte um dos lugares que a ampliação de 3 para 18 teve de caçar à mão.
+    *(f"Tema {numero}" for numero in range(1, TETO_DE_TEMAS_POR_AGENDA + 1)),
     "Modalidade",
     "Local",
     "Relato",
@@ -727,7 +781,7 @@ DESTINO_DO_CAMPO: dict[str, str] = {
     # vir.
     "alegacoes": "fora da v1",
     # Nenhuma coluna da aba Agendas leva a pauta em palavras — o assunto da
-    # reunião é o que `temas` (colunas Tema 1–3) já cobre na planilha.
+    # reunião é o que `temas` (as colunas `Tema N`) já cobre na planilha.
     "pauta": "fora da v1",
     # Aposentado (ver `api/dicionarios.py`, item "stakeholders": substituído
     # pela categoria de público da instituição na migration 0036). Um campo

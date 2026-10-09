@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencias import obter_usuario_atual
 from app.banco.sessao import SessaoDoPedido
-from app.banco.tabelas_catalogo import DICIONARIOS, Tema
+from app.banco.tabelas_catalogo import DICIONARIOS, FormatoInteracao, Tema
 from app.dominio.recorte import ABRANGENCIAS_VALIDAS, INTERNACIONAL, NACIONAL
 
 rotas = APIRouter(
@@ -96,6 +96,31 @@ def listar_dicionarios(sessao: Sessao) -> dict[str, list[dict[str, Any]]]:
         }
         for linha in sessao.scalars(
             select(Tema).where(Tema.ativo.is_(False)).order_by(Tema.nome)
+        )
+    ]
+
+    # OS TIPOS DE INTERAÇÃO APOSENTADOS, pela MESMA razão dos temas acima.
+    #
+    # CONSERTO PREVENTIVO, e a palavra importa: numa base recriada hoje este
+    # caso tem ZERO ocorrências, porque os semeadores só atribuem formato ativo.
+    # Mas a `0060` aposentou o formato `midia`, e na base que acumulou dado antes
+    # dela havia 106 interações apontando para ele — cada uma mostrando "—" no
+    # lugar de "Mídia", porque `nomeDoFormatoDeInteracao` devolve `'—'` quando o
+    # id não resolve. A carga real em produção traz esse histórico de volta.
+    #
+    # A `0060` diz, no próprio comentário, que o vínculo histórico deve ser
+    # preservado. Preservar o vínculo e esconder o nome é meia preservação: a
+    # agenda continua apontando para "Mídia" e a tela finge que ela não tem tipo.
+    resposta["formatos_interacao_inativos"] = [
+        {
+            coluna.name: getattr(linha, coluna.name)
+            for coluna in FormatoInteracao.__table__.columns
+            if coluna.name != "ativo"
+        }
+        for linha in sessao.scalars(
+            select(FormatoInteracao)
+            .where(FormatoInteracao.ativo.is_(False))
+            .order_by(FormatoInteracao.ordem)
         )
     ]
 

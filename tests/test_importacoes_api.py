@@ -2390,7 +2390,7 @@ def test_o_download_entrega_o_COMPLETO_por_padrao(cliente_admin, sessao):
 
 
 def test_o_download_entrega_o_SIMPLIFICADO_quando_pedido(cliente_admin, sessao):
-    """O modelo do evento: 54 agendas no mesmo dia, 22 colunas em vez de 58."""
+    """O modelo do evento: 54 agendas no mesmo dia, 37 colunas em vez de 74."""
     from openpyxl import load_workbook
 
     from app.dominio.importacao_de_agendas import MODELOS

@@ -302,6 +302,57 @@ def test_as_colunas_numeradas_de_tema_viram_UMA_lista(sessao, semente):
     assert proposta.entrada.temas == [semente["tema"].id]
 
 
+def test_o_mesmo_tema_em_duas_colunas_conta_UMA_vez(sessao, semente):
+    """E O AVISO DIZ EM QUAL COLUNA ELE JÁ ESTAVA.
+
+    `interacao_tema` tem chave primária `(interacao, tema)` e o repositório monta
+    a lista com `set`, então a repetição JÁ era absorvida — em silêncio. Com três
+    colunas de tema quase não acontecia; com 18 passou a ser o erro de
+    preenchimento mais fácil de cometer, e o silêncio faria a pessoa conferir 18
+    células para descobrir por que a agenda tem 2 assuntos e ela preencheu 3.
+    """
+    conteudo = _preenchida(
+        sessao,
+        agendas=[
+            _agenda(
+                semente,
+                **{
+                    "Tema 1": semente["tema"].nome,
+                    "Tema 5": semente["tema"].nome,
+                },
+            )
+        ],
+    )
+
+    (proposta,) = importar_agendas.propor(sessao, conteudo)
+
+    assert proposta.entrada.temas == [semente["tema"].id]
+    (aviso,) = [d for d in proposta.divergencias if d.campo == "temas"]
+    assert aviso.coluna == "Tema 5"
+    assert "já está em Tema 1" in aviso.mensagem
+
+
+def test_o_tema_repetido_NAO_trava_a_confirmacao(sessao, semente):
+    """Repetir um assunto é escorregão de preenchimento, não dado errado: a
+    agenda resultante está correta. Travar uma linha de um arquivo de 500 por
+    isso ensinaria a pessoa a ignorar o aviso — o mesmo raciocínio de
+    `_avisar_duplicatas` para a agenda repetida."""
+    conteudo = _preenchida(
+        sessao,
+        agendas=[
+            _agenda(
+                semente,
+                **{"Tema 1": semente["tema"].nome, "Tema 2": semente["tema"].nome},
+            )
+        ],
+    )
+
+    (proposta,) = importar_agendas.propor(sessao, conteudo)
+
+    assert [d.trava for d in proposta.divergencias if d.campo == "temas"] == [False]
+    assert proposta.entrada is not None, "a proposta não pode morrer por um aviso"
+
+
 def test_a_coluna_vazia_nao_entra_na_lista(sessao, semente):
     """Tema 2 e Tema 3 em branco não podem virar dois `None` na lista."""
     conteudo = _preenchida(sessao, agendas=[_agenda(semente, **{"Tema 1": semente["tema"].nome})])

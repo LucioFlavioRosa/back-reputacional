@@ -66,6 +66,7 @@ from app.dominio.importacao_de_agendas import (
     PRIMEIRO_INTERLOCUTOR_E_PRINCIPAL,
     VOCABULARIOS_FECHADOS,
     VOCABULARIOS_QUE_A_IMPORTACAO_CRIA,
+    Coluna,
     Divergencia,
     aba_de,
     classificar,
@@ -1230,7 +1231,41 @@ def propor_de_linhas(
             if valor is None:
                 continue
             if e_lista:
-                listas.setdefault(coluna.campo, []).append(valor)
+                ja_na_lista = listas.setdefault(coluna.campo, [])
+                if valor in ja_na_lista:
+                    escrito = _texto_da_celula(bruto)
+                    de_onde = _primeira_coluna_com(
+                        linha, colunas_de_agenda, coluna.campo, bruto
+                    )
+                    # O MESMO TEMA DUAS VEZES NA MESMA AGENDA É UMA SÓ.
+                    #
+                    # `interacao_tema` tem chave primária `(interacao, tema)` e o
+                    # repositório monta a lista com `set`, então a repetição JÁ
+                    # era absorvida — em silêncio. Com três colunas de tema isso
+                    # quase não acontecia; com 18 passou a ser o erro de
+                    # preenchimento mais fácil de cometer, e silêncio aqui faria
+                    # a pessoa conferir 18 células para descobrir por que a
+                    # agenda tem 6 temas e ela preencheu 8.
+                    #
+                    # NÃO TRAVA, de propósito. Repetir um tema é escorregão de
+                    # preenchimento, não dado errado: a agenda resultante está
+                    # correta, e travar uma linha de um arquivo de 500 por isso
+                    # ensinaria a ignorar o aviso — o mesmo raciocínio que
+                    # `_avisar_duplicatas` usa para a agenda repetida.
+                    divergencias.append(
+                        Divergencia(
+                            campo=coluna.campo,
+                            valor=escrito,
+                            mensagem=(
+                                f"{coluna.nome}: {escrito!r} já está em {de_onde}. "
+                                "Cada assunto conta uma vez — esta coluna foi ignorada."
+                            ),
+                            trava=False,
+                            coluna=coluna.nome,
+                        )
+                    )
+                    continue
+                ja_na_lista.append(valor)
             else:
                 campos[coluna.campo] = valor
 
@@ -2349,3 +2384,30 @@ def colunas_numeradas_sem_grupo() -> Sequence[str]:
     return sorted(numeradas - mapeadas)
 
 
+
+
+def _texto_da_celula(bruto: object) -> str:
+    """O que a pessoa escreveu na célula, para a mensagem citar de volta.
+
+    Sem normalizar e sem resolver para id: a divergência tem de dizer o valor que
+    ela reconhece na planilha, não o que o sistema entendeu dele.
+    """
+    return "" if bruto is None else str(bruto).strip()
+
+
+def _primeira_coluna_com(
+    linha: object, colunas: Sequence[Coluna], campo: str, bruto: object
+) -> str:
+    """Qual coluna do mesmo campo já trouxe este valor.
+
+    "O tema está repetido" manda procurar entre 18 colunas; "já está em Tema 3"
+    manda apagar uma célula. É a mesma régua das outras divergências deste
+    módulo, que nomeiam a coluna e o valor.
+    """
+    procurado = _texto_da_celula(bruto).casefold()
+    for coluna in colunas:
+        if coluna.campo != campo:
+            continue
+        if _texto_da_celula(linha.celulas.get(coluna.nome)).casefold() == procurado:
+            return coluna.nome
+    return "outra coluna"  # pragma: no cover - o valor veio de uma delas
