@@ -725,8 +725,8 @@ def test_todas_as_rotas_do_prefixo_estao_protegidas():
     assert all(c.startswith("/api/taxonomia/subtemas") for c in caminhos), caminhos
 
 
-def test_nenhuma_rota_destas_e_capturada_por_outro_roteador():
-    """A ARMADILHA QUE ESTE ARQUIVO JÁ PEGOU UMA VEZ.
+def test_as_rotas_de_subtemas_sao_ATENDIDAS_por_elas(cliente_admin):
+    """A ARMADILHA QUE ESTE ARQUIVO JÁ PEGOU UMA VEZ, e agora pela via certa.
 
     O prefixo era `/api/importacoes/subtemas`, e a importação de agendas tem
     `POST /api/importacoes/{importacao_id}/confirmacao`: o parâmetro casa com o
@@ -734,70 +734,60 @@ def test_nenhuma_rota_destas_e_capturada_por_outro_roteador():
     de "uuid inválido". Passava em todo teste de unidade — só a chamada HTTP
     mostrava.
 
-    Trocar o prefixo consertou. Este teste é o que impede a volta, e ele
-    pergunta o que importa: na aplicação montada, cada caminho destes resolve
-    para UMA rota, e é a minha. Fixar só a string do prefixo não bastaria —
-    amanhã outro roteador pode nascer com `/api/taxonomia/{algo}`.
+    A PRIMEIRA VERSÃO DESTE TESTE ANDAVA PELA ÁRVORE DE ROTAS, comparando
+    `rota.matches(...)` e lendo `rota.path` de cada item de `app.routes`. Ela
+    passava aqui e QUEBROU NO CI: o lock pina `fastapi==0.141.1`, e nessa versão
+    `include_router` deixa um `_IncludedRouter` em `app.routes` — um invólucro
+    que tem `matches` e NÃO tem `path`. `AttributeError`, nos dois testes.
+
+    O erro de fundo não foi o atributo: foi eu testar roteamento por dentro de
+    estrutura privada do framework. Agora o teste pergunta o que a pessoa
+    percebe — QUEM ATENDEU —, e a resposta vem no corpo do 422: o meu
+    manipulador reclama do CORPO que falta; o de agendas reclamaria de um
+    `importacao_id` que não é uuid. Isso não depende de versão nenhuma.
     """
-    from main import criar_app
-
-    aplicacao = criar_app()
-    meus = {r.path for r in rota.rotas.routes}
-    # O MÉTODO ENTRA NA SONDA. `/modelo` só atende GET, e sondar tudo com POST
-    # daria "nenhuma rota casa" — o teste falharia sem haver colisão nenhuma.
-    sondas = [
-        (r.path, metodo) for r in rota.rotas.routes for metodo in sorted(r.methods)
-    ]
-    assert sondas, "o roteador não tem rota nenhuma"
-
-    for caminho, metodo in sondas:
-        casam = [
-            r
-            for r in aplicacao.routes
-            if hasattr(r, "matches")
-            and r.matches({"type": "http", "path": caminho, "method": metodo})[0].value
-            >= 2  # 2 = Match.FULL: caminho E método
-        ]
-        assert casam, (caminho, metodo)
-        assert all(r.path in meus for r in casam), (
-            caminho,
-            metodo,
-            [r.path for r in casam],
-        )
+    for caminho in (
+        "/api/taxonomia/subtemas/conferencia",
+        "/api/taxonomia/subtemas/confirmacao",
+    ):
+        resposta = cliente_admin.post(caminho)
+        assert resposta.status_code == 422, (caminho, resposta.text)
+        locais = [".".join(str(parte) for parte in d["loc"]) for d in resposta.json()["detail"]]
+        # QUEM ATENDEU FOI O MEU: ele pede `arquivo` no corpo.
+        assert any("arquivo" in local for local in locais), (caminho, locais)
+        # E NÃO O DE AGENDAS: ele pediria um uuid no caminho.
+        assert all("importacao_id" not in local for local in locais), (caminho, locais)
 
 
-def test_a_sonda_de_colisao_de_rota_realmente_pega_a_colisao():
-    """O CONTRAPESO DO TESTE ACIMA. Um guarda que ninguém viu falhar não prova
-    nada — e este reconstrói exatamente o prefixo que estava errado antes.
+def test_o_prefixo_ANTIGO_ainda_cairia_na_importacao_de_agendas(cliente_admin):
+    """O CONTRAPESO. Um guarda que ninguém viu falhar não prova nada.
 
-    Com `/api/importacoes/subtemas`, a confirmação resolve para a rota de
-    AGENDAS (`/api/importacoes/{importacao_id}/confirmacao`), que é registrada
-    primeiro. É o defeito original, reproduzido aqui para que o teste de cima
-    não possa passar por estar medindo a coisa errada.
+    Este bate no caminho que o prefixo antigo produzia e mostra que ele É
+    atendido pela rota de agendas — a armadilha segue viva na aplicação de
+    hoje, e é só o prefixo próprio que nos tira dela. Sem este teste, o de cima
+    passaria por estar medindo a coisa errada (por exemplo, se o 422 do corpo
+    viesse de qualquer rota).
     """
-    from fastapi import APIRouter
+    resposta = cliente_admin.post("/api/importacoes/subtemas/confirmacao")
 
-    from main import criar_app
+    assert resposta.status_code == 422
+    tipos = [d.get("type") for d in resposta.json()["detail"]]
+    locais = [".".join(str(parte) for parte in d["loc"]) for d in resposta.json()["detail"]]
+    assert "uuid_parsing" in tipos, resposta.text
+    assert any("importacao_id" in local for local in locais), locais
 
-    aplicacao = criar_app()
-    sob_importacoes = APIRouter(prefix="/api/importacoes/subtemas")
 
-    @sob_importacoes.post("/confirmacao")
-    def _confirmar_no_prefixo_antigo() -> dict:  # pragma: no cover - só o roteamento
-        return {}
+def test_todos_os_caminhos_deste_roteador_ficam_sob_o_prefixo():
+    """A CONFERÊNCIA ESTRUTURAL QUE SOBREVIVE A VERSÃO.
 
-    aplicacao.include_router(sob_importacoes)
-
-    caminho = "/api/importacoes/subtemas/confirmacao"
-    casam = [
-        r
-        for r in aplicacao.routes
-        if hasattr(r, "matches")
-        and r.matches({"type": "http", "path": caminho, "method": "POST"})[0].value >= 2
-    ]
-    assert casam, caminho
-    # A PRIMEIRA que casa é quem atende — e não é a nossa.
-    assert casam[0].path == "/api/importacoes/{importacao_id}/confirmacao"
+    `rotas.routes` são as rotas DO ROTEADOR, antes de ele ser incluído na
+    aplicação — ali ainda são `APIRoute` com `path`, em qualquer versão. É a
+    aplicação montada que embrulha tudo em `_IncludedRouter`, e era lá que a
+    primeira versão deste teste ia procurar.
+    """
+    caminhos = [r.path for r in rota.rotas.routes]
+    assert caminhos, "o roteador não tem rota nenhuma"
+    assert all(c.startswith("/api/taxonomia/subtemas") for c in caminhos), caminhos
 
 
 def test_baixar_o_modelo_devolve_xlsx_com_nome(cliente_admin):
