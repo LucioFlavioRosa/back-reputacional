@@ -38,7 +38,7 @@ from app.banco.tabelas_score import Lente, ScoreConfig, ScoreFato, ScoreFonte, S
 from app.banco.tabelas_stakeholders import Instituicao
 from app.casos_de_uso import ingerir_mencoes
 from app.casos_de_uso.ler_sinais_da_lente import regua_dos_sinais
-from app.dominio.erros import NaoEncontrado, RegraViolada
+from app.dominio.erros import Conflito, NaoEncontrado, RegraViolada
 from app.dominio.score import (
     REGUAS_DE_ENGAJAMENTO,
     REGUAS_DE_TIER,
@@ -1152,6 +1152,20 @@ class VeiculosDoMercadoEntrada(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     ids: list[UUID]
+    #: A LISTA QUE A TELA TINHA EM MÃO quando a pessoa começou a editar.
+    #:
+    #: POR QUE ELA VEM NO PEDIDO. A gravação é declarativa sobre a tabela
+    #: inteira, e o catálogo que a tela lê é carregado no boot: duas pessoas
+    #: editando a mesma lista se destroem em silêncio. A abre a aba de manhã, B
+    #: acrescenta um veículo à tarde, A remove outro e salva — o pedido de A
+    #: chega sem o id do veículo de B, e "estes são os veículos de mercado"
+    #: desmarca o de B. A tela de A diz "0 entraram, 1 saíram": contagem
+    #: verdadeira de uma mudança que A não pediu.
+    #:
+    #: OBRIGATÓRIA, e não opcional: guarda que se pode esquecer de mandar é
+    #: guarda que não existe. Divergiu? 409, e a tela recarrega e mostra a
+    #: lista de agora — ninguém perde trabalho sem saber.
+    conhecidos: list[UUID]
 
 
 class VeiculosDoMercadoSaida(BaseModel):
@@ -1159,6 +1173,14 @@ class VeiculosDoMercadoSaida(BaseModel):
     #: Quantos saíram da lista nesta gravação. É o número que a tela repete de
     #: volta, porque remover é a operação que a pessoa quer ver confirmada.
     desmarcados: int
+    #: OS QUE NÃO ENTRARAM, pelo nome, por já terem outra classificação.
+    #:
+    #: EXISTE PORQUE A RECUSA ERA MUDA. O servidor não sobrescreve subcategoria
+    #: escolhida à mão — está certo —, mas devolvia `{marcados: 0}` sem dizer
+    #: de quem, e a tela imprimia "Nada mudou — a lista já estava assim" e
+    #: limpava a edição. A pessoa achava que salvou, e a lente seguia sem o
+    #: veículo. Nome, e não id: é o que ela reconhece na frase.
+    recusados: list[str] = []
 
 
 @rotas.put("/veiculos-de-investidores")
@@ -1192,6 +1214,14 @@ def definir_veiculos_de_investidores(
             CategoriaPublico.nome == CATEGORIA_DA_IMPRENSA,
             SubcategoriaPublico.nome == SUBCATEGORIA_DO_MERCADO,
         )
+        #: DESEMPATE EXPLÍCITO: `categoria_publico.nome` e
+        #: `subcategoria_publico.nome` não têm índice único, e hoje nenhuma tela
+        #: os renomeia (as duas tabelas estão em `FECHADOS`) — mas migration
+        #: renomeia, e a 0061 renomeou. Sem ordem, duas linhas com o mesmo nome
+        #: fariam a rota e a ingestão escolherem subcategorias diferentes, cada
+        #: uma pela ordem que o banco devolvesse.
+        .order_by(SubcategoriaPublico.id)
+        .limit(1)
     )
     if alvo is None:
         raise RegraViolada(
@@ -1199,25 +1229,70 @@ def definir_veiculos_de_investidores(
             "não está cadastrada. Cadastre-a antes de definir a lista."
         )
 
+    categoria = sessao.scalar(
+        select(CategoriaPublico.id).where(CategoriaPublico.nome == CATEGORIA_DA_IMPRENSA)
+    )
+
     pedidos = set(entrada.ids)
+    #: TRAVA AS LINHAS ENVOLVIDAS ANTES DE DECIDIR, em ordem de id — a mesma
+    #: disciplina da reconferência da taxonomia. Sem trava, duas gravações
+    #: simultâneas leem a mesma lista e a segunda desfaz a primeira.
+    envolvidos = sorted(pedidos | set(entrada.conhecidos))
+    if envolvidos:
+        sessao.scalars(
+            select(Instituicao)
+            .where(Instituicao.id.in_(envolvidos))
+            .order_by(Instituicao.id)
+            .with_for_update()
+        ).all()
+
+    #: A LISTA DE AGORA, depois da trava.
+    atuais = {
+        instituicao.id: instituicao
+        for instituicao in sessao.scalars(
+            select(Instituicao).where(
+                Instituicao.tipo == "veiculo",
+                Instituicao.subcategoria_publico_id == alvo,
+            )
+        )
+    }
+    if set(entrada.conhecidos) != set(atuais):
+        raise Conflito(
+            "A lista de veículos de investidores mudou desde que esta tela "
+            f"carregou (agora são {len(atuais)}). Recarregue e refaça a edição — "
+            "salvar por cima desfaria o que a outra pessoa acabou de fazer."
+        )
+
     marcados = 0
     desmarcados = 0
+    recusados: list[str] = []
     for instituicao in sessao.scalars(
         select(Instituicao).where(Instituicao.tipo == "veiculo")
     ):
         quer = instituicao.id in pedidos
         tem = instituicao.subcategoria_publico_id == alvo
         if quer and not tem:
-            #: NÃO SOBRESCREVE outra subcategoria: ela é decisão de alguém, e a
-            #: tela mostra o que vai acontecer antes de gravar.
+            #: NÃO SOBRESCREVE outra subcategoria: ela é decisão de alguém. Mas
+            #: a recusa VOLTA COM NOME — ver `VeiculosDoMercadoSaida.recusados`.
             if instituicao.subcategoria_publico_id is None:
                 instituicao.subcategoria_publico_id = alvo
+                #: E A CATEGORIA VAI JUNTO. A subcategoria é filha da categoria,
+                #: e gravar só a filha deixa um par que a tela de cadastro
+                #: recusa ("Subcategoria X não pertence à categoria Y") — quem
+                #: fosse editar aquele veículo teria de mudar a classificação,
+                #: e isso o tiraria da lente sem querer.
+                if instituicao.categoria_publico_id is None and categoria is not None:
+                    instituicao.categoria_publico_id = categoria
                 marcados += 1
+            else:
+                recusados.append(instituicao.nome)
         elif tem and not quer:
             instituicao.subcategoria_publico_id = None
             desmarcados += 1
     sessao.flush()
-    return VeiculosDoMercadoSaida(marcados=marcados, desmarcados=desmarcados)
+    return VeiculosDoMercadoSaida(
+        marcados=marcados, desmarcados=desmarcados, recusados=recusados
+    )
 
 
 @rotas.post("/fontes/{codigo}/conferencia")

@@ -375,10 +375,40 @@ class Leitura:
     #: permite a tela desenhar "houve volume, ninguém classificou" em vez de
     #: "não houve nada" — dois estados que a §2 separa de propósito.
     nao_classificadas: Mapping[date, int] = field(default_factory=dict)
+    #: OS MESES QUE O ARQUIVO TRAZ, e não os que renderam menção.
+    #:
+    #: POR QUE OS DOIS EXISTEM. `meses` é o que entrou; este é o que o arquivo
+    #: cobre, contando a linha que foi descartada. A diferença decide o que
+    #: `regravar` APAGA, e ela só aparece quando o recorte é a lista de
+    #: veículos: um mês em que nenhum veículo da lista foi mencionado rende
+    #: zero menções, e apagar por `meses` não apagaria nada — o mês ficaria
+    #: com o que a régua ANTERIOR gravou, e a série do Mercado passaria a
+    #: misturar dois critérios, mês a mês, sem nada em tela.
+    #:
+    #: Só entra mês de linha que PASSOU pelos filtros de coluna e tinha data:
+    #: linha que esta fonte nem considera não é instrução de apagar mês.
+    meses_do_arquivo: tuple[date, ...] = ()
+    #: SE A LISTA DE VEÍCULOS FOI APLICADA nesta leitura.
+    #:
+    #: EXISTE PARA `regravar` SE DEFENDER. A guarda de `ler_planilha` pega quem
+    #: lê sem o predicado, mas não pega quem monta uma `Leitura` à mão e grava
+    #: direto — é o que `carga_do_pacote_das_lentes` faz. Gravar sem recorte na
+    #: fonte do Mercado fazia a lente contar o clipping inteiro.
+    recortada_por_lista: bool = False
 
     @property
     def meses(self) -> tuple[date, ...]:
         return tuple(sorted({mencao.mes for mencao in self.mencoes}))
+
+    def meses_a_substituir(self, mapeamento: Mapeamento) -> tuple[date, ...]:
+        """Os meses que uma subida desta fonte troca no banco.
+
+        PARA QUEM RECORTA POR LISTA, são os meses DO ARQUIVO: "nenhum veículo
+        meu foi mencionado em setembro" é um zero verdadeiro, e tem de apagar
+        setembro. Para o resto, são os meses que renderam menção — mês que leu
+        vazio ali é arquivo suspeito, e apagar seria trocar dado por nada.
+        """
+        return self.meses_do_arquivo if mapeamento.lista_de_veiculos else self.meses
 
 
 def para_data(valor: object) -> date | None:
@@ -687,7 +717,10 @@ def ler_planilha(
     descartes: dict[str, int] = {motivo.value: 0 for motivo in Descarte}
     avisos: dict[str, int] = {AVISO_DE_TIER: 0}
     nao_classificadas: dict[date, int] = {}
+    meses_do_arquivo: set[date] = set()
     coluna_do_tier = mapeamento.colunas.get("tier")
+    coluna_do_veiculo = mapeamento.colunas.get("veiculo")
+    recorta = bool(mapeamento.lista_de_veiculos) and veiculo_na_lista is not None
     total = 0
     for linha in linhas:
         total += 1
@@ -701,9 +734,24 @@ def ler_planilha(
                 data = para_data(linha.get(mapeamento.colunas["data"]))
                 if data is not None:
                     mes = data.replace(day=1)
+                    meses_do_arquivo.add(mes)
+                    #: SÓ A NÃO CLASSIFICADA DESTA FONTE. O recorte acontece
+                    #: depois de `ler_linha`, e sem esta conferência a fonte do
+                    #: Mercado herdava as não classificadas do clipping
+                    #: INTEIRO: "houve volume e ninguém classificou" passaria a
+                    #: ser o volume da Imprensa, exibido na lente Mercado.
+                    #:
+                    #: Pela célula crua, porque a linha não virou menção: é o
+                    #: mesmo texto que `ler_linha` leria em `veiculo`.
+                    if recorta and coluna_do_veiculo is not None:
+                        assert veiculo_na_lista is not None
+                        if not veiculo_na_lista(_texto(linha.get(coluna_do_veiculo))):
+                            continue
                     nao_classificadas[mes] = nao_classificadas.get(mes, 0) + 1
             continue
-        if veiculo_na_lista is not None and mapeamento.lista_de_veiculos:
+        meses_do_arquivo.add(lido.mes)
+        if recorta:
+            assert veiculo_na_lista is not None
             if not veiculo_na_lista(lido.veiculo):
                 descartes[Descarte.FORA_DA_LISTA_DE_VEICULOS.value] += 1
                 continue
@@ -719,6 +767,8 @@ def ler_planilha(
         linhas=total,
         avisos=avisos,
         nao_classificadas=nao_classificadas,
+        meses_do_arquivo=tuple(sorted(meses_do_arquivo)),
+        recortada_por_lista=recorta,
     )
 
 

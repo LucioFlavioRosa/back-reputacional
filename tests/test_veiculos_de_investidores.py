@@ -32,7 +32,7 @@ from app.banco.sessao import obter_sessao
 from app.banco.tabelas_catalogo import CategoriaPublico, SubcategoriaPublico
 from app.banco.tabelas_stakeholders import Instituicao
 from main import app
-from tests.test_e2e_postgres import URL, corpo
+from tests.test_e2e_postgres import URL
 
 _engine = create_engine(URL, pool_pre_ping=True)
 
@@ -137,13 +137,44 @@ def _veiculo(sessao, nome: str, subcategoria: int | None = None) -> Instituicao:
     return feito
 
 
+def _lista_de_agora(sessao) -> list[str]:
+    """A lista como o banco a tem — é o que a tela teria em mão."""
+    return [
+        str(ident)
+        for ident in sessao.scalars(
+            select(Instituicao.id)
+            .join(
+                SubcategoriaPublico,
+                SubcategoriaPublico.id == Instituicao.subcategoria_publico_id,
+            )
+            .join(
+                CategoriaPublico,
+                CategoriaPublico.id == SubcategoriaPublico.categoria_publico_id,
+            )
+            .where(
+                Instituicao.tipo == "veiculo",
+                CategoriaPublico.nome == "Imprensa",
+                SubcategoriaPublico.nome == "Econômica e de negócios",
+            )
+        )
+    ]
+
+
+def _salvar(cliente, sessao, ids) -> object:
+    """Grava a lista dizendo o que a tela tinha em mão — o caso sem conflito."""
+    return cliente.put(
+        ROTA,
+        json={"ids": [str(i) for i in ids], "conhecidos": _lista_de_agora(sessao)},
+    )
+
+
 def test_marca_os_veiculos_da_lista(cliente, sessao, mercado):
     valor = _veiculo(sessao, "Valor Econômico zz1")
     info = _veiculo(sessao, "InfoMoney zz1")
 
-    resposta = cliente.put(ROTA, json={"ids": [str(valor.id), str(info.id)]})
+    resposta = _salvar(cliente, sessao, [valor.id, info.id])
 
-    assert resposta.status_code == 200, corpo(resposta)
+    assert resposta.status_code == 200, resposta.text
     assert resposta.json()["marcados"] == 2
     sessao.expire_all()
     assert sessao.get(Instituicao, valor.id).subcategoria_publico_id == mercado
@@ -156,9 +187,9 @@ def test_quem_sai_da_lista_perde_a_subcategoria_do_mercado(cliente, sessao, merc
     sai = _veiculo(sessao, "Jornal que saiu zz2", mercado)
     fica = _veiculo(sessao, "Jornal que ficou zz2", mercado)
 
-    resposta = cliente.put(ROTA, json={"ids": [str(fica.id)]})
+    resposta = _salvar(cliente, sessao, [fica.id])
 
-    assert resposta.status_code == 200, corpo(resposta)
+    assert resposta.status_code == 200, resposta.text
     assert resposta.json()["desmarcados"] >= 1
     sessao.expire_all()
     assert sessao.get(Instituicao, sai.id).subcategoria_publico_id is None
@@ -173,16 +204,16 @@ def test_nao_sobrescreve_subcategoria_que_alguem_escolheu(
     #: humano com uma lista. Fora da lista E dentro dela, ele fica como está.
     classificado = _veiculo(sessao, "Jornal do Bairro zz3", outra_subcategoria)
 
-    fora = cliente.put(ROTA, json={"ids": []})
-    assert fora.status_code == 200, corpo(fora)
+    fora = _salvar(cliente, sessao, [])
+    assert fora.status_code == 200, fora.text
     sessao.expire_all()
     assert (
         sessao.get(Instituicao, classificado.id).subcategoria_publico_id
         == outra_subcategoria
     )
 
-    dentro = cliente.put(ROTA, json={"ids": [str(classificado.id)]})
-    assert dentro.status_code == 200, corpo(dentro)
+    dentro = _salvar(cliente, sessao, [classificado.id])
+    assert dentro.status_code == 200, dentro.text
     sessao.expire_all()
     assert (
         sessao.get(Instituicao, classificado.id).subcategoria_publico_id
@@ -204,9 +235,9 @@ def test_ignora_quem_nao_e_veiculo(cliente, sessao, mercado):
     sessao.add(orgao)
     sessao.flush()
 
-    resposta = cliente.put(ROTA, json={"ids": [str(orgao.id)]})
+    resposta = _salvar(cliente, sessao, [orgao.id])
 
-    assert resposta.status_code == 200, corpo(resposta)
+    assert resposta.status_code == 200, resposta.text
     assert resposta.json()["marcados"] == 0
     sessao.expire_all()
     assert sessao.get(Instituicao, orgao.id).subcategoria_publico_id is None
@@ -219,18 +250,18 @@ def test_id_que_nao_existe_nao_derruba_a_gravacao(cliente, sessao, mercado):
 
     valor = _veiculo(sessao, "Valor Econômico zz5")
 
-    resposta = cliente.put(ROTA, json={"ids": [str(valor.id), str(uuid4())]})
+    resposta = _salvar(cliente, sessao, [valor.id, uuid4()])
 
-    assert resposta.status_code == 200, corpo(resposta)
+    assert resposta.status_code == 200, resposta.text
     assert resposta.json()["marcados"] == 1
 
 
 def test_regravar_a_mesma_lista_nao_muda_nada(cliente, sessao, mercado):
     valor = _veiculo(sessao, "Valor Econômico zz6", mercado)
 
-    resposta = cliente.put(ROTA, json={"ids": [str(valor.id)]})
+    resposta = _salvar(cliente, sessao, [valor.id])
 
-    assert resposta.status_code == 200, corpo(resposta)
+    assert resposta.status_code == 200, resposta.text
     #: Os outros veículos de mercado do banco não entram nesta conta: o que se
     #: afirma aqui é que o que já estava certo não é tocado de novo.
     assert resposta.json()["marcados"] == 0
@@ -241,9 +272,9 @@ def test_lista_vazia_e_um_pedido_legitimo(cliente, sessao, mercado):
     #: preenchimento: recusá-la deixaria a pessoa sem como esvaziar a lista.
     unico = _veiculo(sessao, "Jornal único zz7", mercado)
 
-    resposta = cliente.put(ROTA, json={"ids": []})
+    resposta = _salvar(cliente, sessao, [])
 
-    assert resposta.status_code == 200, corpo(resposta)
+    assert resposta.status_code == 200, resposta.text
     sessao.expire_all()
     assert sessao.get(Instituicao, unico.id).subcategoria_publico_id is None
 
@@ -253,10 +284,88 @@ def test_campo_desconhecido_e_recusado(cliente):
     #: lista VAZIA em silêncio — e apagaria os 81.
     resposta = cliente.put(ROTA, json={"veiculos": []})
 
-    assert resposta.status_code == 422, corpo(resposta)
+    assert resposta.status_code == 422, resposta.text
 
 
 def test_so_quem_administra_cadastros_muda_a_lista(cliente_sem_cadastro):
-    resposta = cliente_sem_cadastro.put(ROTA, json={"ids": []})
+    resposta = cliente_sem_cadastro.put(ROTA, json={"ids": [], "conhecidos": []})
 
-    assert resposta.status_code == 403, corpo(resposta)
+    assert resposta.status_code == 403, resposta.text
+
+
+# -- os achados da revisão -------------------------------------------------------
+
+
+def test_A_RECUSA_VOLTA_COM_NOME_em_vez_de_virar_silencio(
+    cliente, sessao, mercado, outra_subcategoria
+):
+    """O achado Alto: a tela dizia "Nada mudou" para uma edição que não entrou.
+
+    CENÁRIO DE PRIMEIRO USO. A `0066` marcou só quem tinha subcategoria nula,
+    então um veículo já classificado à mão como "Geral nacional" ficou de fora
+    da lista. A pessoa o acrescenta pela aba e salva. O servidor recusa — certo,
+    não sobrescreve classificação humana —, mas devolvia `{marcados: 0}` sem
+    dizer de quem, e a tela imprimia "Nada mudou — a lista já estava assim",
+    limpava a edição e o veículo desaparecia. A pessoa achava que salvou.
+    """
+    classificado = _veiculo(sessao, "Jornal do Bairro zz20", outra_subcategoria)
+
+    resposta = _salvar(cliente, sessao, [classificado.id])
+
+    assert resposta.status_code == 200, resposta.text
+    saida = resposta.json()
+    assert saida["marcados"] == 0
+    assert saida["recusados"] == ["Jornal do Bairro zz20"]
+
+
+def test_A_LISTA_QUE_MUDOU_NO_MEIO_e_recusada_com_409(cliente, sessao, mercado):
+    """O achado Médio do lost update.
+
+    A abre a aba de manhã; B acrescenta um veículo à tarde; A remove outro e
+    salva. O pedido de A chega sem o id do veículo de B, e "estes são os
+    veículos de mercado" desmarcaria o de B — com a tela de A dizendo "0
+    entraram, 1 saíram", contagem verdadeira de uma mudança que A não pediu.
+    """
+    de_a = _veiculo(sessao, "Valor Econômico zz21", mercado)
+    conhecidos_de_a = _lista_de_agora(sessao)
+    #: B acrescenta DEPOIS de A ter carregado a tela.
+    de_b = _veiculo(sessao, "InfoMoney zz21", mercado)
+
+    resposta = cliente.put(
+        ROTA, json={"ids": [str(de_a.id)], "conhecidos": conhecidos_de_a}
+    )
+
+    assert resposta.status_code == 409, resposta.text
+    assert "mudou desde que esta tela carregou" in resposta.text
+    sessao.expire_all()
+    #: E O VEÍCULO DE B CONTINUA NA LISTA: nada foi gravado.
+    assert sessao.get(Instituicao, de_b.id).subcategoria_publico_id == mercado
+
+
+def test_a_CATEGORIA_vai_junto_com_a_subcategoria(cliente, sessao, mercado):
+    """O achado Baixo do par inconsistente.
+
+    A subcategoria é filha da categoria. Gravar só a filha deixava um par que a
+    tela de cadastro recusa ("Subcategoria X não pertence à categoria Y"): quem
+    fosse editar aquele veículo teria de mudar a classificação, e isso o tiraria
+    da lente sem querer.
+    """
+    sem_categoria = _veiculo(sessao, "Veículo sem categoria zz22")
+    assert sem_categoria.categoria_publico_id is None
+
+    resposta = _salvar(cliente, sessao, [sem_categoria.id])
+
+    assert resposta.status_code == 200, resposta.text
+    sessao.expire_all()
+    gravado = sessao.get(Instituicao, sem_categoria.id)
+    imprensa = sessao.scalar(
+        select(CategoriaPublico.id).where(CategoriaPublico.nome == "Imprensa")
+    )
+    assert gravado.categoria_publico_id == imprensa
+
+
+def test_sem_CONHECIDOS_o_pedido_e_recusado(cliente):
+    """Guarda que se pode esquecer de mandar é guarda que não existe."""
+    resposta = cliente.put(ROTA, json={"ids": []})
+
+    assert resposta.status_code == 422, resposta.text

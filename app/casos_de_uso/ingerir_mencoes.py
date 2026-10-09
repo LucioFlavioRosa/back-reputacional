@@ -52,12 +52,18 @@ from app.banco.tabelas_score import Mencao, ScoreFonte, ScoreMesFonte
 from app.casos_de_uso import veiculos_da_imprensa
 from app.casos_de_uso.veiculos_da_imprensa import nomes_da_lista
 from app.dominio.erros import RegraViolada
-from app.dominio.ingestao_score import Leitura, Mapeamento, ler_planilha, somar
+from app.dominio.ingestao_score import (
+    Descarte,
+    Leitura,
+    Mapeamento,
+    ler_planilha,
+    somar,
+)
 
-# `normalizar` É A MESMA DO CADASTRO, e isso foi verificado: ela e o
-# `achatar` da ingestão dão o mesmo resultado nos casos reais. Duas
-# normalizações diferentes fariam a menção não achar o veículo que acabou
-# de ser criado a partir dela.
+# `normalizar` É A MESMA DOS DOIS LADOS: o nome que vem da planilha e o
+# `nome_normalizado` gravado em `instituicao`. É isso que faz a menção achar o
+# veículo criado a partir dela — e não `normalizar` ser igual ao `achatar` da
+# ingestão, que ela não é (divergem em caractere não-ASCII; ver `reconhecer`).
 from app.dominio.texto import normalizar
 
 #: Abrir uma planilha de 10 mil linhas é barato; abrir um arquivo de 200 MB
@@ -232,8 +238,25 @@ def regravar(
     Uma segunda cópia desta função seria a segunda definição de "o que é um mês
     no banco".
     """
+    mapeamento = _mapeamento_de(fonte)
+    if mapeamento.lista_de_veiculos and not leitura.recortada_por_lista:
+        #: A GUARDA MORA AQUI, e não só em `ler_planilha`, porque é AQUI que a
+        #: escrita acontece. `carga_do_pacote_das_lentes` monta a `Leitura` à
+        #: mão e chama esta função direto: no dia em que a imprensa entrar
+        #: naquele pacote, a fonte do Mercado seria gravada com o clipping
+        #: inteiro — a lente contaria 25.457 menções em vez de 327, e nada
+        #: daria sinal. Quem grava numa fonte que recorta por lista tem de ter
+        #: recortado.
+        raise RegraViolada(
+            f"{fonte.nome} recorta pela lista {mapeamento.lista_de_veiculos!r} e "
+            "a leitura recebida não foi recortada."
+        )
+
     de_cadastro = dict(veiculos or {})
-    meses = list(leitura.meses)
+    #: OS MESES DO ARQUIVO para quem recorta por lista — ver
+    #: `Leitura.meses_a_substituir`. Apagar por `meses` deixaria o mês sem
+    #: veículo da lista com o que o critério anterior gravou.
+    meses = list(leitura.meses_a_substituir(mapeamento))
     sessao.execute(
         delete(MencaoNaoClassificada).where(
             MencaoNaoClassificada.fonte_id == fonte.id,
@@ -371,7 +394,18 @@ def _ingerir_uma(
     #: Sem isto, subir pela própria fonte do Mercado derrubaria a subida inteira
     #: no mês fraco — e, na primeira subida de uma base sem veículo
     #: classificado, em todos eles.
-    pode_vir_vazia = e_recorte or bool(mapeamento.lista_de_veiculos)
+    #:
+    #: MAS SÓ O RECORTE PODE EXPLICAR O VAZIO. O que o recorte não explica é
+    #: arquivo ILEGÍVEL: aba e cabeçalho certos, datas que o parser não lê ou
+    #: vocabulário de sentimento que o mapeamento não conhece. Aí nenhuma linha
+    #: chegou a ser candidata, e aceitar em silêncio é a falha para a qual esta
+    #: guarda foi escrita — subir pela fonte do Mercado a desligava inteira.
+    legiveis = len(leitura.mencoes) + leitura.descartes.get(
+        Descarte.FORA_DA_LISTA_DE_VEICULOS.value, 0
+    )
+    pode_vir_vazia = e_recorte or (
+        bool(mapeamento.lista_de_veiculos) and legiveis > 0
+    )
     if not leitura.mencoes and not pode_vir_vazia:
         #: ZERO NA FONTE PELA QUAL SE SUBIU É ERRO: o arquivo não serve, e
         #: aceitar em silêncio apagaria o mês trocando-o por nada.
@@ -379,6 +413,32 @@ def _ingerir_uma(
             f"Nenhuma linha da planilha virou menção em {fonte.nome}. "
             f"Lidas {leitura.linhas}; descartes: {dict(leitura.descartes)}."
         )
+    if not leitura.mencoes and mapeamento.lista_de_veiculos:
+        #: ZERO NUMA FONTE QUE RECORTA POR LISTA SUBSTITUI O MÊS. "Nenhum
+        #: veículo meu foi mencionado em setembro" é um zero da Aegea, medido
+        #: pela régua da Aegea — e setembro tem de ficar zerado, não com o que a
+        #: régua antiga gravou. Sem isto, resubir o arquivo para aplicar o
+        #: critério novo deixava o mês fraco no critério velho, e a série do
+        #: Mercado passava a misturar os dois sem nada em tela.
+        #:
+        #: Segue para `regravar`, que apaga os meses DO ARQUIVO e grava zero
+        #: menções.
+        antes_do_vazio = _quanto_havia(
+            sessao, fonte, list(leitura.meses_a_substituir(mapeamento))
+        )
+        regravar(sessao, fonte, leitura, veiculos)
+        return Resumo(
+            fonte=fonte.codigo,
+            nome=fonte.nome,
+            linhas=leitura.linhas,
+            ingeridas=0,
+            descartes=leitura.descartes,
+            meses=leitura.meses_a_substituir(mapeamento),
+            antes=antes_do_vazio,
+            avisos={motivo: total for motivo, total in leitura.avisos.items() if total},
+            veiculos_criados=criados,
+        )
+
     if not leitura.mencoes:
         #: ZERO NUMA IRMÃ QUE RECORTA É FATO, e não erro — e isto é conserto de
         #: um defeito que vem do commit original da ingestão.
@@ -408,7 +468,11 @@ def _ingerir_uma(
             veiculos_criados=criados,
         )
 
-    antes = _quanto_havia(sessao, fonte, list(leitura.meses))
+    #: PELOS MESES QUE VÃO SER SUBSTITUÍDOS, que para quem recorta por lista
+    #: são os do arquivo: é esse o número que a tela compara para dizer "este
+    #: mês tinha 300 e vai encolher".
+    meses_substituidos = list(leitura.meses_a_substituir(mapeamento))
+    antes = _quanto_havia(sessao, fonte, meses_substituidos)
     regravar(sessao, fonte, leitura, veiculos)
     de_cadastro = dict(veiculos or {})
     return Resumo(
@@ -417,7 +481,7 @@ def _ingerir_uma(
         linhas=leitura.linhas,
         ingeridas=len(leitura.mencoes),
         descartes=leitura.descartes,
-        meses=leitura.meses,
+        meses=tuple(meses_substituidos),
         antes=antes,
         avisos={motivo: total for motivo, total in leitura.avisos.items() if total},
         veiculos_criados=criados,
@@ -615,8 +679,11 @@ def _prever_uma(sessao: Session, fonte: ScoreFonte, conteudo: bytes) -> Resumo:
         nome=fonte.nome,
         linhas=leitura.linhas,
         ingeridas=len(leitura.mencoes),
-        antes=_quanto_havia(sessao, fonte, list(leitura.meses)),
+        #: PELOS MESES QUE A SUBIDA SUBSTITUIRIA, e não pelos que renderiam
+        #: menção: é o que faz a conferência prometer o que vai acontecer
+        #: quando o recorte por lista zera um mês.
+        antes=_quanto_havia(sessao, fonte, list(leitura.meses_a_substituir(mapeamento))),
         descartes=leitura.descartes,
         avisos={motivo: total for motivo, total in leitura.avisos.items() if total},
-        meses=tuple(leitura.meses),
+        meses=leitura.meses_a_substituir(mapeamento),
     )

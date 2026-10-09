@@ -29,9 +29,12 @@
 --: A coluna normalizada é a que a aplicação usa para casar nome — e é a que tem
 --: índice único com o tipo. Os nomes abaixo já vêm normalizados por ela.
 --:
---: (Um dos veículos da Clipei traz EMOJI no nome. `normalizar` o preserva, e é
---: por isso que gerar a lista pela própria função do domínio importa: uma
---: normalização escrita à mão em SQL trataria isso de outro jeito.)
+--: (Um dos veículos da Clipei traz EMOJI no nome. `normalizar` o DESCARTA —
+--: ela faz `NFKD` e corta tudo que não é ASCII, medido: `normalizar("Jornal 📈")`
+--: dá `"jornal"` —, enquanto o `achatar` da ingestão o preserva. Os dois lados
+--: desta comparação usam `normalizar`, então o casamento fecha; é por isso que
+--: gerar a lista pela própria função do domínio importa, e não por preservar o
+--: emoji. Corrigido depois de revisão: a frase anterior afirmava o contrário.)
 --:
 --: Nome que não casar é ignorado SEM ERRO: numa base onde a Clipei ainda não
 --: entrou o veículo não existe, e parar a migration por isso impediria o banco

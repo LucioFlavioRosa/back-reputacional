@@ -114,11 +114,16 @@ def reconhecer(
     `veiculos` é nome cru -> `{"uf": ..., "abrangencia": ..., "mencoes": n}`,
     como o leitor da planilha o monta.
 
-    NORMALIZA PELA MESMA FUNÇÃO DO CADASTRO (`dominio.texto.normalizar`), e isso
-    foi verificado: ela e o `achatar` da ingestão dão o mesmo resultado nos casos
-    reais — acento, caixa, espaço duplo e o `|` que a Clipei usa entre veículo e
-    cidade. Duas normalizações diferentes fariam "Valor Econômico" não casar com
-    o "Valor Econômico" que já está cadastrado.
+    NORMALIZA PELA MESMA FUNÇÃO DO CADASTRO (`dominio.texto.normalizar`), e é
+    isso que faz "Valor Econômico" casar com o "Valor Econômico" já cadastrado:
+    acento, caixa, espaço duplo e o `|` que a Clipei usa entre veículo e cidade.
+
+    ELA NÃO É IGUAL AO `achatar` DA INGESTÃO, e a segurança não vem de serem
+    iguais — vem de os DOIS LADOS desta comparação usarem `normalizar`.
+    Divergem em caractere não-ASCII: `normalizar` faz `NFKD` e corta o que não é
+    ASCII (medido: `normalizar("Jornal 📈")` dá `"jornal"`), enquanto `achatar`
+    o preserva. Um veículo cujo nome seja só não-ASCII normaliza para vazio e
+    nunca casa — fato aceito, e a razão de a lista descartar nome vazio.
     """
     nomes = {normalizar(nome): nome for nome in veiculos}
     if not nomes:
@@ -214,6 +219,13 @@ def nomes_da_lista(sessao: Session, lista: str) -> frozenset[str]:
     classificou veículo nenhum, a lente Mercado recorta para zero. É o estado
     da primeira subida, e `_ingerir_uma` já sabe que recorte vazio numa fonte
     irmã é fato, não falha.
+
+    VEÍCULO DESATIVADO NÃO ESTÁ NA LISTA. `ativo=false` é o gesto de quem
+    administra o cadastro dizendo "este não é um veículo corrente", e manter as
+    menções dele contando numa lente faria a desativação significar duas coisas
+    diferentes em dois lugares. `fontes_do_mesmo_arquivo` já filtra `ativo` pelo
+    mesmo motivo. A aba o mostra com a marca "inativo — não conta na lente",
+    para a consequência não ser silenciosa.
     """
     par = LISTAS_DE_VEICULOS.get(lista)
     if par is None:
@@ -237,9 +249,14 @@ def nomes_da_lista(sessao: Session, lista: str) -> frozenset[str]:
         )
         .where(
             Instituicao.tipo == "veiculo",
+            Instituicao.ativo.is_(True),
             CategoriaPublico.nome == categoria,
             SubcategoriaPublico.nome == subcategoria,
         )
+        #: SEM `limit`, de propósito: aqui se quer a UNIÃO de todos os veículos
+        #: que casam, e não uma subcategoria escolhida. Se um dia houver duas
+        #: linhas com o mesmo par de nomes, o recorte inclui as duas — o que é
+        #: mais seguro do que escolher uma e perder metade da lista.
     )
     return frozenset(nome for nome in nomes if nome)
 

@@ -27,16 +27,23 @@ import io
 from datetime import date
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
 from app.banco.tabelas_catalogo import CategoriaPublico, SubcategoriaPublico
+from app.banco.tabelas_lentes import MencaoNaoClassificada
 from app.banco.tabelas_score import Mencao, ScoreFonte
 from app.banco.tabelas_stakeholders import Instituicao
 from app.casos_de_uso import ingerir_mencoes
 from app.casos_de_uso.veiculos_da_imprensa import nomes_da_lista
 from app.dominio.erros import RegraViolada
-from app.dominio.ingestao_score import Descarte, Mapeamento, ler_planilha
+from app.dominio.ingestao_score import (
+    Descarte,
+    Leitura,
+    Mapeamento,
+    MencaoLida,
+    ler_planilha,
+)
 from app.dominio.texto import normalizar
 from tests.test_e2e_postgres import URL
 
@@ -102,15 +109,24 @@ def test_o_descarte_tem_motivo_PROPRIO():
     assert leitura.descartes[Descarte.FORA_DO_FILTRO.value] == 0
 
 
-def test_linha_sem_veiculo_nao_entra():
-    #: Não há como afirmar que ela é de um veículo de mercado, e supor que é
-    #: inventaria menção na lente.
+def test_o_motor_pergunta_ao_predicado_tambem_pela_linha_sem_veiculo():
+    #: O MOTOR NÃO DECIDE SOZINHO sobre a linha sem veículo: ele pergunta, e
+    #: quem responde é `_recorte_por_lista` — testado em
+    #: `test_a_linha_SEM_VEICULO_nao_entra_pelo_codigo_de_producao`, que exercita
+    #: a guarda de verdade. Aqui só se afirma que a pergunta é feita.
+    perguntados: list[str | None] = []
+
+    def anotar(veiculo: str | None) -> bool:
+        perguntados.append(veiculo)
+        return False
+
     leitura = ler_planilha(
         [{"Data": date(2026, 8, 3), "Classificação": "Positiva", "Veículo": None}],
         Mapeamento.de_json(MAPEAMENTO_COM_LISTA),
-        lambda veiculo: bool(veiculo) and normalizar(veiculo) in {"valor economico"},
+        anotar,
     )
 
+    assert perguntados == [None]
     assert leitura.mencoes == ()
     assert leitura.descartes[Descarte.FORA_DA_LISTA_DE_VEICULOS.value] == 1
 
@@ -192,6 +208,27 @@ def test_veiculo_sem_subcategoria_nao_esta_na_lista(sessao):
     sessao.flush()
 
     assert "jornal do bairro zz2" not in nomes_da_lista(sessao, "imprensa_economica")
+
+
+def test_VEICULO_DESATIVADO_sai_da_lista(sessao):
+    """O achado Médio: desativar no cadastro tinha de tirar da lente.
+
+    `ativo=false` é o gesto de quem administra o cadastro dizendo "este não é um
+    veículo corrente". Sem este filtro, a próxima subida continuava contando as
+    menções dele no Mercado — e a aba o exibia como membro vivo, sem marca
+    nenhuma. Três lugares precisavam concordar e não concordavam.
+    """
+    desativado = _marcar(sessao, "Jornal aposentado zz30")
+    assert normalizar("Jornal aposentado zz30") in nomes_da_lista(
+        sessao, "imprensa_economica"
+    )
+
+    desativado.ativo = False
+    sessao.flush()
+
+    assert normalizar("Jornal aposentado zz30") not in nomes_da_lista(
+        sessao, "imprensa_economica"
+    )
 
 
 def test_lista_sem_traducao_para_o_cadastro_e_recusada(sessao):
@@ -304,3 +341,186 @@ def test_lista_vazia_recorta_para_zero_sem_derrubar_a_subida(sessao, fonte_de_me
     )
 
     assert resumo[0].ingeridas == 0
+
+
+# -- os achados da revisão -------------------------------------------------------
+
+
+def test_a_linha_SEM_VEICULO_nao_entra_pelo_codigo_de_producao(sessao, fonte_de_mercado):
+    """A guarda real, e não a lambda de um teste.
+
+    O QUE A REVISÃO PEGOU: o teste do motor passava um predicado próprio, então
+    `if not veiculo: return False` em `_recorte_por_lista` nunca era exercida —
+    apagá-la deixava a suíte verde. Aqui a linha sobe de verdade, pelo caminho
+    inteiro.
+    """
+    _marcar(sessao, "Valor Econômico zz10")
+
+    resumo = ingerir_mencoes.ingerir(
+        sessao,
+        fonte_de_mercado,
+        _planilha(
+            [
+                [date(2026, 8, 3), "Positiva", "Valor Econômico zz10", "Geral"],
+                [date(2026, 8, 4), "Negativa", None, "Investidores"],
+            ]
+        ),
+    )
+
+    assert resumo[0].ingeridas == 1
+    assert resumo[0].descartes[Descarte.FORA_DA_LISTA_DE_VEICULOS.value] == 1
+
+
+def _mencao_antiga(sessao, fonte: ScoreFonte, mes: date) -> None:
+    """Uma menção gravada pela régua ANTERIOR, como o banco a tem hoje."""
+    sessao.add(
+        Mencao(
+            fonte_id=fonte.id,
+            mes=mes,
+            data=mes,
+            sentimento="pos",
+            veiculo="Veículo do critério antigo",
+        )
+    )
+    sessao.flush()
+
+
+def test_RESUBIR_ZERA_O_MES_em_que_nenhum_veiculo_da_lista_aparece(
+    sessao, fonte_de_mercado
+):
+    """O achado Alto: o mês não pode ficar com o que a régua antiga gravou.
+
+    CENÁRIO. A lente Mercado tinha agosto gravado pelo critério velho
+    (`Público-alvo = Investidores`). Quem opera resobe o arquivo justamente para
+    aplicar o critério novo, e naquele mês nenhum veículo da lista é mencionado.
+    Antes do conserto, `regravar` apagava por `leitura.meses` — que nasce das
+    menções e vinha vazio —, então NADA era apagado: a lente seguia valendo 20%
+    do ISR com as linhas do critério aposentado, e nenhuma tela mostrava isso.
+    """
+    _mencao_antiga(sessao, fonte_de_mercado, date(2026, 8, 1))
+
+    resumo = ingerir_mencoes.ingerir(
+        sessao,
+        fonte_de_mercado,
+        _planilha([[date(2026, 8, 3), "Positiva", "Fora da lista zz11", "Geral"]]),
+    )
+
+    assert resumo[0].ingeridas == 0
+    #: O MÊS APARECE NO RESUMO, para a tela poder dizer o que substituiu.
+    assert resumo[0].meses == (date(2026, 8, 1),)
+    #: E A TELA PODE DIZER QUE ENCOLHEU: `antes` é o que havia no mês.
+    assert resumo[0].antes == 1
+    assert (
+        sessao.scalar(
+            select(func.count())
+            .select_from(Mencao)
+            .where(Mencao.fonte_id == fonte_de_mercado.id)
+        )
+        == 0
+    )
+
+
+def test_RESUBIR_PARCIAL_nao_deixa_um_mes_em_cada_criterio(sessao, fonte_de_mercado):
+    """O caso pior do mesmo achado: a série misturando dois critérios.
+
+    Arquivo com agosto E setembro, lista casando só em agosto. Antes do
+    conserto, agosto era regravado pelo critério novo e setembro ficava no
+    antigo — e a série do Mercado passava a misturar os dois, mês a mês.
+    """
+    _marcar(sessao, "Valor Econômico zz12")
+    _mencao_antiga(sessao, fonte_de_mercado, date(2026, 8, 1))
+    _mencao_antiga(sessao, fonte_de_mercado, date(2026, 9, 1))
+
+    ingerir_mencoes.ingerir(
+        sessao,
+        fonte_de_mercado,
+        _planilha(
+            [
+                [date(2026, 8, 3), "Positiva", "Valor Econômico zz12", "Geral"],
+                [date(2026, 9, 4), "Negativa", "Fora da lista zz12", "Investidores"],
+            ]
+        ),
+    )
+
+    gravadas = sessao.execute(
+        select(Mencao.mes, Mencao.veiculo).where(Mencao.fonte_id == fonte_de_mercado.id)
+    ).all()
+    assert [(m, v) for m, v in gravadas] == [
+        (date(2026, 8, 1), "Valor Econômico zz12")
+    ]
+
+
+def test_ARQUIVO_ILEGIVEL_continua_sendo_recusado(sessao, fonte_de_mercado):
+    """A outra metade do achado Médio sobre o vazio.
+
+    O recorte explica um vazio; arquivo ilegível não. Aba e cabeçalho certos,
+    vocabulário de sentimento que o mapeamento não conhece: nenhuma linha chegou
+    a ser candidata, e aceitar com 201 é a falha para a qual a guarda foi
+    escrita. Antes do conserto, `pode_vir_vazia` a desligava para toda fonte que
+    recorta por lista.
+    """
+    with pytest.raises(RegraViolada, match="Nenhuma linha da planilha virou menção"):
+        ingerir_mencoes.ingerir(
+            sessao,
+            fonte_de_mercado,
+            _planilha([[date(2026, 8, 3), "Mais ou menos", "Valor Econômico zz13", ""]]),
+        )
+
+
+def test_as_NAO_CLASSIFICADAS_sao_as_desta_fonte(sessao, fonte_de_mercado):
+    """O achado Médio sobre "houve volume e ninguém classificou".
+
+    O recorte acontece depois de `ler_linha`, então a linha sem sentimento era
+    contada para a fonte do Mercado seja de que veículo fosse: a lente passava a
+    exibir como sua a não-classificação do clipping INTEIRO.
+    """
+    _marcar(sessao, "Valor Econômico zz14")
+
+    ingerir_mencoes.ingerir(
+        sessao,
+        fonte_de_mercado,
+        _planilha(
+            [
+                [date(2026, 8, 3), "Positiva", "Valor Econômico zz14", "Geral"],
+                #: SEM SENTIMENTO e de veículo DA lista: conta.
+                [date(2026, 8, 4), "Não informado", "Valor Econômico zz14", "Geral"],
+                #: SEM SENTIMENTO e de veículo FORA da lista: não é desta fonte.
+                [date(2026, 8, 5), "Não informado", "Jornal do Bairro zz14", "Geral"],
+                [date(2026, 8, 6), "Não informado", "Outro jornal zz14", "Geral"],
+            ]
+        ),
+    )
+
+    quantas = sessao.scalar(
+        select(MencaoNaoClassificada.total).where(
+            MencaoNaoClassificada.fonte_id == fonte_de_mercado.id,
+            MencaoNaoClassificada.mes == date(2026, 8, 1),
+        )
+    )
+    assert quantas == 1
+
+
+def test_REGRAVAR_recusa_leitura_que_nao_foi_recortada(sessao, fonte_de_mercado):
+    """O achado Médio do segundo caminho de escrita.
+
+    `carga_do_pacote_das_lentes` monta a `Leitura` à mão e chama `regravar`
+    direto, por fora de `ler_planilha` — então a guarda do motor não cobre esse
+    caminho. No dia em que a imprensa entrar naquele pacote, a fonte do Mercado
+    seria gravada com o clipping inteiro, sem sinal nenhum. A guarda passou a
+    morar onde a escrita acontece.
+    """
+    sem_recorte = Leitura(
+        mencoes=(
+            MencaoLida(
+                mes=date(2026, 8, 1),
+                data=date(2026, 8, 3),
+                sentimento="pos",
+                veiculo="Qualquer um",
+            ),
+        ),
+        descartes={},
+        linhas=1,
+    )
+
+    with pytest.raises(RegraViolada, match="não foi recortada"):
+        ingerir_mencoes.regravar(sessao, fonte_de_mercado, sem_recorte)
