@@ -444,7 +444,7 @@ def test_o_gerador_faz_o_COMPLETO_por_padrao():
 
 
 def test_o_gerador_faz_o_SIMPLIFICADO_quando_pedido():
-    """O modelo do evento: 22 colunas, na ordem do formulário."""
+    """O modelo do evento: 37 colunas, na ordem do formulário."""
     from app.dominio.importacao_de_agendas import MODELOS
 
     conteudo = gerar(VOCABULARIOS, modelo="simplificado")
@@ -964,3 +964,54 @@ def test_o_intervalo_acha_a_ultima_linha_tambem_num_vocabulario_de_NUMEROS():
 
     assert 'REPT("z"' in definido, definido
     assert "E+307" in definido, definido
+
+
+def test_o_modelo_marca_o_tema_repetido_nas_duas_versoes():
+    """A FORMATAÇÃO CONDICIONAL É O QUE DÁ, e o pedido era outro.
+
+    O pedido foi "ao escolher um tema, tirá-lo das outras colunas". O Excel não
+    permite: uma célula aceita UMA validação, e uma lista não sabe excluir o que
+    as vizinhas usaram. Trocar a lista por uma fórmula `COUNTIF` perderia a
+    suspensa com os assuntos — e digitá-los à mão é o erro que a suspensa existe
+    para impedir.
+
+    O que entrou resolve o mesmo problema por outro caminho: a célula repetida
+    fica vermelha na hora, a suspensa continua inteira, e a trava de verdade é a
+    conferência. Este teste existe porque uma formatação condicional é
+    invisível em revisão de código e some sem ninguém notar.
+    """
+    from openpyxl.utils import get_column_letter
+
+    from app.dominio.importacao_de_agendas import CAMPO_DOS_TEMAS, colunas_do_modelo
+
+    for modelo in ("completo", "simplificado"):
+        pasta = _abrir(gerar(VOCABULARIOS, modelo=modelo))
+        aba = pasta["Agendas"]
+
+        regras = [
+            (faixa.sqref, regra)
+            for faixa in aba.conditional_formatting
+            for regra in faixa.rules
+        ]
+        assert len(regras) == 1, (modelo, regras)
+        faixa, regra = regras[0]
+
+        # A FAIXA COBRE AS COLUNAS DE TEMA, e as 500 linhas do teto.
+        colunas = colunas_do_modelo(modelo)
+        de_tema = [
+            indice
+            for indice, coluna in enumerate(colunas, start=1)
+            if coluna.campo == CAMPO_DOS_TEMAS
+        ]
+        assert len(de_tema) == 18, modelo
+        primeira = get_column_letter(min(de_tema))
+        ultima = get_column_letter(max(de_tema))
+        assert str(faixa) == f"{primeira}2:{ultima}501", (modelo, str(faixa))
+
+        # A FÓRMULA CONTA NA LINHA, não na coluna: `$` nas letras e não no
+        # número. Fixar a linha compararia toda a planilha com a linha 2.
+        (formula,) = regra.formula
+        assert f"COUNTIF(${primeira}2:${ultima}2,{primeira}2)>1" in formula, modelo
+        # EM BRANCO NÃO É REPETIÇÃO: dezoito células vazias contariam como
+        # dezoito iguais, e a linha inteira nasceria vermelha.
+        assert f'{primeira}2<>""' in formula, modelo

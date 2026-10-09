@@ -36,6 +36,7 @@ from collections.abc import Mapping, Sequence
 from app.dominio.erros import RegraViolada
 from app.dominio.importacao_de_agendas import (
     ABA_PRINCIPAL,
+    CAMPO_DOS_TEMAS,
     COLUNA_DA_INSTITUICAO_DA_AGENDA,
     COLUNA_DE_REPETICAO,
     FORMATO,
@@ -256,6 +257,8 @@ def gerar(
     try:
         from openpyxl import Workbook
         from openpyxl.comments import Comment
+        from openpyxl.formatting.rule import FormulaRule
+        from openpyxl.styles import PatternFill
         from openpyxl.utils import get_column_letter
         from openpyxl.workbook.defined_name import DefinedName
         from openpyxl.worksheet.datavalidation import DataValidation
@@ -537,6 +540,43 @@ def gerar(
         # `A2..A501` CRIA as 500 células, o arquivo passa a ter 501 linhas usadas
         # e o `Ctrl+End` de quem abre o modelo vai para o fim do nada.
         agendas.column_dimensions[letra_da_data].number_format = FORMATO_DA_DATA_NA_TELA
+
+    # -- o tema repetido fica VERMELHO enquanto a pessoa preenche -------------
+    #
+    # O PEDIDO ERA OUTRO, e vale dizer por que ele não dá: "ao escolher um tema,
+    # tirá-lo das outras colunas". O Excel não permite — uma célula aceita UMA
+    # validação, e uma lista não sabe excluir o que as células vizinhas usaram.
+    # As alternativas que existiriam são piores que o problema: trocar a lista
+    # por uma fórmula `COUNTIF` perderia a suspensa com os 149 assuntos (e
+    # digitá-los à mão é o erro que a suspensa existe para impedir), e uma
+    # suspensa filtrada por linha exigiria uma área auxiliar com uma fórmula
+    # `FILTER` por linha — 500 linhas vezes 18 colunas de fórmula num arquivo
+    # que precisa abrir no Excel de quem recebe por e-mail.
+    #
+    # O QUE DÁ, E RESOLVE O MESMO PROBLEMA: formatação condicional. A célula
+    # repetida fica vermelha NA HORA, a suspensa continua inteira, e quem
+    # preenche vê o erro antes de subir o arquivo. A trava de verdade é a
+    # conferência, que retira a repetição e avisa em qual coluna o assunto já
+    # estava — ver `importar_agendas`.
+    indices_de_tema = [
+        indice
+        for indice, coluna in enumerate(colunas_da_agenda, start=1)
+        if coluna.campo == CAMPO_DOS_TEMAS
+    ]
+    if len(indices_de_tema) > 1:
+        primeira = get_column_letter(min(indices_de_tema))
+        ultima = get_column_letter(max(indices_de_tema))
+        faixa = f"{primeira}2:{ultima}{_LINHAS_DE_AGENDAS + 1}"
+        # `$` NAS COLUNAS E NÃO NA LINHA: o intervalo contado tem de ser o das
+        # colunas de tema DAQUELA linha. Fixar a linha compararia tudo com a 2.
+        agendas.conditional_formatting.add(
+            faixa,
+            FormulaRule(
+                formula=[f'AND({primeira}2<>"",COUNTIF(${primeira}2:${ultima}2,{primeira}2)>1)'],
+                fill=PatternFill(start_color="FFF4C7C3", end_color="FFF4C7C3", fill_type="solid"),
+                stopIfTrue=False,
+            ),
+        )
 
     # -- a largura de cada coluna, pelo tipo do dado --------------------------
     #

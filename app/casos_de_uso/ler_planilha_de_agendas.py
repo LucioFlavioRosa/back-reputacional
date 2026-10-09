@@ -203,7 +203,7 @@ def _linhas_da_aba(aba: Aba, folha) -> list[LinhaBruta]:
             continue
 
         # UMA COLUNA DECIDE PELA LINHA TODA, e é aí que está a economia: escrever a
-        # instrução em cada uma das 22 colunas trocaria digitar 22 valores por
+        # instrução em cada uma das 37 colunas trocaria digitar 37 valores por
         # digitar 22 instruções, e não pouparia nada.
         #
         # A LINHA OPTA POR HERDAR. Quem não marcou não herda: vazio continua vazio,

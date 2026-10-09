@@ -536,7 +536,7 @@ def test_o_completo_tem_74_colunas_e_o_front_diz_esse_numero():
     from app.dominio.importacao_de_agendas import MODELOS
 
     assert len(MODELOS["completo"]) == 74
-    assert len(MODELOS["simplificado"]) == 22
+    assert len(MODELOS["simplificado"]) == 37
 
 
 def test_o_modelo_completo_e_a_descricao_inteira_na_ordem_dela():
@@ -545,10 +545,15 @@ def test_o_modelo_completo_e_a_descricao_inteira_na_ordem_dela():
     assert list(MODELOS["completo"]) == [coluna.nome for coluna in aba_de("Agendas").colunas]
 
 
-def test_o_simplificado_tem_as_22_colunas_do_evento():
+def test_o_simplificado_tem_as_37_colunas_do_evento():
     """AS COLUNAS QUE O DONO DO PRODUTO PEDIU, e a razão: 54 agendas do mesmo dia
-    são um evento, com muitas conversas curtas. As 59 colunas do completo viram
-    rolagem horizontal para preencher quatro coisas por linha."""
+    são um evento, com muitas conversas curtas. As 74 colunas do completo viram
+    rolagem horizontal para preencher quatro coisas por linha.
+
+    O RECORTE É DE CAMPOS, NÃO DE ASSUNTOS: ficam de fora aceite, expectativa e
+    materiais, e as 18 colunas de tema entram nos DOIS modelos — senão a mesma
+    agenda caberia ou não dependendo do arquivo que a pessoa baixou.
+    """
     from app.dominio.importacao_de_agendas import COLUNA_DE_REPETICAO, MODELOS
 
     assert list(MODELOS["simplificado"]) == [
@@ -560,9 +565,7 @@ def test_o_simplificado_tem_as_22_colunas_do_evento():
         "Instituição",
         "UF",
         "Unidade de negócio",
-        "Tema 1",
-        "Tema 2",
-        "Tema 3",
+        *(f"Tema {numero}" for numero in range(1, TETO_DE_TEMAS_POR_AGENDA + 1)),
         "Modalidade",
         "Local",
         "Relato",
