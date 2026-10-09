@@ -24,7 +24,7 @@ from sqlalchemy import Date as ColunaDeData
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.banco.tabelas_catalogo import Clima, Tema
+from app.banco.tabelas_catalogo import BlocoTema, Clima, MacroTema, Tema
 from app.banco.tabelas_interacoes import InteracaoRegistro
 from app.banco.tabelas_score import (
     Lente,
@@ -378,6 +378,32 @@ def condicoes_do_filtro(filtro: FiltroDeMencoes | None) -> list:
                 Mencao.tema_id.in_(
                     select(Tema.id).where(Tema.nome == filtro.tema_texto).scalar_subquery()
                 ),
+            )
+        )
+    #: OS TRÊS NÍVEIS DA TAXONOMIA, cada um um `and` a mais — escolher o pilar e,
+    #: dentro dele, um tema estratégico estreita, como no CRM. SUBCONSULTA pelo
+    #: mesmo motivo do tema acima: este recorte entra em nove consultas.
+    if filtro.tema_n3:
+        condicoes.append(
+            Mencao.tema_id.in_(select(Tema.id).where(Tema.nome == filtro.tema_n3).scalar_subquery())
+        )
+    if filtro.tema_n2:
+        condicoes.append(
+            Mencao.tema_id.in_(
+                select(Tema.id)
+                .join(MacroTema, MacroTema.id == Tema.macro_tema_id)
+                .where(MacroTema.nome == filtro.tema_n2)
+                .scalar_subquery()
+            )
+        )
+    if filtro.tema_n1:
+        condicoes.append(
+            Mencao.tema_id.in_(
+                select(Tema.id)
+                .join(MacroTema, MacroTema.id == Tema.macro_tema_id)
+                .join(BlocoTema, BlocoTema.id == MacroTema.bloco_tema_id)
+                .where(BlocoTema.nome == filtro.tema_n1)
+                .scalar_subquery()
             )
         )
     return condicoes

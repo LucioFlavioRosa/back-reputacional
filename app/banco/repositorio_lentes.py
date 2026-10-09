@@ -36,7 +36,7 @@ from app.banco.repositorio_score import (
     so_fontes_ligadas,
     so_interacoes_visiveis,
 )
-from app.banco.tabelas_catalogo import Clima, Tema
+from app.banco.tabelas_catalogo import BlocoTema, Clima, MacroTema, Tema
 from app.banco.tabelas_interacoes import InteracaoRegistro, InteracaoTema
 from app.banco.tabelas_lentes import (
     CmRespostaMes,
@@ -290,6 +290,21 @@ def opcoes_de_filtro(sessao: Session, lente_id: int, mes: date) -> dict[str, lis
         )
         return [valor for (valor,) in sessao.execute(consulta) if valor]
 
+    def _da_taxonomia(coluna) -> list[str]:
+        """Os nomes de um nível da taxonomia que as menções do mês alcançam."""
+        consulta = (
+            select(coluna)
+            .distinct()
+            .select_from(Mencao)
+            .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+            .join(Tema, Tema.id == Mencao.tema_id)
+            .join(MacroTema, MacroTema.id == Tema.macro_tema_id)
+            .join(BlocoTema, BlocoTema.id == MacroTema.bloco_tema_id)
+            .where(ScoreFonte.lente_id == lente_id, Mencao.mes == primeiro_dia(mes))
+            .order_by(coluna)
+        )
+        return [valor for (valor,) in sessao.execute(consulta) if valor]
+
     def _mais_presentes(coluna, quantos: int) -> list[str]:
         """Os valores com mais menções no mês, e só eles.
 
@@ -347,6 +362,15 @@ def opcoes_de_filtro(sessao: Session, lente_id: int, mes: date) -> dict[str, lis
         #: base nacional são dezenas, e a lista por volume responde "quem está
         #: aparecendo este mês".
         "empresas": _mais_presentes(Mencao.unidade_texto, 20),
+        # -- a taxonomia de temas do CRM, pelas menções ligadas a ela ----------
+        #
+        # SÓ O QUE APARECE NO MÊS, como as outras: os nomes dos pilares, temas
+        # estratégicos e temas das menções que têm `tema_id`. Sem menção ligada
+        # (a base que só traz o texto do fornecedor), as três vêm vazias e a
+        # tela não oferece o filtro.
+        "temas_n1": _da_taxonomia(BlocoTema.nome),
+        "temas_n2": _da_taxonomia(MacroTema.nome),
+        "temas_n3": _da_taxonomia(Tema.nome),
     }
 
 

@@ -230,6 +230,14 @@ class FiltroDeMencoes:
     #: lente sem lugar aqui: clicar na barra de uma concessionária não tinha para
     #: onde ir.
     empresa: str | None = None
+    #: A TAXONOMIA DE TEMAS DO CRM (v4), pelo NOME de cada nível: o pilar (N1,
+    #: `bloco_tema`), o tema estratégico (N2, `macro_tema`) e o tema (N3,
+    #: `tema`). Casam pela menção ligada a um tema do cadastro (`tema_id`) —
+    #: é o vínculo que a carga real traz; menção só com o texto do fornecedor
+    #: não entra em nenhum dos três.
+    tema_n1: str | None = None
+    tema_n2: str | None = None
+    tema_n3: str | None = None
 
     @property
     def ativo(self) -> bool:
@@ -244,6 +252,9 @@ class FiltroDeMencoes:
                 self.subtema,
                 self.autor,
                 self.empresa,
+                self.tema_n1,
+                self.tema_n2,
+                self.tema_n3,
             )
         )
 
