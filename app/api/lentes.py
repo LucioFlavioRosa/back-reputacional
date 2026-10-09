@@ -1010,6 +1010,9 @@ def _trilha_do_recorte(codigo_da_lente: str, filtro: FiltroDeMencoes) -> list[Pa
     para o mesmo recorte se lerem como recortes diferentes.
     """
     valores = {
+        "tema_n1": filtro.tema_n1,
+        "tema_n2": filtro.tema_n2,
+        "tema_n3": filtro.tema_n3,
         "tema": filtro.tema_texto,
         "subtema": filtro.subtema,
         "empresa": filtro.empresa,
@@ -1783,6 +1786,9 @@ def obter_dossie(
     subtema: Annotated[str | None, Query()] = None,
     autor: Annotated[str | None, Query()] = None,
     empresa: Annotated[str | None, Query()] = None,
+    tema_n1: Annotated[str | None, Query(description="pilar (N1) da taxonomia, pelo nome")] = None,
+    tema_n2: Annotated[str | None, Query(description="tema estratégico (N2), pelo nome")] = None,
+    tema_n3: Annotated[str | None, Query(description="tema (N3) do cadastro, pelo nome")] = None,
 ) -> DossieSaida:
     """A lente inteira: nota, KPIs, evolução, dois painéis, texto e ações.
 
@@ -1806,6 +1812,9 @@ def obter_dossie(
         subtema=subtema,
         autor=autor,
         empresa=empresa,
+        tema_n1=tema_n1,
+        tema_n2=tema_n2,
+        tema_n3=tema_n3,
     )
     calibracao = repositorio_score.calibracao_vigente(sessao)
     meses = repositorio_lentes.meses_ate(alvo, MESES_DA_EVOLUCAO)
@@ -2029,6 +2038,9 @@ def obter_recorte(
     subtema: Annotated[str | None, Query()] = None,
     autor: Annotated[str | None, Query()] = None,
     empresa: Annotated[str | None, Query()] = None,
+    tema_n1: Annotated[str | None, Query(description="pilar (N1) da taxonomia, pelo nome")] = None,
+    tema_n2: Annotated[str | None, Query(description="tema estratégico (N2), pelo nome")] = None,
+    tema_n3: Annotated[str | None, Query(description="tema (N3) do cadastro, pelo nome")] = None,
 ) -> RecorteSaida:
     """O nível 3 do pacote: o que o drawer abre quando alguém clica num dado.
 
@@ -2058,6 +2070,9 @@ def obter_recorte(
         subtema=subtema,
         autor=autor,
         empresa=empresa,
+        tema_n1=tema_n1,
+        tema_n2=tema_n2,
+        tema_n3=tema_n3,
     )
     calibracao = repositorio_score.calibracao_vigente(sessao)
     meses = repositorio_lentes.meses_ate(alvo, MESES_DA_EVOLUCAO)
@@ -2231,6 +2246,11 @@ class OpcoesDeFiltroSaida(BaseModel):
     subtemas: list[str] = []
     autores: list[str] = []
     empresas: list[str] = []
+    #: A taxonomia de temas do CRM (N1, N2, N3), pelos nomes que as menções
+    #: ligadas a ela alcançam no mês. Vazias sem menção ligada.
+    temas_n1: list[str] = []
+    temas_n2: list[str] = []
+    temas_n3: list[str] = []
 
 
 @rotas.get("/{codigo}/dossie/opcoes-de-filtro")

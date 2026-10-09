@@ -414,10 +414,10 @@ def test_mudar_um_dado_muda_a_frase_na_proxima_leitura(sessao):
 
 def test_o_mercado_avisa_que_a_nota_e_um_proxy(sessao):
     """É a única lente sem série mensal de sentimento. A nota existe e é
-    defensável, mas quem a lê tem de saber que ela mede os veículos econômicos
-    de Tier 1, e não o que o mercado disse."""
+    defensável, mas quem a lê tem de saber que ela mede a imprensa econômica
+    (todos os tiers, ponderados), e não o que o mercado disse."""
     sinais = _dossie(sessao, "mercado").sinais
-    assert any("proxy dos veículos Tier 1" in sinal.frase for sinal in sinais)
+    assert any("proxy da imprensa econômica" in sinal.frase for sinal in sinais)
     assert sinais[-1].onde == "Lente"
 
 
