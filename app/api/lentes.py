@@ -397,7 +397,7 @@ def _legenda_e_cores_do_clima(sessao) -> tuple[list[str], list[str]]:
 #: caminho.
 RECORTE_DO_PAINEL: dict[str, str] = {
     "Temas × sentimento": "tema",
-    "Temas × clima": "tema",
+    "Temas × termômetro": "tema",
     #: O BLOCO AMPLO DOS TEMAS, logo abaixo dos painéis. Ele mostra os seis temas
     #: mais falados do mês com o sentimento de cada um, e era o único gráfico da
     #: tela em que a barra não levava a lugar nenhum — pedido do dono do produto,
@@ -615,12 +615,12 @@ def _evolucao(
         )
     return _bloco(
         "barras_empilhadas",
-        "Evolução das matérias" if not interna else "Clima das agendas, mês a mês",
+        "Evolução das matérias" if not interna else "Termômetro das agendas, mês a mês",
         _serie_em_blocos(serie),
         Ficha(
             origem=Procedencia.CRM if interna else Procedencia.PLANILHA,
             fonte="CRM dos Stakeholders" if interna else _nomes_das_fontes(sessao, lente.id),
-            colunas=("Data", "Clima") if interna else ("Data", "Sentimento"),
+            colunas=("Data", "Termômetro") if interna else ("Data", "Sentimento"),
             conceitos=(CONCEITO_NS,),
         ),
         conclusao,
@@ -846,7 +846,7 @@ def _paineis(
     return [
         _bloco(
             "barras_100",
-            "Temas × clima" if interna else "Temas × sentimento",
+            "Temas × termômetro" if interna else "Temas × sentimento",
             [{"rotulo": linha.pop("tema"), **linha} for linha in temas],
             Ficha(
                 origem=Procedencia.CRM if interna else Procedencia.PLANILHA,
@@ -1022,6 +1022,7 @@ def _trilha_do_recorte(codigo_da_lente: str, filtro: FiltroDeMencoes) -> list[Pa
         "uf": filtro.uf,
         "tier": filtro.tier,
         "atributo": filtro.atributo,
+        "sentimento": filtro.sentimento,
     }
     #: PRIMEIRO AS DA LENTE, NA ORDEM DELA; depois TODAS as outras que o filtro
     #: aceita, na ordem do dicionário de rótulos.
@@ -1195,7 +1196,7 @@ def _veiculos(
         )
         return (
             _bloco("barras_horizontais", "Top veículos", [], vazio_ficha, None),
-            _bloco("divergente_por_item", "Clima por veículos", [], vazio_ficha, None),
+            _bloco("divergente_por_item", "Termômetro por veículos", [], vazio_ficha, None),
         )
 
     veiculos = repositorio_lentes.veiculos_por_sentimento(sessao, lente.id, mes, calibracao, filtro)
@@ -1216,7 +1217,7 @@ def _veiculos(
     # de 0 a 100). É o placar simples que a diretoria já conhece de lá.
     clima_por_veiculos = _bloco(
         "divergente_por_item",
-        "Clima por veículos",
+        "Termômetro por veículos",
         [
             {
                 "chave": linha["veiculo"],
@@ -1628,12 +1629,12 @@ def _kpis_do_institucional(serie, do_mes, total) -> list[KpiSaida]:
             detalhe=f"{_num(no_mes)} no mês de referência",
         ),
         KpiSaida(
-            rotulo="Clima propositivo",
+            rotulo="Termômetro propositivo",
             valor=_pct(do_mes["pos"] / no_mes if no_mes else None),
             detalhe=f"{_num(do_mes['pos'])} agendas" if do_mes else "sem base",
         ),
         KpiSaida(
-            rotulo="Clima tenso",
+            rotulo="Termômetro tenso",
             valor=_pct(do_mes["neg"] / no_mes if no_mes else None),
             detalhe=f"{_num(do_mes['neg'])} agendas" if do_mes else "sem base",
         ),
@@ -1789,6 +1790,7 @@ def obter_dossie(
     tema_n1: Annotated[str | None, Query(description="pilar (N1) da taxonomia, pelo nome")] = None,
     tema_n2: Annotated[str | None, Query(description="tema estratégico (N2), pelo nome")] = None,
     tema_n3: Annotated[str | None, Query(description="tema (N3) do cadastro, pelo nome")] = None,
+    sentimento: Annotated[str | None, Query(description="pos, neu ou neg")] = None,
 ) -> DossieSaida:
     """A lente inteira: nota, KPIs, evolução, dois painéis, texto e ações.
 
@@ -1815,6 +1817,7 @@ def obter_dossie(
         tema_n1=tema_n1,
         tema_n2=tema_n2,
         tema_n3=tema_n3,
+        sentimento=sentimento,
     )
     calibracao = repositorio_score.calibracao_vigente(sessao)
     meses = repositorio_lentes.meses_ate(alvo, MESES_DA_EVOLUCAO)
@@ -2041,6 +2044,7 @@ def obter_recorte(
     tema_n1: Annotated[str | None, Query(description="pilar (N1) da taxonomia, pelo nome")] = None,
     tema_n2: Annotated[str | None, Query(description="tema estratégico (N2), pelo nome")] = None,
     tema_n3: Annotated[str | None, Query(description="tema (N3) do cadastro, pelo nome")] = None,
+    sentimento: Annotated[str | None, Query(description="pos, neu ou neg")] = None,
 ) -> RecorteSaida:
     """O nível 3 do pacote: o que o drawer abre quando alguém clica num dado.
 
@@ -2073,6 +2077,7 @@ def obter_recorte(
         tema_n1=tema_n1,
         tema_n2=tema_n2,
         tema_n3=tema_n3,
+        sentimento=sentimento,
     )
     calibracao = repositorio_score.calibracao_vigente(sessao)
     meses = repositorio_lentes.meses_ate(alvo, MESES_DA_EVOLUCAO)
@@ -2238,6 +2243,8 @@ class OpcoesDeFiltroSaida(BaseModel):
     veiculos: list[str]
     atributos: list[str]
     temas: list[str]
+    #: Os sentimentos (pos/neu/neg) que aparecem no mês — filtro rápido da Imprensa.
+    sentimentos: list[str] = []
     #: Os cortes que o padrão Aegea trouxe (0055). VAZIOS na lente que não tem o
     #: campo — a Imprensa não manda perfil do autor —, e é assim que a tela sabe
     #: não oferecer um seletor que não escolhe nada.

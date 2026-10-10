@@ -2,7 +2,7 @@
 --:
 --: O QUE O DONO DO PRODUTO VIU. No Cadastro compartilhado, a deputada Stela
 --: Farias aparecia como "Poder Legislativo" — o público está certo desde a
---: `0074`, mas o CARGO não aparecia em lugar nenhum. E ele é o que a pessoa
+--: `0075`, mas o CARGO não aparecia em lugar nenhum. E ele é o que a pessoa
 --: reconhece: "Deputado estadual · RS" diz quem é o ator; "Poder Legislativo"
 --: diz a que poder ele pertence.
 --:
@@ -17,14 +17,14 @@
 --: régua de peso o consome.
 --:
 --: SÓ PERFIL DE REDE TEM CARGO, e o CHECK garante: um jornal não tem cargo.
---: Mesma disciplina de `interlocutor_id` na `0072`.
+--: Mesma disciplina de `interlocutor_id` na `0073`.
 --:
 --: E A PESSOA, QUANDO VIER, TEM O CARGO DELA. `interlocutor.cargo` é a verdade
 --: do CRM sobre a pessoa; este aqui é a evidência do fornecedor sobre o
 --: perfil. Não é a mesma afirmação em dois lugares: um perfil pode existir sem
 --: pessoa nenhuma, e é esse o estado dos 1.108.
 --:
---: O BACKFILL USA O CARGO MAIS FREQUENTE das menções do perfil, como a `0074`:
+--: O BACKFILL USA O CARGO MAIS FREQUENTE das menções do perfil, como a `0075`:
 --: quase sempre há um só; havendo empate, o alfabético decide.
 --:
 --: Idempotente.
@@ -47,7 +47,7 @@ create temporary table rotulo_do_cargo (
     rotulo text not null
 ) on commit drop;
 
---: AS VARIANTES TAMBÉM, pelo mesmo motivo da `0074`: numa base que ingeriu
+--: AS VARIANTES TAMBÉM, pelo mesmo motivo da `0075`: numa base que ingeriu
 --: antes de `CARGO_CANONICO`, `mencao.cargo` tem `vereadora` e `verador`, e o
 --: `coalesce` com `initcap` gravaria "Verador" — o erro de digitação do
 --: fornecedor — como se fosse um cargo. Achado de revisão.

@@ -80,7 +80,7 @@ COMPLETO = [
     "Categoria",
     "Engajamento",
 ]
-#: O CABEÇALHO REAL do arquivo de 01–09/2026, com as colunas que a `0069`
+#: O CABEÇALHO REAL do arquivo de 01–09/2026, com as colunas que a `0070`
 #: passou a ler.
 COM_AS_NOVAS = [
     "Data",
@@ -200,7 +200,7 @@ def test_a_coluna_que_FALTA_DE_VERDADE_ainda_e_recusada(sessao, bites):
         )
 
 
-# -- a 0069: link, texto, autor e uf ----------------------------------------------
+# -- a 0070: link, texto, autor e uf ----------------------------------------------
 
 
 def test_a_bites_grava_LINK_TEXTO_AUTOR_E_UF(sessao, bites):

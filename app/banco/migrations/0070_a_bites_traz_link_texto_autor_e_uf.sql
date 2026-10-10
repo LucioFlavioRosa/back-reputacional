@@ -59,7 +59,7 @@ update score_fonte
        )
  where codigo = 'bites';
 
---: AS NOVAS ENTRAM COMO OPCIONAIS, somando-se ao `tema` que a `0068` já pôs.
+--: AS NOVAS ENTRAM COMO OPCIONAIS, somando-se ao `tema` que a `0069` já pôs.
 update score_fonte
    set mapeamento_colunas = jsonb_set(
          mapeamento_colunas,

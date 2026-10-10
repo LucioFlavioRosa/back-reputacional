@@ -429,7 +429,7 @@ def editar_instituicao(
         atual=registro.tipo,
     )
     registro.nome_completo = entrada.nome_completo
-    #: A PESSOA DE QUEM O PERFIL E. O CHECK da `0072` recusa pessoa em quem nao
+    #: A PESSOA DE QUEM O PERFIL E. O CHECK da `0073` recusa pessoa em quem nao
     #: e perfil de rede — um jornal nao e "de" uma pessoa —, e a recusa aqui e
     #: explicita para a mensagem falar de cadastro em vez de constraint.
     _conferir_campos_de_perfil(registro.tipo, entrada)

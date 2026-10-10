@@ -34,7 +34,7 @@ class Instituicao(Tabela):
     #: nao sabe o que escolheu. Nulo no que veio da planilha.
     nome_completo: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: O CARGO QUE O FORNECEDOR INFORMOU, pelo rótulo — "Deputado estadual".
-    #: Só em `tipo='perfil_rede'`, e o CHECK da `0075` garante.
+    #: Só em `tipo='perfil_rede'`, e o CHECK da `0076` garante.
     #:
     #: É O QUE A PESSOA RECONHECE NA TELA: o público diz a que poder o ator
     #: pertence ("Poder Legislativo"); o cargo diz quem ele é.
@@ -44,7 +44,7 @@ class Instituicao(Tabela):
     #: perfil pode existir sem pessoa nenhuma, que é o estado dos 1.108.
     cargo: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: A PESSOA DE QUEM ESTE PERFIL É — só em `tipo='perfil_rede'`, e o CHECK
-    #: da `0072` garante. É o que liga o que `stelafariasrs` postou ao que a
+    #: da `0073` garante. É o que liga o que `stelafariasrs` postou ao que a
     #: deputada Stela Farias fez nas agendas do CRM.
     #:
     #: A CHAVE FICA NO PERFIL porque a cardinalidade é essa: um perfil é de no
@@ -205,7 +205,7 @@ class AtorDistinto(Tabela):
 
     Tira o par da fila de duplicados — sem isto, a fila nunca chega a zero — e
     guarda conhecimento sobre o mundo: `Diário SM` e `Diários M` casam por
-    semelhança e podem não ser o mesmo jornal. Ver migration `0077`.
+    semelhança e podem não ser o mesmo jornal. Ver migration `0078`.
 
     SEM LADO: o par é guardado sempre na mesma ordem (`esquerda < direita`,
     pelo uuid), e é a chave primária que recusa a repetição — a aplicação não

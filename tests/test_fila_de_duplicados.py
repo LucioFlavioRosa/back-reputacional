@@ -1,6 +1,6 @@
 """A fila do mesmo ator cadastrado duas vezes, e as duas respostas.
 
-A `0076` fundiu os homônimos exatos sozinha. O que sobra é o par que só casa
+A `0077` fundiu os homônimos exatos sozinha. O que sobra é o par que só casa
 depois de tirar pontuação — `valoreconomico` ↔ `Valor Econômico` —, e ali
 semelhança não é identidade: `Diário SM` e `Diários M` casam assim, `bmc.news`
 casa com DOIS veículos.
@@ -9,7 +9,7 @@ O QUE ESTES TESTES PROTEGEM:
 
 * a fila mostra o par parecido, com as menções de cada lado (é o número que diz
   qual é a linha com história);
-* e NÃO mostra: o homônimo exato (é da `0076`), o par que alguém já declarou
+* e NÃO mostra: o homônimo exato (é da `0077`), o par que alguém já declarou
   distinto, o perfil ligado a uma pessoa do CRM;
 * a fusão move as menções para o sobrevivente e apaga o perfil;
 * a fusão RECUSA o caminho inverso — apagar o veículo curado dentro do handle
@@ -123,7 +123,7 @@ def test_a_fila_mostra_o_par_parecido_com_as_mencoes(sessao, bites):
 
 
 def test_a_fila_NAO_mostra_o_homonimo_exato(sessao):
-    #: Nome igual por `nome_normalizado` é da `0076`, que funde sem perguntar.
+    #: Nome igual por `nome_normalizado` é da `0077`, que funde sem perguntar.
     #: Se aparecesse aqui, a tela pediria decisão sobre o que já foi decidido.
     perfil = _cadastrar(sessao, "Exame Zz61", "perfil_rede")
     _cadastrar(sessao, "exame zz61", "veiculo")

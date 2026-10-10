@@ -37,7 +37,7 @@ _engine = create_engine(URL, pool_pre_ping=True)
 
 SQL = (
     Path(__file__).resolve().parents[1]
-    / "app/banco/migrations/0076_um_cadastro_so_para_o_mesmo_ator.sql"
+    / "app/banco/migrations/0077_um_cadastro_so_para_o_mesmo_ator.sql"
 ).read_text(encoding="utf-8")
 
 

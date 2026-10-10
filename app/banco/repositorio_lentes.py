@@ -265,6 +265,29 @@ def composicao_por_tier(
     return sorted(linhas, key=lambda linha: ordem.get(linha["tier"], 9))
 
 
+def taxonomia_n1_n2(
+    sessao: Session, do_fornecedor: list[str] | None = None
+) -> dict[str, list[str]]:
+    """Os pilares (N1) e os temas estratégicos (N2), na ordem da taxonomia.
+
+    `do_fornecedor`: os temas que os fornecedores escreveram no período. O TEMA
+    DO FORNECEDOR É O PILAR (N1), e por isso entra na lista de N1 — depois dos 7
+    da taxonomia, sem repetir o que já está lá."""
+    pilares = list(sessao.scalars(select(BlocoTema.nome).order_by(BlocoTema.ordem)))
+    vistos = {p.casefold() for p in pilares}
+    extras = [t for t in (do_fornecedor or []) if t.casefold() not in vistos]
+    return {
+        "temas_n1": pilares + sorted(set(extras), key=str.casefold),
+        "temas_n2": list(
+            sessao.scalars(
+                select(MacroTema.nome)
+                .join(BlocoTema, BlocoTema.id == MacroTema.bloco_tema_id)
+                .order_by(BlocoTema.ordem, MacroTema.ordem)
+            )
+        ),
+    }
+
+
 def opcoes_de_filtro(sessao: Session, lente_id: int, mes: date) -> dict[str, list[str]]:
     """Os valores de veículo/atributo/tema que REALMENTE aparecem no mês desta
     lente — e não um dicionário fechado, porque nenhum dos três é um: são
@@ -336,6 +359,8 @@ def opcoes_de_filtro(sessao: Session, lente_id: int, mes: date) -> dict[str, lis
         "veiculos": _distintos(Mencao.veiculo),
         "atributos": _distintos(Mencao.atributo),
         "temas": _distintos(Mencao.tema_texto),
+        #: O sentimento da menção, filtro rápido da Imprensa (pos/neu/neg).
+        "sentimentos": _distintos(Mencao.sentimento),
         # -- os cortes que o padrão Aegea trouxe (0055) ----------------------
         #
         # O PACOTE DE PRODUÇÃO LISTA AS DIMENSÕES ÚTEIS DE CADA LENTE, e as da
@@ -368,8 +393,12 @@ def opcoes_de_filtro(sessao: Session, lente_id: int, mes: date) -> dict[str, lis
         # estratégicos e temas das menções que têm `tema_id`. Sem menção ligada
         # (a base que só traz o texto do fornecedor), as três vêm vazias e a
         # tela não oferece o filtro.
-        "temas_n1": _da_taxonomia(BlocoTema.nome),
-        "temas_n2": _da_taxonomia(MacroTema.nome),
+        # PILAR E TEMA ESTRATÉGICO: A TAXONOMIA INTEIRA, sempre — e é a única
+        # exceção ao "só o que aparece no mês". São filtros rápidos fixos em
+        # toda lente, por pedido, e precisam estar lá mesmo quando o mês ainda
+        # não tem menção ligada a tema do cadastro; escolher um sem menção
+        # devolve a lista vazia, que é a resposta verdadeira.
+        **taxonomia_n1_n2(sessao, _distintos(Mencao.tema_texto)),
         "temas_n3": _da_taxonomia(Tema.nome),
     }
 

@@ -757,7 +757,7 @@ def _post_da_bites(quando: date, sentimento: str, atributo: str, unidade: str, t
 def test_os_drivers_leem_unidade_e_perpetuacao(cliente_do_score, sessao):
     """Duas das três leituras da aba, pela fonte da Sociedade digital.
 
-    O ATRIBUTO SAIU DESTE TESTE porque saiu da Bites: a `0068` tirou a coluna
+    O ATRIBUTO SAIU DESTE TESTE porque saiu da Bites: a `0069` tirou a coluna
     do mapeamento dela por decisão de negócio — o N1 passa a ser derivado do
     assunto (N3) pelo cadastro, e manter o N1 que o fornecedor carimba criava
     dois N1 para a mesma menção, livres para discordar. O eixo de atributo se
@@ -798,7 +798,7 @@ def test_os_drivers_leem_unidade_e_perpetuacao(cliente_do_score, sessao):
 def test_os_drivers_leem_o_atributo_da_clipei(cliente_do_score, sessao):
     """O eixo de atributo, pela fonte que ainda manda a coluna.
 
-    DEPOIS DA `0068`, A CLIPEI É A ÚNICA que alimenta `mencao.atributo` — a
+    DEPOIS DA `0069`, A CLIPEI É A ÚNICA que alimenta `mencao.atributo` — a
     Bites deixou de mandar e as duas fontes da Approach nunca mandaram. Este
     teste é o que impede o eixo de morrer sem ninguém notar.
     """

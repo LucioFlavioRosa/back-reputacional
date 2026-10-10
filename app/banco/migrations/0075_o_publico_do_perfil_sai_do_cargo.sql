@@ -129,7 +129,7 @@ update instituicao i
    --: ator decide. Achado de revisão.
    --:
    --: (`i.cargo` seria a guarda óbvia e NÃO serve: a coluna só nasce na
-   --: `0075`, e uma base criada do zero aplica as migrations em ordem — a
+   --: `0076`, e uma base criada do zero aplica as migrations em ordem — a
    --: suíte inteira foi pulada em silêncio por causa disso.)
    and not exists (
          select 1 from cargo_do_perfil cp where cp.perfil = i.id

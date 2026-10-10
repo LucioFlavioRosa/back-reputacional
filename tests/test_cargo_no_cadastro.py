@@ -1,7 +1,7 @@
 """O perfil guarda o cargo que o fornecedor informou.
 
 O QUE O DONO DO PRODUTO VIU. No Cadastro compartilhado, a deputada Stela Farias
-aparecia como "Poder Legislativo" — o público está certo desde a `0074`, mas o
+aparecia como "Poder Legislativo" — o público está certo desde a `0075`, mas o
 CARGO não aparecia em lugar nenhum. E é ele que diz quem é o ator: "Deputado
 estadual · RS" responde a pergunta; "Poder Legislativo" diz só a que poder ele
 pertence.
@@ -202,7 +202,7 @@ def test_a_api_recusa_cargo_em_quem_nao_e_perfil(cliente, sessao):
 
 
 def test_o_rotulo_da_migration_bate_com_o_dominio():
-    """A `0075` escreve os rótulos em SQL, porque migration não importa a app.
+    """A `0076` escreve os rótulos em SQL, porque migration não importa a app.
 
     DUAS CÓPIAS DA MESMA TABELA é a receita conhecida de divergir em silêncio:
     alguém acrescenta um cargo no domínio, a migration antiga fica para trás, e
@@ -211,7 +211,7 @@ def test_o_rotulo_da_migration_bate_com_o_dominio():
     """
     sql = (
         Path(__file__).resolve().parents[1]
-        / "app/banco/migrations/0075_o_perfil_guarda_o_cargo_informado.sql"
+        / "app/banco/migrations/0076_o_perfil_guarda_o_cargo_informado.sql"
     ).read_text(encoding="utf-8")
     pares = dict(re.findall(r"\('([a-z_]+)',\s*'([^']+)'\)", sql))
 
@@ -234,7 +234,7 @@ def test_a_categoria_da_migration_bate_com_o_dominio():
     """A TERCEIRA cópia manual da mesma tabela, costurada.
 
     `CATEGORIA_POR_CARGO` (Python, usada na ingestão) e `publico_por_cargo`
-    (SQL, usada no backfill da `0074`) dizem a mesma coisa em dois lugares.
+    (SQL, usada no backfill da `0075`) dizem a mesma coisa em dois lugares.
     Divergindo, o perfil criado pela ingestão cai numa categoria e o backfill
     de uma base nova cai em outra — e a falha é MUDA dos dois lados: um
     `.get()` que não casa deixa o perfil sem público, indistinguível de "cargo
@@ -246,7 +246,7 @@ def test_a_categoria_da_migration_bate_com_o_dominio():
     """
     sql = (
         Path(__file__).resolve().parents[1]
-        / "app/banco/migrations/0074_o_publico_do_perfil_sai_do_cargo.sql"
+        / "app/banco/migrations/0075_o_publico_do_perfil_sai_do_cargo.sql"
     ).read_text(encoding="utf-8")
     trincas = re.findall(
         r"\('([a-z_]+)',\s*'([^']+)',\s*(?:'([^']+)'|null)\)", sql

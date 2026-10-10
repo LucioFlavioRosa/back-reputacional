@@ -1,6 +1,6 @@
 --: O PAR QUE ALGUÉM OLHOU E DISSE: são atores diferentes.
 --:
---: POR QUE ESTA TABELA EXISTE. A `0076` fundiu os 30 homônimos exatos, que não
+--: POR QUE ESTA TABELA EXISTE. A `0077` fundiu os 30 homônimos exatos, que não
 --: pedem julgamento. Sobraram ~66 pares que só casam depois de tirar pontuação
 --: e espaço — `valoreconomico` ↔ `Valor Econômico` é o mesmo ator; `Diário SM`
 --: ↔ `Diários M` pode não ser; `bmc.news` casa com DOIS veículos. Esses vão

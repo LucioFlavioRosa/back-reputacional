@@ -9,7 +9,7 @@ TRÊS CAMADAS, e cada uma faz o que a anterior não pode:
 
 1. A INGESTÃO não cria mais o par: `veiculos_da_imprensa.reconhecer` procura em
    qualquer tipo quando quem fala é perfil de rede.
-2. A `0076` fundiu os 30 HOMÔNIMOS EXATOS que a versão antiga gravou — nome
+2. A `0077` fundiu os 30 HOMÔNIMOS EXATOS que a versão antiga gravou — nome
    igual por `nome_normalizado` não pede julgamento.
 3. ESTE MÓDULO cuida dos que sobraram: ~66 pares que só casam depois de tirar
    pontuação e espaço. Ali a semelhança NÃO prova identidade — `Diário SM` e
@@ -93,8 +93,8 @@ def listar(sessao: Session) -> list[Duplicado]:
 
     FORA DA FILA, e cada exclusão por um motivo diferente:
 
-    * o HOMÔNIMO EXATO, que a `0076` já fundiu e que a ingestão não recria —
-      se aparecer um, é regressão, e a `0076` roda de novo;
+    * o HOMÔNIMO EXATO, que a `0077` já fundiu e que a ingestão não recria —
+      se aparecer um, é regressão, e a `0077` roda de novo;
     * o par que alguém JÁ DECIDIU que é outro ator (`ator_distinto`) — sem
       isso a fila nunca chega a zero;
     * o perfil LIGADO A UMA PESSOA do CRM, porque o sobrevivente não pode
@@ -136,7 +136,7 @@ def listar(sessao: Session) -> list[Duplicado]:
                 )
                 for outro in grupo
                 if outro.id != perfil.id
-                #: O HOMÔNIMO EXATO não é pergunta: é a `0076`.
+                #: O HOMÔNIMO EXATO não é pergunta: é a `0077`.
                 and outro.nome_normalizado != perfil.nome_normalizado
                 and ordenar_o_par(perfil.id, outro.id) not in decididos
                 and _esta_do_lado_que_pergunta(perfil, outro, mencoes)
@@ -187,7 +187,7 @@ def ordenar_o_par(um: uuid.UUID, outro: uuid.UUID) -> tuple[uuid.UUID, uuid.UUID
 
     Dizer que A é diferente de B é dizer que B é diferente de A. Guardado
     ordenado, é a chave primária que recusa a repetição — a aplicação não
-    procura nas duas direções. Ver migration `0077`.
+    procura nas duas direções. Ver migration `0078`.
     """
     return (um, outro) if str(um) < str(outro) else (outro, um)
 

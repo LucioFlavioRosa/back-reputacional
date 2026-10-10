@@ -179,7 +179,7 @@ def test_a_0071_FUNDE_o_par_e_preserva_as_mencoes(sessao, bites):
     ACHADO DE REVISÃO: os dois testes que havia aqui liam o banco de teste —
     que é criado do zero pelas migrations e NÃO tem perfil de rede nenhum. As
     asserções eram `0 == 0` e `[] == []`: afirmavam provar a fusão de 59 grupos
-    e o rename de 509 linhas, e passariam com a `0071` apagada do repositório.
+    e o rename de 509 linhas, e passariam com a `0072` apagada do repositório.
 
     Aqui o par `@x`/`x` é criado na sessão, com uma menção em cada lado, e o
     SQL da migration é executado. O que se afirma é o que ela faz: o lado com
@@ -214,7 +214,7 @@ def test_a_0071_FUNDE_o_par_e_preserva_as_mencoes(sessao, bites):
 
     sql = (
         Path(__file__).resolve().parents[1]
-        / "app/banco/migrations/0071_o_handle_do_perfil_sem_arroba.sql"
+        / "app/banco/migrations/0072_o_handle_do_perfil_sem_arroba.sql"
     ).read_text(encoding="utf-8")
     #: SEM O `begin`/`commit` da migration: o teste já roda dentro de uma
     #: transação que o fixture desfaz no fim.
@@ -253,7 +253,7 @@ def test_a_0071_RENOMEIA_quem_tem_arroba_e_nao_tem_gemeo(sessao):
 
     sql = (
         Path(__file__).resolve().parents[1]
-        / "app/banco/migrations/0071_o_handle_do_perfil_sem_arroba.sql"
+        / "app/banco/migrations/0072_o_handle_do_perfil_sem_arroba.sql"
     ).read_text(encoding="utf-8")
     sessao.execute(text(sql.replace("begin;", "").replace("commit;", "")))
     sessao.expire_all()
@@ -285,7 +285,7 @@ def test_a_0071_trata_ARROBA_COM_ESPACO(sessao):
 
     sql = (
         Path(__file__).resolve().parents[1]
-        / "app/banco/migrations/0071_o_handle_do_perfil_sem_arroba.sql"
+        / "app/banco/migrations/0072_o_handle_do_perfil_sem_arroba.sql"
     ).read_text(encoding="utf-8")
     sessao.execute(text(sql.replace("begin;", "").replace("commit;", "")))
     sessao.expire_all()
