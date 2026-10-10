@@ -484,7 +484,8 @@ def test_callback_sem_cookie_de_pedido_deixa_rastro(cliente, sessao):
     resposta = cliente.get(
         "/api/auth/callback?code=inventado&state=inventado", follow_redirects=False
     )
-    assert resposta.status_code == 403
+    assert resposta.status_code == 303
+    assert "erro=" in resposta.headers["location"]
 
     with Session(bind=_engine) as conferencia:
         depois = conferencia.scalar(

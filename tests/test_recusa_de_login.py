@@ -266,8 +266,12 @@ def test_sso_recusa_quem_nunca_recebeu_papel(cliente, sessao, marca, monkeypatch
 
     resposta = _chamar_callback(cliente, monkeypatch, identidade)
 
-    assert resposta.status_code == 403
-    assert "nao foi liberado" in _sem_acento(resposta.json()["detalhe"])
+    # 303, e não 403: o navegador chega aqui por navegação de topo, vinda do
+    # Entra ID — um 403 cru apareceria como PÁGINA, no lugar do site. A recusa
+    # vira redirecionamento de volta ao front com a mensagem, para a tela de
+    # login mostrar na caixa de aviso que já tem pronta.
+    assert resposta.status_code == 303
+    assert "nao foi liberado" in _sem_acento(_mensagem_do_redirecionamento(resposta))
 
     # O OUTRO LADO DA MOEDA, e o que faz o fluxo do produto funcionar: a
     # pessoa recusada PRECISA existir depois, senao quem administra acessos
@@ -308,10 +312,17 @@ def test_sso_recusa_conta_desativada(cliente, sessao, marca, monkeypatch):
         Identidade(entra_object_id=oid, email=email, nome="Pessoa Removida"),
     )
 
-    assert resposta.status_code == 403, (
+    # 303 é a resposta correta agora (ver `app/api/acesso.py` — recusa vira
+    # redirecionamento com mensagem, não mais 403 cru). O que este teste
+    # protege continua intacto: SEM o cookie de sessão, a conta desativada não
+    # entra nem com o código mudando de 403 para 303.
+    assert resposta.status_code == 303, (
         "conta desativada entrou pelo SSO — desativar deixou de remover"
     )
-    assert "desativada" in resposta.json()["detalhe"]
+    assert sessao_assinada.NOME_DO_COOKIE not in resposta.cookies, (
+        "conta desativada recebeu cookie de sessão pelo SSO"
+    )
+    assert "desativada" in _mensagem_do_redirecionamento(resposta)
 
     registro = sessao.scalars(
         select(Usuario).where(Usuario.entra_object_id == oid)
@@ -363,6 +374,15 @@ def _sem_acento(texto: str) -> str:
     )
 
 
+def _mensagem_do_redirecionamento(resposta) -> str:
+    """A mensagem de recusa que o `/auth/callback` devolve no `?erro=` do
+    redirecionamento — e não mais num corpo JSON cru. Ver `app/api/acesso.py`."""
+    from urllib.parse import parse_qs, urlsplit
+
+    query = parse_qs(urlsplit(resposta.headers["location"]).query)
+    return query["erro"][0]
+
+
 # -- a recusa precisa dizer o que fazer ---------------------------------------
 #
 # Sem mensagem própria, as recusas do callback saem todas como "Você não tem
@@ -380,8 +400,8 @@ def test_pedido_de_login_expirado_diz_o_que_fazer(cliente):
     resposta = cliente.get(
         "/api/auth/callback?code=qualquer&state=qualquer", follow_redirects=False
     )
-    assert resposta.status_code == 403
-    detalhe = resposta.json()["detalhe"]
+    assert resposta.status_code == 303
+    detalhe = _mensagem_do_redirecionamento(resposta)
     assert "Tente entrar de novo" in detalhe, (
         f"a instrução não chegou; a pessoa leu {detalhe!r}"
     )
