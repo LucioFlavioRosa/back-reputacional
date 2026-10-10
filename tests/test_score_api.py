@@ -475,7 +475,13 @@ def _planilha(aba: str, cabecalho: list[str], linhas: list[list]) -> bytes:
 #: menos células — o que falta chega como célula vazia, que é exatamente o que
 #: a planilha de verdade faz.
 CABECALHO_DA_BITES = [
-    "Data", "Autor", "Cargo", "Sentimento", "Atributo", "Categoria", "Engajamento",
+    #: A COLUNA DE TEMA É `N3` desde a `0079`. Escrita à mão aqui, e SEM COSTURA
+    #: que avise se o cadastro mudar — nenhum teste deste arquivo lê
+    #: `tema_id`/`tema_texto`, e `tema` é opcional, então um nome velho aqui não
+    #: derruba nada: as menções só entrariam sem assunto. Quem prende a troca é
+    #: `test_mapeamento_da_bites`. Achado de revisão, dito aqui porque o
+    #: comentário anterior prometia uma guarda que não existe.
+    "Data", "Autor", "Cargo", "Sentimento", "Atributo", "N3", "Engajamento",
     "Unidades/Empresas",
 ]
 

@@ -64,17 +64,26 @@ def bites(sessao) -> ScoreFonte:
     return fonte
 
 
-CABECALHO = ["Data", "Cargo", "Sentimento", "Unidades/Empresas", "Categoria", "Engajamento"]
+def _cabecalho(coluna_do_tema: str) -> list[str]:
+    """O cabeçalho da Bites, com a coluna de tema QUE O CADASTRO MANDA LER.
+
+    Escrita à mão, essa coluna já quebrou doze testes de uma vez: a `0079`
+    apontou o tema para `N3` e o arquivo que estes testes geram deixou de ter
+    coluna de assunto nenhuma — eles passaram a provar o contrário do que dizem.
+    É a mesma regra de `_planilha_da_approach`, aqui também.
+    """
+    return ["Data", "Cargo", "Sentimento", "Unidades/Empresas", coluna_do_tema, "Engajamento"]
 
 
-def _planilha(linhas: list[list]) -> bytes:
+def _planilha(fonte: ScoreFonte, linhas: list[list]) -> bytes:
     from openpyxl import Workbook
 
+    coluna = Mapeamento.de_json(fonte.mapeamento_colunas).colunas["tema"]
     livro = Workbook()
     aba = livro.active
     aba.title = "Planilha1"
     aba.append(["Relatório mensal", None])
-    aba.append(CABECALHO)
+    aba.append(_cabecalho(coluna))
     for linha in linhas:
         aba.append(linha)
     memoria = io.BytesIO()
@@ -123,7 +132,7 @@ def um_tema(sessao) -> Tema:
 
 
 def test_a_mencao_aponta_para_o_tema_do_cadastro(sessao, bites, um_tema):
-    ingerir_mencoes.ingerir(sessao, bites, _planilha([_linha(um_tema.nome)]))
+    ingerir_mencoes.ingerir(sessao, bites, _planilha(bites, [_linha(um_tema.nome)]))
 
     gravada = sessao.scalar(select(Mencao).where(Mencao.fonte_id == bites.id))
     assert gravada.tema_id == um_tema.id
@@ -137,14 +146,14 @@ def test_liga_pelo_nome_NORMALIZADO(sessao, bites, um_tema):
     #: menção. É a mesma régua do vínculo do veículo.
     bagunçado = f"  {um_tema.nome.upper()}  "
 
-    ingerir_mencoes.ingerir(sessao, bites, _planilha([_linha(bagunçado)]))
+    ingerir_mencoes.ingerir(sessao, bites, _planilha(bites, [_linha(bagunçado)]))
 
     gravada = sessao.scalar(select(Mencao).where(Mencao.fonte_id == bites.id))
     assert gravada.tema_id == um_tema.id
 
 
 def test_o_assunto_que_o_cadastro_NAO_TEM_fica_sem_vinculo(sessao, bites):
-    ingerir_mencoes.ingerir(sessao, bites, _planilha([_linha("Assunto inventado zz1")]))
+    ingerir_mencoes.ingerir(sessao, bites, _planilha(bites, [_linha("Assunto inventado zz1")]))
 
     gravada = sessao.scalar(select(Mencao).where(Mencao.fonte_id == bites.id))
     assert gravada.tema_id is None
@@ -164,7 +173,7 @@ def test_a_CELULA_NAO_E_PARTIDA_em_virgulas(sessao, bites):
     )
     assert com_virgula is not None, "o cadastro tem de ter tema com vírgula no nome"
 
-    ingerir_mencoes.ingerir(sessao, bites, _planilha([_linha(com_virgula.nome)]))
+    ingerir_mencoes.ingerir(sessao, bites, _planilha(bites, [_linha(com_virgula.nome)]))
 
     gravada = sessao.scalar(select(Mencao).where(Mencao.fonte_id == bites.id))
     assert gravada.tema_id == com_virgula.id
@@ -180,7 +189,7 @@ def test_o_tema_DESATIVADO_nao_e_ligado(sessao, bites):
     desativado = sessao.scalar(select(Tema).where(Tema.ativo.is_(False)).limit(1))
     assert desativado is not None
 
-    ingerir_mencoes.ingerir(sessao, bites, _planilha([_linha(desativado.nome)]))
+    ingerir_mencoes.ingerir(sessao, bites, _planilha(bites, [_linha(desativado.nome)]))
 
     gravada = sessao.scalar(select(Mencao).where(Mencao.fonte_id == bites.id))
     assert gravada.tema_id is None
@@ -190,7 +199,10 @@ def test_o_resumo_conta_quantas_ligaram(sessao, bites, um_tema):
     resumo = ingerir_mencoes.ingerir(
         sessao,
         bites,
-        _planilha([_linha(um_tema.nome, 3), _linha("Assunto inventado zz2", 4), _linha("", 5)]),
+        _planilha(
+            bites,
+            [_linha(um_tema.nome, 3), _linha("Assunto inventado zz2", 4), _linha("", 5)],
+        ),
     )
 
     assert resumo[0].ingeridas == 3
@@ -202,6 +214,7 @@ def test_o_resumo_conta_quantas_ligaram(sessao, bites, um_tema):
 
 def test_a_conferencia_mostra_o_que_NAO_CASOU_antes_de_gravar(sessao, bites, um_tema):
     conteudo = _planilha(
+        bites,
         [
             _linha(um_tema.nome, 3),
             _linha("Assunto inventado zz3", 4),
@@ -225,7 +238,7 @@ def test_a_conferencia_separa_o_tema_DESATIVADO_do_nome_errado(sessao, bites):
     #: São dois problemas com dois consertos: nome errado se arruma na
     #: planilha, tema desativado se arruma no cadastro.
     desativado = sessao.scalar(select(Tema).where(Tema.ativo.is_(False)).limit(1))
-    conteudo = _planilha([_linha(desativado.nome, 3), _linha("Nome errado zz4", 4)])
+    conteudo = _planilha(bites, [_linha(desativado.nome, 3), _linha("Nome errado zz4", 4)])
 
     _previsao, _veiculos, assuntos = ingerir_mencoes.conferir(sessao, bites, conteudo)
 
@@ -236,6 +249,7 @@ def test_a_conferencia_separa_o_tema_DESATIVADO_do_nome_errado(sessao, bites):
 
 def test_a_lista_do_que_nao_casou_vem_ORDENADA_POR_VOLUME(sessao, bites):
     conteudo = _planilha(
+        bites,
         [_linha("Pouco zz5", 3)] + [_linha("Muito zz5", 4) for _ in range(3)]
     )
 
@@ -255,6 +269,7 @@ def test_a_conferencia_NAO_CONTA_a_linha_que_a_subida_descarta(sessao, bites, um
     antes e depois de confirmar.
     """
     conteudo = _planilha(
+        bites,
         [
             _linha(um_tema.nome, 3),
             #: SENTIMENTO ILEGÍVEL: a linha não vira menção, e por isso não

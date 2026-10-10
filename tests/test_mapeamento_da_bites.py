@@ -71,6 +71,9 @@ def _planilha(nome_da_aba: str, cabecalho: list[str], linhas: list[list]) -> byt
     return memoria.getvalue()
 
 
+#: O FORMATO ANTIGO, como o fornecedor mandava: com `Atributo` e com
+#: `Categoria`. Nenhuma das duas é lida hoje — `Atributo` por decisão, e
+#: `Categoria` desde que o tema passou a vir de `N3` (`0079`).
 COMPLETO = [
     "Data",
     "Cargo",
@@ -95,8 +98,38 @@ COM_AS_NOVAS = [
     "Texto",
     "Engajamento",
 ]
-SEM_ATRIBUTO = ["Data", "Cargo", "Sentimento", "Unidades/Empresas", "Categoria", "Engajamento"]
-SEM_CATEGORIA = ["Data", "Cargo", "Sentimento", "Unidades/Empresas", "Engajamento"]
+#: O CABEÇALHO DA PLANILHA CONSOLIDADA (Jan–Set/2026), em que a Bites passou a
+#: entregar os três níveis explícitos. Conferido contra o cadastro: N1 7/7,
+#: N2 40/40 e N3 92/92 casam, e as três colunas concordam entre si.
+CONSOLIDADA = [
+    "Data",
+    "Autor",
+    "Cargo",
+    "Rede Social",
+    "Cidade",
+    "Estado",
+    "Abrangência",
+    "Atributo",
+    "Sentimento",
+    "Unidades/Empresas",
+    "Categoria",
+    "Link",
+    "Texto",
+    "Engajamento",
+    "Holding",
+    "Seguidores",
+    "N1",
+    "N2",
+    "N3",
+]
+#: A PLANILHA MENOS O ATRIBUTO, e com a coluna de tema que o cadastro lê hoje
+#: (`N3`, desde a `0079`). Trazia `Categoria` — que deixou de ser coluna de
+#: tema —, e aí o cenário dizia "menos o Atributo" enquanto era "menos o
+#: Atributo E menos o tema". Duas ausências num teste que fala de uma.
+SEM_ATRIBUTO = ["Data", "Cargo", "Sentimento", "Unidades/Empresas", "N3", "Engajamento"]
+#: E A PLANILHA SEM COLUNA DE TEMA NENHUMA: `tema` é opcional de propósito, e o
+#: fornecedor pode parar de mandá-la.
+SEM_TEMA = ["Data", "Cargo", "Sentimento", "Unidades/Empresas", "Engajamento"]
 
 
 def test_o_cadastro_da_bites_nao_le_mais_o_atributo(bites):
@@ -144,15 +177,16 @@ def test_a_planilha_SEM_a_coluna_atributo_sobe_igual(sessao, bites):
     assert resumo[0].ingeridas == 1
 
 
-def test_a_planilha_SEM_A_COLUNA_CATEGORIA_sobe(sessao, bites):
+def test_a_planilha_SEM_A_COLUNA_DE_TEMA_sobe(sessao, bites):
     #: A primeira sobe com ela vazia; depois o fornecedor pode removê-la. Nem
-    #: uma nem outra forma pode exigir mudança no cadastro da fonte.
+    #: uma nem outra forma pode exigir mudança no cadastro da fonte — e a
+    #: menção fica SEM ASSUNTO, que é o retrato honesto do arquivo.
     resumo = ingerir_mencoes.ingerir(
         sessao,
         bites,
         _planilha(
             "Planilha1",
-            SEM_CATEGORIA,
+            SEM_TEMA,
             [[date(2026, 8, 3), "Vereador", "Positivo", "Corsan", 10]],
         ),
     )
@@ -313,3 +347,117 @@ def test_a_CLIPEI_continua_cadastrando_veiculo(sessao):
     for codigo in ("clipei", "clipei_investidores", "approach_sl", "approach_cm"):
         fonte = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == codigo))
         assert Mapeamento.de_json(fonte.mapeamento_colunas).quem_fala == "veiculo", codigo
+
+
+def test_o_subtema_vem_da_coluna_N3(bites):
+    """A `0079`, e o defeito que ela conserta.
+
+    A `Categoria` da planilha antiga era o que havia; na consolidada existe uma
+    coluna `N3` que é a taxonomia do cadastro. E `Categoria` não serve mais como
+    chave: 52 dos seus valores trazem VÁRIOS assuntos numa célula
+    ("Abastecimento, Agência de Regulação, Proteção ambiental"), e a ingestão
+    procuraria no cadastro um assunto com esse nome inteiro.
+    """
+    mapeamento = Mapeamento.de_json(bites.mapeamento_colunas)
+
+    assert mapeamento.colunas["tema"] == "N3"
+    #: E A COLUNA ANTIGA NÃO É MAIS LIDA por campo nenhum.
+    assert "Categoria" not in mapeamento.colunas.values()
+    #: (`Categoria` também não está nas necessárias — mas isso vale desde a
+    #: `0069`, que pôs `tema` em `colunas_opcionais`, e passaria com esta
+    #: migration revertida. Fica como registro, não como guarda. Achado de
+    #: revisão: a asserção parecia provar a troca e não provava.)
+    assert "Categoria" not in mapeamento.colunas_necessarias
+
+
+def test_a_planilha_CONSOLIDADA_liga_o_assunto_no_cadastro(sessao, bites):
+    """O caminho inteiro: célula N3 -> `tema_id` do cadastro.
+
+    Na planilha real são 92 valores de N3, e os 92 casam com temas ativos. Sem a
+    `0079` cada uma dessas linhas subiria com `tema_id` nulo — e nenhum recorte
+    por N1, N2 ou N3 a encontraria.
+
+    O TEMA VEM DO BANCO, e não por nome fixo: o banco de teste nasce das
+    migrations, e os 104 temas da taxonomia entraram por importação de planilha.
+    """
+    from app.banco.tabelas_catalogo import Tema
+
+    #: `order_by` junto do `limit`: sem ele a linha devolvida é indeterminada no
+    #: Postgres, e o teste fica intermitente no dia em que o semeador mudar.
+    esperado = sessao.scalar(
+        select(Tema)
+        .where(Tema.ativo.is_(True), Tema.macro_tema_id.is_not(None))
+        .order_by(Tema.id)
+        .limit(1)
+    )
+    assert esperado is not None, "o cadastro de teste precisa de um tema ativo"
+
+    resumo = ingerir_mencoes.ingerir(
+        sessao,
+        bites,
+        _planilha(
+            "Consolidado 2026",
+            CONSOLIDADA,
+            [
+                [
+                    date(2026, 8, 4), "fulano zz90", "Vereador", "Facebook", "Canoas",
+                    "RS", "Municipal", "Governança", "Negativo", "Corsan",
+                    "Abastecimento, Agência de Regulação", "https://x/1", "texto",
+                    3, 1, 10, "Eficiência Operacional e Qualidade",
+                    "Abastecimento de água", esperado.nome,
+                ]
+            ],
+        ),
+    )
+
+    assert resumo[0].ingeridas == 1
+    gravada = sessao.scalar(
+        select(Mencao).where(Mencao.fonte_id == bites.id, Mencao.mes == date(2026, 8, 1))
+    )
+    assert gravada.tema_id == esperado.id
+    #: O RÓTULO GRAVADO É O DO N3, e não a célula de `Categoria` com dois
+    #: assuntos — que é justamente o que a ingestão lia antes.
+    assert gravada.tema_texto == esperado.nome
+    #: E O `Atributo` SEGUE IGNORADO: nesta planilha ele contradiz o N1 em 1.418
+    #: das 2.842 linhas, e o N1 vem do cadastro pelo N3.
+    assert gravada.atributo is None
+
+
+def test_a_CATEGORIA_PREENCHIDA_nao_liga_mais_assunto(sessao, bites):
+    """O contrapeso da `0079`: a coluna antiga, cheia, não vale mais nada.
+
+    ACHADO DE REVISÃO. Os testes provavam que o mapeamento diz `N3`; nenhum
+    provava o caminho inteiro com `Categoria` PREENCHIDA com nome de tema de
+    verdade. Sem isto, reapontar o cadastro para `Categoria` por engano não faz
+    teste fim-a-fim nenhum reclamar — e o engano é silencioso: as menções entram,
+    a nota sai, e o recorte por assunto fica vazio.
+    """
+    from app.banco.tabelas_catalogo import Tema
+
+    tema = sessao.scalar(
+        select(Tema)
+        .where(Tema.ativo.is_(True), Tema.macro_tema_id.is_not(None))
+        .order_by(Tema.id)
+        .limit(1)
+    )
+    assert tema is not None
+
+    #: `SEM_TEMA` + `Categoria` no fim: a planilha NÃO tem `N3`, e a `Categoria`
+    #: traz o nome de um tema ativo — o cenário em que a leitura antiga ligaria.
+    resumo = ingerir_mencoes.ingerir(
+        sessao,
+        bites,
+        _planilha(
+            "Planilha1",
+            [*SEM_TEMA, "Categoria"],
+            [[date(2026, 8, 3), "Vereador", "Positivo", "Corsan", 10, tema.nome]],
+        ),
+    )
+
+    assert resumo[0].ingeridas == 1
+    gravada = sessao.scalar(
+        select(Mencao).where(Mencao.fonte_id == bites.id, Mencao.mes == date(2026, 8, 1))
+    )
+    #: A MENÇÃO ENTRA E FICA SEM ASSUNTO. É o que a `0079` muda: só `N3` liga.
+    assert gravada.tema_texto is None
+    assert gravada.tema_id is None
