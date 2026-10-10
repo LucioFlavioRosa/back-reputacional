@@ -152,6 +152,19 @@ def test_filtrar_por_veiculo_muda_a_nota_tambem(sessao, imprensa_de_junho):
     assert dossie.nota == 5
 
 
+def test_filtrar_por_sentimento_fica_so_com_aquele_sentimento(sessao, imprensa_de_junho):
+    """Só as negativas (as duas do Veículo B): NS = -1 -> score = 0. É o filtro
+    rápido de Sentimento da Imprensa, o mesmo gesto do termômetro no CRM."""
+    dossie = _dossie(sessao, sentimento="neg")
+
+    assert dossie.recorte_filtrado is True
+    assert dossie.nota == 0
+    opcoes = obter_opcoes_de_filtro(
+        sessao=sessao, usuario=_QuemOlha(), codigo="imprensa", mes="2026-06"
+    )
+    assert set(opcoes.sentimentos) == {"pos", "neu", "neg"}
+
+
 def test_filtrar_por_atributo_e_tema_restringe_igual_a_veiculo(sessao, imprensa_de_junho):
     """"Qualidade" e "Tarifa" são sinônimos de Veículo A neste cenário:
     positivo=2*10=20 (tier muito_relevante), neutro=1*1=1 (tier

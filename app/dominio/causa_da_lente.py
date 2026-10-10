@@ -45,6 +45,7 @@ ROTULO_DA_DIMENSAO: dict[str, str] = {
     "tema_n1": "Pilar (N1)",
     "tema_n2": "Tema estratégico (N2)",
     "tema_n3": "Subtema (N3)",
+    "sentimento": "Sentimento",
 }
 
 

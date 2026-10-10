@@ -238,6 +238,9 @@ class FiltroDeMencoes:
     tema_n1: str | None = None
     tema_n2: str | None = None
     tema_n3: str | None = None
+    #: O SENTIMENTO DA MENÇÃO (`pos`/`neu`/`neg`), filtro rápido da Imprensa por
+    #: pedido — o mesmo gesto do termômetro no CRM dos Stakeholders.
+    sentimento: str | None = None
 
     @property
     def ativo(self) -> bool:
@@ -255,6 +258,7 @@ class FiltroDeMencoes:
                 self.tema_n1,
                 self.tema_n2,
                 self.tema_n3,
+                self.sentimento,
             )
         )
 
