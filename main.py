@@ -15,6 +15,7 @@ from app.api import (
     base_das_lentes,
     cadastro_duplicado,
     catalogo,
+    consulta_profundidade,
     dicionarios,
     exportacoes,
     importacao_de_subtemas,
@@ -52,6 +53,7 @@ from app.observabilidade import configurar_observabilidade
 from app.seguranca.limite_de_taxa import LimiteDeTaxaMiddleware, RegistroDeBaldes
 from app.seguranca.protecao_http import (
     CabecalhosDeSegurancaMiddleware,
+    CompressaoSeletivaMiddleware,
     LimiteDeCorpoMiddleware,
 )
 from app.seguranca.verificacao_de_producao import conferir
@@ -84,7 +86,8 @@ def criar_app() -> FastAPI:
     # último registrado fica mais EXTERNO. A pilha final, de fora para dentro:
     #
     #     cabeçalhos  ->  CORS  ->  observabilidade
-    #                 ->  limite de taxa  ->  limite de corpo  ->  rotas
+    #                 ->  limite de taxa  ->  limite de corpo  ->  compressão
+    #                 ->  rotas
     #
     # Os cabeçalhos de segurança por FORA de tudo: precisam sair em toda
     # resposta, inclusive no 429 do limite e no 500 da observabilidade. Por
@@ -101,6 +104,13 @@ def criar_app() -> FastAPI:
     # O limite por DENTRO da observabilidade, e não por fora: um 429 é sinal de
     # incidente, e fora dela a recusa não apareceria em log nenhum — o ataque
     # ficaria invisível justamente enquanto está sendo barrado.
+    #
+    # A compressão é a camada mais INTERNA, colada nas rotas: só mexe no corpo
+    # da resposta de uma rota (a Consulta em profundidade), e tudo o que vem
+    # por fora — cabeçalhos de segurança, CORS, observabilidade — continua
+    # vendo e marcando a resposta como antes. Ver `CompressaoSeletivaMiddleware`
+    # para o porquê de não comprimir a API inteira.
+    app.add_middleware(CompressaoSeletivaMiddleware)
     app.add_middleware(
         LimiteDeCorpoMiddleware, maximo=configuracao.tamanho_maximo_do_corpo
     )
@@ -149,6 +159,7 @@ def criar_app() -> FastAPI:
     app.include_router(score.rotas)
     app.include_router(riscos.rotas)
     app.include_router(lentes.rotas)
+    app.include_router(consulta_profundidade.rotas)
     app.include_router(base_das_lentes.rotas)
     app.include_router(stakeholders.rotas)
     app.include_router(cadastro_duplicado.rotas)
