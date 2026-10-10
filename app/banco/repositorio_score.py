@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from sqlalchemy import Date as ColunaDeData
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, null, or_, select
 from sqlalchemy.orm import Session
 
 from app.banco.tabelas_catalogo import BlocoTema, Clima, MacroTema, Tema
@@ -35,6 +35,7 @@ from app.banco.tabelas_score import (
     ScoreFonte,
     ScoreMesFonte,
 )
+from app.dominio.consulta_profundidade import GrupoDaConsulta, MencaoDaConsulta, MesDaLente
 from app.dominio.score import (
     REGUA_DE_CONTAGEM,
     REGUAS_DE_TIER,
@@ -45,6 +46,7 @@ from app.dominio.score import (
     LenteMedida,
     SomasDaFonte,
     calcular_indice,
+    medida_da_mencao,
     medir_lente,
     ns,
     peso_do_cargo,
@@ -593,6 +595,236 @@ def impacto_do_recorte(
     return PONTOS_POR_NS * (do_recorte.positivo - do_recorte.negativo) / total_do_mes
 
 
+def meses_da_lente(
+    sessao: Session, lente: Lente, meses: Sequence[date], calibracao: Calibracao
+) -> dict[date, MesDaLente]:
+    """A nota oficial, o NS da contagem, a régua e o D de cada mês — de uma vez.
+
+    É `denominador_do_mes` e `medir_lentes` juntos, para os seis meses da
+    Consulta em profundidade em TRÊS leituras (fontes, `score_mes_fonte` e
+    estimativas), e não dezoito. A conta é a mesma, pelas mesmas funções do
+    domínio (`regua_da_lente`, `ponderar`, `medir_lente`): a nota que sai daqui
+    é a que a tela mostra, inclusive quando é estimada.
+
+    SÓ PARA LENTE DE PLANILHA. A fonte interna (CRM) não passa por
+    `score_mes_fonte`, e a consulta só existe para Imprensa e Mercado — uma
+    lente com fonte interna aqui teria a nota sem o CRM, e por isso a função
+    se recusa a medi-la.
+    """
+    fontes = list(sessao.scalars(select(ScoreFonte).where(ScoreFonte.lente_id == lente.id)))
+    if any(fonte.interna for fonte in fontes):
+        raise ValueError(f"A lente {lente.codigo!r} lê o CRM; meses_da_lente é só de planilha.")
+    codigo_da_fonte = {fonte.id: fonte.codigo for fonte in fontes}
+    meses = [primeiro_dia(m) for m in meses]
+
+    por_mes: dict[date, dict[str, list[SomasDaFonte]]] = {m: {} for m in meses}
+    consulta = select(
+        ScoreMesFonte.mes,
+        ScoreMesFonte.fonte_id,
+        ScoreMesFonte.sentimento,
+        ScoreMesFonte.tier,
+        ScoreMesFonte.mencoes,
+        ScoreMesFonte.soma_log,
+        ScoreMesFonte.soma_engajamento,
+        ScoreMesFonte.soma_cargo,
+    ).where(ScoreMesFonte.fonte_id.in_(list(codigo_da_fonte)), ScoreMesFonte.mes.in_(meses))
+    for mes, fonte_id, sentimento, tier, mencoes, log, engajamento, cargo in sessao.execute(
+        consulta
+    ):
+        fonte = codigo_da_fonte[fonte_id]
+        por_mes[mes].setdefault(fonte, []).append(
+            SomasDaFonte(
+                fonte=fonte,
+                sentimento=sentimento,
+                tier=tier or "",
+                mencoes=float(mencoes),
+                soma_log=float(log),
+                soma_engajamento=float(engajamento),
+                soma_cargo=float(cargo),
+            )
+        )
+    estimativas = {
+        mes: float(valor)
+        for mes, valor in sessao.execute(
+            select(ScoreEstimativa.mes, ScoreEstimativa.ns).where(
+                ScoreEstimativa.lente_id == lente.id, ScoreEstimativa.mes.in_(meses)
+            )
+        )
+    }
+
+    saida: dict[date, MesDaLente] = {}
+    for mes in meses:
+        ligadas = {f: linhas for f, linhas in por_mes[mes].items() if calibracao.ligada(f)}
+        regua = regua_da_lente(ligadas, calibracao.regua_engajamento)
+        total = Contagem()
+        for linhas in ligadas.values():
+            total = total + ponderar(linhas, calibracao, regua)
+        medida = medir_lente(
+            codigo=lente.codigo,
+            nome=lente.nome,
+            peso=calibracao.peso(lente.codigo, lente.peso_padrao),
+            somas_por_fonte=por_mes[mes],
+            calibracao=calibracao,
+            estimativa=estimativas.get(mes),
+            fontes_cadastradas=tuple(codigo_da_fonte.values()),
+        )
+        saida[mes] = MesDaLente(
+            mes=mes, regua=regua, denominador=total.total, ns=ns(total), nota=medida.score
+        )
+    return saida
+
+
+def grupos_da_consulta(
+    sessao: Session,
+    lente_id: int,
+    meses: Sequence[date],
+    calibracao: Calibracao,
+    reguas: dict[date, str],
+) -> list[GrupoDaConsulta]:
+    """As menções dos meses ANTERIORES ao da tela, já agrupadas no banco.
+
+    Desses meses a Consulta só usa agregados (impacto de cada nó, volume), e ler
+    as linhas cruas — 48 mil com o volume real, com título, link e autor — levava
+    segundos. O GROUP BY é pelo que decide o vínculo (tema_id, tema_texto,
+    subtema, atributo) e o peso (sentimento, tier, e o engajamento ou o cargo SÓ
+    NO MÊS CUJA RÉGUA OS LÊ — `reguas`, de `meses_da_lente`): na régua de
+    contagem eles não mudam o peso, e agrupar por eles só multiplicaria grupos.
+    """
+    meses = [primeiro_dia(m) for m in meses]
+    if not meses:
+        return []
+    com_engajamento = [m for m in meses if reguas.get(m) in ("log", "bruto")]
+    com_cargo = [m for m in meses if reguas.get(m) == "cargo"]
+    # SEM RÓTULO NO GROUP BY: "engajamento" como alias colidiria com a coluna
+    # de mesmo nome, e o Postgres resolveria o GROUP BY pela coluna crua.
+    engajamento = (
+        case((Mencao.mes.in_(com_engajamento), Mencao.engajamento), else_=null())
+        if com_engajamento
+        else null()
+    )
+    cargo = case((Mencao.mes.in_(com_cargo), Mencao.cargo), else_=null()) if com_cargo else null()
+    chaves = (
+        Mencao.mes,
+        Mencao.sentimento,
+        Mencao.tier,
+        engajamento,
+        cargo,
+        Mencao.tema_id,
+        Mencao.tema_texto,
+        Mencao.subtema,
+        Mencao.atributo,
+    )
+    consulta = (
+        select(
+            *chaves[:3],
+            engajamento.label("engajamento_do_peso"),
+            cargo.label("cargo_do_peso"),
+            *chaves[5:],
+            func.count().label("quantas"),
+        )
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .where(
+            ScoreFonte.lente_id == lente_id,
+            Mencao.mes.in_(meses),
+            *so_fontes_ligadas(calibracao),
+        )
+        # O NULL constante fica fora do GROUP BY: o Postgres recusa constante
+        # que não seja posição ("non-integer constant in GROUP BY").
+        .group_by(
+            *chaves[:3],
+            *((engajamento,) if com_engajamento else ()),
+            *((cargo,) if com_cargo else ()),
+            *chaves[5:],
+        )
+    )
+    return [
+        GrupoDaConsulta(
+            mes=linha.mes,
+            sentimento=linha.sentimento,
+            quantas=int(linha.quantas),
+            tier=linha.tier,
+            engajamento=linha.engajamento_do_peso,
+            cargo=linha.cargo_do_peso,
+            tema_id=linha.tema_id,
+            tema_texto=linha.tema_texto,
+            subtema=linha.subtema,
+            atributo=linha.atributo,
+        )
+        for linha in sessao.execute(consulta)
+    ]
+
+
+def mencoes_da_consulta(
+    sessao: Session, lente_id: int, mes: date, calibracao: Calibracao
+) -> list[MencaoDaConsulta]:
+    """As menções da lente NO MÊS DA TELA, linha a linha, numa leitura só.
+
+    A CONSULTA EM PROFUNDIDADE NÃO CHAMA `impacto_do_recorte` POR NÓ: com 7
+    pilares, dezenas de temas e subtemas, seriam centenas de idas ao banco para
+    somar as mesmas linhas de jeitos diferentes. Lê-se a menção crua uma vez e a
+    árvore inteira se agrega em Python (`dominio.consulta_profundidade`) —
+    O(linhas), e as mesmas réguas. Só este mês precisa da linha inteira (os
+    recortes e as matérias); os anteriores vêm de `grupos_da_consulta`.
+
+    A CALIBRAÇÃO VALE AQUI COMO NA NOTA: fonte desligada não entra, senão a
+    árvore explicaria um número do qual ela não participou.
+    """
+    consulta = (
+        select(
+            Mencao.id,
+            Mencao.mes,
+            Mencao.data,
+            Mencao.sentimento,
+            Mencao.tier,
+            Mencao.engajamento,
+            Mencao.cargo,
+            Mencao.tema_id,
+            Mencao.tema_texto,
+            Mencao.subtema,
+            Mencao.atributo,
+            Mencao.veiculo,
+            Mencao.unidade_texto,
+            Mencao.uf,
+            Mencao.autor,
+            Mencao.titulo_texto,
+            Mencao.link,
+            Mencao.id_fonte,
+        )
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .where(
+            ScoreFonte.lente_id == lente_id,
+            Mencao.mes == primeiro_dia(mes),
+            *so_fontes_ligadas(calibracao),
+        )
+        # A ordem só estabiliza os empates (a amostra ordena em Python); com um
+        # mês só, ela custa pouco.
+        .order_by(Mencao.data, Mencao.id)
+    )
+    return [
+        MencaoDaConsulta(
+            id=str(linha.id),
+            mes=linha.mes,
+            data=linha.data,
+            sentimento=linha.sentimento,
+            tier=linha.tier,
+            engajamento=linha.engajamento,
+            cargo=linha.cargo,
+            tema_id=linha.tema_id,
+            tema_texto=linha.tema_texto,
+            subtema=linha.subtema,
+            atributo=linha.atributo,
+            veiculo=linha.veiculo,
+            unidade_texto=linha.unidade_texto,
+            uf=linha.uf,
+            autor=linha.autor,
+            titulo_texto=linha.titulo_texto,
+            link=linha.link,
+            id_fonte=linha.id_fonte,
+        )
+        for linha in sessao.execute(consulta)
+    ]
+
+
 def fontes_da_lente(
     sessao: Session,
     lente_id: int,
@@ -843,14 +1075,9 @@ def pesos_por_tema(
     pesos_de_tier = REGUAS_DE_TIER[calibracao.regua_tier]
 
     def medida(regua: str, cargo: str | None, engajamento: int | None, quantas: int) -> float:
-        """O que cada uma destas menções soma, pela régua dada."""
-        if regua == "log":
-            return peso_do_engajamento(engajamento) * quantas
-        if regua == "bruto":
-            return (engajamento or 0) * quantas
-        if regua == "cargo":
-            return peso_do_cargo(cargo) * quantas
-        return float(quantas)
+        """O que cada uma destas menções soma, pela régua dada — a regra mora em
+        `medida_da_mencao`, a mesma que a consulta em profundidade usa."""
+        return medida_da_mencao(regua, cargo, engajamento) * quantas
 
     linhas = list(sessao.execute(consulta))
 

@@ -110,6 +110,49 @@ def peso_do_engajamento(engajamento: int | None) -> float:
     return 1 + math.log10(1 + max(0, engajamento or 0))
 
 
+def medida_da_mencao(regua: str, cargo: str | None, engajamento: int | None) -> float:
+    """O que UMA menção soma pela régua de engajamento dada.
+
+    É a versão menção a menção de `SomasDaFonte.medida`: lá a ingestão já somou
+    a coluna que cada régua consome; aqui a menção ainda está crua, e a mesma
+    escolha se faz sobre os campos dela. Morava como função interna de
+    `repositorio_score.pesos_por_tema`, e a consulta em profundidade precisava
+    dela de novo — dois lugares para a mesma régua é como elas divergem.
+    """
+    if regua == "log":
+        return peso_do_engajamento(engajamento)
+    if regua == "bruto":
+        return float(engajamento or 0)
+    if regua == "cargo":
+        return peso_do_cargo(cargo)
+    return 1.0
+
+
+def peso_do_tier(tier: str | None, regua_tier: str) -> float:
+    """Quanto o veículo vale na régua de tier. Sem tier, 1 — como em `ponderar`."""
+    if not tier:
+        return 1.0
+    return REGUAS_DE_TIER[regua_tier].get(tier, 1.0)
+
+
+def peso_da_mencao(
+    tier: str | None,
+    cargo: str | None,
+    engajamento: int | None,
+    calibracao: Calibracao,
+    regua: str,
+) -> float:
+    """O `w` de uma menção: tier do veículo × medida de engajamento.
+
+    A RÉGUA DE ENGAJAMENTO VEM DE FORA, e é a do MÊS da lente (ver
+    `regua_da_lente`): decidi-la por menção somaria curtida com menção dentro da
+    mesma razão. Somando `w` de todas as menções do mês chega-se ao mesmo total
+    que `ponderar` tira de `score_mes_fonte` — é o que faz o impacto de uma
+    matéria fechar com a nota.
+    """
+    return peso_do_tier(tier, calibracao.regua_tier) * medida_da_mencao(regua, cargo, engajamento)
+
+
 @dataclass(frozen=True, slots=True)
 class Contagem:
     """O que se soma de um lado da fórmula, já ponderado."""

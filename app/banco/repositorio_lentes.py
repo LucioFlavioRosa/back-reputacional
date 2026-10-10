@@ -53,6 +53,12 @@ from app.dominio.causa_da_lente import (
     Presenca,
     dimensoes_do_recorte,
 )
+from app.dominio.consulta_profundidade import (
+    PilarDaTaxonomia,
+    SubtemaDaTaxonomia,
+    Taxonomia,
+    TemaDaTaxonomia,
+)
 from app.dominio.score import Calibracao, FiltroDeMencoes
 
 
@@ -286,6 +292,49 @@ def taxonomia_n1_n2(
             )
         ),
     }
+
+
+def taxonomia_ativa(sessao: Session) -> Taxonomia:
+    """Os três níveis ATIVOS da taxonomia v4, para a Consulta em profundidade.
+
+    TRÊS LEITURAS PEQUENAS (7 + 41 + 104 linhas) e a resolução em Python: a
+    comparação é sem acento, e o `unaccent` não está instalado no banco — fazê-la
+    em SQL pediria uma extensão nova só para isto.
+
+    O SUBTEMA SEM MACRO FICA DE FORA aqui mesmo: são os 45 legados que a 0058
+    desativou ("Tarifa", "Universalização"), e casar uma menção com eles a
+    deixaria num N3 sem N2 e sem pilar.
+
+    SÓ AS COLUNAS, E NÃO A ENTIDADE: `Tema.vinculos_de_risco` é `selectin`, e
+    carregar o ORM inteiro disparava uma quarta leitura (tema_risco) que a
+    Consulta não usa.
+    """
+    pilares = [
+        PilarDaTaxonomia(id=id_, codigo=codigo, nome=nome)
+        for id_, codigo, nome in sessao.execute(
+            select(BlocoTema.id, BlocoTema.codigo, BlocoTema.nome)
+            .where(BlocoTema.ativo.is_(True))
+            .order_by(BlocoTema.ordem)
+        )
+    ]
+    temas = [
+        TemaDaTaxonomia(id=id_, codigo=codigo, nome=nome, pilar_id=pilar_id)
+        for id_, codigo, nome, pilar_id in sessao.execute(
+            select(MacroTema.id, MacroTema.codigo, MacroTema.nome, MacroTema.bloco_tema_id)
+            .join(BlocoTema, BlocoTema.id == MacroTema.bloco_tema_id)
+            .where(MacroTema.ativo.is_(True))
+            .order_by(BlocoTema.ordem, MacroTema.ordem)
+        )
+    ]
+    subtemas = [
+        SubtemaDaTaxonomia(id=id_, nome=nome, tema_id=tema_id)
+        for id_, nome, tema_id in sessao.execute(
+            select(Tema.id, Tema.nome, Tema.macro_tema_id)
+            .where(Tema.ativo.is_(True), Tema.macro_tema_id.is_not(None))
+            .order_by(Tema.id)
+        )
+    ]
+    return Taxonomia(pilares, temas, subtemas)
 
 
 def opcoes_de_filtro(sessao: Session, lente_id: int, mes: date) -> dict[str, list[str]]:
