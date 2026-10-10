@@ -25,7 +25,7 @@
 --:     instituicao.cargo   = 'Unidade aegea' ........  11
 --:     instituicao.cargo   = 'Nao identificado' .....  23
 --:
---: PELO VALOR EXATO, e não por `initcap` ou `unaccent`: o conjunto é de três
+--: PELO VALOR EXATO, e não por `initcap` ou `unaccent`: o conjunto é de DOIS
 --: rótulos conhecidos, e uma regra genérica mexeria em texto que alguém pode ter
 --: escrito à mão. Trocar exatamente o que a derivação errada produziu é o que
 --: deixa esta migration inócua na segunda passagem — e inócua numa base que

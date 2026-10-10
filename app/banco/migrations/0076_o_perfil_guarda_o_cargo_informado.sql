@@ -70,7 +70,7 @@ insert into rotulo_do_cargo (cargo, rotulo) values
     ('prefeitura',        'Prefeitura'),
     ('orgao_publico',     'Órgão público'),
     ('outros',            'Outros'),
-    --: OS TRÊS QUE A DERIVAÇÃO AUTOMÁTICA ESCREVIA SEM ACENTO. Sem entrada, o
+    --: TRÊS ENTRADAS, DOIS CONSERTOS — `aegea` já saía certo. Sem entrada, o
     --: rótulo saía de `initcap(replace(cargo,'_',' '))` do lado do SQL e de
     --: `capitalize()` do lado do Python — nenhum dos dois devolve acento, e a
     --: tela mostrava "Unidade aegea" e "Nao identificado". O que já está
