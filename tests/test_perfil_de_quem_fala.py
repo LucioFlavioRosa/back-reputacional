@@ -207,3 +207,22 @@ def test_a_linha_SEM_CARGO_entra_sem_perfil(sessao, bites):
     gravada = sessao.scalar(select(Mencao).where(Mencao.fonte_id == bites.id))
     assert gravada.perfil_autor is None
     assert gravada.cargo is None
+
+
+def test_o_ROTULO_da_propria_companhia_e_do_desconhecido_tem_ACENTO():
+    """A derivação automática não devolve acento, e a tela mostrava o erro.
+
+    Sem entrada em `ROTULO_DO_CARGO`, o rótulo sai de
+    `codigo.replace("_", " ").capitalize()` — que põe maiúscula só na primeira
+    letra e não tem como saber do acento. A tela do cliente mostrava "Unidade
+    aegea" e "Nao identificado": é o tipo de erro que se lê como desleixo antes
+    de se ler como defeito, e o nome da companhia é o pior lugar para ele.
+    """
+    from app.dominio.ingestao_score import rotulo_do_cargo
+
+    assert rotulo_do_cargo("unidade_aegea") == "Unidade Aegea"
+    assert rotulo_do_cargo("nao_identificado") == "Não identificado"
+    assert rotulo_do_cargo("aegea") == "Aegea"
+    #: E O CARGO QUE NINGUÉM CADASTROU continua aparecendo, derivado: esconder
+    #: até alguém mapear faria o gráfico mentir por omissão.
+    assert rotulo_do_cargo("coisa_nova") == "Coisa nova"

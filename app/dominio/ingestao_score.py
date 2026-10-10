@@ -556,6 +556,19 @@ ROTULO_DO_CARGO: dict[str, str] = {
     "prefeitura": "Prefeitura",
     "orgao_publico": "Órgão público",
     "outros": "Outros",
+    #: TRÊS ENTRADAS, DOIS CONSERTOS. Sem entrada aqui, o rótulo vem de
+    #: `codigo.replace("_", " ").capitalize()`, que só põe maiúscula na PRIMEIRA
+    #: letra e não devolve acento nenhum: a tela mostrava "Unidade aegea" e "Nao
+    #: identificado". O nome da companhia e a palavra "não" aparecem na tela do
+    #: cliente — é o tipo de erro que se lê como desleixo antes de se ler como
+    #: defeito.
+    #:
+    #: `aegea` JÁ SAÍA CERTO da derivação ("Aegea"); ele está aqui por
+    #: completude, para quem procurar os cargos da casa achar os dois no mesmo
+    #: lugar. É por isso que a `0081` troca dois valores, e não três.
+    "aegea": "Aegea",
+    "unidade_aegea": "Unidade Aegea",
+    "nao_identificado": "Não identificado",
 }
 
 

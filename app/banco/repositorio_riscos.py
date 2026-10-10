@@ -47,6 +47,7 @@ from app.banco.tabelas_interacoes import InteracaoRegistro, InteracaoTema
 from app.banco.tabelas_score import Lente, Mencao, ScoreFonte
 from app.dominio.identidade import Escopo
 from app.dominio.riscos import (
+    CARGOS_DA_PROPRIA_COMPANHIA,
     PESO_DA_SEVERIDADE,
     SEVERIDADES,
     MesDeRisco,
@@ -247,6 +248,19 @@ def mencoes_de_incidente(filtro: FiltroDeRisco, riscos: list[int] | None) -> Sel
             Mencao.sentimento == SENTIMENTO_DO_INCIDENTE,
             Risco.ativo.is_(True),
             Tema.ativo.is_(True),
+            #: A PRÓPRIA COMPANHIA FALANDO NÃO É INCIDENTE. Medido em
+            #: 10/10/2026: 125 menções da Bites são posts da Aegea e das
+            #: concessionárias dela, e SEIS delas vinham classificadas como
+            #: negativas com assunto — entravam na conta como se alguém tivesse
+            #: criticado a empresa. A aba responde "o que se fala da companhia";
+            #: o que a companhia publica é comunicação, não exposição a risco.
+            #:
+            #: SEIS DE 5.885 é pouco, e o motivo de consertar não é o tamanho: é
+            #: que uma dessas linhas aberta numa reunião ("este aqui é nosso
+            #: próprio post") derruba a confiança no resto da tabela, que está
+            #: certo.
+            Mencao.cargo.not_in(CARGOS_DA_PROPRIA_COMPANHIA)
+            | Mencao.cargo.is_(None),
         )
     )
     if riscos is not None:
@@ -417,6 +431,12 @@ def _mencoes_cuja_pior_e(
             Mencao.sentimento == SENTIMENTO_DO_INCIDENTE,
             Risco.ativo.is_(True),
             Tema.ativo.is_(True),
+            #: A MESMA EXCLUSÃO da consulta principal: se a subconsulta contasse
+            #: o post da casa, uma menção excluída lá poderia ser classificada
+            #: por ele aqui — e os números do topo deixariam de fechar com a
+            #: tabela. É o mesmo defeito que a revisão achou na severidade.
+            Mencao.cargo.not_in(CARGOS_DA_PROPRIA_COMPANHIA)
+            | Mencao.cargo.is_(None),
         )
         .group_by(Mencao.id)
         .having(func.max(_peso_em_sql()) == peso_da_severidade(severidade))

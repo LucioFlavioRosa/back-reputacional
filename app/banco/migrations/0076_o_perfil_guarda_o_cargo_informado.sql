@@ -70,6 +70,14 @@ insert into rotulo_do_cargo (cargo, rotulo) values
     ('prefeitura',        'Prefeitura'),
     ('orgao_publico',     'Órgão público'),
     ('outros',            'Outros'),
+    --: TRÊS ENTRADAS, DOIS CONSERTOS — `aegea` já saía certo. Sem entrada, o
+    --: rótulo saía de `initcap(replace(cargo,'_',' '))` do lado do SQL e de
+    --: `capitalize()` do lado do Python — nenhum dos dois devolve acento, e a
+    --: tela mostrava "Unidade aegea" e "Nao identificado". O que já está
+    --: gravado é corrigido pela `0081`; aqui é para a base que nasce agora.
+    ('aegea',             'Aegea'),
+    ('unidade_aegea',     'Unidade Aegea'),
+    ('nao_identificado',  'Não identificado'),
     ('vereadora',         'Vereador'),
     ('verador',           'Vereador'),
     ('deputada_estadual', 'Deputado estadual'),

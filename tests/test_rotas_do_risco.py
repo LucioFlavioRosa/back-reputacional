@@ -1116,3 +1116,67 @@ def test_o_MES_QUE_NAO_EXISTE_e_recusado_e_nao_estoura(da_plataforma):
 
     #: E O MÊS QUE EXISTE CONTINUA PASSANDO.
     assert da_plataforma.get("/api/score/riscos?de=2026-01&ate=2026-12").status_code == 200
+
+
+def test_o_POST_DA_PROPRIA_AEGEA_nao_e_incidente(da_plataforma, sessao, com_incidentes):
+    """A aba responde "o que se fala da companhia", não o que ela publica.
+
+    MEDIDO EM 10/10/2026: 125 menções da Bites são posts da Aegea e das
+    concessionárias dela (4,4% da fonte), e SEIS vinham classificadas como
+    negativas com assunto — entravam na conta como se alguém tivesse criticado a
+    empresa.
+
+    SEIS DE 5.885 É POUCO, e não é por isso que se conserta: é que uma dessas
+    linhas aberta numa reunião ("este aqui é nosso próprio post") derruba a
+    confiança no resto da tabela, que está certo.
+    """
+    from sqlalchemy import select as _select
+
+    from app.banco.tabelas_score import ScoreFonte as _Fonte
+    from tests.test_rastreio_de_riscos import _mencao
+
+    antes = da_plataforma.get("/api/score/riscos/incidentes?tamanho=500").json()["total"]
+
+    bites = sessao.scalar(_select(_Fonte).where(_Fonte.codigo == "bites"))
+    #: UM POST DA CASA, negativo e com assunto — tudo o que faria dele um
+    #: incidente, menos o autor.
+    da_casa = _mencao(sessao, bites, com_incidentes, "neg", dia=7)
+    da_casa.cargo = "unidade_aegea"
+    #: E UM DE TERCEIRO no mesmo molde, para o teste provar que a exclusão é do
+    #: AUTOR e não do resto.
+    de_terceiro = _mencao(sessao, bites, com_incidentes, "neg", dia=8)
+    de_terceiro.cargo = "vereador"
+    sessao.flush()
+
+    depois = da_plataforma.get("/api/score/riscos/incidentes?tamanho=500").json()
+    assert depois["total"] == antes + 1, "só o de terceiro entrou"
+    assert str(da_casa.id) not in {linha["id"] for linha in depois["itens"]}
+    assert str(de_terceiro.id) in {linha["id"] for linha in depois["itens"]}
+
+
+def test_a_CASA_fica_fora_tambem_da_SEVERIDADE_e_do_INDICE(
+    da_plataforma, sessao, com_incidentes
+):
+    """A exclusão vale em todas as contas, senão os números param de fechar.
+
+    Se a subconsulta da pior severidade contasse o post da casa e a consulta
+    principal não, os três números do topo deixariam de somar o total da
+    tabela — o mesmo defeito que a revisão achou na severidade por recorte.
+    """
+    from sqlalchemy import select as _select
+
+    from app.banco.tabelas_score import ScoreFonte as _Fonte
+    from tests.test_rastreio_de_riscos import _mencao
+
+    bites = sessao.scalar(_select(_Fonte).where(_Fonte.codigo == "bites"))
+    for dia in (9, 10, 11):
+        linha = _mencao(sessao, bites, com_incidentes, "neg", dia=dia)
+        linha.cargo = "aegea"
+    sessao.flush()
+
+    painel = da_plataforma.get("/api/score/riscos").json()
+    total = da_plataforma.get("/api/score/riscos/incidentes?tamanho=500").json()["total"]
+
+    assert sum(painel["total_por_severidade"].values()) == total
+    #: E A SÉRIE TAMBÉM: a soma dos meses é o total do recorte.
+    assert sum(mes["incidentes"] for mes in painel["serie"]) == total

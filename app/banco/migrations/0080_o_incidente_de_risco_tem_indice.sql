@@ -1,0 +1,64 @@
+--: O INCIDENTE DE RISCO GANHA ÍNDICE, e só ele.
+--:
+--: O QUE A ABA DE RISCO FAZ A CADA CARREGAMENTO. Ela pede três rotas, e as três
+--: partem do mesmo conjunto: a menção NEGATIVA que tem assunto do cadastro. São
+--: a série do índice, a matriz dos 32 riscos, a contagem por severidade, as
+--: dimensões do recorte (duas consultas), a página do relatório e a recorrência
+--: por assunto — oito varreduras do mesmo fato numa abertura de tela.
+--:
+--: MEDIDO EM 10/10/2026, na base local com o dado real:
+--:
+--:     mencao .............. 28.626 linhas, 5.790 incidentes
+--:     interacao ...........    429 agendas visíveis, 121 tensas
+--:
+--: A série fazia `Seq Scan` em `mencao`: lia as 28.626 e descartava 22.606,
+--: 3.470 páginas, 8,1 ms. O índice parcial reduz o conjunto de partida a um
+--: quinto.
+--:
+--: POR QUE AGORA E NÃO DEPOIS. Hoje agosto e setembro concentram 25 mil das 28
+--: mil menções: jan–jul só têm Bites, e a Clipei entra em agosto. Quando as
+--: bases de todos os meses subirem — e vão —, a tabela multiplica por cinco com
+--: a MESMA tela pedindo as mesmas oito varreduras. O índice é barato antes disso
+--: e é dívida depois.
+--:
+--: AS COLUNAS SÃO AS QUE A ABA USA, nesta ordem: `tema_id` é por onde todo
+--: incidente chega a risco (`tema_risco`), e `mes` é por onde a janela recorta e
+--: a série agrupa. `mencao_por_tema` já existia em `tema_id`, mas sem o
+--: `sentimento` na condição — o planejador ainda tinha de visitar a linha para
+--: descobrir se ela era negativa.
+--:
+--: E O QUE NÃO ENTRA NESTA MIGRATION: o índice das AGENDAS.
+--:
+--: A revisão sugeriu um par — um para as menções e outro para `interacao`
+--: (clima tenso, visível, não arquivada). Medi antes de criar, e as agendas não
+--: justificam: são 429 linhas visíveis, a consulta roda em 1,1 ms, e o
+--: planejador vai preferir `Seq Scan` numa tabela desse tamanho por muito tempo.
+--: Um índice que o planejador ignora não é neutro: ele é reescrito em todo
+--: `insert` e `update`, e o CRM grava agenda o dia inteiro. Fica anotado para
+--: quando a tabela passar da ordem de dezenas de milhares — aí a conta inverte.
+--:
+--: `if not exists` PORQUE A MIGRATION PODE REAPLICAR: o banco de produção já
+--: rodou as anteriores, e este arquivo tem de ser inócuo na segunda passagem.
+--:
+--: SEM `concurrently`, E ISSO É ACEITÁVEL AQUI. A criação pega SHARE LOCK: ela
+--: bloqueia ESCRITA em `mencao` e PERMITE leitura. Com 28 mil linhas é
+--: instantâneo, e com as 150 mil previstas continua na casa de segundos — e a
+--: escrita em `mencao` é a subida de planilha, que já é uma operação que a
+--: pessoa espera. `concurrently` não roda em transação, e todas as migrations
+--: deste projeto rodam em uma; trocar a mecânica por causa deste índice seria
+--: pagar caro por um problema que esta tabela não tem.
+
+create index if not exists mencao_incidente_de_risco
+    on mencao (tema_id, mes)
+    where sentimento = 'neg' and tema_id is not null;
+
+--: A ESTATÍSTICA ATUALIZADA na mesma transação, e por PREVISIBILIDADE, não por
+--: necessidade — a primeira versão deste comentário dizia que sem o `analyze` o
+--: planejador "decidiria pelo que sabia antes do índice", e isso está errado: o
+--: `create index` registra o índice, e o planejador já o considera na consulta
+--: seguinte. O que o `analyze` atualiza é a estatística da TABELA, que é o que
+--: faz o planejador estimar bem a seletividade do predicado parcial.
+--:
+--: O CUSTO É BAIXO: `analyze` pega `ShareUpdateExclusiveLock`, que não bloqueia
+--: leitura nem escrita comum, e nesta ordem de grandeza roda em milissegundos.
+analyze mencao;
