@@ -21,7 +21,7 @@ import secrets
 from dataclasses import asdict
 from datetime import date, datetime
 from typing import Annotated, Literal
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from uuid import UUID
 
 from fastapi import (
@@ -226,98 +226,109 @@ def callback(
     # técnico da falha continua só no log.
     ip = ip_do_cliente(requisicao, proxies_confiaveis=configuracao.proxies_confiaveis)
 
+    # O NAVEGADOR CHEGA AQUI POR NAVEGAÇÃO DE TOPO, vindo do Entra ID — não é
+    # uma chamada escondida do front. Uma recusa que só levantasse a exceção
+    # devolveria o JSON cru como PÁGINA, no lugar do site: foi exatamente o que
+    # alguém viu ao tentar entrar sem papel liberado. Por isso todo o corpo
+    # mora num só `try`, e a recusa vira um REDIRECT de volta ao front com a
+    # mensagem — a mesma que a tela de login já sabe mostrar numa caixa de
+    # aviso, para quem clica errado com senha.
     try:
-        pedido = sessao_assinada.ler(
-            requisicao.cookies.get(COOKIE_DO_PEDIDO),
-            configuracao.sessao_secreta,
-            tipo=sessao_assinada.TIPO_PEDIDO,
-        )
-    except sessao_assinada.SessaoInvalida as erro:
-        # Este caminho não registrava. Cookie de pedido ausente, vencido,
-        # adulterado ou de outro tipo é justamente o que uma rajada de callbacks
-        # forjados produz — e é o sinal que a trilha existe para mostrar.
-        registrar_acesso.registrar_e_confirmar(
-            sessao, resultado=registrar_acesso.NEGADO_NO_PROVEDOR, ip=ip
-        )
-        raise NaoAutorizado(
-            "Pedido de login expirado. Tente entrar de novo.",
-            sobre_o_pedido=True,
-        ) from erro
+        try:
+            pedido = sessao_assinada.ler(
+                requisicao.cookies.get(COOKIE_DO_PEDIDO),
+                configuracao.sessao_secreta,
+                tipo=sessao_assinada.TIPO_PEDIDO,
+            )
+        except sessao_assinada.SessaoInvalida as erro:
+            # Este caminho não registrava. Cookie de pedido ausente, vencido,
+            # adulterado ou de outro tipo é justamente o que uma rajada de
+            # callbacks forjados produz — e é o sinal que a trilha existe para
+            # mostrar.
+            registrar_acesso.registrar_e_confirmar(
+                sessao, resultado=registrar_acesso.NEGADO_NO_PROVEDOR, ip=ip
+            )
+            raise NaoAutorizado(
+                "Pedido de login expirado. Tente entrar de novo.",
+                sobre_o_pedido=True,
+            ) from erro
 
-    estado, nonce, verificador, redirect = pedido.csrf.split("|", 3)
+        estado, nonce, verificador, redirect = pedido.csrf.split("|", 3)
 
-    if error:
-        registrar_acesso.registrar_e_confirmar(
-            sessao, resultado=registrar_acesso.NEGADO_NO_PROVEDOR, ip=ip
-        )
-        raise NaoAutorizado("O Entra ID recusou o login.", sobre_o_pedido=True)
+        if error:
+            registrar_acesso.registrar_e_confirmar(
+                sessao, resultado=registrar_acesso.NEGADO_NO_PROVEDOR, ip=ip
+            )
+            raise NaoAutorizado("O Entra ID recusou o login.", sobre_o_pedido=True)
 
-    if not code or not state or not secrets.compare_digest(state, estado):
-        # `state` divergente é a assinatura de um CSRF no próprio login: alguém
-        # tentando fazer a vítima entrar na conta do atacante.
-        registrar_acesso.registrar_e_confirmar(
-            sessao, resultado=registrar_acesso.NEGADO_NO_PROVEDOR, ip=ip
-        )
-        raise NaoAutorizado("Pedido de login inválido.", sobre_o_pedido=True)
+        if not code or not state or not secrets.compare_digest(state, estado):
+            # `state` divergente é a assinatura de um CSRF no próprio login:
+            # alguém tentando fazer a vítima entrar na conta do atacante.
+            registrar_acesso.registrar_e_confirmar(
+                sessao, resultado=registrar_acesso.NEGADO_NO_PROVEDOR, ip=ip
+            )
+            raise NaoAutorizado("Pedido de login inválido.", sobre_o_pedido=True)
 
-    cliente = cliente_entra(configuracao)
-    try:
-        id_token = cliente.trocar_codigo(
-            codigo=code,
-            redirect_uri=configuracao.entra_redirect_uri,
-            verificador=verificador,
-        )
-        identidade = cliente.validar(id_token, nonce=nonce)
-    except FalhaNoLogin as erro:
-        # O motivo vai para o log, não para a tela: ele descreve o que falhou na
-        # validação, e isso ajuda quem está tentando forjar um token.
-        logger.warning("Login recusado: %s", erro, extra={"ip": ip})
-        registrar_acesso.registrar_e_confirmar(
-            sessao, resultado=registrar_acesso.NEGADO_NO_PROVEDOR, ip=ip
-        )
-        raise NaoAutorizado(
-            "Não foi possível concluir o login.", sobre_o_pedido=True
-        ) from erro
+        cliente = cliente_entra(configuracao)
+        try:
+            id_token = cliente.trocar_codigo(
+                codigo=code,
+                redirect_uri=configuracao.entra_redirect_uri,
+                verificador=verificador,
+            )
+            identidade = cliente.validar(id_token, nonce=nonce)
+        except FalhaNoLogin as erro:
+            # O motivo vai para o log, não para a tela: ele descreve o que
+            # falhou na validação, e isso ajuda quem está tentando forjar um
+            # token.
+            logger.warning("Login recusado: %s", erro, extra={"ip": ip})
+            registrar_acesso.registrar_e_confirmar(
+                sessao, resultado=registrar_acesso.NEGADO_NO_PROVEDOR, ip=ip
+            )
+            raise NaoAutorizado(
+                "Não foi possível concluir o login.", sobre_o_pedido=True
+            ) from erro
 
-    usuario = provisionar(
-        sessao,
-        entra_object_id=identidade.entra_object_id,
-        email=identidade.email,
-        nome=identidade.nome,
-    )
-
-    # Confirma o provisionamento ANTES de decidir. A pessoa existe no diretório
-    # e acabou de ser criada aqui; se a recusa desfizesse isso, quem administra
-    # acessos não teria a quem conceder — teria de esperar a pessoa tentar de
-    # novo, e a tentativa seria negada de novo.
-    sessao.commit()
-
-    negativa = _motivo_da_recusa(usuario)
-    if negativa:
-        registrar_acesso.registrar_e_confirmar(
+        usuario = provisionar(
             sessao,
-            resultado=negativa,
-            usuario_id=usuario.id,
-            email_tentado=identidade.email,
-            ip=ip,
+            entra_object_id=identidade.entra_object_id,
+            email=identidade.email,
+            nome=identidade.nome,
         )
-        # A pessoa é quem diz ser; só não tem acesso liberado. A mensagem pode
-        # ser específica: não revela nada que ela já não saiba sobre si.
-        #
-        # `sobre_o_pedido=True` é o que TORNA isso verdade, e faltava. Sem ele,
-        # `_e_externo()` não tem identidade resolvida no meio da autenticação,
-        # cai no lado seguro — "de fora" —, e a política troca a frase por
-        # "Você não tem permissão para esta operação".
-        #
-        # A intenção estava escrita neste comentário e não estava no código: o
-        # log guardava "Seu acesso ainda não foi liberado. Peça à coordenação"
-        # e a pessoa lia um beco sem saída. A porta da senha já passava a
-        # bandeira; a do SSO, não — e é a que vai sobrar.
-        #
-        # A doutrina em `dominio/erros.py` cita esta frase pelo nome como
-        # exemplo do que é `sobre_o_pedido`: descreve o ESTADO de quem pede,
-        # que a pessoa já conhece, e é acionável.
-        raise NaoAutorizado(_texto_da_recusa(usuario), sobre_o_pedido=True)
+
+        # Confirma o provisionamento ANTES de decidir. A pessoa existe no
+        # diretório e acabou de ser criada aqui; se a recusa desfizesse isso,
+        # quem administra acessos não teria a quem conceder — teria de esperar
+        # a pessoa tentar de novo, e a tentativa seria negada de novo.
+        sessao.commit()
+
+        negativa = _motivo_da_recusa(usuario)
+        if negativa:
+            registrar_acesso.registrar_e_confirmar(
+                sessao,
+                resultado=negativa,
+                usuario_id=usuario.id,
+                email_tentado=identidade.email,
+                ip=ip,
+            )
+            # A pessoa é quem diz ser; só não tem acesso liberado. A mensagem
+            # pode ser específica: não revela nada que ela já não saiba sobre
+            # si.
+            #
+            # `sobre_o_pedido=True` é o que TORNA isso verdade. Sem ele,
+            # `_e_externo()` não tem identidade resolvida no meio da
+            # autenticação, cai no lado seguro — "de fora" —, e a política
+            # troca a frase por "Você não tem permissão para esta operação".
+            #
+            # A doutrina em `dominio/erros.py` cita esta frase pelo nome como
+            # exemplo do que é `sobre_o_pedido`: descreve o ESTADO de quem
+            # pede, que a pessoa já conhece, e é acionável.
+            raise NaoAutorizado(_texto_da_recusa(usuario), sobre_o_pedido=True)
+    except NaoAutorizado as recusa:
+        destino = (
+            configuracao.url_do_front.rstrip("/") + "/?erro=" + quote(str(recusa))
+        )
+        return RedirectResponse(destino, status_code=status.HTTP_303_SEE_OTHER)
 
     registrar_acesso.registrar(
         sessao,
