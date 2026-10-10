@@ -9,6 +9,14 @@ Lê com a biblioteca padrão (`csv`), e não com pandas — é um script de uso
 único, e pandas não é dependência do projeto; trazê-la só para isto obrigaria
 a mexer no lockfile com hash pinado por nada.
 
+MODO SEM PASTA — para rodar dentro de um Container Apps Job avulso, que não
+tem como montar um caminho do seu notebook: omita `pasta` e defina as três
+variáveis de ambiente `CSV_INSTITUICOES_B64`, `CSV_CONTATOS_B64` e
+`CSV_REPRESENTANTES_B64` com o conteúdo de cada CSV em base64 (os três juntos
+somam ~130KB, bem dentro do limite de uma execução avulsa — não precisa de
+Storage Account nem de imagem própria). O script decodifica para uma pasta
+temporária e segue normalmente.
+
 Grava pelas MESMAS validações de domínio que a API usa — `derivar_tipo`,
 `_conferir_tier`, `_conferir_categoria_publico`, `_conferir_area`, `gravar` —
 e não por `insert` cru: um script que escrevesse direto via ORM, sem essas
@@ -50,8 +58,11 @@ existe (mesma chave única) aparece em "já existia", não em "criado".
 from __future__ import annotations
 
 import argparse
+import base64
 import csv
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 from sqlalchemy import select
@@ -350,9 +361,39 @@ def importar(sessao: Session, pasta: Path) -> Resultado:
     return resultado
 
 
+#: Nome do arquivo em disco <- variável de ambiente com o conteúdo em base64.
+ARQUIVO_PARA_VARIAVEL = {
+    "instituicoes.csv": "CSV_INSTITUICOES_B64",
+    "contatos.csv": "CSV_CONTATOS_B64",
+    "representantes_aegea.csv": "CSV_REPRESENTANTES_B64",
+}
+
+
+def _pasta_a_partir_do_ambiente() -> Path | None:
+    """Decodifica as três variáveis de ambiente para uma pasta temporária.
+
+    Devolve `None` se nenhuma delas estiver definida — nesse caso `pasta` é
+    obrigatória na linha de comando, como no modo normal.
+    """
+    if not any(os.environ.get(variavel) for variavel in ARQUIVO_PARA_VARIAVEL.values()):
+        return None
+    pasta = Path(tempfile.mkdtemp(prefix="cadastro_externo_"))
+    for nome_arquivo, variavel in ARQUIVO_PARA_VARIAVEL.items():
+        conteudo = os.environ.get(variavel)
+        if not conteudo:
+            raise SystemExit(f"{variavel} não definida — as três são obrigatórias juntas.")
+        (pasta / nome_arquivo).write_bytes(base64.b64decode(conteudo))
+    return pasta
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("pasta", type=Path, help="pasta com os CSVs do dataset consolidado")
+    parser.add_argument(
+        "pasta",
+        type=Path,
+        nargs="?",
+        help="pasta com os CSVs; omita para ler de CSV_*_B64 (ver docstring)",
+    )
     parser.add_argument(
         "--confirmar",
         action="store_true",
@@ -360,8 +401,15 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    pasta = args.pasta or _pasta_a_partir_do_ambiente()
+    if pasta is None:
+        parser.error(
+            "informe a pasta, ou defina "
+            "CSV_INSTITUICOES_B64/CSV_CONTATOS_B64/CSV_REPRESENTANTES_B64"
+        )
+
     with obter_fabrica_de_sessao()() as sessao:
-        resultado = importar(sessao, args.pasta)
+        resultado = importar(sessao, pasta)
         if args.confirmar:
             sessao.commit()
             print("Gravado.")
