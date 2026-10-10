@@ -35,6 +35,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
+#: OS CARGOS QUE SÃO A PRÓPRIA COMPANHIA FALANDO, e que não contam como
+#: incidente.
+#:
+#: MEDIDO EM 10/10/2026: 125 das 2.842 menções da Bites (4,4% da fonte) têm
+#: `cargo` `aegea` ou `unidade_aegea` — são posts da Aegea e das concessionárias
+#: dela, não o que terceiros disseram sobre elas. Das 125, 103 são positivas e
+#: SEIS eram negativas com assunto: entravam na conta como se alguém tivesse
+#: criticado a empresa. A aba responde "o que se fala da companhia"; o que a
+#: companhia publica é comunicação, não exposição a risco.
+#:
+#: AQUI E NÃO EM `ingestao_score`, onde ela nasceu: isto é a definição de
+#: INCIDENTE, e incidente é assunto deste módulo. `repositorio_riscos` já
+#: importa daqui, e importar de um módulo de ingestão para decidir o que conta
+#: era dependência torta entre camadas. Achado de revisão.
+#:
+#: OS CÓDIGOS SÃO OS CANÔNICOS de `CARGO_CANONICO` — a mesma grafia que
+#: `ROTULO_DO_CARGO` usa como chave.
+CARGOS_DA_PROPRIA_COMPANHIA: frozenset[str] = frozenset({"aegea", "unidade_aegea"})
+
 #: QUANTO CADA SEVERIDADE PESA no índice.
 #:
 #: Três níveis porque são os três da matriz da Aegea, e a proporção é a mais
