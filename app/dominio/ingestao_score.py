@@ -137,6 +137,24 @@ class Descarte(StrEnum):
 #: cadastro da fonte, e não aparecer depois como recorte misteriosamente vazio.
 LISTAS_DE_VEICULOS = frozenset({"imprensa_economica"})
 
+#: COMO NASCE QUEM FALA, quando a fonte traz um nome que o cadastro não tem.
+#:
+#: POR QUE ISTO É DECLARADO POR FONTE. A coluna `veiculo` da menção guarda QUEM
+#: FALOU, e isso é uma coisa diferente em cada fornecedor: no clipping da Clipei
+#: é um veículo de imprensa (Folha, Valor, InfoMoney); no social listening da
+#: Bites é um PERFIL DE REDE (`deolhoemesteio`, `@casadevovodede`, "Stela
+#: Farias"). Os dois são "quem falou" e os dois moram no Cadastro compartilhado
+#: — mas nascem com tipo e categoria de público diferentes, e confundi-los
+#: estragaria as duas pontas: perfil de rede dentro da Imprensa poderia um dia
+#: entrar na lista de imprensa econômica da lente Mercado, e veículo fora dela
+#: sairia dos filtros que a redação usa.
+#:
+#: O VALOR É O `tipo` DA INSTITUIÇÃO, e a categoria de público que o acompanha
+#: mora em `casos_de_uso/veiculos_da_imprensa.CATEGORIA_DE_QUEM_FALA` — a
+#: camada que tem banco. Aqui só se declara quais existem, para um nome errado
+#: doer no cadastro da fonte em vez de virar cadastro errado.
+CADASTROS_DE_QUEM_FALA = frozenset({"veiculo", "perfil_rede"})
+
 
 @dataclass(frozen=True, slots=True)
 class Mapeamento:
@@ -170,6 +188,12 @@ class Mapeamento:
     #: A LINHA SEM VEÍCULO NÃO ENTRA: não há como afirmar que ela é de um
     #: veículo de mercado, e supor que é inventaria menção.
     lista_de_veiculos: str | None = None
+    #: COMO NASCE QUEM FALA nesta fonte — ver `CADASTROS_DE_QUEM_FALA`.
+    #:
+    #: `veiculo` é o padrão porque era o único caso quando o vínculo nasceu (o
+    #: clipping da Clipei), e manter o padrão deixa as quatro fontes antigas
+    #: exatamente como estavam.
+    quem_fala: str = "veiculo"
     #: Sinônimos de sentimento deste fornecedor, além dos conhecidos.
     sentimentos: Mapping[str, str] = field(default_factory=dict)
     #: O PREFIXO DE TAXONOMIA QUE O FORNECEDOR CARIMBA no rótulo. A Approach
@@ -224,6 +248,11 @@ class Mapeamento:
                 "mapeamento marca como opcional campo que não existe em mencao: "
                 f"{sorted(fora_do_vocabulario)}"
             )
+        if self.quem_fala not in CADASTROS_DE_QUEM_FALA:
+            raise ValueError(
+                "mapeamento cadastra quem fala de um jeito que não existe: "
+                f"{self.quem_fala!r}; conhecidos: {sorted(CADASTROS_DE_QUEM_FALA)}"
+            )
         if self.lista_de_veiculos and self.lista_de_veiculos not in LISTAS_DE_VEICULOS:
             raise ValueError(
                 "mapeamento recorta por uma lista de veículos que não existe: "
@@ -251,6 +280,7 @@ class Mapeamento:
         aba = dados.get("aba")
         arquivo = dados.get("arquivo")
         lista = dados.get("lista_de_veiculos")
+        quem_fala = dados.get("quem_fala")
         prefixo = dados.get("prefixo_a_remover")
         return cls(
             colunas=dict(dados.get("colunas") or {}),
@@ -258,6 +288,7 @@ class Mapeamento:
             arquivo=str(arquivo) if arquivo else None,
             filtros=filtros,
             lista_de_veiculos=str(lista) if lista else None,
+            quem_fala=str(quem_fala) if quem_fala else "veiculo",
             sentimentos=dict(dados.get("sentimentos") or {}),  # type: ignore[arg-type]
             prefixo_a_remover=str(prefixo) if prefixo else None,
             apelidos={
@@ -472,10 +503,119 @@ def para_inteiro(valor: object) -> int | None:
     return -numero if negativo else numero
 
 
+#: AS GRAFIAS QUE SÃO O MESMO CARGO.
+#:
+#: MEDIDO no arquivo de 01–09/2026 da Bites: `vereador` com 55 menções e
+#: `vereadora` com 4 são o mesmo cargo; `deputado_estadual` com 379 e
+#: `deputada_estadual` com 1, idem; e `verador` com 1 é erro de digitação do
+#: fornecedor. Sem dobrar, a régua de engajamento dá peso 1 a uma vereadora e
+#: peso 2 a um vereador — e o gráfico de quem fala mostra o mesmo cargo em duas
+#: barras.
+#:
+#: O FEMININO ENTRA AQUI, E NÃO NUMA REGRA DE SUFIXO: trocar "a" final por "o"
+#: quebraria `imprensa`, `empresa` e `prefeitura`. São poucos cargos, e
+#: declarar cada par é o que torna a dobra conferível.
+CARGO_CANONICO: dict[str, str] = {
+    "vereadora": "vereador",
+    "verador": "vereador",
+    "deputada_estadual": "deputado_estadual",
+    "deputada_federal": "deputado_federal",
+    "prefeita": "prefeito",
+    "senadora": "senador",
+    "governadora": "governador",
+    "ministra": "ministro",
+    "presidenta": "presidente",
+}
+
+#: O RÓTULO DE TELA de cada cargo.
+#:
+#: `deputado_estadual` é CHAVE, e não texto para ler: nasceu para ser a chave
+#: de `PESO_DO_CARGO`. Quem abre a lente de redes quer ler "Deputado estadual"
+#: no gráfico de quem fala, e é esta tabela que separa as duas coisas — em vez
+#: de a tela desachatar o código com um `replace` por conta própria.
+#:
+#: Cargo que não está aqui vira rótulo pela própria grafia (ver
+#: `rotulo_do_cargo`): um cargo novo aparece na tela no dia em que chega, e não
+#: no dia em que alguém se lembra de cadastrá-lo.
+ROTULO_DO_CARGO: dict[str, str] = {
+    "presidente": "Presidente",
+    "ministro": "Ministro",
+    "governador": "Governador",
+    "senador": "Senador",
+    "deputado_federal": "Deputado federal",
+    "deputado_estadual": "Deputado estadual",
+    "prefeito": "Prefeito",
+    "vereador": "Vereador",
+    "politico": "Político",
+    "comunicador": "Comunicador",
+    "imprensa": "Imprensa",
+    "internauta": "Internauta",
+    "empresa": "Empresa",
+    "sindicato": "Sindicato",
+    "partido": "Partido",
+    "prefeitura": "Prefeitura",
+    "orgao_publico": "Órgão público",
+    "outros": "Outros",
+}
+
+
 def normalizar_cargo(valor: object) -> str | None:
-    """`Deputado Estadual` → `deputado_estadual`, a chave de `PESO_DO_CARGO`."""
+    """`Deputado Estadual` → `deputado_estadual`, a chave de `PESO_DO_CARGO`.
+
+    DOBRA AS GRAFIAS DO MESMO CARGO (ver `CARGO_CANONICO`): sem isso, uma
+    vereadora pesava 1 e um vereador 2 na régua de engajamento, e o gráfico de
+    quem fala mostrava o mesmo cargo em duas barras.
+    """
     achatado = achatar(valor)
-    return achatado.replace(" ", "_") if achatado else None
+    if not achatado:
+        return None
+    codigo = achatado.replace(" ", "_")
+    return CARGO_CANONICO.get(codigo, codigo)
+
+
+def rotulo_do_cargo(valor: object) -> str | None:
+    """O cargo como se lê na tela: `deputado_estadual` → `Deputado estadual`.
+
+    PELO MESMO CAMINHO DO PESO, de propósito: o rótulo sai do cargo já
+    canonizado, então a barra do gráfico e o peso da régua falam do mesmo
+    cargo. Duas normalizações independentes divergiriam no dia em que alguém
+    acrescentasse uma grafia só numa delas.
+
+    CARGO DESCONHECIDO VIRA RÓTULO MESMO ASSIM — do código, com a inicial
+    maiúscula e sem o sublinhado. Um cargo que o fornecedor inventar aparece na
+    tela no dia em que chegar; esconder até alguém cadastrar faria o gráfico
+    mentir por omissão.
+    """
+    codigo = normalizar_cargo(valor)
+    if codigo is None:
+        return None
+    conhecido = ROTULO_DO_CARGO.get(codigo)
+    if conhecido:
+        return conhecido
+    return codigo.replace("_", " ").capitalize()
+
+
+def _perfil_de_quem_fala(
+    linha: Mapping[str, object], mapeamento: Mapeamento
+) -> str | None:
+    """O perfil de quem fala, respeitando o que a fonte aponta.
+
+    QUANDO A FONTE DIZ QUE O PERFIL É O CARGO — `perfil_autor` e `cargo`
+    mapeados para a MESMA coluna, que é o caso da Bites —, o valor sai pelo
+    rótulo do cargo: dobra "Vereador" com "Vereadora" e devolve texto de tela.
+
+    QUANDO A FONTE TEM COLUNA PRÓPRIA, o texto passa cru. É o que protege um
+    vocabulário como "Figura pública" / "Cidadão", que a lente Sociedade conta
+    num KPI: passá-lo pelo rótulo do cargo o devolveria sem acento, porque
+    `achatar` tira acento para comparar.
+    """
+    coluna = mapeamento.colunas.get("perfil_autor")
+    if not coluna:
+        return None
+    bruto = linha.get(coluna)
+    if coluna == mapeamento.colunas.get("cargo"):
+        return rotulo_do_cargo(bruto)
+    return _texto(bruto)
 
 
 def _texto(valor: object) -> str | None:
@@ -619,6 +759,37 @@ def para_uf(valor: object) -> str | None:
     return _NOME_CANONICO.get(achatar(texto), texto)
 
 
+def quem_falou(valor: object, mapeamento: Mapeamento) -> str | None:
+    """Quem falou, no nome que o cadastro vai usar.
+
+    O @ DO HANDLE É PONTUAÇÃO DA PLATAFORMA, e não identidade: medido no
+    arquivo de 01–09/2026 da Bites, 568 dos 1.173 autores vêm com @ e 59 deles
+    têm o GÊMEO sem @ na mesma planilha — `@casadevovodede` com 33 menções e
+    `casadevovodede` com 32 são o mesmo perfil. Sem tirar o @, o cadastro
+    ganha duas linhas para um perfil e o dossiê soma errado os dois.
+
+    SÓ ONDE QUEM FALA É UM PERFIL. No clipping da Clipei, quem fala é um
+    veículo de imprensa e o nome não tem @ — aplicar isto lá seria mexer em
+    25.457 vínculos que já funcionam por uma regra que não é deles.
+
+    E A CAIXA NÃO É TOCADA AQUI: a comparação com o cadastro já passa por
+    `normalizar`, que a resolve. O que se grava é o nome como o fornecedor o
+    escreveu, menos o @ — é o que a pessoa reconhece na tela.
+
+    PÚBLICA PORQUE SÃO DOIS CHAMADORES: `ler_linha`, que grava a menção, e
+    `veiculos_da_planilha`, que lê o arquivo de novo para a conferência listar
+    quem nasceria. Se cada uma canonizasse do seu jeito, a tela prometeria um
+    nome e o banco gravaria outro.
+    """
+    texto = _texto(valor)
+    if texto is None or mapeamento.quem_fala != "perfil_rede":
+        return texto
+    limpo = texto.lstrip("@").strip()
+    #: HANDLE QUE É SÓ @ não vira nome vazio: sem isto, uma célula com "@"
+    #: criaria uma instituição de nome vazio, que o cadastro não deveria ter.
+    return limpo or None
+
+
 def _rotulo(valor: object, mapeamento: Mapeamento) -> str | None:
     """O rótulo do fornecedor já sem prefixo e sob o nome combinado."""
     limpo = sem_prefixo(_texto(valor), mapeamento.prefixo_a_remover)
@@ -662,7 +833,7 @@ def ler_linha(
         engajamento=para_inteiro(opcional("engajamento")),
         cargo=normalizar_cargo(opcional("cargo")),
         atributo=_texto(opcional("atributo")),
-        veiculo=_texto(opcional("veiculo")),
+        veiculo=quem_falou(opcional("veiculo"), mapeamento),
         publico_alvo=_texto(opcional("publico_alvo")),
         tema_texto=_rotulo(opcional("tema"), mapeamento),
         unidade_texto=_rotulo(opcional("unidade"), mapeamento),
@@ -684,7 +855,7 @@ def ler_linha(
         id_fonte=_texto(opcional("id_fonte")),
         uf=para_uf(opcional("uf")),
         subtema=_rotulo(opcional("subtema"), mapeamento),
-        perfil_autor=_texto(opcional("perfil_autor")),
+        perfil_autor=_perfil_de_quem_fala(linha, mapeamento),
         titulo_texto=_texto(opcional("titulo_texto")),
         link=_texto(opcional("link")),
     )

@@ -78,6 +78,14 @@ class InstituicaoSaida(BaseModel):
     #: ainda nao foi reclassificado — ver `0036_categoria_de_publico.sql`.
     categoria_publico_id: int | None
     subcategoria_publico_id: int | None
+    #: O CARGO QUE O FORNECEDOR INFORMOU, pelo rótulo. Só em perfil de rede.
+    #: É o que faz a tela dizer "Stela Farias — Deputado estadual · RS" em vez
+    #: de só "Poder Legislativo".
+    cargo: str | None = None
+    #: A PESSOA DE QUEM ESTE PERFIL É. Só em perfil de rede; nulo no resto, e
+    #: nulo também no perfil que ninguém ligou ainda — que é o estado dos 1.108
+    #: que a primeira carga da Bites criou.
+    interlocutor_id: UUID | None = None
     ativo: bool
 
 
@@ -181,6 +189,30 @@ def listar_pessoas_aegea(
 # muda o que aparece em toda agenda que aponta para ela.
 
 
+def _conferir_campos_de_perfil(tipo: str | None, entrada: InstituicaoEntrada) -> None:
+    """So perfil de rede tem cargo e pessoa — e a recusa fala de cadastro.
+
+    UMA FUNCAO SO, usada na criacao E na edicao. Estavam so na edicao, e a
+    criacao caia no CHECK do banco: `gravar` captura qualquer `IntegrityError`
+    e responde "Ja existe uma instituicao chamada X do tipo Y" — uma mensagem
+    falsa, sobre um campo diferente.
+
+    `is not None`, E NAO TRUTHINESS, nos dois campos: `cargo=""` nao e nulo, e
+    com `if entrada.cargo` ele passava pela guarda, era atribuido e estourava
+    o CHECK — com a mesma mensagem errada. Achado de revisao.
+    """
+    if tipo == "perfil_rede":
+        return
+    if entrada.interlocutor_id is not None:
+        raise RegraViolada(
+            f"So perfil de rede tem pessoa. Este cadastro e do tipo {tipo!r}."
+        )
+    if entrada.cargo is not None:
+        raise RegraViolada(
+            f"So perfil de rede tem cargo. Este cadastro e do tipo {tipo!r}."
+        )
+
+
 class InstituicaoEntrada(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -198,6 +230,21 @@ class InstituicaoEntrada(BaseModel):
     #: O nome POR EXTENSO. Quem escolhe "ABCON" no formulario de agenda
     #: precisa saber que instituicao e essa, e a sigla nao diz.
     nome_completo: str | None = None
+    #: A PESSOA DE QUEM ESTE PERFIL E — so em perfil de rede.
+    #:
+    #: E O QUE CRUZA AS FONTES: com ela, o que `stelafariasrs` postou na Bites
+    #: e o que a deputada Stela Farias fez nas agendas do CRM passam a ser da
+    #: mesma pessoa. Nulo e o estado normal: sao 1.108 perfis, e dizer de quem
+    #: e cada um e juizo humano — `@casadevovodede` pode ser pessoa fisica,
+    #: pagina de bairro ou comercio.
+    #:
+    #: NAO CONFUNDIR COM `interlocutor.instituicao_id`, que diz DE QUEM a
+    #: pessoa fala. Aqui e o contrario: de quem o PERFIL e.
+    interlocutor_id: UUID | None = None
+    #: O CARGO DO PERFIL, pelo rotulo — "Deputado estadual". So em perfil de
+    #: rede. Editavel porque o fornecedor erra: `stelafariasrs` veio com UF TO
+    #: e sem cargo, e quem conhece o ator conserta na tela.
+    cargo: str | None = None
     esfera_id: int | None = None
     uf: str | None = None
     #: A RELEVANCIA da instituicao: 1 a 4. Opcional AQUI e obrigatoria na tela,
@@ -261,11 +308,22 @@ def criar_instituicao(
     tipo = derivar_tipo(
         sessao, tipo=entrada.tipo, categoria_publico_id=entrada.categoria_publico_id, atual=None
     )
+    #: AS MESMAS TRAVAS DA EDICAO, e por um motivo concreto: `gravar` captura
+    #: QUALQUER `IntegrityError` e responde "Ja existe uma instituicao chamada
+    #: X do tipo Y". Sem conferir aqui, um `POST` com cargo num veiculo
+    #: estourava o CHECK do banco e a pessoa lia uma mensagem sobre NOME
+    #: DUPLICADO — falsa, e sobre outro campo. Achado de revisao.
+    _conferir_campos_de_perfil(tipo, entrada)
+
     registro = Instituicao(
         nome=entrada.nome.strip(),
         nome_normalizado=_normalizar(entrada.nome),
         tipo=tipo,
         nome_completo=entrada.nome_completo,
+        #: NA CRIACAO TAMBEM, para a tela poder cadastrar o perfil ja dizendo
+        #: de quem e — o caso de quem acha o perfil na lista e sabe a resposta.
+        interlocutor_id=entrada.interlocutor_id,
+        cargo=entrada.cargo,
         categoria_publico_id=entrada.categoria_publico_id,
         subcategoria_publico_id=entrada.subcategoria_publico_id,
         esfera_id=entrada.esfera_id,
@@ -371,6 +429,12 @@ def editar_instituicao(
         atual=registro.tipo,
     )
     registro.nome_completo = entrada.nome_completo
+    #: A PESSOA DE QUEM O PERFIL E. O CHECK da `0072` recusa pessoa em quem nao
+    #: e perfil de rede — um jornal nao e "de" uma pessoa —, e a recusa aqui e
+    #: explicita para a mensagem falar de cadastro em vez de constraint.
+    _conferir_campos_de_perfil(registro.tipo, entrada)
+    registro.interlocutor_id = entrada.interlocutor_id
+    registro.cargo = entrada.cargo
     registro.tier = entrada.tier
     registro.categoria_publico_id = entrada.categoria_publico_id
     registro.subcategoria_publico_id = entrada.subcategoria_publico_id

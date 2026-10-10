@@ -39,7 +39,11 @@ from sqlalchemy.orm import Session
 from app.banco.tabelas_catalogo import CategoriaPublico, Esfera, SubcategoriaPublico
 from app.banco.tabelas_stakeholders import Instituicao
 from app.dominio.erros import RegraViolada
-from app.dominio.ingestao_score import para_sigla
+from app.dominio.ingestao_score import (
+    normalizar_cargo,
+    para_sigla,
+    rotulo_do_cargo,
+)
 from app.dominio.texto import normalizar
 
 #: A categoria de público com que um veículo da imprensa nasce.
@@ -58,6 +62,62 @@ CATEGORIA_DA_IMPRENSA = "Imprensa"
 #: aparece em três), então a chave real é sempre (categoria, subcategoria).
 LISTAS_DE_VEICULOS: dict[str, tuple[str, str]] = {
     "imprensa_economica": (CATEGORIA_DA_IMPRENSA, "Econômica e de negócios"),
+}
+
+#: A CATEGORIA DE PÚBLICO COM QUE CADA TIPO NASCE.
+#:
+#: O motor só conhece os tipos (`CADASTROS_DE_QUEM_FALA`, em
+#: `dominio/ingestao_score`); a categoria mora aqui, que é a camada com banco —
+#: o mesmo desenho das listas de veículos.
+#:
+#: PERFIL DE REDE É FORMADOR DE OPINIÃO, e não imprensa. A categoria já existia
+#: no cadastro e estava VAZIA: as categorias de público preveem formador de
+#: opinião e sociedade civil desde a `0036`, e só a Imprensa tinha gente. Um
+#: perfil de rede dentro da Imprensa poderia um dia entrar na lista de imprensa
+#: econômica da lente Mercado — e "deolhoemesteio" não é veículo de investidor.
+CATEGORIA_DE_QUEM_FALA: dict[str, str] = {
+    "veiculo": CATEGORIA_DA_IMPRENSA,
+    "perfil_rede": "Formadores de Opinião",
+}
+
+#: O PÚBLICO DE QUEM FALA, PELO CARGO QUE A PLANILHA INFORMA.
+#:
+#: POR QUE ISTO EXISTE. A primeira carga criou os 1.108 perfis todos como
+#: "Formadores de Opinião", e quem abriu o cadastro viu o vereador Iriel Sachet
+#: classificado como formador de opinião — errado, e o cadastro TEM o
+#: vocabulário certo: a taxonomia de públicos prevê Poder Legislativo com
+#: Federal, Estadual e Municipal desde a `0036`.
+#:
+#: O CARGO VINHA SENDO JOGADO FORA no cadastro. A coluna `Cargo` da Bites
+#: alimentava a régua de peso e o gráfico de quem fala, mas o perfil nascia sem
+#: ela — e é ela que diz se o ator é poder público, imprensa ou sociedade.
+#:
+#: SÓ O QUE SE PODE DEFENDER ESTÁ AQUI. `político` (19 menções) pode ser
+#: executivo ou legislativo; `partido`, `empresa` e `órgão público` não têm par
+#: óbvio na taxonomia; `outros`, `alemao` e `perfil de twitter` não são cargo.
+#: Esses ficam SEM categoria — que é a verdade ("ainda não classificado"), e é
+#: um estado que o cadastro já conhece. Chutar classificaria 2.249 perfis
+#: anônimos como formadores de opinião, que é o defeito que isto conserta.
+#:
+#: A chave é o cargo JÁ CANONIZADO (`normalizar_cargo`), então `Vereadora` e
+#: `Verador` caem no mesmo lugar.
+CATEGORIA_POR_CARGO: dict[str, tuple[str, str | None]] = {
+    "presidente": ("Poder Executivo", "Federal"),
+    "ministro": ("Poder Executivo", "Federal"),
+    "governador": ("Poder Executivo", "Estadual"),
+    "prefeito": ("Poder Executivo", "Municipal"),
+    #: A PREFEITURA é o órgão, e o perfil dela fala pelo executivo municipal.
+    "prefeitura": ("Poder Executivo", "Municipal"),
+    "senador": ("Poder Legislativo", "Federal"),
+    "deputado_federal": ("Poder Legislativo", "Federal"),
+    "deputado_estadual": ("Poder Legislativo", "Estadual"),
+    "vereador": ("Poder Legislativo", "Municipal"),
+    #: IMPRENSA SEM SUBCATEGORIA: a lógica editorial (econômica, geral,
+    #: regional) é juízo humano, e é dela que a lente Mercado depende.
+    "imprensa": (CATEGORIA_DA_IMPRENSA, None),
+    "comunicador": ("Formadores de Opinião", None),
+    "sindicato": ("Entidades Setoriais e Representativas", "Institutos e Associações"),
+    "internauta": ("Sociedade Civil e Comunidade", "Comunidade e lideranças locais"),
 }
 
 #: `Abrangência` da Clipei -> `esfera` do cadastro.
@@ -90,6 +150,11 @@ class VeiculoNovo:
     #: Quantas menções da planilha apontam para ele. É por aqui que a tela
     #: ordena: um veículo com 1.453 menções merece mais atenção que um com 1.
     mencoes: int = 0
+    #: O CARGO QUE O FORNECEDOR INFORMOU, já canonizado — `vereador`,
+    #: `deputado_estadual`, `imprensa`. É o que decide o público do perfil (ver
+    #: `CATEGORIA_POR_CARGO`) e o que a conferência mostra, para quem autoriza
+    #: a criação ver "Iriel Sachet — Vereador" em vez de só o nome.
+    cargo: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,7 +172,9 @@ class Reconhecimento:
 
 
 def reconhecer(
-    sessao: Session, veiculos: dict[str, dict[str, object]]
+    sessao: Session,
+    veiculos: dict[str, dict[str, object]],
+    tipo: str = "veiculo",
 ) -> Reconhecimento:
     """Separa o que o cadastro já tem do que falta. NÃO ESCREVE NADA.
 
@@ -131,15 +198,44 @@ def reconhecer(
 
     #: UMA CONSULTA, e não uma por veículo: são 2.648 nomes no export de dois
     #: meses da Clipei, e 2.648 idas ao banco levariam minutos.
-    existentes = {
-        normalizado: str(ident)
-        for normalizado, ident in sessao.execute(
-            select(Instituicao.nome_normalizado, Instituicao.id).where(
-                Instituicao.tipo == "veiculo",
-                Instituicao.nome_normalizado.in_(list(nomes)),
-            )
-        ).all()
-    }
+    #:
+    #: EM QUALQUER TIPO, e é decisão do dono do produto: UM CADASTRO SÓ, vindo
+    #: do Cadastro compartilhado.
+    #:
+    #: O QUE ISTO CONSERTA, medido nesta base: "Valor Econômico" existia TRÊS
+    #: vezes — como veículo (86 menções, na lista do Mercado) e como dois
+    #: perfis de rede (2 e 11 menções, sem classificação nenhuma). Treze
+    #: menções do Valor não somavam com as 86, e nenhuma tela juntava. São 94
+    #: atores com cadastro duplicado entre imprensa e rede.
+    #:
+    #: O CANAL NÃO SE PERDE AO UNIFICAR, e era essa a minha objeção: quem diz
+    #: "foi em rede social" é a FONTE da menção — `bites` alimenta a lente
+    #: Sociedade digital, `clipei` a Imprensa. A instituição responde QUEM
+    #: falou; a fonte responde ONDE.
+    achados: dict[str, tuple[str, bool]] = {}
+    for normalizado, ident, de_outro_tipo in sessao.execute(
+        select(
+            Instituicao.nome_normalizado,
+            Instituicao.id,
+            (Instituicao.tipo != tipo).label("de_outro_tipo"),
+        ).where(
+            Instituicao.nome_normalizado.in_(list(nomes)),
+            #: EM QUALQUER TIPO SÓ QUANDO QUEM FALA É UM PERFIL. O `Veículo` do
+            #: clipping é SEMPRE um meio de imprensa: um nome igual ao de um
+            #: órgão ali é HOMÔNIMO, e não o mesmo ator — apontar a matéria do
+            #: jornal para a prefeitura seria atribuição errada. O perfil de
+            #: rede é o contrário: o Instagram do Valor Econômico É o Valor.
+            *([] if tipo == "perfil_rede" else [Instituicao.tipo == tipo]),
+        )
+    ).all():
+        #: O DO TIPO DA FONTE VENCE quando o nome existe nos dois: enquanto os
+        #: 94 duplicados não forem fundidos, a Clipei continua achando o
+        #: veículo dela e a Bites o perfil dela — ninguém troca de ator no meio
+        #: do caminho. Fundidos, sobra um e a preferência não decide nada.
+        atual = achados.get(normalizado)
+        if atual is None or (atual[1] and not de_outro_tipo):
+            achados[normalizado] = (str(ident), bool(de_outro_tipo))
+    existentes = {chave: ident for chave, (ident, _) in achados.items()}
 
     novos = [
         VeiculoNovo(
@@ -149,6 +245,7 @@ def reconhecer(
                 str(veiculos[bruto].get("abrangencia") or "").strip().lower()
             ),
             mencoes=int(veiculos[bruto].get("mencoes") or 0),
+            cargo=normalizar_cargo(veiculos[bruto].get("cargo")),
         )
         for normalizado, bruto in nomes.items()
         if normalizado not in existentes
@@ -157,10 +254,16 @@ def reconhecer(
     return Reconhecimento(cadastrados=existentes, novos=tuple(novos))
 
 
-def criar(sessao: Session, novos: tuple[VeiculoNovo, ...]) -> dict[str, str]:
-    """Cadastra os veículos que faltam e devolve nome normalizado -> id.
+def criar(
+    sessao: Session, novos: tuple[VeiculoNovo, ...], tipo: str = "veiculo"
+) -> dict[str, str]:
+    """Cadastra quem falou e ainda não estava no cadastro. Normalizado -> id.
 
-    NASCEM COMO IMPRENSA E SEM SUBCATEGORIA. A categoria é a única que o
+    `tipo` VEM DA FONTE (`Mapeamento.quem_fala`): `veiculo` para um clipping
+    de imprensa, `perfil_rede` para social listening. O padrão mantém as
+    quatro fontes antigas exatamente como estavam.
+
+    NASCEM NA CATEGORIA DO TIPO E SEM SUBCATEGORIA. A categoria é a única que o
     fornecedor permite afirmar — é um export de clipping de imprensa, e todo
     veículo dele é imprensa. A subcategoria é lógica EDITORIAL (econômica,
     geral nacional, regional das concessões, municipal), e nenhuma coluna da
@@ -173,12 +276,28 @@ def criar(sessao: Session, novos: tuple[VeiculoNovo, ...]) -> dict[str, str]:
     if not novos:
         return {}
 
-    categoria = sessao.scalar(
-        select(CategoriaPublico.id).where(
-            CategoriaPublico.nome == CATEGORIA_DA_IMPRENSA,
-            CategoriaPublico.ativo,
+    #: TODAS AS CATEGORIAS E SUBCATEGORIAS DE UMA VEZ, porque o público de
+    #: cada perfil sai do cargo dele: uma consulta por perfil faria 1.108 idas
+    #: ao banco numa subida.
+    categorias = {
+        nome: ident
+        for nome, ident in sessao.execute(
+            select(CategoriaPublico.nome, CategoriaPublico.id).where(
+                CategoriaPublico.ativo
+            )
         )
-    )
+    }
+    subcategorias = {
+        (categoria, sub): ident
+        for categoria, sub, ident in sessao.execute(
+            select(CategoriaPublico.nome, SubcategoriaPublico.nome, SubcategoriaPublico.id)
+            .join(
+                CategoriaPublico,
+                CategoriaPublico.id == SubcategoriaPublico.categoria_publico_id,
+            )
+        )
+    }
+    categoria = categorias.get(CATEGORIA_DE_QUEM_FALA[tipo])
     esferas = {
         nome: ident
         for nome, ident in sessao.execute(select(Esfera.nome, Esfera.id)).all()
@@ -187,17 +306,37 @@ def criar(sessao: Session, novos: tuple[VeiculoNovo, ...]) -> dict[str, str]:
     criados: dict[str, str] = {}
     for veiculo in novos:
         nome = " ".join(veiculo.nome.split())
+        #: O PÚBLICO SAI DO CARGO quando quem fala é um perfil e o cargo é
+        #: conhecido: o vereador entra em Poder Legislativo / Municipal, e não
+        #: em Formadores de Opinião. Cargo desconhecido ou ausente deixa o
+        #: perfil SEM categoria — "ainda não classificado", que é a verdade.
+        publico, subpublico = categoria, None
+        if tipo == "perfil_rede":
+            par = CATEGORIA_POR_CARGO.get(veiculo.cargo or "")
+            if par is None:
+                publico = None
+            else:
+                publico = categorias.get(par[0])
+                subpublico = (
+                    subcategorias.get((par[0], par[1])) if par[1] else None
+                )
+
         registro = Instituicao(
             nome=nome,
             nome_normalizado=normalizar(nome),
-            tipo="veiculo",
-            categoria_publico_id=categoria,
+            tipo=tipo,
+            categoria_publico_id=publico,
+            subcategoria_publico_id=subpublico,
             esfera_id=esferas.get(veiculo.esfera or ""),
             # A SIGLA, e não o nome: `instituicao.uf` é o domínio
             # `abrangencia`, com CHECK das 29 siglas — "Santa Catarina" ali é
             # recusado pelo Postgres. É a assimetria com `mencao.uf`, que
             # guarda o nome por decisão do dono; `para_sigla` documenta as duas.
             uf=para_sigla(veiculo.uf),
+            #: O CARGO VAI PARA O CADASTRO, pelo rótulo: é o que faz a tela
+            #: dizer "Stela Farias — Deputado estadual" em vez de só o público.
+            #: Nulo em veículo, onde a coluna não existe.
+            cargo=rotulo_do_cargo(veiculo.cargo) if tipo == "perfil_rede" else None,
         )
         sessao.add(registro)
         criados[normalizar(nome)] = registro

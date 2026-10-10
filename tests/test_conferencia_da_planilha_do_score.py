@@ -132,7 +132,7 @@ def test_conferir_diz_o_que_seria_ingerido_em_cada_fonte_irma(sessao, clipei):
     """UMA LINHA POR FONTE, como a subida: o export da Clipei alimenta Imprensa
     e, recortado, Mercado. Conferir uma e subir as duas seria prometer uma coisa
     e fazer outra."""
-    previsao, _ = ingerir_mencoes.conferir(
+    previsao, _, _ = ingerir_mencoes.conferir(
         sessao, clipei, _planilha([_linha("Veículo Irmãs 42")])
     )
 
@@ -141,7 +141,7 @@ def test_conferir_diz_o_que_seria_ingerido_em_cada_fonte_irma(sessao, clipei):
 
 
 def test_conferir_lista_os_veiculos_que_nasceriam(sessao, clipei):
-    previsao, reco = ingerir_mencoes.conferir(
+    previsao, reco, _ = ingerir_mencoes.conferir(
         sessao,
         clipei,
         _planilha(
@@ -357,7 +357,7 @@ def test_o_cabecalho_e_PROCURADO_e_nao_assumido_na_linha_1(sessao, clipei):
         [_linha("Veículo Sob Título 42")], ["N2", "N3", "N1"]
     )
 
-    previsao, _ = ingerir_mencoes.conferir(sessao, clipei, conteudo)
+    previsao, _, _ = ingerir_mencoes.conferir(sessao, clipei, conteudo)
 
     assert next(r for r in previsao if r.fonte == "clipei").ingeridas == 1
 

@@ -49,7 +49,7 @@ from sqlalchemy.orm import Session
 
 from app.banco.tabelas_lentes import MencaoNaoClassificada
 from app.banco.tabelas_score import Mencao, ScoreFonte, ScoreMesFonte
-from app.casos_de_uso import veiculos_da_imprensa
+from app.casos_de_uso import temas_da_mencao, veiculos_da_imprensa
 from app.casos_de_uso.veiculos_da_imprensa import nomes_da_lista
 from app.dominio.erros import RegraViolada
 from app.dominio.ingestao_score import (
@@ -57,6 +57,7 @@ from app.dominio.ingestao_score import (
     Leitura,
     Mapeamento,
     ler_planilha,
+    quem_falou,
     somar,
 )
 
@@ -110,6 +111,12 @@ class Resumo:
     #: É o número que diz o quanto a ponte cobre, e o que cresce a cada subida
     #: com criação: medido depois da primeira carga, 76,7%.
     mencoes_ligadas: int = 0
+    #: Quantas menções DESTA fonte acharam assunto no cadastro de temas.
+    #:
+    #: É O NÚMERO QUE DIZ SE O FILTRO DA TAXONOMIA TEM DADO: o dossiê recorta
+    #: por N1/N2/N3 pelo `tema_id`, então menção sem vínculo não aparece em
+    #: recorte nenhum. Medido antes desta etapa: zero em 29.898.
+    mencoes_com_tema: int = 0
 
 
 def _linhas_da_aba(
@@ -253,6 +260,17 @@ def regravar(
         )
 
     de_cadastro = dict(veiculos or {})
+    #: O MAPA DOS ASSUNTOS SAI DAQUI, e não de um parâmetro como o dos veículos.
+    #: A diferença é que ele não depende de autorização: veículo que falta NASCE
+    #: na subida, e por isso quem decide é a tela; assunto não nasce — o cadastro
+    #: é a autoridade. Montar o mapa dentro da gravação faz o vínculo valer para
+    #: os DOIS caminhos de escrita, inclusive a `carga_do_pacote_das_lentes`,
+    #: que monta a `Leitura` à mão e chama esta função direto.
+    #:
+    #: UMA CONSULTA por gravação, e são 104 temas: o conjunto cabe na memória e
+    #: a comparação é O(1). Perguntar ao banco por linha faria da subida de
+    #: 25.597 linhas um problema de rede.
+    de_temas = temas_da_mencao.por_nome(sessao)
     #: OS MESES DO ARQUIVO para quem recorta por lista — ver
     #: `Leitura.meses_a_substituir`. Apagar por `meses` deixaria o mês sem
     #: veículo da lista com o que o critério anterior gravou.
@@ -288,6 +306,12 @@ def regravar(
             # bom tempo: a Clipei traz 2.648 veículos distintos e o cadastro
             # começou com 39. A cada subida com criação a cobertura sobe.
             instituicao_id=de_cadastro.get(normalizar(mencao.veiculo or "")),
+            # O ASSUNTO DO CADASTRO, quando o nome casa. Nulo é o normal
+            # enquanto o fornecedor não fala o vocabulário do N3 — e é o que a
+            # conferência mostra antes de gravar. Com o vínculo, o dossiê filtra
+            # por Pilar (N1), Tema estratégico (N2) e Subtema (N3) sem o
+            # fornecedor mandar nada além do N3.
+            tema_id=de_temas.get(normalizar(mencao.tema_texto or "")),
             tema_texto=mencao.tema_texto,
             unidade_texto=mencao.unidade_texto,
             teor=mencao.teor,
@@ -474,6 +498,9 @@ def _ingerir_uma(
     meses_substituidos = list(leitura.meses_a_substituir(mapeamento))
     antes = _quanto_havia(sessao, fonte, meses_substituidos)
     regravar(sessao, fonte, leitura, veiculos)
+    #: UMA VEZ, e nao por mencao: a contagem abaixo percorre 25 mil linhas, e
+    #: uma consulta dentro do laco faria 25 mil idas ao banco.
+    temas = temas_da_mencao.por_nome(sessao)
     de_cadastro = dict(veiculos or {})
     return Resumo(
         fonte=fonte.codigo,
@@ -492,6 +519,13 @@ def _ingerir_uma(
             1
             for mencao in leitura.mencoes
             if normalizar(mencao.veiculo or "") in de_cadastro
+        ),
+        # PELA MESMA RÉGUA DA GRAVAÇÃO, e não por uma contagem própria: o
+        # número que a tela mostra tem de ser o que o banco recebeu.
+        mencoes_com_tema=sum(
+            1
+            for mencao in leitura.mencoes
+            if normalizar(mencao.tema_texto or "") in temas
         ),
     )
 
@@ -560,14 +594,19 @@ def ingerir(
     # arquivo e veriam os mesmos veículos. Criar por fonte faria a segunda achar
     # tudo já cadastrado — inofensivo — e contaria a criação duas vezes no
     # resumo, o que faria a tela mentir o número que a pessoa autorizou.
+    #: COM QUE TIPO QUEM FALA NASCE, dito pela fonte: `veiculo` no clipping de
+    #: imprensa, `perfil_rede` no social listening. Procurar e criar sempre em
+    #: `veiculo` faria "deolhoemesteio" virar veículo de imprensa — e um dia
+    #: candidato à lista de imprensa econômica da lente Mercado.
+    quem_fala = _mapeamento_de(fonte).quem_fala
     reconhecimento = veiculos_da_imprensa.reconhecer(
-        sessao, veiculos_da_planilha(sessao, fonte, conteudo)
+        sessao, veiculos_da_planilha(sessao, fonte, conteudo), quem_fala
     )
     autorizados = {normalizar(nome) for nome in veiculos_a_criar}
     a_criar = tuple(
         novo for novo in reconhecimento.novos if normalizar(novo.nome) in autorizados
     )
-    criados = veiculos_da_imprensa.criar(sessao, a_criar)
+    criados = veiculos_da_imprensa.criar(sessao, a_criar, quem_fala)
     de_cadastro = {**reconhecimento.cadastrados, **criados}
 
     return [
@@ -614,9 +653,17 @@ def veiculos_da_planilha(
         return {}
 
     coluna_do_estado = mapeamento.colunas.get("uf")
+    #: O CARGO VEM JUNTO, porque é ele que decide o público do perfil no
+    #: cadastro — vereador é Poder Legislativo / Municipal, e não formador de
+    #: opinião. Sem isto, o cargo alimentava a régua e o gráfico, e o cadastro
+    #: nascia sem ele.
+    coluna_do_cargo = mapeamento.colunas.get("cargo")
     achados: dict[str, dict[str, object]] = {}
     for linha in _linhas_da_aba(conteudo, mapeamento):
-        nome = str(linha.get(coluna_do_veiculo) or "").strip()
+        #: PELA MESMA FUNÇÃO DA GRAVAÇÃO. A célula crua traria `@casadevovodede`
+        #: e `casadevovodede` como dois perfis — a tela listaria dois para
+        #: cadastrar, e o cadastro ganharia duas linhas para um perfil.
+        nome = quem_falou(linha.get(coluna_do_veiculo), mapeamento)
         if not nome:
             continue
         registro = achados.setdefault(
@@ -626,6 +673,13 @@ def veiculos_da_planilha(
                 if coluna_do_estado
                 else "",
                 "abrangencia": str(linha.get(COLUNA_DA_ABRANGENCIA) or "").strip(),
+                #: O PRIMEIRO CARGO NÃO VAZIO, como a praça e a abrangência: o
+                #: `setdefault` guarda o primeiro que aparece. Um perfil com
+                #: dois cargos na mesma planilha é dado a corrigir, e a
+                #: conferência mostra o que vai ser usado.
+                "cargo": str(linha.get(coluna_do_cargo) or "").strip()
+                if coluna_do_cargo
+                else "",
                 "mencoes": 0,
             },
         )
@@ -633,9 +687,57 @@ def veiculos_da_planilha(
     return achados
 
 
+def assuntos_da_planilha(
+    sessao: Session, fonte: ScoreFonte, conteudo: bytes
+) -> dict[str, int]:
+    """Assunto → quantas linhas o citam, CONTADO COMO A SUBIDA CONTA.
+
+    PELA LEITURA, e não pela célula crua. A primeira versão desta função
+    percorria as linhas da aba direto, e isso errava duas coisas de uma vez —
+    as duas contra a razão de existir da conferência, que é prometer o que vai
+    acontecer:
+
+    1. NENHUM FILTRO OU DESCARTE era aplicado. A Bites traz 2.886 linhas e
+       1.426 caem por sentimento ilegível: a tela dizia "N acham o assunto"
+       sobre 2.886, e o resumo depois de gravar contava sobre ~1.460. O mesmo
+       rótulo, dois números, quase o dobro de diferença. Pior em
+       `clipei_investidores`, que recorta o arquivo: contava as 25.597 linhas
+       do clipping inteiro.
+
+    2. O TEXTO NÃO PASSAVA POR `_rotulo`, que tira o prefixo de taxonomia do
+       fornecedor e aplica os apelidos. Nas duas fontes da Approach, cuja
+       célula vem como `2 - Aegea - Falta de Água`, a conferência listaria
+       TODOS os assuntos como desconhecidos e a subida ligaria todos — mandando
+       a pessoa cobrar do fornecedor um problema que não existe.
+
+    LÊ O ARQUIVO DE NOVO, como `veiculos_da_planilha`: é o preço de não ter
+    tabela de rascunho, e o mesmo desenho do resto da conferência.
+    """
+    mapeamento = _mapeamento_de(fonte)
+    if not mapeamento.colunas.get("tema"):
+        return {}
+
+    leitura = ler_planilha(
+        _linhas_da_aba(conteudo, mapeamento),
+        mapeamento,
+        _recorte_por_lista(sessao, mapeamento),
+    )
+    contagem: dict[str, int] = {}
+    for mencao in leitura.mencoes:
+        #: VAZIO É CHAVE VAZIA, e é o que `temas_da_mencao.reconhecer` conta
+        #: como "veio sem assunto".
+        texto = mencao.tema_texto or ""
+        contagem[texto] = contagem.get(texto, 0) + 1
+    return contagem
+
+
 def conferir(
     sessao: Session, fonte: ScoreFonte, conteudo: bytes
-) -> tuple[list[Resumo], veiculos_da_imprensa.Reconhecimento]:
+) -> tuple[
+    list[Resumo],
+    veiculos_da_imprensa.Reconhecimento,
+    temas_da_mencao.Reconhecimento,
+]:
     """O que a subida FARIA, sem gravar nada.
 
     POR QUE ELA EXISTE. O dono do produto pediu que o veículo sem cadastro nasça
@@ -657,8 +759,21 @@ def conferir(
         _prever_uma(sessao, irma, conteudo)
         for irma in fontes_do_mesmo_arquivo(sessao, fonte)
     ]
-    return previsao, veiculos_da_imprensa.reconhecer(
-        sessao, veiculos_da_planilha(sessao, fonte, conteudo)
+    #: OS ASSUNTOS TAMBÉM SÃO CONFERIDOS ANTES, e pelo mesmo motivo dos
+    #: veículos: o critério do dossiê por N1/N2/N3 sai do vínculo com o
+    #: cadastro, e menção sem vínculo não entra em recorte nenhum. Ver o nome
+    #: que não casou ANTES de gravar é a diferença entre corrigir a planilha e
+    #: descobrir o buraco depois, no gráfico vazio.
+    return (
+        previsao,
+        veiculos_da_imprensa.reconhecer(
+            sessao,
+            veiculos_da_planilha(sessao, fonte, conteudo),
+            _mapeamento_de(fonte).quem_fala,
+        ),
+        temas_da_mencao.reconhecer(
+            sessao, assuntos_da_planilha(sessao, fonte, conteudo)
+        ),
     )
 
 

@@ -175,13 +175,26 @@ TIPO_DE_INSTITUICAO: dict[Frente, str] = {
     Frente.BANCOS_CREDORES: "credor",
 }
 
-#: Os tipos que se pode cadastrar. DERIVADO do mapa acima, e nao uma segunda
-#: lista: um tipo que nenhuma frente conversa seria cadastravel e invisivel —
-#: a instituicao existiria e nunca apareceria em formulario nenhum.
+#: TIPOS QUE EXISTEM NO CADASTRO E NAO SAO FRENTE DO CRM.
 #:
-#: Um tipo que nao aparece no mapa acima nao existe para a aplicacao, por mais
-#: que alguem o escreva num comentario.
-TIPOS_DE_INSTITUICAO: frozenset[str] = frozenset(TIPO_DE_INSTITUICAO.values())
+#: `perfil_rede` nasce da ingestao do social listening, onde quem fala e um
+#: perfil (`deolhoemesteio`, "Stela Farias") e nao um veiculo de imprensa. Nao
+#: existe agenda com um perfil de Instagram, entao ele nao esta no mapa de
+#: frentes acima.
+#:
+#: E ISSO NAO O TORNA INVISIVEL, que era a premissa de quando este arquivo foi
+#: escrito: o cadastro servia so ao CRM. Hoje ele serve tambem ao Score, que
+#: mostra quem falou no dossie da lente, e a tela de Cadastro compartilhado
+#: lista e filtra por tipo. Sem esta lista, `derivar_tipo` recusava editar um
+#: perfil com "Tipo invalido" — e os 1.108 perfis que a primeira carga da Bites
+#: criou eram ineditaveis.
+TIPOS_SEM_FRENTE: frozenset[str] = frozenset({"perfil_rede"})
+
+#: Os tipos que se pode cadastrar: os das frentes mais os que existem sem
+#: frente. DERIVADO dos dois mapas, e nao uma terceira lista escrita a mao.
+TIPOS_DE_INSTITUICAO: frozenset[str] = (
+    frozenset(TIPO_DE_INSTITUICAO.values()) | TIPOS_SEM_FRENTE
+)
 
 #: O TIPO QUE UMA CATEGORIA DE PÚBLICO IMPLICA — o que faz a tela de cadastro
 #: não precisar perguntar o tipo: quem cadastra escolhe o público (Poder
