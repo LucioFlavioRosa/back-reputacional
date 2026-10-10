@@ -264,9 +264,22 @@ def _filtro(
     """
 
     def primeiro_dia(mes: str | None) -> date | None:
+        r"""O mês `AAAA-MM` virando o primeiro dia dele.
+
+        O REGEX DA ROTA NÃO BASTA: `2026-99` casa com `^\d{4}-\d{2}$` e estoura
+        dentro de `date()`, o que a aplicação devolve como 500 — "erro interno"
+        para um endereço que a pessoa digitou errado, e um registro de falha na
+        telemetria que ninguém causou. Achado de revisão. Aqui ele volta como
+        `RegraViolada`, que é 422 com o valor recusado no texto.
+        """
         if not mes:
             return None
-        return date(int(mes[:4]), int(mes[5:7]), 1)
+        try:
+            return date(int(mes[:4]), int(mes[5:7]), 1)
+        except ValueError:
+            raise RegraViolada(
+                f"Mês {mes!r} não existe. Use `AAAA-MM`, de `0001-01` a `9999-12`."
+            ) from None
 
     pares: list[tuple[str, str]] = []
     for crua in dimensao or ():

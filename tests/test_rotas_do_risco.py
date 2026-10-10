@@ -1099,3 +1099,20 @@ def test_a_AGENDA_DE_VARIOS_TEMAS_pesa_pelo_tema_do_RECORTE(
     assert str(dos_dois.id) in {
         linha["id"] for linha in das_altas["itens"] if linha["tipo"] == "agenda"
     }
+
+
+def test_o_MES_QUE_NAO_EXISTE_e_recusado_e_nao_estoura(da_plataforma):
+    """`2026-99` passa o regex da rota e estourava dentro de `date()`.
+
+    O RESULTADO ERA 500: "erro interno" para um endereço que a pessoa digitou
+    errado, e um registro de falha na telemetria que ninguém causou. Achado de
+    revisão de PR.
+    """
+    for consulta in ("de=2026-99", "ate=2026-00", "de=2026-13&ate=2026-14"):
+        resposta = da_plataforma.get(f"/api/score/riscos?{consulta}")
+        assert resposta.status_code == 422, (consulta, resposta.status_code)
+        #: E A RECUSA DIZ QUAL VALOR FOI RECUSADO.
+        assert "não existe" in resposta.text or "nao existe" in resposta.text
+
+    #: E O MÊS QUE EXISTE CONTINUA PASSANDO.
+    assert da_plataforma.get("/api/score/riscos?de=2026-01&ate=2026-12").status_code == 200
