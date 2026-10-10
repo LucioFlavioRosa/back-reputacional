@@ -39,6 +39,7 @@ from app.banco.tabelas_stakeholders import Instituicao
 from app.casos_de_uso import ingerir_mencoes
 from app.casos_de_uso.ler_sinais_da_lente import regua_dos_sinais
 from app.dominio.erros import Conflito, NaoEncontrado, RegraViolada
+from app.dominio.ingestao_score import rotulo_do_cargo
 from app.dominio.score import (
     REGUAS_DE_ENGAJAMENTO,
     REGUAS_DE_TIER,
@@ -1108,6 +1109,27 @@ class VeiculoNovoSaida(BaseModel):
     uf: str | None = None
     esfera: str | None = None
     mencoes: int
+    #: O CARGO QUE O FORNECEDOR INFORMOU, já com as grafias dobradas.
+    #:
+    #: É ELE QUE DECIDE O PÚBLICO do perfil no cadastro — vereador entra em
+    #: Poder Legislativo / Municipal, e não em Formadores de Opinião. Quem
+    #: autoriza a criação de 1.108 perfis precisa ver "Iriel Sachet —
+    #: Vereador": sem o cargo, a decisão é tomada sobre um nome e um número.
+    cargo: str | None = None
+
+
+class AssuntoNaoReconhecidoSaida(BaseModel):
+    """Um assunto que a planilha traz e o cadastro de temas não reconhece."""
+
+    #: O texto como o fornecedor o escreveu — é o que se procura na planilha.
+    nome: str
+    #: Quantas linhas o citam. A lista ordena por aqui.
+    mencoes: int
+    #: O NOME EXISTE NO CADASTRO, MAS ESTÁ DESATIVADO. São dois problemas com
+    #: dois consertos: nome errado se arruma na planilha, tema desativado se
+    #: arruma no cadastro — ou é a planilha que está na taxonomia antiga, e a
+    #: v4 desativou 45 temas.
+    desativado: bool
 
 
 class ConferenciaSaida(BaseModel):
@@ -1123,6 +1145,21 @@ class ConferenciaSaida(BaseModel):
     #: Quantos veículos da planilha o cadastro JÁ reconhece. Com os novos, dá o
     #: total — e a razão entre os dois é o quanto a ponte cobre hoje.
     veiculos_reconhecidos: int
+    #: Quantas linhas achariam assunto no cadastro de temas.
+    #:
+    #: POR QUE ESTE NÚMERO APARECE NA CONFERÊNCIA. O dossiê recorta por Pilar
+    #: (N1), Tema estratégico (N2) e Subtema (N3) pelo vínculo da menção com o
+    #: tema; sem vínculo, a linha não entra em recorte nenhum. Subir uma
+    #: planilha cujo assunto não casa é subir dado que nenhum filtro alcança.
+    mencoes_com_tema: int = 0
+    #: Quantas vieram SEM assunto. Não é erro — a planilha da Bites de
+    #: 01–09/2026 veio com 84% da coluna em branco, e o conteúdo vai ser
+    #: refeito. Mas quem sobe tem de ver o tamanho disso.
+    mencoes_sem_assunto: int = 0
+    #: OS NOMES QUE O CADASTRO NÃO RECONHECE, por volume. É a lista que a
+    #: pessoa leva para o fornecedor — ou para o cadastro, quando o tema existe
+    #: e está desativado.
+    assuntos_nao_reconhecidos: list[AssuntoNaoReconhecidoSaida] = []
 
 
 #: A subcategoria de público que define a lente Mercado.
@@ -1318,7 +1355,7 @@ def conferir_planilha(
     if fonte is None:
         raise NaoEncontrado("Fonte não encontrada.")
 
-    previsao, reconhecimento = ingerir_mencoes.conferir(
+    previsao, reconhecimento, assuntos = ingerir_mencoes.conferir(
         sessao, fonte, arquivo.file.read()
     )
     return ConferenciaSaida(
@@ -1329,10 +1366,25 @@ def conferir_planilha(
                 uf=veiculo.uf,
                 esfera=veiculo.esfera,
                 mencoes=veiculo.mencoes,
+                #: PELO RÓTULO, e não pelo código: a tela mostra "Deputado
+                #: estadual", e não `deputado_estadual`.
+                cargo=rotulo_do_cargo(veiculo.cargo),
             )
             for veiculo in reconhecimento.novos
         ],
         veiculos_reconhecidos=len(reconhecimento.cadastrados),
+        mencoes_com_tema=assuntos.ligadas,
+        mencoes_sem_assunto=assuntos.sem_assunto,
+        assuntos_nao_reconhecidos=[
+            AssuntoNaoReconhecidoSaida(
+                nome=item.nome, mencoes=item.mencoes, desativado=item.desativado
+            )
+            #: OS TRINTA MAIORES, e não a lista inteira: a Bites de 01–09/2026
+            #: traz 65 valores distintos, e um fornecedor novo pode trazer
+            #: centenas. Quem corrige a planilha ataca por volume, e a lista
+            #: ordenada já põe o que importa no topo.
+            for item in assuntos.nao_ligados[:30]
+        ],
     )
 
 

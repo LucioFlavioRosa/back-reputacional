@@ -319,7 +319,7 @@ def test_a_CONFERENCIA_recorta_igual_a_subida(sessao, fonte_de_mercado):
         ]
     )
 
-    previsoes, _reconhecimento = ingerir_mencoes.conferir(
+    previsoes, _veiculos, _assuntos = ingerir_mencoes.conferir(
         sessao, fonte_de_mercado, conteudo
     )
     previsao = next(p for p in previsoes if p.fonte == "zz_mercado")

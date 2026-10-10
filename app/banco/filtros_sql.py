@@ -58,8 +58,12 @@ def _id_do_codigo(tabela: type, codigo: str) -> ColumnElement[int]:
     return select(tabela.id).where(tabela.codigo == codigo).scalar_subquery()
 
 
-def _condicoes_de_escopo(escopo: Escopo) -> list[ColumnElement[bool]]:
+def condicoes_de_escopo(escopo: Escopo) -> list[ColumnElement[bool]]:
     """O alcance do usuário, que a query string não consegue afrouxar.
+
+    PÚBLICA desde que o rastreio de risco passou a contar agendas: ele precisa
+    exatamente destas condições, e reescrevê-las lá seria a segunda cópia da
+    regra de alcance — a que um dia deixa de acompanhar esta.
 
     Cada dimensão restringe apenas a si mesma; dimensões sem concessão não
     entram. O caso perigoso é o de quem é restrito e não recebeu concessão
@@ -321,7 +325,7 @@ def condicoes(
     do payload e mantê-lo pesquisável seria um oráculo: sem receber o texto, o
     usuário descobriria o conteúdo por tentativa e erro, uma palavra por vez.
     """
-    onde: list[ColumnElement[bool]] = list(_condicoes_de_escopo(escopo))
+    onde: list[ColumnElement[bool]] = list(condicoes_de_escopo(escopo))
 
     if not incluir_arquivadas:
         onde.append(InteracaoRegistro.arquivado_em.is_(None))

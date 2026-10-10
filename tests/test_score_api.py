@@ -475,7 +475,13 @@ def _planilha(aba: str, cabecalho: list[str], linhas: list[list]) -> bytes:
 #: menos células — o que falta chega como célula vazia, que é exatamente o que
 #: a planilha de verdade faz.
 CABECALHO_DA_BITES = [
-    "Data", "Autor", "Cargo", "Sentimento", "Atributo", "Categoria", "Engajamento",
+    #: A COLUNA DE TEMA É `N3` desde a `0079`. Escrita à mão aqui, e SEM COSTURA
+    #: que avise se o cadastro mudar — nenhum teste deste arquivo lê
+    #: `tema_id`/`tema_texto`, e `tema` é opcional, então um nome velho aqui não
+    #: derruba nada: as menções só entrariam sem assunto. Quem prende a troca é
+    #: `test_mapeamento_da_bites`. Achado de revisão, dito aqui porque o
+    #: comentário anterior prometia uma guarda que não existe.
+    "Data", "Autor", "Cargo", "Sentimento", "Atributo", "N3", "Engajamento",
     "Unidades/Empresas",
 ]
 
@@ -754,14 +760,22 @@ def _post_da_bites(quando: date, sentimento: str, atributo: str, unidade: str, t
     return [quando, "@a", "", sentimento, atributo, tema, 1, unidade]
 
 
-def test_os_drivers_leem_atributo_unidade_e_perpetuacao(cliente_do_score, sessao):
+def test_os_drivers_leem_unidade_e_perpetuacao(cliente_do_score, sessao):
+    """Duas das três leituras da aba, pela fonte da Sociedade digital.
+
+    O ATRIBUTO SAIU DESTE TESTE porque saiu da Bites: a `0069` tirou a coluna
+    do mapeamento dela por decisão de negócio — o N1 passa a ser derivado do
+    assunto (N3) pelo cadastro, e manter o N1 que o fornecedor carimba criava
+    dois N1 para a mesma menção, livres para discordar. O eixo de atributo se
+    prova em `test_os_drivers_leem_o_atributo_da_clipei`.
+    """
     linhas = []
     # Um tema negativo em quatro meses seguidos, sempre na Corsan.
     for mes_ in (3, 4, 5, 6):
         linhas.append(
             _post_da_bites(date(2026, mes_, 5), "Negativo", "Governança", "Corsan", "Tarifa")
         )
-    # E um mês com atributo positivo noutra unidade.
+    # E um mês positivo noutra unidade.
     linhas.append(
         _post_da_bites(date(2026, 6, 6), "Positivo", "Prosperidade", "Prolagos", "Obras")
     )
@@ -770,11 +784,10 @@ def test_os_drivers_leem_atributo_unidade_e_perpetuacao(cliente_do_score, sessao
     corpo_ = cliente_do_score.get("/api/score/drivers?mes=2026-06").json()
     assert corpo_["mencoes_no_mes"] >= 2
 
-    por_atributo = {a["nome"]: a for a in corpo_["atributos"]}
-    assert por_atributo["Governança"]["negativo"] == 1
-    # NS −1 → score 0; NS +1 → score 100. É o que a barra divergente desenha.
-    assert por_atributo["Governança"]["score"] == 0
-    assert por_atributo["Prosperidade"]["score"] == 100
+    #: A COLUNA DE ATRIBUTO DA PLANILHA É IGNORADA, e o eixo fica sem nada da
+    #: Bites: é o preço declarado da decisão, e aparece aqui para não aparecer
+    #: numa reunião.
+    assert "Governança" not in {a["nome"] for a in corpo_["atributos"]}
 
     por_unidade = {u["nome"]: u for u in corpo_["unidades"]}
     assert por_unidade["Corsan"]["negativas"] == 1
@@ -786,6 +799,32 @@ def test_os_drivers_leem_atributo_unidade_e_perpetuacao(cliente_do_score, sessao
     assert perpetuados["Tarifa"]["primeiro_mes"] == "2026-03"
     assert perpetuados["Tarifa"]["ultimo_mes"] == "2026-06"
     assert perpetuados["Tarifa"]["lentes"] == ["Sociedade digital"]
+
+
+def test_os_drivers_leem_o_atributo_da_clipei(cliente_do_score, sessao):
+    """O eixo de atributo, pela fonte que ainda manda a coluna.
+
+    DEPOIS DA `0069`, A CLIPEI É A ÚNICA que alimenta `mencao.atributo` — a
+    Bites deixou de mandar e as duas fontes da Approach nunca mandaram. Este
+    teste é o que impede o eixo de morrer sem ninguém notar.
+    """
+    conteudo = _clipping(
+        [
+            [date(2026, 6, 1), "NEGATIVA", "Muito Relevante", "Governança",
+             "Jornal Local", "População em geral", "Tarifa"],
+            [date(2026, 6, 2), "POSITIVA", "Relevante", "Prosperidade",
+             "Jornal Local", "População em geral", "Obras"],
+        ]
+    )
+    _subir(cliente_do_score, "clipei", conteudo)
+
+    corpo_ = cliente_do_score.get("/api/score/drivers?mes=2026-06").json()
+
+    por_atributo = {a["nome"]: a for a in corpo_["atributos"]}
+    assert por_atributo["Governança"]["negativo"] == 1
+    # NS −1 → score 0; NS +1 → score 100. É o que a barra divergente desenha.
+    assert por_atributo["Governança"]["score"] == 0
+    assert por_atributo["Prosperidade"]["score"] == 100
 
 
 def test_o_tema_que_morreu_antes_do_mes_nao_esta_em_perpetuacao(cliente_do_score):

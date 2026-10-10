@@ -33,6 +33,31 @@ class Instituicao(Tabela):
     #: e como se fala e como a lista fica legivel; quem nao convive com a sigla
     #: nao sabe o que escolheu. Nulo no que veio da planilha.
     nome_completo: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: O CARGO QUE O FORNECEDOR INFORMOU, pelo rótulo — "Deputado estadual".
+    #: Só em `tipo='perfil_rede'`, e o CHECK da `0076` garante.
+    #:
+    #: É O QUE A PESSOA RECONHECE NA TELA: o público diz a que poder o ator
+    #: pertence ("Poder Legislativo"); o cargo diz quem ele é.
+    #:
+    #: NÃO É A MESMA AFIRMAÇÃO QUE `interlocutor.cargo`: lá é a verdade do CRM
+    #: sobre a PESSOA, aqui é a evidência do fornecedor sobre o PERFIL — e um
+    #: perfil pode existir sem pessoa nenhuma, que é o estado dos 1.108.
+    cargo: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: A PESSOA DE QUEM ESTE PERFIL É — só em `tipo='perfil_rede'`, e o CHECK
+    #: da `0073` garante. É o que liga o que `stelafariasrs` postou ao que a
+    #: deputada Stela Farias fez nas agendas do CRM.
+    #:
+    #: A CHAVE FICA NO PERFIL porque a cardinalidade é essa: um perfil é de no
+    #: máximo uma pessoa, e uma pessoa tem vários perfis (54 dos 1.173 autores
+    #: da Bites aparecem em mais de uma rede).
+    #:
+    #: NÃO CONFUNDIR COM `interlocutor.instituicao_id`, que diz DE QUEM a
+    #: pessoa fala — para a deputada, a Assembleia.
+    interlocutor_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("interlocutor.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     esfera_id: Mapped[int | None] = mapped_column(
         SmallInteger, ForeignKey("esfera.id"), nullable=True
     )
@@ -172,4 +197,37 @@ class PessoaAegeaTema(Tabela):
     )
     tema_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("tema.id"), primary_key=True
+    )
+
+
+class AtorDistinto(Tabela):
+    """O par que alguém olhou e declarou atores diferentes.
+
+    Tira o par da fila de duplicados — sem isto, a fila nunca chega a zero — e
+    guarda conhecimento sobre o mundo: `Diário SM` e `Diários M` casam por
+    semelhança e podem não ser o mesmo jornal. Ver migration `0078`.
+
+    SEM LADO: o par é guardado sempre na mesma ordem (`esquerda < direita`,
+    pelo uuid), e é a chave primária que recusa a repetição — a aplicação não
+    procura nas duas direções, ela ordena antes de gravar.
+    """
+
+    __tablename__ = "ator_distinto"
+
+    esquerda: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("instituicao.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    direita: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("instituicao.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    motivo: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decidido_por: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("usuario.id"), nullable=True
+    )
+    decidido_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
