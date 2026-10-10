@@ -46,6 +46,15 @@ dependencies = [
     # vem de fora, por upload. Declarada aqui e não deixada ao acaso da
     # transitividade, pelo mesmo motivo da telemetria.
     "defusedxml>=0.7",
+    # O LEITOR RÁPIDO DOS .xlsx, em Rust. Medido com o export de 25.000 linhas
+    # da Clipei: o openpyxl decodifica a aba em 2,55s e o calamine em 0,27s —
+    # 9,5x. Era o piso do tempo de subida depois de a releitura ser eliminada,
+    # e a subida é a tela em que a pessoa espera olhando.
+    #
+    # O OPENPYXL FICA, e não por timidez: ele ESCREVE as planilhas que a
+    # plataforma exporta, e o calamine só lê. A ingestão do Score lê pelo
+    # calamine e cai no openpyxl se ele recusar o arquivo.
+    "python-calamine>=0.3",
 ]
 
 [project.optional-dependencies]

@@ -44,7 +44,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, insert, select
 from sqlalchemy.orm import Session
 
 from app.banco.tabelas_lentes import MencaoNaoClassificada
@@ -120,40 +120,105 @@ class Resumo:
 
 
 def _linhas_da_aba(
-    conteudo: bytes, mapeamento: Mapeamento
+    conteudo: bytes | ArquivoLido, mapeamento: Mapeamento
 ) -> Iterator[Mapping[str, object]]:
-    """As linhas da planilha como dicionários cabeçalho → célula."""
-    try:
-        from openpyxl import load_workbook
-    except ModuleNotFoundError as erro:  # pragma: no cover - dependência declarada
-        raise RegraViolada("Leitura de planilha indisponível neste servidor.") from erro
+    """As linhas da planilha como dicionários cabeçalho → célula.
 
-    # `read_only` não carrega a planilha inteira na memória, e `data_only` traz
-    # o VALOR de uma célula com fórmula — sem ele, a coluna de engajamento
-    # calculada chegaria como a string "=SOMA(...)".
-    try:
-        planilha = load_workbook(io.BytesIO(conteudo), read_only=True, data_only=True)
-    except Exception as erro:
-        # Um `.xls` antigo, um CSV renomeado ou um upload truncado chegam aqui.
-        # Sem a tradução, o openpyxl devolveria 500 e a pessoa leria "erro
-        # interno" para um arquivo que ela mesma pode trocar.
-        raise RegraViolada(
-            "Não consegui abrir o arquivo como planilha .xlsx. "
-            "Se ele veio em .xls ou .csv, salve como .xlsx e envie de novo."
-        ) from erro
-    try:
-        if mapeamento.aba and mapeamento.aba in planilha.sheetnames:
-            aba = planilha[mapeamento.aba]
-        elif mapeamento.aba:
-            raise RegraViolada(
-                f"A planilha não tem a aba {mapeamento.aba!r}. "
-                f"Abas encontradas: {', '.join(planilha.sheetnames)}."
-            )
-        else:
-            aba = planilha[planilha.sheetnames[0]]
+    ABRE O ARQUIVO A CADA CHAMADA quando recebe bytes, e é por isso que quem faz
+    mais de uma passada passa um `ArquivoLido`: a conferência fazia quatro
+    leituras do mesmo arquivo e gastava 14,3s onde hoje gasta 2,7s. Ver
+    `ArquivoLido`.
+    """
+    return _lido(conteudo).linhas(mapeamento)
 
-        linhas = aba.iter_rows(values_only=True)
-        cabecalho = _achar_o_cabecalho(linhas, mapeamento)
+
+def _como_o_openpyxl(celula: object) -> object:
+    """Uma célula do calamine na forma que o openpyxl entregava.
+
+    Chamada uma vez por célula — 300 mil vezes num arquivo de 25.000 linhas —,
+    e por isso é só dois testes. Mesmo assim custa uma fração do que se ganhou:
+    a decodificação caiu de 2,55s para 0,27s.
+    """
+    if celula == "":
+        return None
+    if type(celula) is float and celula.is_integer():
+        return int(celula)
+    return celula
+
+
+#: ATÉ QUE TAMANHO DE ARQUIVO VALE GUARDAR A LEITURA.
+#:
+#: Guardar as células derruba a releitura (ver `ArquivoLido`), e o preço é
+#: memória: medido com 25.000 linhas, 20 MB — cerca de 0,8 KB por linha. O
+#: limite de upload é 40 MB de `.xlsx` COMPRIMIDO, e um arquivo desses pode
+#: trazer centenas de milhares de linhas: guardar tudo chegaria a centenas de
+#: MB, e o servidor é compartilhado.
+#:
+#: 8 MB porque os arquivos reais de hoje têm 2 a 5 MB — o ganho fica onde ele
+#: existe, com folga. Acima do teto, cada etapa volta a decodificar em
+#: `read_only`, sem retenção: a subida fica lenta como era antes, o que é
+#: melhor que derrubar o processo. Achado de revisão.
+TAMANHO_PARA_GUARDAR_A_LEITURA = 8 * 1024 * 1024
+
+
+class ArquivoLido:
+    """A planilha aberta UMA VEZ, servindo todas as etapas da subida.
+
+    POR QUE EXISTE, com os números que a motivaram. Medido com 25.000 linhas (o
+    tamanho do export real da Clipei), abrir e percorrer o `.xlsx` custa 5,1s —
+    e a conferência fazia isso QUATRO vezes: duas na previsão (uma por fonte
+    irmã), uma nos veículos e uma nos assuntos. Davam 14,3s, dos quais 0,02s
+    eram banco. Reusando as células, as quatro passadas custam 0,10s.
+
+    O CUSTO É A DECODIFICAÇÃO DO XML, não o dicionário por linha: guardar as
+    células de uma passada não pesa por linha, e é o que elimina as outras três
+    leituras.
+
+    GUARDA A ABA INTEIRA, linhas do topo inclusive, e a BUSCA DO CABEÇALHO
+    continua sendo de cada fonte. Não é detalhe: `_achar_o_cabecalho` procura a
+    primeira linha que traz as `colunas_necessarias` DAQUELA fonte, e duas irmãs
+    podem exigir conjuntos diferentes. Guardar o cabeçalho da primeira faria a
+    segunda recusar uma coluna que existe numa linha mais abaixo — hoje as duas
+    da Clipei exigem o mesmo, mas era armadilha montada. Achado de revisão.
+
+    A VALIDAÇÃO DE COLUNA também é por fonte, pelo mesmo motivo: o que se reusa
+    é a leitura; o que cada cadastro exige, cada uma confere.
+
+    UMA ABA POR ARQUIVO, e o cache é por nome de aba: fonte que peça outra aba
+    do mesmo arquivo abre a dela, e não recebe as linhas da vizinha. É o caso
+    das duas fontes da Approach, que leem as abas `CM` e `SL` do mesmo arquivo:
+    duas decodificações, cada uma da sua aba. As duas da Clipei leem `Clipping`,
+    e aí a segunda sai de graça — que é onde está o ganho, porque é esse o
+    arquivo de 25.000 linhas.
+
+    ARQUIVO GRANDE NÃO É GUARDADO. Ver `TAMANHO_PARA_GUARDAR_A_LEITURA`.
+    """
+
+    def __init__(self, conteudo: bytes) -> None:
+        self._conteudo = conteudo
+        #: aba resolvida -> todas as células da aba, do topo ao fim
+        self._lido: dict[str, list[tuple]] = {}
+        self._guardar = len(conteudo) <= TAMANHO_PARA_GUARDAR_A_LEITURA
+
+    def linhas(self, mapeamento: Mapeamento) -> Iterator[Mapping[str, object]]:
+        """As linhas como dicionários cabeçalho → célula, para este mapeamento."""
+        if self._guardar:
+            fluxo: Iterator[tuple] = iter(self._celulas(mapeamento))
+            yield from self._dicionarios(fluxo, mapeamento)
+            return
+
+        #: SEM GUARDAR: a planilha é grande, e cada etapa decodifica a sua.
+        planilha, aba = self._abrir(mapeamento)
+        try:
+            yield from self._dicionarios(aba.iter_rows(values_only=True), mapeamento)
+        finally:
+            planilha.close()
+
+    def _dicionarios(
+        self, fluxo: Iterator[tuple], mapeamento: Mapeamento
+    ) -> Iterator[Mapping[str, object]]:
+        """O cabeçalho desta fonte, a conferência das colunas, e as linhas."""
+        cabecalho = _achar_o_cabecalho(fluxo, mapeamento)
 
         faltando = sorted(mapeamento.colunas_necessarias - set(cabecalho))
         if faltando:
@@ -162,10 +227,107 @@ def _linhas_da_aba(
                 f"{', '.join(faltando)}."
             )
 
-        for linha in linhas:
+        for linha in fluxo:
             yield dict(zip(cabecalho, linha, strict=False))
-    finally:
-        planilha.close()
+
+    def _celulas(self, mapeamento: Mapeamento) -> list[tuple]:
+        """As células da aba, decodificadas uma vez e guardadas."""
+        chave = mapeamento.aba or ""
+        if chave in self._lido:
+            return self._lido[chave]
+
+        try:
+            self._lido[chave] = self._pelo_calamine(mapeamento)
+        except RegraViolada:
+            #: RECUSA DE CADASTRO passa direto: aba que falta é mensagem para a
+            #: pessoa, não falha de leitor, e tentar o outro daria a mesma.
+            raise
+        except Exception:
+            #: QUALQUER OUTRA FALHA DO CALAMINE cai no openpyxl, que leu esses
+            #: arquivos por meses. Um leitor novo pode recusar um `.xlsx`
+            #: estranho que o antigo aceitava, e a subida não pode morrer por
+            #: causa de uma otimização.
+            planilha, aba = self._abrir(mapeamento)
+            try:
+                self._lido[chave] = list(aba.iter_rows(values_only=True))
+            finally:
+                planilha.close()
+        return self._lido[chave]
+
+    def _pelo_calamine(self, mapeamento: Mapeamento) -> list[tuple]:
+        """A aba lida pelo calamine, com as células na forma do openpyxl.
+
+        AS TRÊS DIFERENÇAS, achadas comparando célula por célula os dois leitores
+        nos dois arquivos reais, e resolvidas aqui para que nada rio abaixo
+        precise saber qual leitor trouxe a célula:
+
+        * VAZIO vem como `""`, e não `None`. `_texto` já trata os dois, mas
+          `linha.get(coluna) is None` em qualquer lugar passaria a ser falso;
+        * INTEIRO vem como `float`, e a coluna `ID` da Clipei é numérica:
+          `id_fonte` gravaria `"12345.0"` no lugar de `"12345"`, e é por esse
+          campo que se compara matéria com matéria;
+        * `to_python()` PULA as linhas vazias do topo por padrão. O leitor
+          procura o cabeçalho nas 20 primeiras linhas contando a partir da
+          primeira: pular uma mudaria o que ele acha. `skip_empty_area=False`
+          devolve a aba como ela é.
+        """
+        from python_calamine import CalamineWorkbook
+
+        livro = CalamineWorkbook.from_filelike(io.BytesIO(self._conteudo))
+        nomes = livro.sheet_names
+        if mapeamento.aba and mapeamento.aba not in nomes:
+            raise RegraViolada(
+                f"A planilha não tem a aba {mapeamento.aba!r}. "
+                f"Abas encontradas: {', '.join(nomes)}."
+            )
+        if not nomes:
+            raise RegraViolada("A planilha está vazia.")
+        aba = livro.get_sheet_by_name(mapeamento.aba or nomes[0])
+        return [
+            tuple(_como_o_openpyxl(celula) for celula in linha)
+            for linha in aba.to_python(skip_empty_area=False)
+        ]
+
+    def _abrir(self, mapeamento: Mapeamento):
+        """Abre o arquivo e devolve a planilha e a aba desta fonte."""
+        try:
+            from openpyxl import load_workbook
+        except ModuleNotFoundError as erro:  # pragma: no cover - dependência declarada
+            raise RegraViolada("Leitura de planilha indisponível neste servidor.") from erro
+
+        # `read_only` não carrega a planilha inteira na memória de uma vez, e
+        # `data_only` traz o VALOR de uma célula com fórmula — sem ele, a coluna
+        # de engajamento calculada chegaria como a string "=SOMA(...)".
+        try:
+            planilha = load_workbook(io.BytesIO(self._conteudo), read_only=True, data_only=True)
+        except Exception as erro:
+            # Um `.xls` antigo, um CSV renomeado ou um upload truncado chegam
+            # aqui. Sem a tradução, o openpyxl devolveria 500 e a pessoa leria
+            # "erro interno" para um arquivo que ela mesma pode trocar.
+            raise RegraViolada(
+                "Não consegui abrir o arquivo como planilha .xlsx. "
+                "Se ele veio em .xls ou .csv, salve como .xlsx e envie de novo."
+            ) from erro
+
+        if mapeamento.aba and mapeamento.aba in planilha.sheetnames:
+            return planilha, planilha[mapeamento.aba]
+        if mapeamento.aba:
+            abas = ", ".join(planilha.sheetnames)
+            planilha.close()
+            raise RegraViolada(
+                f"A planilha não tem a aba {mapeamento.aba!r}. Abas encontradas: {abas}."
+            )
+        return planilha, planilha[planilha.sheetnames[0]]
+
+
+def _lido(conteudo: bytes | ArquivoLido) -> ArquivoLido:
+    """Aceita os bytes ou o arquivo já aberto.
+
+    As funções públicas recebem bytes — é o que a rota tem na mão, e é o que os
+    testes passam. Quem orquestra (`conferir`, `ingerir`) abre uma vez e passa o
+    `ArquivoLido` adiante, e aí as etapas internas não reabrem nada.
+    """
+    return conteudo if isinstance(conteudo, ArquivoLido) else ArquivoLido(conteudo)
 
 
 #: Quantas linhas do topo o leitor examina procurando o cabeçalho.
@@ -290,46 +452,57 @@ def regravar(
         )
     )
 
-    sessao.add_all(
-        Mencao(
-            fonte_id=fonte.id,
-            mes=mencao.mes,
-            data=mencao.data,
-            sentimento=mencao.sentimento,
-            tier=mencao.tier,
-            engajamento=mencao.engajamento,
-            cargo=mencao.cargo,
-            atributo=mencao.atributo,
-            veiculo=mencao.veiculo,
-            publico_alvo=mencao.publico_alvo,
+    #: `insert()` EM LOTE, e nao `add_all` com objetos do ORM. Medido com 25.000
+    #: linhas: 4,34s instanciando e dando flush, contra 2,11s mandando os
+    #: dicionários — dos quais 1,13s eram só para criar objetos que ninguém lê
+    #: de volta (esta função não devolve nada, e quem conta usa a `leitura`).
+    #: O `id` continua vindo do default da coluna, aplicado pelo próprio
+    #: `insert()`.
+    valores = [
+        {
+            "fonte_id": fonte.id,
+            "mes": mencao.mes,
+            "data": mencao.data,
+            "sentimento": mencao.sentimento,
+            "tier": mencao.tier,
+            "engajamento": mencao.engajamento,
+            "cargo": mencao.cargo,
+            "atributo": mencao.atributo,
+            "veiculo": mencao.veiculo,
+            "publico_alvo": mencao.publico_alvo,
             # O VEÍCULO DO CADASTRO, quando ele existe. Nulo é o normal por um
             # bom tempo: a Clipei traz 2.648 veículos distintos e o cadastro
             # começou com 39. A cada subida com criação a cobertura sobe.
-            instituicao_id=de_cadastro.get(normalizar(mencao.veiculo or "")),
+            "instituicao_id": de_cadastro.get(normalizar(mencao.veiculo or "")),
             # O ASSUNTO DO CADASTRO, quando o nome casa. Nulo é o normal
             # enquanto o fornecedor não fala o vocabulário do N3 — e é o que a
             # conferência mostra antes de gravar. Com o vínculo, o dossiê filtra
             # por Pilar (N1), Tema estratégico (N2) e Subtema (N3) sem o
             # fornecedor mandar nada além do N3.
-            tema_id=de_temas.get(normalizar(mencao.tema_texto or "")),
-            tema_texto=mencao.tema_texto,
-            unidade_texto=mencao.unidade_texto,
-            teor=mencao.teor,
-            acionavel=mencao.acionavel,
-            autor=mencao.autor,
+            "tema_id": de_temas.get(normalizar(mencao.tema_texto or "")),
+            "tema_texto": mencao.tema_texto,
+            "unidade_texto": mencao.unidade_texto,
+            "teor": mencao.teor,
+            "acionavel": mencao.acionavel,
+            "autor": mencao.autor,
             # -- os campos do padrão Aegea (0055) ---------------------------
             # Nulos vindos de fonte que não os manda, e é assim que as
             # planilhas antigas continuam entrando sem mudança.
-            id_fonte=mencao.id_fonte,
-            uf=mencao.uf,
-            subtema=mencao.subtema,
-            perfil_autor=mencao.perfil_autor,
-            titulo_texto=mencao.titulo_texto,
-            link=mencao.link,
-            peso_tier=mencao.peso_tier,
-        )
+            "id_fonte": mencao.id_fonte,
+            "uf": mencao.uf,
+            "subtema": mencao.subtema,
+            "perfil_autor": mencao.perfil_autor,
+            "titulo_texto": mencao.titulo_texto,
+            "link": mencao.link,
+            "peso_tier": mencao.peso_tier,
+        }
         for mencao in leitura.mencoes
-    )
+    ]
+    #: PLANILHA VAZIA NÃO VIRA `insert` VAZIO: o SQLAlchemy recusaria a lista
+    #: sem linhas, e mês sem menção é caso legítimo — é o que acontece quando o
+    #: recorte por lista não acha veículo nenhum.
+    if valores:
+        sessao.execute(insert(Mencao), valores)
     sessao.add_all(
         ScoreMesFonte(
             fonte_id=fonte.id,
@@ -396,7 +569,7 @@ def _recorte_por_lista(
 def _ingerir_uma(
     sessao: Session,
     fonte: ScoreFonte,
-    conteudo: bytes,
+    conteudo: bytes | ArquivoLido,
     veiculos: Mapping[str, str] | None = None,
     criados: int = 0,
     e_recorte: bool = False,
@@ -599,8 +772,11 @@ def ingerir(
     #: `veiculo` faria "deolhoemesteio" virar veículo de imprensa — e um dia
     #: candidato à lista de imprensa econômica da lente Mercado.
     quem_fala = _mapeamento_de(fonte).quem_fala
+    #: ABERTA UMA VEZ, como na conferência: a subida fazia três leituras do
+    #: mesmo arquivo (os veículos, e uma gravação por irmã). Ver `ArquivoLido`.
+    arquivo = _lido(conteudo)
     reconhecimento = veiculos_da_imprensa.reconhecer(
-        sessao, veiculos_da_planilha(sessao, fonte, conteudo), quem_fala
+        sessao, veiculos_da_planilha(sessao, fonte, arquivo), quem_fala
     )
     autorizados = {normalizar(nome) for nome in veiculos_a_criar}
     a_criar = tuple(
@@ -613,7 +789,7 @@ def ingerir(
         _ingerir_uma(
             sessao,
             irma,
-            conteudo,
+            arquivo,
             de_cadastro,
             len(criados),
             e_recorte=irma.id != fonte.id,
@@ -632,7 +808,7 @@ COLUNA_DA_ABRANGENCIA = "Abrangência"
 
 
 def veiculos_da_planilha(
-    sessao: Session, fonte: ScoreFonte, conteudo: bytes
+    sessao: Session, fonte: ScoreFonte, conteudo: bytes | ArquivoLido
 ) -> dict[str, dict[str, object]]:
     """Nome do veículo -> praça, alcance e quantas menções o citam.
 
@@ -688,7 +864,7 @@ def veiculos_da_planilha(
 
 
 def assuntos_da_planilha(
-    sessao: Session, fonte: ScoreFonte, conteudo: bytes
+    sessao: Session, fonte: ScoreFonte, conteudo: bytes | ArquivoLido
 ) -> dict[str, int]:
     """Assunto → quantas linhas o citam, CONTADO COMO A SUBIDA CONTA.
 
@@ -698,8 +874,10 @@ def assuntos_da_planilha(
     acontecer:
 
     1. NENHUM FILTRO OU DESCARTE era aplicado. A Bites traz 2.886 linhas e
-       1.426 caem por sentimento ilegível: a tela dizia "N acham o assunto"
-       sobre 2.886, e o resumo depois de gravar contava sobre ~1.460. O mesmo
+       1.426 caíam por sentimento ilegível NO ARQUIVO DE 01–09/2026: a tela
+       dizia "N acham o assunto" sobre 2.886, e o resumo depois de gravar
+       contava sobre ~1.460. (A planilha consolidada já vem com sentimento em
+       todas as linhas; o furo era de CAMINHO, não daquele arquivo.) O mesmo
        rótulo, dois números, quase o dobro de diferença. Pior em
        `clipei_investidores`, que recorta o arquivo: contava as 25.597 linhas
        do clipping inteiro.
@@ -755,8 +933,13 @@ def conferir(
 
     NÃO ESCREVE, e há teste para isso. `_ingerir_uma` grava; esta só lê.
     """
+    #: ABERTA UMA VEZ, e as quatro etapas abaixo reusam a leitura. Medido com
+    #: 25.000 linhas: eram 14,3s em quatro decodificações do mesmo arquivo —
+    #: duas na previsão (uma por irmã), uma nos veículos, uma nos assuntos —
+    #: contra 0,02s de banco. Ver `ArquivoLido`.
+    arquivo = _lido(conteudo)
     previsao = [
-        _prever_uma(sessao, irma, conteudo)
+        _prever_uma(sessao, irma, arquivo)
         for irma in fontes_do_mesmo_arquivo(sessao, fonte)
     ]
     #: OS ASSUNTOS TAMBÉM SÃO CONFERIDOS ANTES, e pelo mesmo motivo dos
@@ -768,16 +951,18 @@ def conferir(
         previsao,
         veiculos_da_imprensa.reconhecer(
             sessao,
-            veiculos_da_planilha(sessao, fonte, conteudo),
+            veiculos_da_planilha(sessao, fonte, arquivo),
             _mapeamento_de(fonte).quem_fala,
         ),
         temas_da_mencao.reconhecer(
-            sessao, assuntos_da_planilha(sessao, fonte, conteudo)
+            sessao, assuntos_da_planilha(sessao, fonte, arquivo)
         ),
     )
 
 
-def _prever_uma(sessao: Session, fonte: ScoreFonte, conteudo: bytes) -> Resumo:
+def _prever_uma(
+    sessao: Session, fonte: ScoreFonte, conteudo: bytes | ArquivoLido
+) -> Resumo:
     """O resumo de uma fonte sem gravar — o mesmo cálculo de `_ingerir_uma`."""
     mapeamento = _mapeamento_de(fonte)
     #: A CONFERÊNCIA RECORTA IGUAL À SUBIDA. Se a previsão lesse o arquivo sem

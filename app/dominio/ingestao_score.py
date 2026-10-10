@@ -814,8 +814,13 @@ def ler_linha(
     achatado = achatar(linha.get(colunas["sentimento"]))
     sentimento = mapeamento.sentimentos.get(achatado) or SENTIMENTOS.get(achatado)
     if sentimento is None:
-        # A Bites traz 1.426 posts com `Não informado`: são posts reais que o
-        # fornecedor não classificou, e entrar como neutro inventaria opinião.
+        # A Bites TRAZIA 1.426 posts com `Não informado` no arquivo de
+        # 01–09/2026: posts reais que o fornecedor não classificou, e entrar
+        # como neutro inventaria opinião. Na planilha CONSOLIDADA (medida em
+        # 10/10/2026) isso acabou — sentimento em 2.842 de 2.842 linhas, e a
+        # conferência devolveu `sem_sentimento: 0`. O descarte continua aqui
+        # porque é regra da fonte, não do arquivo: o próximo mês pode voltar a
+        # vir sem classificação.
         return Descarte.SEM_SENTIMENTO
 
     def opcional(campo: str) -> object:
