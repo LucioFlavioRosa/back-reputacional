@@ -145,6 +145,10 @@ class IncidenteNaTabela(BaseModel):
     fonte: str
     #: A LENTE da fonte — a dimensão padronizada do Score.
     lente: str
+    #: OS NOMES DE CADASTRO dos dois, porque é o que a tela escreve: "Sociedade
+    #: digital · Bites", e não "sociedade · bites". Código é chave, não rótulo.
+    lente_nome: str
+    fonte_nome: str
     tema: str
     tier: str | None
     engajamento: float | None
@@ -446,7 +450,9 @@ def relatorio_de_incidentes(
                 incidente=linha.incidente,
                 link=linha.link,
                 fonte=linha.fonte,
+                fonte_nome=linha.fonte_nome,
                 lente=linha.lente,
+                lente_nome=linha.lente_nome,
                 tema=linha.tema,
                 tier=linha.tier,
                 engajamento=linha.engajamento,

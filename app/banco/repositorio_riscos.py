@@ -732,6 +732,15 @@ class Incidente:
     #: Clipei": a lente diz de que ângulo se está vendo, a fonte diz de quem
     #: veio o dado, e quem confere uma planilha precisa da segunda.
     lente: str
+    #: OS NOMES DE CADASTRO DOS DOIS, porque é o que a tela escreve.
+    #:
+    #: O CÓDIGO É CHAVE, NÃO RÓTULO: a tabela mostrava "sociedade · bites" onde o
+    #: resto do produto escreve "Sociedade digital" — e "sociedade" não é nem o
+    #: nome da lente. Vêm do servidor e não de um mapa no navegador: a consulta
+    #: já seleciona os dois, e um mapa no front seria uma segunda cópia do
+    #: cadastro, que envelheceria na primeira lente renomeada.
+    lente_nome: str
+    fonte_nome: str
     tema: str
     #: O ALCANCE vai CRU, nas duas formas que as fontes mandam: o tier da
     #: imprensa e o engajamento das redes. Traduzir aqui obrigaria a inventar
@@ -843,7 +852,9 @@ def incidentes_de_risco(
             Mencao.tier.label("tier"),
             Mencao.engajamento.label("engajamento"),
             ScoreFonte.codigo.label("fonte"),
+            ScoreFonte.nome.label("fonte_nome"),
             Lente.codigo.label("lente"),
+            Lente.nome.label("lente_nome"),
             Tema.nome.label("tema"),
             func.max(_peso_em_sql()).label("pior"),
             func.min(Risco.severidade).label("qualquer_severidade"),
@@ -857,7 +868,9 @@ def incidentes_de_risco(
             Mencao.tier,
             Mencao.engajamento,
             ScoreFonte.codigo,
+            ScoreFonte.nome,
             Lente.codigo,
+            Lente.nome,
             Tema.nome,
         )
         .subquery()
@@ -879,7 +892,9 @@ def incidentes_de_risco(
                 incidente=linha.incidente,
                 link=linha.link,
                 fonte=linha.fonte,
+                fonte_nome=linha.fonte_nome,
                 lente=linha.lente,
+                lente_nome=linha.lente_nome,
                 tema=linha.tema,
                 tier=linha.tier,
                 engajamento=linha.engajamento,
@@ -893,6 +908,14 @@ def incidentes_de_risco(
 
     das_agendas = agendas_de_incidente(filtro, riscos, escopo)
     if das_agendas is not None:
+        #: O NOME DA FONTE E DA LENTE DO CRM, do cadastro: ele é uma `score_fonte`
+        #: como as outras (`interna = true`), e escrever "crm" na tela seria o
+        #: mesmo erro de mostrar código onde o produto mostra nome.
+        do_cadastro = lentes_das_fontes(sessao).get(FONTE_DO_CRM)
+        nomes_do_crm = (
+            (nomes_das_fontes(sessao).get(FONTE_DO_CRM) or FONTE_DO_CRM),
+            (do_cadastro[1] if do_cadastro else LENTE_DO_CRM),
+        )
         de_agendas = (
             das_agendas.with_only_columns(
                 InteracaoRegistro.id.label("id"),
@@ -927,7 +950,11 @@ def incidentes_de_risco(
                     incidente=None,
                     link=None,
                     fonte=FONTE_DO_CRM,
+                    #: O NOME DO CRM E DA LENTE DELE vêm do cadastro, como os
+                    #: das menções — ver `lentes_das_fontes`.
+                    fonte_nome=nomes_do_crm[0],
                     lente=LENTE_DO_CRM,
+                    lente_nome=nomes_do_crm[1],
                     tema=linha.tema,
                     tier=None,
                     engajamento=None,
@@ -1331,6 +1358,17 @@ def arvore_dos_temas(
             )
         )
     return arvore
+
+
+def nomes_das_fontes(sessao: Session) -> dict[str, str]:
+    """O nome de cadastro de cada fonte, pelo código.
+
+    A TELA ESCREVE NOME, e o código é chave. Vale para o CRM como para as
+    outras: ele é uma `score_fonte` com `interna = true`, e "crm" na coluna da
+    tabela seria o mesmo erro de mostrar `sociedade` onde o cadastro diz
+    "Sociedade digital".
+    """
+    return dict(sessao.execute(select(ScoreFonte.codigo, ScoreFonte.nome)).all())
 
 
 def lentes_das_fontes(sessao: Session) -> dict[str, tuple[str, str]]:
