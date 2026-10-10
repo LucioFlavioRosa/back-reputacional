@@ -31,6 +31,7 @@ from __future__ import annotations
 import re
 
 from starlette.datastructures import Headers, MutableHeaders
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 #: Um megabyte. O maior corpo legítimo em JSON é o formulário de interação —
@@ -280,3 +281,30 @@ async def _responder_grande_demais(send: Send) -> None:
         }
     )
     await send({"type": "http.response.body", "body": corpo})
+
+
+#: As respostas que vão comprimidas. Só a Consulta em profundidade: com o volume
+#: real ela passa de 180 KB (o teto é a taxonomia, 104 subtemas com amostra de
+#: matérias), e cai para uns 20 KB em gzip.
+CAMINHOS_COMPRIMIDOS = re.compile(r"^/api/score/lentes/[^/]+/consulta$")
+
+
+class CompressaoSeletivaMiddleware:
+    """Gzip só nas rotas de `CAMINHOS_COMPRIMIDOS`, e não na API inteira.
+
+    POR QUE NÃO O `GZipMiddleware` EM TUDO: a sessão é cookie, e comprimir uma
+    resposta que traga segredo junto de algo que o visitante controla é o
+    cenário do BREACH (o tamanho comprimido vaza o segredo aos poucos). A
+    Consulta só devolve dado agregado e matérias públicas — nada de token —,
+    então ali comprimir é ganho sem risco; nas rotas de acesso não seria.
+    """
+
+    def __init__(self, app: ASGIApp, minimo: int = 1024) -> None:
+        self.app = app
+        self.gzip = GZipMiddleware(app, minimum_size=minimo)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and CAMINHOS_COMPRIMIDOS.match(scope.get("path", "")):
+            await self.gzip(scope, receive, send)
+            return
+        await self.app(scope, receive, send)

@@ -229,12 +229,26 @@ class PontoDaSerie(BaseModel):
 
 
 def _mes_de(texto: str) -> date:
-    """`2026-06` vira o primeiro dia do mês."""
+    """`2026-06` vira o primeiro dia do mês.
+
+    O ANO TEM FAIXA: `date` aceita o ano 1, mas as telas voltam meses a partir
+    do pedido (`meses_ate`), e "0001-02" estourava em ValueError lá dentro, como
+    500. Fora de 2000–2100 não há dado nenhum, e a resposta certa é 422.
+    """
     try:
         ano, mes = texto.split("-")
-        return date(int(ano), int(mes), 1)
+        valor = date(int(ano), int(mes), 1)
     except (ValueError, TypeError) as erro:
         raise RegraViolada(f"Mês inválido: {texto!r}. Use o formato AAAA-MM.") from erro
+    if not ANO_MINIMO <= valor.year <= ANO_MAXIMO:
+        raise RegraViolada(
+            f"Mês inválido: {texto!r}. O ano vai de {ANO_MINIMO} a {ANO_MAXIMO}."
+        )
+    return valor
+
+
+ANO_MINIMO = 2000
+ANO_MAXIMO = 2100
 
 
 #: Como cada limite se apresenta na Calibração, na ordem em que se lê: dos
