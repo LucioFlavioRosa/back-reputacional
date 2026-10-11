@@ -627,10 +627,8 @@ def _conferir_o_declarado(
             if coluna.vocabulario in VOCABULARIOS_QUE_A_IMPORTACAO_CRIA
             else frozenset()
         )
-        if (
-            normalizar(texto) not in indice.get(coluna.vocabulario, {})
-            and normalizar(texto) not in declarados_que_valem
-        ):
+        conhecido = indice.get(coluna.vocabulario, {}).get(normalizar(texto))
+        if conhecido is None and normalizar(texto) not in declarados_que_valem:
             divergencias.append(
                 Divergencia(
                     campo=campo,
@@ -638,6 +636,37 @@ def _conferir_o_declarado(
                     mensagem=(
                         f"Na aba de cadastro, {coluna.nome!r} de {nome!r} está {texto!r}, "
                         f"que não existe na lista. Escolha um valor da suspensa."
+                    ),
+                    coluna=coluna_nome,
+                    trava=True,
+                )
+            )
+            tudo_bem = False
+        elif conhecido is AMBIGUO:
+            # DECLAROU ALGO QUE NÃO RESOLVE, e isto é diferente de não declarar —
+            # achado ALTA de revisão (11/10/2026). O nome ambíguo ESTÁ no índice,
+            # então a checagem acima o aceitava; depois, `_instituicao_declarada`
+            # devolvia `None` para a sentinela, e `None` quer dizer "use a
+            # instituição da agenda". Resultado: ela declarava um órgão e o
+            # cadastro nascia em OUTRO, em silêncio — o mesmo chute calado que a
+            # preferência pela aba acabou de fechar, reaberto por outra porta.
+            #
+            # A FRASE DÁ AS DUAS SAÍDAS REAIS, e nenhuma delas é "escreva o nome
+            # certo": os dois cadastros têm o MESMO nome, então não há o que
+            # corrigir na célula. Ou ela deixa a coluna em branco — e aí a
+            # instituição da agenda passa a valer, legitimamente, porque ela não
+            # declarou nada —, ou cadastra a pessoa pela Administração e aponta
+            # para ela na conferência.
+            divergencias.append(
+                Divergencia(
+                    campo=campo,
+                    valor=nome,
+                    mensagem=(
+                        f"Na aba de cadastro, {coluna.nome!r} de {nome!r} está "
+                        f"{texto!r}, e existe mais de um cadastro com esse nome — não "
+                        "tenho como saber qual. Deixe a coluna em branco para usar a "
+                        "instituição desta agenda, ou cadastre a pessoa pela tela de "
+                        "Administração e aponte para ela aqui."
                     ),
                     coluna=coluna_nome,
                     trava=True,
@@ -1839,6 +1868,7 @@ def _instituicao_de_cada_interlocutor(
     indice,
     escolhidos: Mapping[tuple[str, str], object] = MAPPING_VAZIO,
     declarados: Mapping[str, Mapping[str, object]] = MAPPING_VAZIO,
+    a_nascer: frozenset[str] = frozenset(),
 ) -> dict[str, object]:
     """Interlocutor novo → a instituição a que ele pertence.
 
@@ -1872,6 +1902,18 @@ def _instituicao_de_cada_interlocutor(
     E O ESCRITOR CONTINUA SENDO UM SÓ: `_JA_RESOLVIDOS` mantém `instituicao_id`
     fora do que a criação grava a partir do declarado, justamente para as duas
     verdades não discordarem. Quem aprende a declaração é este caminho.
+
+    `a_nascer` É O CONJUNTO DOS QUE VÃO SER CRIADOS, e sem ele a trava voltava
+    pela confirmação — achado ALTA de revisão. A varredura lê as células CRUAS da
+    linha, não os itens que `_listas_da_linha` manteve: o interlocutor de outra
+    instituição, corretamente OMITIDO da agenda, continuava entrando na checagem
+    de "a mesma pessoa em agendas de instituições diferentes" e levantava
+    `RegraViolada` na confirmação. A tela dizia "a agenda entra sem Ana" e o
+    servidor recusava tudo.
+
+    E É O PRÓPRIO PROPÓSITO DA FUNÇÃO: ela responde por interlocutor NOVO. Quem já
+    existe no cadastro já tem instituição, e quem foi omitido não vai nascer —
+    `de_quem` é lido num lugar só, na criação, exatamente para isso.
     """
     de_quem: dict[str, object] = {}
     ambiguos: set[str] = set()
@@ -1908,6 +1950,12 @@ def _instituicao_de_cada_interlocutor(
                 if not pessoa:
                     continue
                 chave = normalizar(str(pessoa))
+                #: SÓ QUEM VAI NASCER. Ver `a_nascer` no docstring: incluir quem
+                #: já existe, ou quem foi omitido da agenda, fazia a checagem de
+                #: ambiguidade recusar a importação inteira por uma pessoa que
+                #: ninguém ia criar.
+                if chave not in a_nascer:
+                    continue
                 #: A ABA ANTES DA AGENDA: o que ela declarou é explícito, a
                 #: instituição da linha é inferência.
                 da_aba = _instituicao_declarada(declarados.get(chave), indice)
@@ -2031,11 +2079,23 @@ def _criar_cadastros(
 
     criados = 0
     de_quem: dict[str, object] = {}
+    #: UMA FLAG, E NÃO `not de_quem`: a varredura pode devolver vazio por motivo
+    #: legítimo — um arquivo que cria só um tema não tem interlocutor novo —, e
+    #: `not de_quem` a repetiria a cada cadastro, com um `_indice` inteiro em
+    #: cada repetição.
+    varrido = False
+    #: SÓ OS INTERLOCUTORES QUE VÃO NASCER. Ver `_instituicao_de_cada_interlocutor`:
+    #: a varredura lê as células cruas, e sem este recorte ela respondia também por
+    #: quem já existe e por quem foi omitido da agenda.
+    a_nascer = frozenset(
+        normalizar(nome) for vocabulario, nome in a_criar if vocabulario == "interlocutores"
+    )
     for (vocabulario, valor), _campo in sorted(a_criar.items(), key=peso):
-        if vocabulario != "instituicoes" and not de_quem:
+        if vocabulario != "instituicoes" and not varrido:
             sessao.flush()
+            varrido = True
             de_quem = _instituicao_de_cada_interlocutor(
-                linhas, _indice(sessao), escolhidos, declarados
+                linhas, _indice(sessao), escolhidos, declarados, a_nascer
             )
         if vocabulario == "instituicoes":
             # O CAMINHO CANÔNICO: a categoria vem da planilha e o TIPO NASCE DELA,
