@@ -264,9 +264,25 @@ def rating(quantas: int, desde: date, com_perspectiva_negativa: list[str]) -> st
 
 
 def proxy_sem_serie() -> str:
+    """A ressalva da nota do Mercado — e ela mudou de primeira metade.
+
+    DIZIA "Mercado sem série mensal de sentimento", e isso deixou de ser verdade
+    em 11/10/2026: a lente passou a ter a série, e o gráfico da Evolução a
+    desenha. Manter a frase seria o produto negando na legenda o que mostra no
+    gráfico logo acima.
+
+    A SEGUNDA METADE CONTINUA VALENDO, e é a que importa: a nota mede o que a
+    imprensa econômica publicou para investidores, ponderado por tier — não é uma
+    pesquisa com o mercado dizendo o que pensa. Quem lê a nota precisa saber
+    disso, e é por isso que a ressalva existe.
+
+    O NOME DA FUNÇÃO FICOU, de propósito: trocá-lo mexeria em três testes e num
+    import, sem ganho — e o docstring já diz que ele descreve o que a frase ERA.
+    """
     return (
-        "Mercado sem série mensal de sentimento: a nota é um proxy da imprensa econômica "
-        "(matérias para investidores), de todos os tiers, cada uma ponderada pelo seu tier."
+        "A nota do Mercado é um proxy: ela mede o que a imprensa econômica publicou "
+        "para investidores, cada matéria ponderada pelo seu tier — e não o que o "
+        "mercado respondeu."
     )
 
 

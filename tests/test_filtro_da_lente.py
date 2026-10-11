@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.api.lentes import obter_dossie, obter_opcoes_de_filtro, obter_recorte
 from app.banco.tabelas_catalogo import Tema
+from app.banco.tabelas_lentes import EventoMercado
 from app.banco.tabelas_score import Mencao, ScoreFonte, ScoreMesFonte
 from app.dominio.score import peso_do_cargo, peso_do_engajamento
 from tests.test_e2e_postgres import URL
@@ -548,6 +549,73 @@ def test_a_conclusao_da_evolucao_do_mercado_fala_de_materia_e_nao_de_nota(sessao
         assert termo not in conclusao.lower(), (
             f"a frase mistura unidade com o gráfico de contagem: {conclusao!r}"
         )
+
+
+def test_o_quadro_de_sinais_do_mercado_fala_da_serie_e_nao_dos_eventos(sessao):
+    """ACHADO DE REVISÃO, e ele sobreviveu a duas mudanças sem ninguém ver.
+
+    O quadro ao lado do gráfico da Evolução (`sinais_da_evolucao`) é alimentado
+    pelos sinais marcados com `Secao.EVOLUCAO`. No Mercado, esses sinais vinham
+    de `detectar_nos_eventos` — porque o eventograma ocupava o lugar do gráfico.
+
+    QUANDO O GRÁFICO VIROU SÉRIE e o eventograma saiu da tela, os sinais ficaram:
+    o quadro narrava em texto, embaixo de um gráfico de barras de matérias, os
+    fatos que a tela deixou de desenhar. Nenhum dos 2036 testes pegou.
+
+    O QUE ESTE TESTE PRENDE: o quadro não pode citar evento, e a lente tem de ter
+    sinal de série como a Imprensa. Se alguém devolver os detectores de evento à
+    seção EVOLUÇÃO, isto cai.
+    """
+    clipei_investidores = sessao.scalars(
+        select(ScoreFonte).where(ScoreFonte.codigo == "clipei_investidores")
+    ).one()
+    for sentimento in ("neg", "neg", "neg", "pos"):
+        sessao.add(
+            Mencao(
+                fonte_id=clipei_investidores.id, mes=MES, sentimento=sentimento,
+                tier="muito_relevante", veiculo="Valor Econômico",
+            )
+        )
+
+    #: DOIS EVENTOS, UM DE CADA TIPO, e é isto que torna o teste decisivo.
+    #:
+    #: Sem evento nenhum no banco, a asserção "o quadro não cita evento" passaria
+    #: por VACUIDADE — não haveria o que citar. Com os dois, ela prova que o
+    #: quadro os ignora de propósito, e a outra metade prova que o painel de
+    #: rating continua mostrando o que é dele.
+    sessao.add(
+        EventoMercado(
+            data=MES, tipo="governanca", texto="Vazamento do Termo de Acordo",
+            efeito="pressiona",
+        )
+    )
+    sessao.add(
+        EventoMercado(
+            data=MES, tipo="rating", agencia="S&P", nota_anterior="B+",
+            nota_nova="B", perspectiva="negativa", texto="S&P rebaixa para B",
+            efeito="pressiona",
+        )
+    )
+    sessao.flush()
+
+    mercado = obter_dossie(sessao=sessao, usuario=_QuemOlha(), codigo="mercado", mes="2026-06")
+
+    #: NENHUMA FRASE DO QUADRO CITA UM EVENTO. Os textos dos eventos do
+    #: eventograma são frases de relatório ("Vazamento do Termo de Acordo",
+    #: "Aumento de capital de até R$ 2,1 bi"); nenhuma delas tem lugar num
+    #: quadro que explica um gráfico de contagem de matérias.
+    quadro = " ".join(mercado.sinais_da_evolucao)
+    for texto_de_evento in ("Vazamento", "Aumento de capital", "Brazil Week", "Copasa"):
+        assert texto_de_evento not in quadro, (
+            f"o quadro da evolução cita o eventograma removido: {quadro!r}"
+        )
+
+    #: E O RATING CONTINUA, porque o painel dele existe. O conserto não podia
+    #: levar os eventos embora de onde eles ainda são desenhados.
+    painel_de_rating = next(
+        painel for painel in mercado.paineis if painel.subtipo == "rating"
+    )
+    assert painel_de_rating.dados, "a trajetória de rating ficou vazia"
 
 
 @pytest.mark.parametrize("codigo", ["imprensa", "mercado"])
