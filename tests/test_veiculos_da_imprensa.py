@@ -527,3 +527,111 @@ def test_o_perfil_de_rede_continua_achando_em_QUALQUER_tipo(sessao):
 
     assert reco.novos == ()
     assert reco.cadastrados[normalizar("Orgão Com Perfil 42")] == str(ja.id)
+
+
+# ============================ o parecido: quem autoriza vê antes de autorizar
+def test_reconhecer_APONTA_o_parecido_que_difere_SO_NO_ESPACO(sessao):
+    """`Neofeed` e `Neo Feed` — o caso que o dono do produto deu.
+
+    MEDIDO ANTES DE EXISTIR: com `NeofeedZZ` no cadastro e `Neo feed ZZ` na
+    planilha, `reconhecer` devolvia `novos=['Neo feed ZZ']` e `criar` gravava o
+    SEGUNDO cadastro. A causa é a assimetria entre as duas chaves: a busca usa
+    `normalizar`, que PRESERVA o espaço, e a fila de duplicados compara por
+    `achatar_para_comparar`, que o tira. A ingestão fabricava exatamente os pares
+    que a fila depois perguntava — 5 `veiculo`+`veiculo` e 59
+    `perfil_rede`+`veiculo` na base.
+
+    O NOME CONTINUA NOVO, e isto é deliberado: a semelhança não prova identidade,
+    e quem decide é gente. O que muda é que a conferência agora DIZ de quem ele se
+    parece, para a autorização não ser tomada sobre um nome e um número.
+    """
+    ja = Instituicao(
+        nome="NeofeedZz81",
+        nome_normalizado=normalizar("NeofeedZz81"),
+        tipo="veiculo",
+    )
+    sessao.add(ja)
+    sessao.flush()
+
+    reco = reconhecer(sessao, _da_planilha("Neo feed Zz81"))
+
+    (novo,) = reco.novos
+    assert novo.nome == "Neo feed Zz81"
+    assert [(p.nome, p.tipo) for p in novo.parecidos] == [("NeofeedZz81", "veiculo")]
+
+
+def test_reconhecer_APONTA_o_parecido_de_OUTRO_TIPO(sessao):
+    """O handle da rede contra o nome do clipping, que é o caso dos 59 pares.
+
+    `cnnbrasil` (perfil de rede) e `CNN Brasil` (veículo) são o mesmo ator, e a
+    chave achatada os une. Sem o aviso, a Clipei cria o veículo ao lado do perfil
+    que a Bites já tinha criado — foi assim que os 22 pares que a `0084` fundiu
+    nasceram depois de a `0077` já tê-los fundido uma vez.
+
+    E O NOME CONTINUA NOVO, de propósito. Uma primeira versão deste teste afirmava
+    que ele seria RECONHECIDO — ou seja, ligado ao perfil automaticamente pela
+    chave achatada. Isso é precisamente o que esta mudança NÃO faz: a semelhança
+    não prova identidade, `bmc.news` coincide com DOIS veículos, e ligar sozinho
+    faria a máquina decidir o que o próprio módulo da fila diz que só gente decide.
+
+    O QUE MUDA É A INFORMAÇÃO na hora de autorizar. Quem olha a conferência vê
+    "CNN Brasil Zz82 — parece com cnnbrasilzz82 (perfil de rede)" e decide: ou
+    desmarca e vai fundir pela fila, ou autoriza porque sabe que são dois atores.
+    """
+    ja = Instituicao(
+        nome="cnnbrasilzz82",
+        nome_normalizado=normalizar("cnnbrasilzz82"),
+        tipo="perfil_rede",
+    )
+    sessao.add(ja)
+    sessao.flush()
+
+    reco = reconhecer(sessao, _da_planilha("CNN Brasil Zz82"))
+
+    (novo,) = reco.novos
+    assert novo.nome == "CNN Brasil Zz82"
+    #: O PARECIDO ATRAVESSA O TIPO: é o caso dos 59 pares `perfil_rede`+`veiculo`.
+    assert [(p.nome, p.tipo) for p in novo.parecidos] == [
+        ("cnnbrasilzz82", "perfil_rede")
+    ]
+
+
+def test_reconhecer_NAO_aponta_parecido_quando_nao_ha(sessao):
+    """Vazio é resposta, e não lista com o menos-ruim.
+
+    Oferecer o menos parecido de uma lista sem nada parecido é pior que não
+    oferecer, porque quem autoriza confia na sugestão — é o mesmo argumento que
+    `GrupoDeDivergencia.sugestoes` já carrega na importação de agendas.
+    """
+    reco = reconhecer(sessao, _da_planilha("Veículo Sem Parecido Zz83"))
+
+    (novo,) = reco.novos
+    assert novo.parecidos == ()
+
+
+def test_o_parecido_NAO_impede_a_criacao(sessao):
+    """Ele informa; a decisão continua sendo de quem autoriza.
+
+    A SEMELHANÇA NÃO PROVA IDENTIDADE, e o módulo da fila registra o
+    contraexemplo: `Diário SM` e `Diários M` coincidem na chave achatada e podem
+    ser dois veículos. Bloquear a criação faria a máquina decidir o que o próprio
+    código diz que só gente decide.
+    """
+    ja = Instituicao(
+        nome="DiarioSmZz84",
+        nome_normalizado=normalizar("DiarioSmZz84"),
+        tipo="veiculo",
+    )
+    sessao.add(ja)
+    sessao.flush()
+
+    reco = reconhecer(sessao, _da_planilha("Diario Sm Zz84"))
+    criar(sessao, reco.novos)
+    sessao.flush()
+
+    quantos = sessao.scalar(
+        select(func.count()).select_from(Instituicao).where(
+            Instituicao.nome.in_(("DiarioSmZz84", "Diario Sm Zz84"))
+        )
+    )
+    assert quantos == 2, "a criação autorizada tem de acontecer"

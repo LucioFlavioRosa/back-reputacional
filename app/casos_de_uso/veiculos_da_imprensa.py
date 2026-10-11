@@ -47,7 +47,7 @@ from app.dominio.ingestao_score import (
     rotulo_do_cargo,
 )
 from app.dominio.score import RELEVANCIA_DO_TIER
-from app.dominio.texto import normalizar
+from app.dominio.texto import achatar_para_comparar, normalizar
 
 #: A categoria de público com que um veículo da imprensa nasce.
 #:
@@ -140,6 +140,25 @@ ESFERA_POR_ABRANGENCIA = {
 
 
 @dataclass(frozen=True, slots=True)
+class Parecido:
+    """Um cadastro que JÁ EXISTE e que este nome novo pode ser.
+
+    PELA CHAVE ACHATADA — espaço e pontuação fora —, que é a mesma comparação da
+    fila de duplicados. `Neofeed` e `Neo Feed` coincidem; `cnnbrasil` e `CNN
+    Brasil` também.
+
+    PARA QUEM AUTORIZA A CRIAÇÃO LER ANTES DE AUTORIZAR. A conferência da ingestão
+    marca todos e deixa desmarcar; sem isto, quem desmarca um rádio de bairro não
+    tem como ver que "Neo Feed" é o "Neofeed" que já está no cadastro — e a
+    autorização cria a duplicata que a fila depois pergunta.
+    """
+
+    id: str
+    nome: str
+    tipo: str
+
+
+@dataclass(frozen=True, slots=True)
 class VeiculoNovo:
     """Um veículo que a planilha traz e o cadastro não tem.
 
@@ -158,6 +177,12 @@ class VeiculoNovo:
     #: `CATEGORIA_POR_CARGO`) e o que a conferência mostra, para quem autoriza
     #: a criação ver "Iriel Sachet — Vereador" em vez de só o nome.
     cargo: str | None = None
+    #: OS CADASTROS QUE ESTE NOME PODE SER — vazio quando não parece com nenhum.
+    #:
+    #: NÃO IMPEDE A CRIAÇÃO, informa quem a autoriza. A decisão é de gente: a
+    #: semelhança não prova identidade, e `Diário SM` contra `Diários M` é o
+    #: contraexemplo que o módulo da fila já registra.
+    parecidos: tuple[Parecido, ...] = ()
     #: A RELEVÂNCIA com que ele nasce — 1, 2 ou 3, o `relevancia.id`.
     #:
     #: JÁ TRADUZIDO da escala do fornecedor ("muito relevante") para a do
@@ -274,9 +299,34 @@ def reconhecer(
             achados[normalizado] = (str(ident), bool(de_outro_tipo))
     existentes = {chave: ident for chave, (ident, _) in achados.items()}
 
+    #: O CADASTRO ATIVO INTEIRO, PELA CHAVE ACHATADA — uma consulta, e um
+    #: dicionário consultado em O(1) por nome novo.
+    #:
+    #: SÓ SE HOUVER NOME NOVO: num arquivo em que tudo já está cadastrado, esta
+    #: consulta não responderia nada. São 3.785 linhas de três colunas.
+    faltando = [bruto for normalizado, bruto in nomes.items() if normalizado not in existentes]
+    por_achatado: dict[str, list[Parecido]] = {}
+    if faltando:
+        for ident, nome_do_cadastro, tipo_do_cadastro in sessao.execute(
+            select(Instituicao.id, Instituicao.nome, Instituicao.tipo).where(
+                Instituicao.ativo.is_(True)
+            )
+        ).all():
+            chave = achatar_para_comparar(nome_do_cadastro or "")
+            if chave:
+                por_achatado.setdefault(chave, []).append(
+                    Parecido(
+                        id=str(ident), nome=nome_do_cadastro, tipo=str(tipo_do_cadastro)
+                    )
+                )
+
     novos = [
         VeiculoNovo(
             nome=bruto,
+            #: QUEM ESTE NOME PODE SER. Medido antes de existir: com `NeofeedZZ` no
+            #: cadastro e `Neo feed ZZ` na planilha, a ingestão criava o segundo —
+            #: porque a busca acima usa `normalizar`, que preserva o espaço.
+            parecidos=tuple(por_achatado.get(achatar_para_comparar(bruto), ())),
             uf=_texto(veiculos[bruto].get("uf")),
             esfera=ESFERA_POR_ABRANGENCIA.get(
                 str(veiculos[bruto].get("abrangencia") or "").strip().lower()

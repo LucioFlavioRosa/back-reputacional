@@ -27,7 +27,6 @@ O QUE ESTE MÓDULO NÃO FAZ: fundir sozinho. Juntar dois dossiês não tem volta
 from __future__ import annotations
 
 import difflib
-import re
 import uuid
 from dataclasses import dataclass
 
@@ -38,9 +37,10 @@ from app.banco.tabelas_interacoes import InteracaoRegistro
 from app.banco.tabelas_score import Mencao
 from app.banco.tabelas_stakeholders import AtorDistinto, Instituicao, Interlocutor
 from app.dominio.erros import NaoEncontrado, RegraViolada
-from app.dominio.texto import normalizar
-
-_SO_ALFANUMERICO = re.compile(r"[^a-z0-9]+")
+from app.dominio.texto import (
+    SEMELHANCA_MINIMA,
+    achatar_para_comparar,
+)
 
 #: O TIPO QUE SÓ ENTRA EM OUTRO CADASTRO, e não mais "o tipo que a fila olha".
 #:
@@ -51,43 +51,15 @@ _SO_ALFANUMERICO = re.compile(r"[^a-z0-9]+")
 #: que tira um cadastro da fila.
 TIPO_DE_ORIGEM = "perfil_rede"
 
-#: QUÃO PARECIDAS DUAS CHAVES PRECISAM SER PARA A FILA PERGUNTAR.
+#: A CHAVE DE SEMELHANÇA E O CORTE VÊM DO DOMÍNIO (`dominio/texto.py`), e não
+#: moram aqui: a INGESTÃO precisa deles para não CRIAR o par, e esta fila para
+#: PERGUNTAR sobre ele. Eram duas cópias, e o comentário deste módulo já avisava
+#: contra "a terceira cópia da mesma regra" — medido: a ingestão buscava por
+#: `normalizar`, que preserva o espaço, e criava `Neo Feed` ao lado de `Neofeed`.
 #:
-#: POR QUE A CHAVE IGUAL NÃO BASTA, e é o pedido do dono do produto: "se o 'Valor'
-#: for classificado como financeiro e em outro momento 'o Valor' for registrado
-#: como veículo, devemos apontar essa possível duplicação... ao dar flexibilidade
-#: ao usuário preciso ter mais garantias na comparação, já que o usuário pode mudar
-#: muita coisa que nós não prevemos".
-#:
-#: `achatar_para_comparar("Valor")` dá "valor" e `("o Valor")` dá "ovalor": chaves
-#: DIFERENTES. Sem semelhança, o caso dele passa batido.
-#:
-#: 0,90 É MEDIDO E NÃO ESCOLHIDO, no cadastro de 3.785 nomes ativos:
-#:
-#:     corte 0,95 ....  124 pares
-#:     corte 0,90 ....  231 pares   <- aqui
-#:     corte 0,85 ....  494 pares
-#:     corte 0,80 .... 1512 pares
-#:
-#: Dos 231, 101 são de chave IGUAL e 130 só parecidos. É fila de trabalho finito,
-#: com uma decisão por par. Em 0,80 são 1.512 perguntas — e o argumento da `0078`
-#: vale aqui: "a fila deixa de ser fila e passa a ser ruído, e o ruído é o que faz
-#: ninguém olhar".
-#:
-#: E `ator_distinto` É O QUE FAZ ELA CHEGAR A ZERO: cada "não, são diferentes"
-#: fica guardado, então um corte generoso custa trabalho UMA vez.
-SEMELHANCA_MINIMA = 0.90
-
-
-def achatar_para_comparar(nome: str) -> str:
-    """A chave de SEMELHANÇA: `Valor Econômico` e `valoreconomico` coincidem.
-
-    Não é `normalizar`, e a diferença é o ponto: `normalizar` é a chave de
-    GRAVAÇÃO, que carrega a unicidade do cadastro, e nela `valoreconomico` e
-    `valor economico` são dois cadastros legítimos. Aqui o espaço e a pontuação
-    saem para a pergunta ser feita, e a resposta é de gente.
-    """
-    return _SO_ALFANUMERICO.sub("", normalizar(nome))
+#: `achatar_para_comparar` e `SEMELHANCA_MINIMA` seguem alcançáveis por este módulo
+#: (`atores_duplicados.achatar_para_comparar`), porque o import os põe no espaço de
+#: nomes dele — os testes e a API continuam lendo daqui.
 
 
 @dataclass(frozen=True)
