@@ -647,12 +647,28 @@ class TestRating:
 
 class TestProxy:
     def test_e_uma_lacuna_da_lente_inteira(self):
+        """A RESSALVA MUDOU DE METADE, em 11/10/2026.
+
+        A frase dizia "Mercado sem série mensal de sentimento", e isso deixou de
+        ser verdade: a lente ganhou a série, e o gráfico da Evolução a desenha.
+        Manter a frase seria o produto negando na legenda o que mostra no
+        gráfico logo acima.
+
+        O QUE CONTINUA, e é o que a ressalva existe para dizer: a nota mede o
+        que a imprensa econômica publicou PARA investidores, ponderado por tier
+        — não é uma pesquisa com o mercado dizendo o que pensa.
+        """
         sinal = sinal_de_proxy()
         assert sinal.tipo == TIPO_DE_LACUNA
         assert sinal.secao is Secao.GERAL
         assert sinal.intensidade == 0
-        assert "proxy da imprensa econômica" in sinal.frase
-        assert "todos os tiers" in sinal.frase
+        assert "proxy" in sinal.frase
+        assert "imprensa econômica" in sinal.frase
+        assert "ponderada pelo seu tier" in sinal.frase
+
+        #: E NÃO DIZ MAIS QUE A LENTE NÃO TEM SÉRIE. Esta asserção é o que
+        #: impede a frase antiga de voltar por cópia de um comentário velho.
+        assert "sem série" not in sinal.frase
 
 
 RECEBIDAS = [497, 513, 799, 802, 1016, 886, 799, 776]
@@ -936,8 +952,10 @@ class TestFrasesDoMercado:
         )
 
     def test_a_lente_avisa_que_a_nota_e_proxy(self):
+        #: ÚLTIMA DA LISTA, que é o lugar da lacuna: ela tem intensidade zero, e
+        #: a ordenação põe por último o que não é variação do período.
         leitura = escolha(self.SINAIS)
-        assert frases_de(leitura.lista)[-1].startswith("Mercado sem série mensal")
+        assert frases_de(leitura.lista)[-1].startswith("A nota do Mercado é um proxy")
 
 
 class TestFrasesDaSociedade:

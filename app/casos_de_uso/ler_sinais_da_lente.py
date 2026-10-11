@@ -28,7 +28,6 @@ from app.dominio.erros import RegraViolada
 from app.dominio.score import Calibracao, FiltroDeMencoes
 from app.dominio.sinais_da_lente import (
     AcaoDeRating,
-    Evento,
     Item,
     Jornalista,
     Leitura,
@@ -44,7 +43,6 @@ from app.dominio.sinais_da_lente import (
     detectar_no_ranking,
     detectar_no_rating,
     detectar_no_volume,
-    detectar_nos_eventos,
     detectar_nos_itens,
     escolher,
     sinal_de_proxy,
@@ -160,21 +158,35 @@ def _da_imprensa(sessao, lente, mes, meses, calibracao, limites, filtro=None) ->
 
 
 def _do_mercado(sessao, lente, mes, meses, calibracao, limites, filtro=None) -> list[Sinal]:
-    """A única lente sem série de sentimento — e a única que precisa dizer isso.
+    """Os sinais da lente de investidores.
 
-    O EVENTOGRAMA OCUPA O LUGAR DA EVOLUÇÃO. Não é uma contagem mensal, é uma
-    sequência de fatos; rodar nela os detectores de série produziria variação
-    de nota a partir de números que ninguém mediu.
+    A EVOLUÇÃO PASSOU A SER SÉRIE, e os sinais dela também. Até 11/10/2026 esta
+    função rodava `detectar_nos_eventos` marcado como `Secao.EVOLUCAO`, porque o
+    eventograma ocupava o lugar do gráfico — e a docstring daqui dizia que esta
+    era "a única lente sem série de sentimento".
+
+    ERA PREMISSA FALSA, a mesma que barrava a lente nos blocos de veículo: ela
+    tem série medida (216 menções em agosto, 111 em setembro), o gráfico passou a
+    desenhá-la, e o eventograma foi retirado da tela pelo dono do produto.
+
+    O DEFEITO QUE ISSO DEIXOU, e é por isto que a correção veio junto: os sinais
+    da seção EVOLUÇÃO viram o quadro ao lado do gráfico (`sinais_da_evolucao`).
+    Eles continuavam narrando os eventos — em texto, embaixo de um gráfico de
+    barras de matérias, sobre fatos que a tela não desenha mais em lugar nenhum.
+    Achado de revisão.
+
+    Agora a seção EVOLUÇÃO lê a série, com a mesma unidade do gráfico
+    ("matérias"), exatamente como a Imprensa. O rating continua no PAINEL B,
+    porque aquele painel existe; o estudo continua no PAINEL A.
     """
     eventos = repositorio_lentes.eventos_de_mercado(sessao, meses)
     _, atributos = repositorio_lentes.estudo_vigente(sessao, mes)
     return [
-        *detectar_nos_eventos(
-            [
-                Evento(quando=evento.data, texto=evento.texto, efeito=evento.efeito)
-                for evento in eventos
-            ],
+        *detectar_na_serie(
+            _serie(sessao, lente, meses, calibracao, filtro),
+            unidade="matérias",
             secao=Secao.EVOLUCAO,
+            limites=limites,
         ),
         *detectar_no_estudo(
             [(atributo.atributo, float(atributo.nota)) for atributo in atributos],

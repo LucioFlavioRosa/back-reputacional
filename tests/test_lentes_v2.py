@@ -413,11 +413,17 @@ def test_mudar_um_dado_muda_a_frase_na_proxima_leitura(sessao):
 
 
 def test_o_mercado_avisa_que_a_nota_e_um_proxy(sessao):
-    """É a única lente sem série mensal de sentimento. A nota existe e é
-    defensável, mas quem a lê tem de saber que ela mede a imprensa econômica
-    (todos os tiers, ponderados), e não o que o mercado disse."""
+    """A nota existe e é defensável, mas quem a lê tem de saber o que ela mede: a
+    imprensa econômica publicada PARA investidores, cada matéria ponderada pelo
+    seu tier — e não o que o mercado respondeu.
+
+    A FRASE DEIXOU DE DIZER "sem série mensal de sentimento" (11/10/2026): a
+    lente ganhou a série e o gráfico da Evolução a desenha, então a ressalva
+    antiga negaria na legenda o que a tela mostra logo acima.
+    """
     sinais = _dossie(sessao, "mercado").sinais
-    assert any("proxy da imprensa econômica" in sinal.frase for sinal in sinais)
+    assert any("é um proxy" in sinal.frase for sinal in sinais)
+    assert any("imprensa econômica" in sinal.frase for sinal in sinais)
     assert sinais[-1].onde == "Lente"
 
 

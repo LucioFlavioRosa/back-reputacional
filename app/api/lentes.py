@@ -210,15 +210,6 @@ class DossieSaida(BaseModel):
     #: como se fosse deste mês.
     manchete: str | None = None
     evolucao: BlocoSaida
-    #: A LINHA DO TEMPO DOS FATOS DE MERCADO, abaixo da Evolução — e só na lente
-    #: Mercado; `None` nas outras. Ele ERA a Evolução dela, e deixou de ser
-    #: quando se mediu que a lente tem série mensal. Ver `_eventograma`.
-    #: SEM `= None`, de propósito: com default, o campo sai do `required` do
-    #: OpenAPI, e um cliente gerado do schema o tiparia `Bloco | undefined`.
-    #: `undefined` não é "não tem", é "ninguém disse" — e o front declara o
-    #: campo obrigatório e anulável justamente para que "não tem" seja dito.
-    #: Achado de revisão.
-    eventograma: BlocoSaida | None
     #: O quadro ao lado da evolução — até três sinais da série, mais as lacunas.
     sinais_da_evolucao: list[str] = Field(default_factory=list)
     #: A rosca de volume por tier, ao lado do Top 5 veículos — ver
@@ -537,14 +528,20 @@ def _evolucao(
 ) -> BlocoSaida:
     """A série mensal de matérias, por sentimento.
 
-    O MERCADO PASSOU A CAIR AQUI, e antes ele saía por cima com o eventograma.
-    Era a mesma premissa que o barrava nos blocos de veículo: tratá-lo como
-    lente sem menção ingerida. Ele tem — 216 menções em agosto e 111 em
-    setembro, e a Imprensa cobre exatamente os mesmos dois meses.
+    O MERCADO CAI AQUI, e antes ele saía por cima com o eventograma. Era a mesma
+    premissa que o barrava nos blocos de veículo: tratá-lo como lente sem menção
+    ingerida. Ele tem — 216 menções em agosto e 111 em setembro, e a Imprensa
+    cobre exatamente os mesmos dois meses.
 
-    O EVENTOGRAMA NÃO FOI SUBSTITUÍDO: ele virou `_eventograma`, um bloco à
-    parte que a tela desenha abaixo deste. Ver o motivo lá — em resumo, dez dos
-    seus quinze eventos não aparecem em lugar nenhum além dele.
+    O EVENTOGRAMA SAIU DA TELA, por decisão do dono do produto (11/10/2026).
+    Ele era a Evolução desta lente; virou um bloco à parte quando a série
+    entrou, e depois foi retirado.
+
+    O QUE SAIU COM ELE, porque alguém vai perguntar: dos 15 eventos, os 5 de
+    rating seguem no painel "Trajetória de rating" (mesma tabela, filtrada por
+    tipo); os outros 10 não aparecem mais em lugar nenhum, e com eles sai a
+    cobertura de fevereiro a julho — esta série começa em agosto. A tabela
+    `evento_mercado` continua no banco, intacta.
     """
     serie = repositorio_lentes.serie_da_lente(sessao, lente.id, meses, calibracao, filtro)
     if lente.codigo == "clientes":
@@ -612,74 +609,6 @@ def _evolucao(
         conclusao,
         legenda,
         cores=cores,
-    )
-
-
-def _eventograma(sessao, lente, meses) -> BlocoSaida | None:
-    """A linha do tempo dos fatos de mercado e rating — SÓ na lente Mercado.
-
-    POR QUE ELE EXISTE SEPARADO, e não mais no lugar da Evolução: ele ERA a
-    Evolução do Mercado, porque se acreditava que a lente não tinha série
-    mensal medida. Tem. Então a Evolução passou a ser a mesma da Imprensa, e o
-    eventograma ficou — não foi trocado.
-
-    E FICOU PORQUE NÃO É REDUNDANTE, o que é medido e não suposto:
-
-      15 eventos, dos quais 5 são de rating — e esses 5 já estão no painel B
-      ("Trajetória de rating", a mesma consulta filtrada por `tipo`)
-
-      os outros 10 não aparecem em lugar nenhum: "Vazamento do Termo de
-      Acordo", "Aumento de capital de até R$ 2,1 bi", "Edital e proposta da
-      Copasa", os resultados trimestrais
-
-      e o PERÍODO é outro: os eventos vão de fevereiro a agosto, a série de
-      menções tem agosto e setembro — eles se complementam no tempo
-
-    Trocar um pelo outro custaria dez eventos e meio ano de cobertura.
-
-    SEM CONCLUSÃO PRÓPRIA: a frase do período já vai no cartão da Evolução,
-    acima. Repeti-la aqui seria a terceira aparição da mesma sentença na tela —
-    o defeito que o comentário do `_evolucao` descreve.
-    """
-    if lente.codigo != "mercado":
-        return None
-
-    eventos = repositorio_lentes.eventos_de_mercado(sessao, meses)
-    por_mes: dict[str, list[dict]] = {f"{mes:%Y-%m}": [] for mes in meses}
-    exemplo = False
-    for evento in eventos:
-        chave = f"{evento.data:%Y-%m}"
-        if chave not in por_mes:
-            continue
-        exemplo = exemplo or evento.exemplo
-        por_mes[chave].append({"texto": evento.texto, "efeito": evento.efeito})
-    return _bloco(
-        "linha_do_tempo",
-        "Eventograma · mercado e rating",
-        [{"mes": mes, "eventos": lista} for mes, lista in por_mes.items()],
-        Ficha(
-            origem=Procedencia.RELATORIO,
-            fonte="Eventograma do Balanço Reputacional",
-            exemplo=exemplo,
-            #: A LACUNA ANTIGA DIZIA "a lente Mercado ainda não tem série mensal
-            #: medida". Era a premissa falsa, e ela caiu: a série está logo
-            #: acima. O que sobra de verdade é o que este bloco é — fato
-            #: datado, transcrito de relatório, sem contagem.
-            lacunas=(
-                "Os fatos são transcritos do relatório, um a um: não são "
-                "contagem, e não somam com a série de matérias acima.",
-            ),
-            conceitos=(
-                Conceito(
-                    termo="Efeito do evento",
-                    texto=(
-                        "Como o fato age sobre a reputação: sustenta, "
-                        "pressiona ou misto. É o que pinta a borda do mês."
-                    ),
-                ),
-            ),
-        ),
-        None,
     )
 
 
@@ -808,7 +737,11 @@ def _paineis(
                 ],
                 Ficha(
                     origem=Procedencia.RELATORIO,
-                    fonte="Ações de rating registradas no eventograma",
+                    #: "do Balanço Reputacional" por extenso: o eventograma
+                    #: deixou de ser um bloco da tela (11/10/2026), e dizer só
+                    #: "no eventograma" mandaria a pessoa procurar um gráfico
+                    #: que não existe mais. A fonte é o documento.
+                    fonte="Ações de rating do eventograma do Balanço Reputacional",
                     exemplo=any(evento.exemplo for evento in eventos),
                 ),
                 titulo_b,
@@ -1556,6 +1489,16 @@ def _materias_recentes(
             "tier": _ROTULO_DO_TIER_DA_MATERIA.get(linha["tier"], linha["tier"]),
             "atributo": linha["atributo"],
             "tema": linha["tema"],
+            #: O ENDEREÇO VAI NA LINHA, NÃO NA GRADE — mesma escolha da
+            #: Sociedade: `coluna_do_link` abaixo faz a linha inteira virar o
+            #: destino, e `link` não está em `COLUNAS_DAS_MATERIAS`, então não
+            #: aparece como coluna. Pedido do dono do produto: "não precisa
+            #: trazer o link na página, apenas que o registro seja clicável".
+            #:
+            #: A CONSULTA JÁ TRAZIA O CAMPO para todas as lentes (é a mesma
+            #: `materias_recentes` que serve a Sociedade); só esta montagem o
+            #: descartava.
+            "link": linha["link"],
         }
         for linha in repositorio_lentes.materias_recentes(
             sessao, lente.id, mes, calibracao, filtro, quantas=quantas
@@ -1573,6 +1516,10 @@ def _materias_recentes(
         None,
         subtipo="materias",
         colunas=COLUNAS_DAS_MATERIAS,
+        #: CLICAR NA LINHA ABRE A MATÉRIA, como na Sociedade. Medido: 100% das
+        #: menções têm link nas três lentes, então nenhuma linha fica sem
+        #: destino.
+        coluna_do_link="link",
     )
 
 
@@ -1970,7 +1917,6 @@ def obter_dossie(
         delta_versus = "mes_anterior"
 
     evolucao = _evolucao(sessao, lente, alvo, meses, calibracao, None, filtro)
-    eventograma = _eventograma(sessao, lente, meses)
     paineis = _paineis(sessao, lente, alvo, meses, calibracao, filtro)
     volume_por_tier = _volume_por_tier(sessao, lente, alvo, calibracao, filtro)
     top_veiculos, clima_por_veiculos = _veiculos(sessao, lente, alvo, calibracao, filtro)
@@ -2061,7 +2007,6 @@ def obter_dossie(
             if lente.codigo in ("imprensa", "sociedade", "mercado")
             else _com_conclusao(evolucao, leitura.titulo_da_evolucao)
         ),
-        eventograma=eventograma,
         sinais_da_evolucao=leitura.sinais_da_evolucao,
         volume_por_tier=volume_por_tier,
         top_veiculos=top_veiculos,

@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.api.lentes import obter_dossie, obter_opcoes_de_filtro, obter_recorte
 from app.banco.tabelas_catalogo import Tema
+from app.banco.tabelas_lentes import EventoMercado
 from app.banco.tabelas_score import Mencao, ScoreFonte, ScoreMesFonte
 from app.dominio.score import peso_do_cargo, peso_do_engajamento
 from tests.test_e2e_postgres import URL
@@ -520,8 +521,9 @@ def test_a_conclusao_da_evolucao_do_mercado_fala_de_materia_e_nao_de_nota(sessao
 
     O Mercado herdava `titulo_da_evolucao` — a frase do sinal mais forte do
     período, que fala da NOTA ("a nota subiu 21 pontos"). Isso era inofensivo
-    enquanto ele desenhava o eventograma, onde não havia contagem com que a
-    frase pudesse se confundir.
+    enquanto ele desenhava o eventograma — a linha do tempo de fatos que era a
+    Evolução dele, e que o dono do produto retirou da lente em 11/10/2026 —,
+    porque ali não havia contagem com que a frase pudesse se confundir.
 
     Agora ele desenha contagem de matéria. Deixá-lo herdando a frase da nota
     traria de volta, exatamente nele, o defeito que a lista de exceções existe
@@ -549,38 +551,137 @@ def test_a_conclusao_da_evolucao_do_mercado_fala_de_materia_e_nao_de_nota(sessao
         )
 
 
-def test_o_eventograma_fica_num_bloco_proprio_e_so_no_mercado(sessao):
-    """O EVENTOGRAMA NÃO FOI SUBSTITUÍDO — e não poderia ser, pela medida.
+def test_o_quadro_de_sinais_do_mercado_fala_da_serie_e_nao_dos_eventos(sessao):
+    """ACHADO DE REVISÃO, e ele sobreviveu a duas mudanças sem ninguém ver.
 
-    Ele tem 15 eventos, dos quais só 5 são de rating; esses 5 já aparecem no
-    painel B ("Trajetória de rating", a mesma consulta filtrada por tipo). Os
-    outros 10 não estão em lugar nenhum além dele: "Vazamento do Termo de
-    Acordo", "Aumento de capital de até R$ 2,1 bi", "Edital e proposta da
-    Copasa", os resultados trimestrais.
+    O quadro ao lado do gráfico da Evolução (`sinais_da_evolucao`) é alimentado
+    pelos sinais marcados com `Secao.EVOLUCAO`. No Mercado, esses sinais vinham
+    de `detectar_nos_eventos` — porque o eventograma ocupava o lugar do gráfico.
 
-    E O PERÍODO É OUTRO: os eventos vão de fevereiro a agosto, a série de
-    menções tem agosto e setembro. Eles se complementam no tempo, e trocar um
-    pelo outro custaria dez eventos e meio ano de cobertura.
+    QUANDO O GRÁFICO VIROU SÉRIE e o eventograma saiu da tela, os sinais ficaram:
+    o quadro narrava em texto, embaixo de um gráfico de barras de matérias, os
+    fatos que a tela deixou de desenhar. Nenhum dos 2036 testes pegou.
+
+    O QUE ESTE TESTE PRENDE: o quadro não pode citar evento, e a lente tem de ter
+    sinal de série como a Imprensa. Se alguém devolver os detectores de evento à
+    seção EVOLUÇÃO, isto cai.
     """
-    dossie = obter_dossie(sessao=sessao, usuario=_QuemOlha(), codigo="mercado", mes="2026-06")
-
-    assert dossie.eventograma is not None, "o eventograma do Mercado desapareceu"
-    assert dossie.eventograma.tipo == "linha_do_tempo"
-    assert "Eventograma" in dossie.eventograma.titulo
-
-    #: A LACUNA ANTIGA ERA A PREMISSA FALSA: "a lente Mercado ainda não tem
-    #: série mensal medida". Ela está logo acima agora, e a frase não pode
-    #: sobrar negando o gráfico que a tela desenha.
-    for lacuna in dossie.eventograma.ficha.lacunas:
-        assert "não tem série mensal" not in lacuna, lacuna
-
-    #: E É SÓ DO MERCADO: nas outras o campo é nulo, e um bloco nulo é o que faz
-    #: a tela não desenhar a moldura.
-    for codigo in ("imprensa", "sociedade", "clientes", "institucional"):
-        outra = obter_dossie(
-            sessao=sessao, usuario=_QuemOlha(), codigo=codigo, mes="2026-06"
+    clipei_investidores = sessao.scalars(
+        select(ScoreFonte).where(ScoreFonte.codigo == "clipei_investidores")
+    ).one()
+    for sentimento in ("neg", "neg", "neg", "pos"):
+        sessao.add(
+            Mencao(
+                fonte_id=clipei_investidores.id, mes=MES, sentimento=sentimento,
+                tier="muito_relevante", veiculo="Valor Econômico",
+            )
         )
-        assert outra.eventograma is None, codigo
+
+    #: DOIS EVENTOS, UM DE CADA TIPO, e é isto que torna o teste decisivo.
+    #:
+    #: Sem evento nenhum no banco, a asserção "o quadro não cita evento" passaria
+    #: por VACUIDADE — não haveria o que citar. Com os dois, ela prova que o
+    #: quadro os ignora de propósito, e a outra metade prova que o painel de
+    #: rating continua mostrando o que é dele.
+    sessao.add(
+        EventoMercado(
+            data=MES, tipo="governanca", texto="Vazamento do Termo de Acordo",
+            efeito="pressiona",
+        )
+    )
+    sessao.add(
+        EventoMercado(
+            data=MES, tipo="rating", agencia="S&P", nota_anterior="B+",
+            nota_nova="B", perspectiva="negativa", texto="S&P rebaixa para B",
+            efeito="pressiona",
+        )
+    )
+    sessao.flush()
+
+    mercado = obter_dossie(sessao=sessao, usuario=_QuemOlha(), codigo="mercado", mes="2026-06")
+
+    #: NENHUMA FRASE DO QUADRO CITA UM EVENTO. Os textos dos eventos do
+    #: eventograma são frases de relatório ("Vazamento do Termo de Acordo",
+    #: "Aumento de capital de até R$ 2,1 bi"); nenhuma delas tem lugar num
+    #: quadro que explica um gráfico de contagem de matérias.
+    quadro = " ".join(mercado.sinais_da_evolucao)
+    for texto_de_evento in ("Vazamento", "Aumento de capital", "Brazil Week", "Copasa"):
+        assert texto_de_evento not in quadro, (
+            f"o quadro da evolução cita o eventograma removido: {quadro!r}"
+        )
+
+    #: E O RATING CONTINUA, porque o painel dele existe. O conserto não podia
+    #: levar os eventos embora de onde eles ainda são desenhados.
+    painel_de_rating = next(
+        painel for painel in mercado.paineis if painel.subtipo == "rating"
+    )
+    assert painel_de_rating.dados, "a trajetória de rating ficou vazia"
+
+
+@pytest.mark.parametrize("codigo", ["imprensa", "mercado"])
+def test_a_linha_da_materia_leva_para_a_materia(sessao, codigo):
+    """CLICAR NA LINHA ABRE A MATÉRIA, e o endereço NÃO é uma coluna.
+
+    Pedido do dono do produto: "ao clicar na matéria abre a página, assim como
+    acontece em Sociedade digital... não precisa trazer o link na página, apenas
+    que o registro seja clicável".
+
+    É a mesma escolha que a Sociedade já fazia, e o motivo está escrito lá: o
+    endereço sai da grade e vira o DESTINO da linha — o valor continua em
+    `dados`, mas não em `colunas`. Uma coluna "Link" gastaria largura numa tabela
+    de seis colunas para mostrar uma URL que ninguém lê.
+
+    MEDIDO antes de ligar: 100% das menções têm link nas três lentes — 25.457 na
+    Imprensa, 327 no Mercado, 2.842 na Sociedade. E as cinco linhas que a lista
+    mostra em setembro têm texto e link nas duas. Nenhuma linha fica sem destino.
+
+    A CONSULTA JÁ TRAZIA O CAMPO: é a mesma `materias_recentes` que serve a
+    Sociedade, e só a montagem da Imprensa/Mercado o descartava.
+    """
+    fonte = "clipei" if codigo == "imprensa" else "clipei_investidores"
+    score_fonte = sessao.scalars(
+        select(ScoreFonte).where(ScoreFonte.codigo == fonte)
+    ).one()
+    sessao.add(
+        Mencao(
+            fonte_id=score_fonte.id, mes=MES, sentimento="neg",
+            tier="muito_relevante", veiculo="Valor Econômico",
+            titulo_texto="CPI da Aegea em Gravataí",
+            link="https://exemplo.com.br/cpi-da-aegea",
+        )
+    )
+    sessao.flush()
+
+    dossie = obter_dossie(sessao=sessao, usuario=_QuemOlha(), codigo=codigo, mes="2026-06")
+
+    #: O DESTINO DA LINHA é declarado, e é o que torna a linha clicável.
+    assert dossie.materias_recentes.coluna_do_link == "link"
+
+    #: O VALOR VIAJA NOS DADOS...
+    linha = next(
+        linha for linha in dossie.materias_recentes.dados
+        if linha.get("link") == "https://exemplo.com.br/cpi-da-aegea"
+    )
+    assert linha["veiculo"] == "Valor Econômico"
+
+    #: ...E NÃO NA GRADE. Esta é a metade do pedido que se perde fácil: sem ela,
+    #: alguém "completa" a tabela acrescentando a coluna, e a URL volta a ocupar
+    #: largura na tela.
+    assert "link" not in [coluna.chave for coluna in dossie.materias_recentes.colunas]
+
+
+def test_a_sociedade_continua_com_a_lista_dela_e_tambem_clicavel(sessao):
+    """A mudança não mexeu na Sociedade, que já era assim — e é a referência.
+
+    Vale o teste porque ela é o PADRÃO que o pedido citou: se alguém unificar as
+    duas montagens algum dia, as duas têm de continuar com o destino na linha.
+    """
+    dossie = obter_dossie(
+        sessao=sessao, usuario=_QuemOlha(), codigo="sociedade", mes="2026-06"
+    )
+
+    assert dossie.materias_recentes.coluna_do_link == "link"
+    assert "link" not in [coluna.chave for coluna in dossie.materias_recentes.colunas]
 
 
 def test_o_mercado_tem_onde_esta_a_causa_menos_a_aba_de_jornalista(sessao):
