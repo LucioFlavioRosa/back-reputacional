@@ -105,6 +105,17 @@ class Instituicao(Tabela):
     #: ficou preenchido: ligar a saída a um campo faria a fila esvaziar sozinha com
     #: um preenchimento parcial, e ninguém teria dito nada.
     pendente_de_revisao: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: POR QUE ESTE CADASTRO ESPERA REVISÃO. Nulo é "nasceu de planilha", sem mais
+    #: nada a dizer — o caso comum.
+    #:
+    #: A ABA LISTA O REGISTRO PELO BOOLEANO, e quem abre a aba precisa saber POR
+    #: QUÊ. "Apareceu em duas instituições na mesma planilha" é a informação que
+    #: torna a revisão possível em vez de um convite a adivinhar.
+    #:
+    #: TEXTO E NÃO CÓDIGO: um enum obrigaria a prever os motivos, e o motivo é uma
+    #: frase para gente ler. É a mesma escolha de `ator_distinto.motivo`, pela mesma
+    #: razão — "é conhecimento sobre o mundo, não estado de interface".
+    motivo_da_revisao: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     criado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -158,6 +169,17 @@ class Interlocutor(Tabela):
     #: ficou preenchido: ligar a saída a um campo faria a fila esvaziar sozinha com
     #: um preenchimento parcial, e ninguém teria dito nada.
     pendente_de_revisao: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: POR QUE ESTE CADASTRO ESPERA REVISÃO. Nulo é "nasceu de planilha", sem mais
+    #: nada a dizer — o caso comum.
+    #:
+    #: A ABA LISTA O REGISTRO PELO BOOLEANO, e quem abre a aba precisa saber POR
+    #: QUÊ. "Apareceu em duas instituições na mesma planilha" é a informação que
+    #: torna a revisão possível em vez de um convite a adivinhar.
+    #:
+    #: TEXTO E NÃO CÓDIGO: um enum obrigaria a prever os motivos, e o motivo é uma
+    #: frase para gente ler. É a mesma escolha de `ator_distinto.motivo`, pela mesma
+    #: razão — "é conhecimento sobre o mundo, não estado de interface".
+    motivo_da_revisao: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     criado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -221,6 +243,17 @@ class PessoaAegea(Tabela):
     #: ficou preenchido: ligar a saída a um campo faria a fila esvaziar sozinha com
     #: um preenchimento parcial, e ninguém teria dito nada.
     pendente_de_revisao: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: POR QUE ESTE CADASTRO ESPERA REVISÃO. Nulo é "nasceu de planilha", sem mais
+    #: nada a dizer — o caso comum.
+    #:
+    #: A ABA LISTA O REGISTRO PELO BOOLEANO, e quem abre a aba precisa saber POR
+    #: QUÊ. "Apareceu em duas instituições na mesma planilha" é a informação que
+    #: torna a revisão possível em vez de um convite a adivinhar.
+    #:
+    #: TEXTO E NÃO CÓDIGO: um enum obrigaria a prever os motivos, e o motivo é uma
+    #: frase para gente ler. É a mesma escolha de `ator_distinto.motivo`, pela mesma
+    #: razão — "é conhecimento sobre o mundo, não estado de interface".
+    motivo_da_revisao: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     criado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

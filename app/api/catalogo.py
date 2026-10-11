@@ -60,7 +60,9 @@ ROTULOS_DE_GRUPO = {
 #:
 #: COM NOME E COM TESTE, para a quarta coluna de controle não vazar por
 #: esquecimento — foi assim que esta vazou.
-COLUNAS_DE_CONTROLE: frozenset[str] = frozenset({"ativo", "pendente_de_revisao"})
+COLUNAS_DE_CONTROLE: frozenset[str] = frozenset(
+    {"ativo", "pendente_de_revisao", "motivo_da_revisao"}
+)
 
 
 @rotas.get("/dicionarios")
