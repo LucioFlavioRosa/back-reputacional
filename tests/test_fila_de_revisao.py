@@ -217,6 +217,8 @@ def test_o_veiculo_da_ingestao_NASCE_pendente(sessao):
     )
     assert novo is not None, "o veículo não foi criado"
     assert novo.pendente_de_revisao is True
+    #: E O MOTIVO DIZ QUAL ENQUADRAMENTO FALTA — ver os três casos abaixo.
+    assert novo.motivo_da_revisao is not None
 
 
 def test_quem_a_PESSOA_cadastra_pela_tela_NAO_entra_na_fila(sessao):
@@ -622,3 +624,66 @@ def _agenda_declarando(sessao, *, agenda: dict, instituicao: dict) -> bytes:
     saida = io.BytesIO()
     pasta.save(saida)
     return saida.getvalue()
+
+
+# -- os TRÊS motivos do que a ingestão de menções cria -------------------------
+#
+# ACHADO DE REVISÃO COM SEVERIDADE MÉDIA: a ingestão nascia pendente SEM motivo, e
+# ela é o produtor de MAIOR VOLUME da fila — 2.631 veículos de uma subida só. O
+# comentário no código já explicava o porquê em prosa; a fila mostrava a frase
+# genérica.
+#
+# E NÃO É O MESMO MOTIVO DA IMPORTAÇÃO DE AGENDAS. Lá falta a CATEGORIA e o tipo
+# cai em `entidade`. Aqui a categoria vem sempre — `CATEGORIA_DE_QUEM_FALA` dá
+# "Imprensa" ao veículo, e o cargo dá a do perfil. Usar a mesma frase mandaria a
+# pessoa procurar um campo que já está preenchido.
+
+
+def test_o_VEICULO_da_ingestao_diz_que_falta_a_subcategoria(sessao):
+    """A categoria é Imprensa; o que falta é a lógica editorial.
+
+    E É DELA QUE A LENTE MERCADO DEPENDE: a lista do Mercado é `tipo='veiculo'`
+    com categoria Imprensa e subcategoria "Econômica e de negócios" — 81 de
+    2.712. Sem a subcategoria o veículo fica fora da lente, e ninguém saberia
+    por quê.
+    """
+    nome = "Veículo Com Motivo Zz83"
+    reco = reconhecer(
+        sessao, {nome: {"uf": "SP", "abrangencia": "Local", "mencoes": 3, "tier": ""}}
+    )
+    criar(sessao, reco.novos)
+    sessao.flush()
+
+    novo = sessao.scalar(
+        select(Instituicao).where(Instituicao.nome_normalizado == normalizar(nome))
+    )
+    assert novo.tipo == "veiculo"
+    #: A CATEGORIA VEIO: é o que torna errado reusar o motivo da importação.
+    assert novo.categoria_publico_id is not None
+    assert novo.subcategoria_publico_id is None
+    assert "subcategoria" in novo.motivo_da_revisao
+    assert "Mercado" in novo.motivo_da_revisao
+
+
+def test_o_PERFIL_sem_cargo_reconhecido_diz_que_falta_o_cargo(sessao):
+    """O caso em que a fila tem mais a ganhar.
+
+    SEM CARGO RECONHECIDO não há categoria nenhuma — é o estado dos 1.108 perfis
+    que a primeira carga da Bites criou. A frase nomeia o campo que destrava o
+    resto: dado o cargo, a categoria sai dele.
+    """
+    nome = "perfilsemcargo_zz84"
+    reco = reconhecer(
+        sessao,
+        {nome: {"uf": "SP", "abrangencia": "Local", "mencoes": 2, "cargo": ""}},
+        tipo="perfil_rede",
+    )
+    criar(sessao, reco.novos, tipo="perfil_rede")
+    sessao.flush()
+
+    novo = sessao.scalar(
+        select(Instituicao).where(Instituicao.nome_normalizado == normalizar(nome))
+    )
+    assert novo.tipo == "perfil_rede"
+    assert novo.categoria_publico_id is None
+    assert "cargo" in novo.motivo_da_revisao

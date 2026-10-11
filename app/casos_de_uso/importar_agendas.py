@@ -721,11 +721,21 @@ def _resolver(
         return _Resolucao(valor=achado)
 
     if veredito == "cria":
-        # O TIPO DA INSTITUIÇÃO É EXIGIDO AQUI, no upload, e não na confirmação.
-        # Ele deriva a frente da agenda, então sem ele a criação chutaria — e o
-        # chute erra a frente de TODA agenda daquela instituição. Recusar agora põe
-        # a pendência na tela junto das outras, em vez de fazer a confirmação
-        # falhar depois de a pessoa já ter conferido tudo.
+        # A CATEGORIA DA INSTITUIÇÃO É CONFERIDA AQUI, no upload, e não na
+        # confirmação — e desde 11/10/2026 ela AVISA em vez de recusar.
+        #
+        # ESTE COMENTÁRIO DIZIA "O TIPO DA INSTITUIÇÃO É EXIGIDO AQUI… recusar agora
+        # põe a pendência na tela junto das outras", e era verdade até a decisão do
+        # dono do produto: "pode registrar como entidade e marcar para revisar".
+        # Nada é exigido aqui; `entidade` é o tipo de quem nasce sem categoria, e a
+        # frente deixa de ser chutada porque `entidade` é o único tipo fora de
+        # `FRENTE_UNICA_DO_TIPO`. Achado de revisão: comentário errado custa o mesmo
+        # que código errado, só demora mais a doer — foi uma frase desatualizada
+        # neste arquivo que me fez escrever `nivel="livre"` e estourar o banco.
+        #
+        # O LUGAR CONTINUA SENDO O UPLOAD, e por uma razão que não mudou: a
+        # conferência é onde a pessoa vê o que vai acontecer. Um aviso que só
+        # aparecesse na confirmação chegaria depois de ela já ter conferido tudo.
         # O QUE A PESSOA ESCREVEU NAS OUTRAS COLUNAS daquela aba, para a criação ter
         # com que nascer. Era só a categoria de público; passou a ser tudo, porque as
         # abas ganharam os campos do formulário da plataforma — e um campo que não

@@ -445,11 +445,65 @@ def criar(
             #: Mercado depende. Quem autoriza 2.631 criações numa tela não decide
             #: 2.631 enquadramentos na mesma tela.
             pendente_de_revisao=True,
+            #: E A MARCA DIZ QUAL ENQUADRAMENTO FALTA. Achado de revisão com
+            #: severidade MÉDIA: este é o produtor de MAIOR VOLUME da fila — 2.631
+            #: veículos de uma subida só —, e era o que a deixava genérica.
+            motivo_da_revisao=_motivo_da_revisao(tipo, publico),
         )
         sessao.add(registro)
         criados[normalizar(nome)] = registro
     sessao.flush()
     return {chave: str(registro.id) for chave, registro in criados.items()}
+
+
+#: POR QUE O CADASTRO DA INGESTÃO ESPERA REVISÃO — e são três perguntas
+#: diferentes, não uma.
+#:
+#: ACHADO DE REVISÃO, severidade MÉDIA: o registro nascia pendente SEM motivo, e
+#: o comentário ao lado já explicava por quê em prosa. A fila mostrava a frase
+#: genérica "entrou por planilha e ninguém conferiu" em 2.631 linhas.
+#:
+#: E NÃO É O MESMO MOTIVO DA IMPORTAÇÃO DE AGENDAS. Lá falta a CATEGORIA, e o tipo
+#: cai em `entidade`. Aqui a categoria vem sempre: `CATEGORIA_DE_QUEM_FALA` dá
+#: "Imprensa" ao veículo, e o cargo dá a do perfil. O que falta é outra coisa em
+#: cada caso — usar a mesma frase mandaria a pessoa procurar um campo que já está
+#: preenchido.
+
+
+def _motivo_da_revisao(tipo: str, publico: int | None) -> str:
+    """Três casos, três frases.
+
+    VEÍCULO: a categoria é Imprensa e a SUBCATEGORIA falta. Ela é lógica
+    editorial que nenhuma coluna da Clipei informa — e é dela que a lente Mercado
+    depende: a lista do Mercado é `tipo='veiculo'` com categoria Imprensa e
+    subcategoria "Econômica e de negócios". Sem a subcategoria o veículo fica
+    fora da lente, e são 81 de 2.712 que estão dentro.
+
+    PERFIL COM CARGO RECONHECIDO: o enquadramento saiu do cargo que o fornecedor
+    mandou, e o fornecedor erra — medido: `stelafariasrs` veio sem cargo e com UF
+    TO, sendo a mesma deputada do RS. O cadastro está completo e ainda assim
+    merece um olhar.
+
+    PERFIL SEM CARGO RECONHECIDO: não há categoria nenhuma, porque o cargo não
+    estava em `CATEGORIA_POR_CARGO`. É o estado dos 1.108 perfis que a primeira
+    carga da Bites criou, e é o caso em que a fila tem mais a ganhar.
+    """
+    if tipo == "veiculo":
+        return (
+            "Entrou pela ingestão de menções com a categoria Imprensa, mas sem "
+            "subcategoria — ela é lógica editorial que a fonte não informa, e é "
+            "dela que a lente Mercado depende."
+        )
+    if publico is None:
+        return (
+            "Entrou pela ingestão de menções sem cargo reconhecido, então ficou "
+            "sem categoria de público. Diga o cargo para o perfil entrar na "
+            "taxonomia."
+        )
+    return (
+        "Entrou pela ingestão de menções, e o enquadramento saiu do cargo que a "
+        "fonte informou — confira se o cargo e a praça estão certos."
+    )
 
 
 def nomes_da_lista(sessao: Session, lista: str) -> frozenset[str]:
