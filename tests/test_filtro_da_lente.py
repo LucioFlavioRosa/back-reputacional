@@ -376,16 +376,45 @@ def test_volume_e_veiculos_vazios_na_institucional(sessao):
     assert dossie.clima_por_veiculos.ficha.lacunas
 
 
-def test_volume_e_veiculos_vazios_no_mercado_MESMO_com_tier_e_veiculo_no_dado(sessao):
-    """Restrição de TELA, por hora (pedido do Jones, 2026-10-02) — e não por
-    o Mercado não ter tier/veículo de verdade: a migration 0048 define
-    `clipei_investidores` como o MESMO clipping da Clipei, recortado por
-    público-alvo. Este teste planta `mencao` com tier/veículo reais nessa
-    fonte e confere que os quatro blocos saem vazios assim mesmo — provando
-    que a restrição é da tela, e não "faltou dado"."""
+def test_o_mercado_tem_os_quatro_blocos_de_veiculo_como_a_imprensa(sessao):
+    """ESTE TESTE REVERTE A DECISÃO QUE ELE MESMO AFIRMAVA, e por isso diz tudo.
+
+    Ele se chamava `..._vazios_no_mercado_MESMO_com_tier_e_veiculo_no_dado`: as
+    maiúsculas eram para avisar que o vazio era DE PROPÓSITO. A restrição foi
+    pedida pelo Jones em 2026-10-02 e era de TELA — ele não quis ver "os mesmos
+    veículos e tiers repetidos em Imprensa e Mercado". O dado sempre esteve lá:
+    a migration 0048 define `clipei_investidores` como o MESMO clipping da
+    Clipei, recortado por público-alvo Investidores.
+
+    E A DECISÃO VINHA COM A CONDIÇÃO DE REVISÃO ESCRITA: "se um dia o recorte
+    por público-alvo virar outro veículo/tier na prática (ex.: fontes econômicas
+    específicas), vale revisitar".
+
+    A CONDIÇÃO SE CUMPRIU, e é medida na base de hoje, não impressão:
+
+      ZERO dos 10 maiores veículos do Mercado estão no top 10 da Imprensa
+      Valor Econômico  — 1º no Mercado,   95º na Imprensa
+      Expert XP        — 3º no Mercado,  333º na Imprensa
+      InfoMoney        — 5º no Mercado,  419º na Imprensa
+      Acionista        — 10º no Mercado, 634º na Imprensa
+
+      o top da Imprensa é rádio local (Rádio Betel 87.9 FM, 1.451 menções);
+      o do Mercado é imprensa econômica, inteiro
+
+      e o tier quase se inverte: 46,2% muito_relevante no Mercado contra 10,7%
+      na Imprensa, que tem 72,7% em menos_relevante
+
+    Os dois gráficos lado a lado não repetem nada — era o que o pedido original
+    temia, e deixou de ser verdade.
+
+    PARA VOLTAR: tire `"mercado"` de `LENTES_COM_VEICULO_E_TIER`, em
+    `app/api/lentes.py`. É uma palavra, e os três blocos voltam a sair vazios.
+    """
     clipei_investidores = sessao.scalars(
         select(ScoreFonte).where(ScoreFonte.codigo == "clipei_investidores")
     ).one()
+    #: "Valor Econômico" não é exemplo escolhido ao acaso: é o veículo nº 1 do
+    #: Mercado na base real, e o 95º da Imprensa. É o caso que justifica o bloco.
     sessao.add(
         Mencao(
             fonte_id=clipei_investidores.id, mes=MES, sentimento="pos",
@@ -396,10 +425,53 @@ def test_volume_e_veiculos_vazios_no_mercado_MESMO_com_tier_e_veiculo_no_dado(se
 
     dossie = obter_dossie(sessao=sessao, usuario=_QuemOlha(), codigo="mercado", mes="2026-06")
 
-    assert dossie.volume_por_tier.dados == []
-    assert dossie.top_veiculos.dados == []
-    assert dossie.clima_por_veiculos.dados == []
-    assert dossie.materias_recentes.dados == []
+    assert dossie.volume_por_tier.dados, "a rosca de volume por tier ficou vazia"
+    assert dossie.top_veiculos.dados, "o top de veículos ficou vazio"
+    assert dossie.clima_por_veiculos.dados, "o termômetro por veículo ficou vazio"
+    assert dossie.materias_recentes.dados, "a lista de últimas matérias ficou vazia"
+
+    #: E O DADO É O PLANTADO, não um resto de outra lente: sem esta asserção o
+    #: teste passaria se os blocos trouxessem as menções da Imprensa.
+    #: (`top_veiculos` é de barras horizontais — as linhas são `rotulo`/`valor`;
+    #: o termômetro é `divergente_por_item`, com `chave`.)
+    assert [linha["rotulo"] for linha in dossie.top_veiculos.dados] == ["Valor Econômico"]
+    assert [linha["chave"] for linha in dossie.clima_por_veiculos.dados] == [
+        "Valor Econômico"
+    ]
+    assert [linha["chave"] for linha in dossie.volume_por_tier.dados] == [
+        "muito_relevante"
+    ]
+    assert [linha["veiculo"] for linha in dossie.materias_recentes.dados] == [
+        "Valor Econômico"
+    ]
+
+    #: E NENHUMA LACUNA, que é o outro lado: a ficha avisava "por ora esta tela
+    #: só mostra tier na lente Imprensa", e essa frase não pode sobrar.
+    assert not dossie.volume_por_tier.ficha.lacunas
+    assert not dossie.top_veiculos.ficha.lacunas
+
+
+def test_as_lentes_sem_veiculo_continuam_vazias_e_dizem_o_motivo(sessao):
+    """O outro lado da mudança: trazer o Mercado NÃO abriu para todas.
+
+    Sociedade e Clientes não têm veículo nem tier na carga — para elas o bloco
+    sairia vazio de qualquer jeito, e a lacuna tem de dizer isso em vez de
+    "por ora só na Imprensa", que virou mentira no dia em que o Mercado entrou.
+
+    SEM ESTE TESTE, trocar o `!=` por um `not in` mal escrito abriria para todo
+    mundo e os blocos vazios voltariam a aparecer como moldura sem conteúdo.
+    """
+    for codigo in ("sociedade", "clientes"):
+        dossie = obter_dossie(
+            sessao=sessao, usuario=_QuemOlha(), codigo=codigo, mes="2026-06"
+        )
+        assert dossie.volume_por_tier.dados == [], codigo
+        assert dossie.volume_por_tier.ficha.lacunas, codigo
+        assert dossie.top_veiculos.dados == [], codigo
+        #: e a lacuna NÃO promete mais que isso é temporário nem culpa a Imprensa
+        for lacuna in dossie.volume_por_tier.ficha.lacunas:
+            assert "por ora" not in lacuna.lower(), lacuna
+            assert "Imprensa" not in lacuna or "CRM" in lacuna, lacuna
 
 
 def test_materias_recentes_sobe_o_teto_quando_ha_recorte(sessao):

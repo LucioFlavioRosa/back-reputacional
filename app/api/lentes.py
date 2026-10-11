@@ -213,7 +213,8 @@ class DossieSaida(BaseModel):
     #: O quadro ao lado da evolução — até três sinais da série, mais as lacunas.
     sinais_da_evolucao: list[str] = Field(default_factory=list)
     #: A rosca de volume por tier, ao lado do Top 5 veículos — ver
-    #: `_volume_por_tier`/`_veiculos`. Vazios na Institucional.
+    #: `_volume_por_tier`/`_veiculos`. Só nas lentes de
+    #: `LENTES_COM_VEICULO_E_TIER` (Imprensa e Mercado); vazios nas outras.
     volume_por_tier: BlocoSaida
     top_veiculos: BlocoSaida
     #: O placar de clima por veículo — ver `_veiculos`. Vazio na Institucional.
@@ -1102,6 +1103,39 @@ _CORES_DO_TIER = {
 }
 
 
+#: AS LENTES QUE TÊM VEÍCULO E TIER DE VERDADE — e portanto os três blocos de
+#: veículo do dossiê: a rosca de volume por tier, o par top/termômetro por
+#: veículo, e a lista de últimas matérias.
+#:
+#: ERA SÓ A IMPRENSA, e a restrição era de TELA: o Jones (2026-10-02) não quis
+#: ver "os mesmos veículos e tiers repetidos em Imprensa e Mercado". A decisão
+#: ficou escrita com a condição de revisão junto — "se um dia o recorte por
+#: público-alvo virar outro veículo/tier na prática (ex.: fontes econômicas
+#: específicas), vale revisitar".
+#:
+#: A CONDIÇÃO SE CUMPRIU, e é medida, não impressão. Na base de hoje:
+#:
+#:   ZERO dos 10 maiores veículos do Mercado estão no top 10 da Imprensa
+#:   Valor Econômico  — 1º no Mercado,   95º na Imprensa
+#:   Expert XP        — 3º no Mercado,  333º na Imprensa
+#:   InfoMoney        — 5º no Mercado,  419º na Imprensa
+#:   Acionista        — 10º no Mercado, 634º na Imprensa
+#:
+#:   o top da Imprensa é rádio local (Rádio Betel 87.9 FM, 1.451 menções);
+#:   o do Mercado é imprensa econômica, inteiro
+#:
+#:   e o tier quase se inverte: 46,2% muito_relevante no Mercado contra 10,7%
+#:   na Imprensa, que tem 72,7% em menos_relevante
+#:
+#: Ou seja: os dois gráficos lado a lado não repetem nada. Era o recorte por
+#: público-alvo Investidores (migration 0048) virando fonte econômica de fato.
+#:
+#: SOCIEDADE E CLIENTES FICAM FORA porque não têm o campo — para elas o bloco
+#: sairia vazio de qualquer jeito. A Institucional fica fora por vir do CRM, e
+#: isso é conferido à parte (`lente_e_interna`), porque a mensagem é outra.
+LENTES_COM_VEICULO_E_TIER = ("imprensa", "mercado")
+
+
 def _volume_por_tier(
     sessao, lente, mes: date, calibracao: Calibracao, filtro: FiltroDeMencoes | None = None
 ) -> BlocoSaida:
@@ -1112,19 +1146,12 @@ def _volume_por_tier(
     veículo × sentimento": a rosca só soma os três sentimentos de cada tier,
     não pede nada que aquela consulta já não traga.
 
-    SÓ NA IMPRENSA — POR HORA (decisão do Jones, 2026-10-02), e NÃO por o dado
-    do Mercado ser inválido: a migration 0048 já define Mercado como "o mesmo
-    clipping da Clipei, recortado por público-alvo Investidores" — tier e
-    veículo são tão reais ali quanto na Imprensa, e é por isso que o semeador
-    de desenvolvimento usa a mesma função para as duas (`_imprensa_ou_mercado`
-    em `semear_mencoes.py`). A restrição é só a tela: olhando os dois gráficos
-    lado a lado nas lentes ainda não fazia sentido PRA ELE ver os mesmos
-    veículos/tiers repetidos em Imprensa e Mercado — Sociedade/Clientes nunca
-    tiveram o campo, então para elas o bloco já saía vazio de qualquer jeito.
-    Se um dia o recorte por público-alvo virar outro veículo/tier na prática
-    (ex.: fontes econômicas específicas), vale revisitar.
+    IMPRENSA E MERCADO — ver `LENTES_COM_VEICULO_E_TIER`, onde está a medida que
+    trouxe o Mercado para cá. Em resumo: os dois gráficos lado a lado não
+    repetem nada, porque nenhum dos 10 maiores veículos do Mercado está no top
+    10 da Imprensa.
     """
-    if lente.codigo != "imprensa":
+    if lente.codigo not in LENTES_COM_VEICULO_E_TIER:
         vazio_ficha = (
             Ficha(
                 origem=Procedencia.CRM,
@@ -1135,9 +1162,11 @@ def _volume_por_tier(
             else Ficha(
                 origem=Procedencia.PLANILHA,
                 fonte=_nomes_das_fontes(sessao, lente.id),
-                lacunas=(
-                    "Por ora esta tela só mostra tier na lente Imprensa.",
-                ),
+                #: A LACUNA DIZ O MOTIVO, e não "por ora": esta lente não tem o
+                #: campo, e isso não muda com o tempo. A frase antiga ("só
+                #: mostra tier na lente Imprensa") virou mentira no dia em que
+                #: o Mercado entrou — e ninguém a teria revisado.
+                lacunas=("Esta lente não traz tier do veículo na carga.",),
             )
         )
         return _bloco("rosca", "Volume por tier", [], vazio_ficha, None)
@@ -1174,11 +1203,9 @@ def _veiculos(
     UMA CONSULTA SÓ alimenta os dois blocos: top-por-volume e o saldo de
     sentimento são a mesma soma lida de dois jeitos.
 
-    SÓ NA IMPRENSA — POR HORA: mesma ressalva de `_volume_por_tier` — é
-    restrição de TELA, pedida pelo Jones, e não um juízo de que o dado do
-    Mercado seja inválido (ver o motivo completo lá).
+    IMPRENSA E MERCADO — ver `LENTES_COM_VEICULO_E_TIER`.
     """
-    if lente.codigo != "imprensa":
+    if lente.codigo not in LENTES_COM_VEICULO_E_TIER:
         vazio_ficha = (
             Ficha(
                 origem=Procedencia.CRM,
@@ -1189,9 +1216,7 @@ def _veiculos(
             else Ficha(
                 origem=Procedencia.PLANILHA,
                 fonte=_nomes_das_fontes(sessao, lente.id),
-                lacunas=(
-                    "Por ora esta tela só mostra veículo na lente Imprensa.",
-                ),
+                lacunas=("Esta lente não traz veículo na carga.",),
             )
         )
         return (
@@ -1392,21 +1417,20 @@ def _materias_recentes(
 ) -> BlocoSaida:
     """O drill-down até a linha: as matérias mais recentes por trás da nota.
 
-    SÓ NA IMPRENSA — POR HORA: mesma ressalva de `_volume_por_tier` — é
-    restrição de TELA, pedida pelo Jones (2026-10-02), e não um juízo de que
-    o dado do Mercado seja inválido. As colunas desta tabela ("Veículo",
-    "Aegea Tier") são as mesmas duas que motivaram a restrição lá.
+    IMPRENSA E MERCADO — ver `LENTES_COM_VEICULO_E_TIER`. As colunas desta
+    tabela ("Veículo", "Aegea Tier") são as mesmas duas que a medida de lá
+    justifica.
 
-    A SOCIEDADE SAIU DESSA RESTRIÇÃO, e pela própria razão dela: o motivo era
-    que as colunas de clipping não dizem nada de um post. A carga do padrão
-    trouxe o que uma menção de rede precisa — o texto, o link, quem escreveu e o
-    engajamento —, então ela ganha a lista com as colunas DELA
-    (`_mencoes_da_sociedade`). As outras três continuam como o Jones pediu.
+    A SOCIEDADE TEM LISTA PRÓPRIA, e por razão diferente: as colunas de clipping
+    não dizem nada de um post, mas a carga do padrão trouxe o que uma menção de
+    rede precisa — o texto, o link, quem escreveu e o engajamento. Ela ganha a
+    lista com as colunas DELA (`_mencoes_da_sociedade`). Clientes e
+    Institucional seguem sem lista, por não terem o campo.
     """
     if lente.codigo == "sociedade":
         return _mencoes_da_sociedade(sessao, lente, mes, calibracao, filtro)
 
-    if lente.codigo != "imprensa":
+    if lente.codigo not in LENTES_COM_VEICULO_E_TIER:
         vazio_ficha = (
             Ficha(
                 origem=Procedencia.CRM,
@@ -1417,7 +1441,7 @@ def _materias_recentes(
             else Ficha(
                 origem=Procedencia.PLANILHA,
                 fonte=_nomes_das_fontes(sessao, lente.id),
-                lacunas=("Por ora esta tela só mostra matérias na lente Imprensa.",),
+                lacunas=("Esta lente não traz matéria com veículo na carga.",),
             )
         )
         return _bloco(
