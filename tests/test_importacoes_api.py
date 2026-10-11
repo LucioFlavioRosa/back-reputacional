@@ -556,6 +556,68 @@ def test_o_grupo_oferece_o_nome_parecido_que_JA_existe(cliente_admin, sessao, se
     assert corpo["pendencias"] == 0
 
 
+def test_a_suspeita_de_duplicata_aparece_em_QUALQUER_campo_nao_so_instituicao(
+    cliente_admin, sessao, semente
+):
+    """A regra é "em qualquer campo", e este teste a exercita no TEMA.
+
+    O MECANISMO É GENÉRICO por construção — `agrupar` compara texto e não sabe de
+    tabela nenhuma, e `_nomes_conhecidos` traduz qualquer campo em vocabulário via
+    `vocabulario_do_campo`. Mas todo teste dela usava `instituicao_id`, e um
+    mecanismo genérico exercitado num caso só é um mecanismo que ninguém sabe se é
+    genérico. O tema vem de outra coluna da planilha e de outro vocabulário.
+
+    É O CASO QUE O DONO DO PRODUTO DEU: "folha de s p" contra "folha de são
+    paulo" — mesma coisa escrita diferente, que a busca por similaridade aponta
+    para mesclar em vez de duplicar.
+
+    POR QUE O NOME SEMEADO NÃO É O NOME DIGITADO COM OUTRO ACENTO: `normalizar`
+    tira o acento, então "água" e "agua" são a MESMA chave e o valor resolveria
+    contra o cadastro, sem divergência nenhuma. Foi exatamente esse o erro de uma
+    primeira versão deste teste, e o zero que ela devolveu era a resposta certa
+    para a pergunta errada. O parecido tem de ser parecido DEPOIS de normalizar.
+    """
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    from app.banco.tabelas_catalogo import Tema
+
+    #: `gerais`: `livre` não é um nível — a constraint `tema_nivel_check` aceita
+    #: `sensivel`, `estrategico` e `gerais`.
+    sessao.add(Tema(nome="Tarifa social de água potável", nivel="gerais", ativo=True))
+    sessao.flush()
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    valores = {
+        "Data": date(2026, 9, 25),
+        "Instituição": semente["instituicao"].nome,
+        "UF": "SP",
+        "Tema 1": "Tarifa social de agua",
+    }
+    folha.append([valores.get(coluna) for coluna in cabecalho])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    corpo = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("dia.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+
+    (grupo,) = [g for g in corpo["grupos"] if g["campo"] == "temas"]
+    #: MOSTRA PARA A PESSOA DECIDIR, no campo de tema: o nome cadastrado que se
+    #: parece, com o alvo que `apontar` aceita.
+    assert "Tarifa social de água potável" in [s["nome"] for s in grupo["sugestoes"]], grupo
+    assert all(s["alvo"] for s in grupo["sugestoes"]), grupo["sugestoes"]
+
+    #: E NÃO TRAVA — as duas metades da regra, no segundo campo.
+    assert grupo["trava"] is False
+    assert grupo["pode_criar"] is True
+    assert corpo["pendencias"] == 0
+
+
 def test_o_que_trava_vem_ANTES_do_que_so_avisa(cliente_admin, sessao, semente):
     """A tela lista em ordem de urgência: o que segura a confirmação primeiro."""
     from datetime import date
