@@ -724,9 +724,18 @@ def test_participante_da_outra_parte_sem_pessoa_e_recusado(sessao, semente):
     assert any("Interlocutor 1" in d.mensagem for d in proposta.divergencias)
 
 
-def test_participante_que_nao_pertence_a_instituicao_e_recusado(sessao, semente):
+def test_participante_que_nao_pertence_a_instituicao_FICA_DE_FORA(sessao, semente):
     """Regra 4. A planilha produz isto com facilidade: a pessoa copia a linha de
-    uma agenda e troca só a instituição, deixando os participantes da anterior."""
+    uma agenda e troca só a instituição, deixando os participantes da anterior.
+
+    ATÉ 11/10/2026 A AGENDA INTEIRA ERA RECUSADA por isso, e o dono do produto
+    pediu o contrário: "sempre aponte a inconsistência mas não trave". Num dia de
+    54 agendas, uma linha copiada segurava as 53 outras.
+
+    A PROPOSTA EXISTE, E É O PARTICIPANTE QUE SAI. É esta a asserção que importa:
+    `outra_parte` é o lugar onde o vínculo apareceria, e `impedimentos` recusaria
+    a agenda na confirmação se ele estivesse lá — depois de a pessoa ter conferido
+    tudo."""
     outra = Instituicao(
         nome="Prefeitura de Campos",
         nome_normalizado=normalizar("Prefeitura de Campos"),
@@ -749,13 +758,21 @@ def test_participante_que_nao_pertence_a_instituicao_e_recusado(sessao, semente)
 
     (proposta,) = importar_agendas.propor(sessao, conteudo)
 
-    assert proposta.entrada is None
-    # A RECUSA MUDOU DE LUGAR: ela era da validação da entrada, no fim, e agora
-    # acontece na RESOLUÇÃO da coluna, porque a resolução passou a saber de qual
-    # instituição é cada interlocutor. O ganho está na mensagem: ela diz de quem a
-    # pessoa é, e consertar não exige procurar em outra tela.
+    # A AGENDA ENTRA.
+    assert proposta.entrada is not None, [d.mensagem for d in proposta.divergencias]
+    assert not any(d.trava for d in proposta.divergencias), [
+        d.mensagem for d in proposta.divergencias if d.trava
+    ]
+    # SEM A PESSOA. Se ela estivesse aqui, `impedimentos` recusaria a agenda na
+    # confirmação — avisar sem omitir só mudaria o momento da recusa.
+    assert proposta.entrada.outra_parte == []
+    # E O AVISO DIZ DE QUEM ELA É, que é o que permite consertar sem procurar — a
+    # recusa mudou de lugar em outra mudança: era da validação da entrada, no fim,
+    # e passou para a RESOLUÇÃO da coluna, que sabe de qual instituição é cada
+    # interlocutor.
     assert any(
-        "Prefeitura de Campos" in d.mensagem and d.trava for d in proposta.divergencias
+        "Prefeitura de Campos" in d.mensagem and not d.trava
+        for d in proposta.divergencias
     ), [d.mensagem for d in proposta.divergencias]
 
 

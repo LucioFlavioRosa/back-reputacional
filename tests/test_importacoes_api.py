@@ -2306,17 +2306,29 @@ def test_o_HOMONIMO_e_desfeito_pela_instituicao_da_linha(cliente_admin, sessao, 
     assert len(ligacoes) == 1
 
 
-def test_interlocutor_de_OUTRA_instituicao_trava_e_diz_de_quem_ele_e(
+def test_interlocutor_de_OUTRA_instituicao_avisa_e_a_agenda_entra_SEM_ELE(
     cliente_admin, sessao, semente
 ):
-    """O ERRO QUE A SUSPENSA DEPENDENTE PREVINE, travado também no servidor — a
+    """O ERRO QUE A SUSPENSA DEPENDENTE PREVINE, visto também no servidor — a
     planilha convertida para o Google Sheets pode perder a validação, e o arquivo
     pode nem ter saído do nosso modelo.
 
     "Ana Prado" é do Valor Econômico. Usada numa agenda da Câmara, ela violaria a
-    regra de que o participante pertence à instituição da agenda — e essa regra
-    recusava na CONFIRMAÇÃO, depois de a pessoa ter conferido tudo. Agora recusa no
-    upload, junto das outras pendências, dizendo de quem a pessoa é."""
+    regra 4 — o participante pertence à instituição da agenda —, que recusava na
+    CONFIRMAÇÃO, depois de a pessoa ter conferido tudo.
+
+    ATÉ 11/10/2026 ISSO TRAVAVA A IMPORTAÇÃO INTEIRA, e o dono do produto pediu o
+    contrário: "sempre aponte a inconsistência mas não trave". Com 54 agendas num
+    dia, uma pessoa escrita na linha errada segurava as outras 53.
+
+    O QUE NÃO PODE ACONTECER É O VÍNCULO, e é por isso que a última asserção
+    conta as ligações: avisar sem omitir o participante só empurraria a recusa
+    para a confirmação, depois de a conferência ter dito que estava pronto.
+    """
+    from sqlalchemy import func
+
+    from app.banco.tabelas_interacoes import InteracaoInterlocutor
+
     outra = _outra_instituicao(sessao)
 
     conteudo = _com_interlocutor(sessao, semente, outra.nome, "Ana Prado")
@@ -2324,7 +2336,8 @@ def test_interlocutor_de_OUTRA_instituicao_trava_e_diz_de_quem_ele_e(
         "/api/importacoes", files={"arquivo": ("a.xlsx", conteudo, TIPO_XLSX)}
     ).json()
 
-    assert criada["pendencias"] >= 1
+    # NÃO TRAVA.
+    assert criada["pendencias"] == 0, criada["grupos"]
     # ONDE A PESSOA LÊ: a tabela de linhas da conferência mostra a mensagem de cada
     # divergência (`ConferirImportacao.tsx`); o bloco agrupado monta o próprio
     # cabeçalho a partir de campo e valor.
@@ -2336,18 +2349,39 @@ def test_interlocutor_de_OUTRA_instituicao_trava_e_diz_de_quem_ele_e(
     assert "Ana Prado" in mensagens
     # A mensagem diz de QUEM ela é, que é o que permite consertar sem procurar.
     assert semente["instituicao"].nome in mensagens
+    # E DIZ O QUE VAI ACONTECER. Um aviso que só diz "está errado" num campo que
+    # não trava é um aviso que se aprende a ignorar.
+    assert "SEM esta pessoa" in mensagens
+
+    antes = sessao.scalar(func.count(InteracaoInterlocutor.interacao_id))
+    confirmacao = cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao")
+    assert confirmacao.status_code == 201, confirmacao.text
+    assert confirmacao.json()["criadas"] == 1, confirmacao.text
+    # O VÍNCULO NÃO FOI FEITO — a metade que a mensagem promete e que nenhuma
+    # asserção sobre a divergência alcança.
+    assert sessao.scalar(func.count(InteracaoInterlocutor.interacao_id)) == antes
 
 
 def test_a_instituicao_DECLARADA_ao_lado_precisa_bater_com_a_da_agenda(
     cliente_admin, sessao, semente
 ):
-    """A contradição declarada, pega no upload.
+    """A contradição declarada, apontada no upload — e sem travar (11/10/2026).
 
     Declarar "Carla Nova — Câmara Municipal" e usá-la numa agenda do Valor
     Econômico é pedir duas coisas incompatíveis: a regra 4 diz que o participante
     pertence à instituição da agenda. Criar a pessoa em um dos dois órgãos e
-    esperar que dê certo é o tipo de chute que erra calado."""
-    _outra_instituicao(sessao)
+    esperar que dê certo é o tipo de chute que erra calado.
+
+    ENTÃO NENHUM DOS DOIS É CHUTADO: a pessoa nasce na instituição que ela
+    DECLAROU — escrever na aba é dizer "quero que isto exista" —, e o vínculo com
+    esta agenda não se faz. As duas metades estão afirmadas aqui, porque é a
+    combinação que não chuta: criar na instituição da agenda seria contrariar a
+    aba, e não criar jogaria fora o que ela escreveu."""
+    from sqlalchemy import func
+
+    from app.banco.tabelas_interacoes import InteracaoInterlocutor
+
+    camara = _outra_instituicao(sessao)
 
     conteudo = _com_interlocutor(
         sessao,
@@ -2360,7 +2394,7 @@ def test_a_instituicao_DECLARADA_ao_lado_precisa_bater_com_a_da_agenda(
         "/api/importacoes", files={"arquivo": ("a.xlsx", conteudo, TIPO_XLSX)}
     ).json()
 
-    assert criada["pendencias"] >= 1, criada["grupos"]
+    assert criada["pendencias"] == 0, criada["grupos"]
     mensagens = " ".join(
         divergencia["mensagem"]
         for linha in criada["linhas"]
@@ -2368,6 +2402,20 @@ def test_a_instituicao_DECLARADA_ao_lado_precisa_bater_com_a_da_agenda(
     )
     assert "Carla Nova" in mensagens
     assert "uma instituição só" in mensagens
+    assert "SEM esta pessoa" in mensagens
+
+    antes = sessao.scalar(func.count(InteracaoInterlocutor.interacao_id))
+    confirmacao = cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao")
+    assert confirmacao.status_code == 201, confirmacao.text
+
+    nova = sessao.scalars(
+        select(Interlocutor).where(Interlocutor.nome_normalizado == normalizar("Carla Nova"))
+    ).first()
+    # NASCEU NA INSTITUIÇÃO QUE ELA DECLAROU, e não na da agenda.
+    assert nova is not None, "a pessoa declarada não foi criada"
+    assert nova.instituicao_id == camara.id
+    # E NÃO ENTROU NESTA AGENDA.
+    assert sessao.scalar(func.count(InteracaoInterlocutor.interacao_id)) == antes
 
 
 def test_a_instituicao_declarada_IGUAL_a_da_agenda_cria_a_pessoa_nela(
@@ -3776,3 +3824,77 @@ def test_o_custo_da_conferencia_nao_cresce_com_o_numero_de_grupos(
         f"a conferência com 30 grupos custou {com_trinta} consultas e com 3 custou "
         f"{com_tres}: alguma coisa voltou a consultar por grupo"
     )
+
+
+def test_interlocutor_de_outra_instituicao_APONTADO_entra_na_agenda(
+    cliente_admin, sessao, semente
+):
+    """A saída continua a um clique: apontar o cadastro certo traz a pessoa.
+
+    POR QUE ISTO É TESTE E NÃO COMENTÁRIO. O aviso deixou de travar, e um aviso
+    que não trava é fácil de transformar em "ignore este campo". `apontados` é
+    consultado ANTES da checagem da instituição exatamente para a decisão da
+    pessoa valer sobre ela — se alguém invertesse a ordem, apontar deixaria de
+    funcionar e nada quebraria.
+    """
+    from datetime import date
+
+    from openpyxl import load_workbook
+    from sqlalchemy import func
+
+    from app.banco.tabelas_interacoes import InteracaoInterlocutor
+    from app.banco.tabelas_stakeholders import Instituicao as Inst
+    from app.banco.tabelas_stakeholders import Interlocutor as Pessoa
+
+    camara = Inst(
+        nome="Câmara Municipal de Campinas",
+        nome_normalizado=normalizar("Câmara Municipal de Campinas"),
+        tipo="orgao",
+        uf="SP",
+    )
+    sessao.add(camara)
+    sessao.flush()
+    #: A pessoa CERTA, na instituição da agenda, com outro nome.
+    certa = Pessoa(
+        nome="Ana Prado Ribeiro",
+        nome_normalizado=normalizar("Ana Prado Ribeiro"),
+        instituicao_id=camara.id,
+    )
+    sessao.add(certa)
+    sessao.flush()
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    valores = {
+        "Data": date(2026, 9, 25),
+        "Instituição": camara.nome,
+        "UF": "SP",
+        "Interlocutor 1": semente["interlocutor"].nome,
+    }
+    folha.append([valores.get(coluna) for coluna in cabecalho])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("dia.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+    (grupo,) = [g for g in criada["grupos"] if g["campo"].endswith("interlocutor_id")]
+
+    depois = cliente_admin.patch(
+        f"/api/importacoes/{criada['id']}/resolucoes",
+        json={
+            "campo": grupo["campo"],
+            "valor": grupo["valor"],
+            "decisao": "apontar",
+            "alvo": str(certa.id),
+        },
+    )
+    assert depois.status_code == 200, depois.text
+
+    antes = sessao.scalar(func.count(InteracaoInterlocutor.interacao_id))
+    confirmacao = cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao")
+    assert confirmacao.status_code == 201, confirmacao.text
+    #: AGORA O VÍNCULO EXISTE: a decisão dela valeu sobre a checagem.
+    assert sessao.scalar(func.count(InteracaoInterlocutor.interacao_id)) == antes + 1

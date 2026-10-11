@@ -488,6 +488,20 @@ class _Resolucao:
     valor: object | None = None
     #: `(vocabulário, nome)` quando a confirmação precisa criar este cadastro.
     a_criar: tuple[str, str] | None = None
+    #: ESTE ITEM DA LISTA NÃO ENTRA NA AGENDA, e o aviso já explica por quê.
+    #:
+    #: NASCEU DO "AVISE MAS NÃO TRAVE" (11/10/2026). Um interlocutor que é de
+    #: OUTRA instituição não pode ser ligado a esta agenda — a regra 4 do domínio
+    #: diz que o participante pertence à instituição da agenda, e `impedimentos` a
+    #: reconfere com a proposta montada. Avisar sem omitir empurraria a recusa
+    #: para a confirmação, depois de a conferência ter dito que estava pronto.
+    #:
+    #: E NÃO DÁ PARA OMITIR DEIXANDO O CAMPO VAZIO:
+    #: `ParticipanteDaOutraParteEntrada.interlocutor_id` é obrigatório, então
+    #: construir o item sem ele estoura o pydantic — e o `except` daquele laço
+    #: transforma o estouro em divergência que TRAVA. A trava voltaria pela porta
+    #: de trás, com uma mensagem pior.
+    omitir_o_item: bool = False
 
 
 def _subcategoria_da_categoria_por_id(
@@ -850,7 +864,7 @@ def _conferir_orgao_declarado(
     instituicao_escrita: str,
     cadastros_declarados: Mapping[str, Mapping[str, Mapping[str, object]]],
     divergencias: list[Divergencia],
-) -> None:
+) -> bool:
     """A contradição entre o órgão declarado ao lado do nome e o da agenda.
 
     Declarar "Carla Nova — Câmara Municipal" e usá-la numa agenda do Valor
@@ -860,15 +874,24 @@ def _conferir_orgao_declarado(
 
     Sem órgão declarado não há contradição: a pessoa nasce na instituição da
     agenda, que é o comportamento de antes desta coluna existir.
+
+    DEVOLVE "ESTE ITEM NÃO ENTRA" — era `None` até 11/10/2026, quando o aviso
+    deixou de travar. Quem decide omitir é o laço das listas, e ele só pode
+    decidir se souber: o vínculo com esta agenda é o que a regra 4 não aceita, e
+    `impedimentos` o recusaria na confirmação.
     """
     do_interlocutor = (cadastros_declarados.get("interlocutores") or {}).get(
         normalizar(texto)
     ) or {}
     declarado = do_interlocutor.get("instituicao_id")
     if not declarado or not instituicao_escrita:
-        return
+        return False
     if normalizar(str(declarado)) == normalizar(instituicao_escrita):
-        return
+        return False
+    # AVISA E DEIXA A AGENDA ENTRAR, pelo mesmo motivo do caso acima e com a
+    # mesma consequência: o cadastro declarado NASCE, com a instituição que ela
+    # declarou — porque escrever na aba é dizer "quero que isto exista" —, mas o
+    # vínculo com ESTA agenda não se faz.
     divergencias.append(
         Divergencia(
             campo=campo,
@@ -877,12 +900,14 @@ def _conferir_orgao_declarado(
                 f"{coluna_nome}: você declarou {texto!r} na aba de interlocutores como "
                 f"sendo de outra instituição, e esta agenda é de "
                 f"{instituicao_escrita!r}. Um interlocutor fala por uma instituição "
-                "só — deixe as duas iguais."
+                "só, então a agenda entra SEM esta pessoa. Deixe as duas iguais, ou "
+                "aponte para o cadastro certo na conferência."
             ),
-            trava=True,
+            trava=False,
             coluna=coluna_nome,
         )
     )
+    return True
 
 
 def _interlocutor_da_instituicao(
@@ -906,11 +931,17 @@ def _interlocutor_da_instituicao(
     pedindo à pessoa que escolhesse qual; com o órgão da linha não há o que
     escolher, e a pendência desaparece.
 
-    RECUSA NO UPLOAD quem é de outro órgão. A regra 4 do domínio — o participante
-    pertence à instituição da agenda — recusava isso na CONFIRMAÇÃO, depois de a
-    pessoa ter conferido tudo. A suspensa dependente previne o erro no Excel, mas
-    a planilha convertida para o Google Sheets pode perder a validação, e o
-    arquivo pode não ter saído do nosso modelo: quem garante é aqui.
+    DEIXA DE FORA quem é de outro órgão — e AVISA, sem travar (11/10/2026). A
+    regra 4 do domínio — o participante pertence à instituição da agenda —
+    recusava isso na CONFIRMAÇÃO, depois de a pessoa ter conferido tudo. A
+    suspensa dependente previne o erro no Excel, mas a planilha convertida para o
+    Google Sheets pode perder a validação, e o arquivo pode não ter saído do nosso
+    modelo: quem garante é aqui.
+
+    ATÉ 11/10/2026 ISSO TRAVAVA A IMPORTAÇÃO INTEIRA, e o dono do produto pediu o
+    contrário: "sempre aponte a inconsistência mas não trave". Agora a agenda
+    entra sem a pessoa, com o aviso na linha — e apontar o cadastro certo na
+    conferência a traz de volta num clique.
 
     `None` significa "não sei, siga pelo caminho normal" — sem órgão na linha, ou
     com um nome que não existe em cadastro nenhum, que é o caminho de quem declara
@@ -927,6 +958,17 @@ def _interlocutor_da_instituicao(
         # O nome não existe em cadastro nenhum: é criação, e quem trata disso é
         # `_resolver` com a declaração da aba.
         return None
+    # AVISA E DEIXA A AGENDA ENTRAR — era `trava=True` até 11/10/2026, a pedido
+    # do dono do produto: "sempre aponte a inconsistência mas não trave".
+    #
+    # SEM A PESSOA, E ISSO ESTÁ NA FRASE. O vínculo é o que não pode acontecer: a
+    # regra 4 do domínio não aceita participante de outra instituição, e
+    # `impedimentos` a reconfere. O que se perde é a presença daquele grupo, e
+    # ela não significa nada sem a pessoa a que se refere.
+    #
+    # E A SAÍDA CONTINUA A UM CLIQUE: a divergência fica aberta, então apontar
+    # para o cadastro certo na conferência faz a pessoa entrar — `apontados` é
+    # consultado ANTES desta checagem, justamente para a decisão dela valer.
     divergencias.append(
         Divergencia(
             campo=campo,
@@ -934,14 +976,15 @@ def _interlocutor_da_instituicao(
             mensagem=(
                 f"{coluna_nome}: {texto!r} não é de {instituicao_escrita!r}, e sim de "
                 f"{' ou '.join(repr(orgao) for orgao in orgaos)}. Um interlocutor fala "
-                "por uma instituição só — corrija a pessoa, a instituição da agenda, "
-                "ou aponte para o cadastro certo na conferência."
+                "por uma instituição só, então a agenda entra SEM esta pessoa. "
+                "Corrija a instituição da agenda, ou aponte para o cadastro certo "
+                "na conferência."
             ),
-            trava=True,
+            trava=False,
             coluna=coluna_nome,
         )
     )
-    return _Resolucao()
+    return _Resolucao(omitir_o_item=True)
 
 
 def _listas_da_linha(
@@ -982,6 +1025,8 @@ def _listas_da_linha(
             do_item: list[Divergencia] = []
             criar_do_item: list[tuple[str, str]] = []
             algo_preenchido = False
+            #: Alguma célula deste item disse "este item não entra na agenda".
+            omitir_o_item = False
 
             for molde, campo in grupo["colunas"].items():
                 coluna_nome = molde.format(n=numero)
@@ -1006,15 +1051,15 @@ def _listas_da_linha(
                                 instituicao_escrita,
                                 do_item,
                             )
-                        if resolucao is None:
-                            _conferir_orgao_declarado(
-                                str(bruto),
-                                coluna_nome,
-                                campo_cheio,
-                                instituicao_escrita,
-                                cadastros_declarados,
-                                do_item,
-                            )
+                        if resolucao is None and _conferir_orgao_declarado(
+                            str(bruto),
+                            coluna_nome,
+                            campo_cheio,
+                            instituicao_escrita,
+                            cadastros_declarados,
+                            do_item,
+                        ):
+                            omitir_o_item = True
                     if resolucao is None:
                         resolucao = _resolver(
                             sessao,
@@ -1031,6 +1076,8 @@ def _listas_da_linha(
                     resolvido = resolucao.valor
                     if resolucao.a_criar is not None:
                         criar_do_item.append(resolucao.a_criar)
+                    if resolucao.omitir_o_item:
+                        omitir_o_item = True
                 else:
                     resolvido = bruto
                 if resolvido is not None:
@@ -1060,6 +1107,12 @@ def _listas_da_linha(
             a_criar.extend(criar_do_item)
 
             if any(divergencia.trava for divergencia in do_item):
+                continue
+            # O ITEM QUE NÃO PODE SE LIGAR A ESTA AGENDA fica fora, e o aviso que
+            # já entrou em `divergencias` diz por quê. ANTES do `esperando` e
+            # antes do modelo: o modelo exige o vínculo e estouraria, e o
+            # `except` lá embaixo transformaria o estouro em trava.
+            if omitir_o_item:
                 continue
             if criar_do_item:
                 esperando.append(
@@ -1766,10 +1819,28 @@ def _reconferir(sessao: Session, a_criar, apontados) -> None:
             )
 
 
+def _instituicao_declarada(declarado: Mapping[str, object] | None, indice) -> object | None:
+    """A instituição que a aba declarou para esta pessoa, resolvida para id.
+
+    `None` em três casos, e os três caem na instituição da agenda: não há
+    declaração; o nome declarado não existe no cadastro; ou ele é AMBÍGUO — e
+    sentinela em chave estrangeira estoura no `flush` com "can't adapt type
+    'object'", que é o achado Alto que `escolhidos` já consertou uma vez.
+    """
+    nome = (declarado or {}).get("instituicao_id")
+    if not nome:
+        return None
+    achada = indice.get("instituicoes", {}).get(normalizar(str(nome)))
+    return None if achada is AMBIGUO else achada
+
+
 def _instituicao_de_cada_interlocutor(
-    linhas, indice, escolhidos: Mapping[tuple[str, str], object] = MAPPING_VAZIO
+    linhas,
+    indice,
+    escolhidos: Mapping[tuple[str, str], object] = MAPPING_VAZIO,
+    declarados: Mapping[str, Mapping[str, object]] = MAPPING_VAZIO,
 ) -> dict[str, object]:
-    """Interlocutor novo → a instituição da agenda em que ele aparece.
+    """Interlocutor novo → a instituição a que ele pertence.
 
     COM TUDO NUMA ABA, a resposta é vizinha de coluna: o interlocutor e a
     instituição estão na MESMA linha. Antes isto atravessava duas abas ligadas
@@ -1786,6 +1857,21 @@ def _instituicao_de_cada_interlocutor(
     interlocutor novo, estourando no `flush` com "can't adapt type 'object'". A
     pessoa tinha escolhido qual instituição era, na conferência; a decisão estava
     gravada e só não era consultada aqui.
+
+    E O QUE ELA DECLAROU NA ABA VEM ANTES DA INSTITUIÇÃO DA AGENDA (11/10/2026).
+    Declarar "Carla Nova — Câmara Municipal" e usá-la numa agenda do Valor
+    Econômico era RECUSADO, e o motivo escrito era este: "criar a pessoa em um dos
+    dois órgãos e esperar que dê certo é o tipo de chute que erra calado". Tirada a
+    trava, o chute aconteceu — medido: ela nascia na instituição da agenda,
+    contrariando em silêncio o que a pessoa escreveu.
+
+    A ORDEM É A DO RESTO DO MÓDULO: decisão explícita antes de inferência. A aba é
+    declaração ("quero que exista assim"); a instituição da agenda é vizinhança de
+    coluna, que acerta quando ninguém disse nada e erra quando alguém disse.
+
+    E O ESCRITOR CONTINUA SENDO UM SÓ: `_JA_RESOLVIDOS` mantém `instituicao_id`
+    fora do que a criação grava a partir do declarado, justamente para as duas
+    verdades não discordarem. Quem aprende a declaração é este caminho.
     """
     de_quem: dict[str, object] = {}
     ambiguos: set[str] = set()
@@ -1822,13 +1908,21 @@ def _instituicao_de_cada_interlocutor(
                 if not pessoa:
                     continue
                 chave = normalizar(str(pessoa))
-                if chave in de_quem and de_quem[chave] != instituicao:
+                #: A ABA ANTES DA AGENDA: o que ela declarou é explícito, a
+                #: instituição da linha é inferência.
+                da_aba = _instituicao_declarada(declarados.get(chave), indice)
+                onde = instituicao if da_aba is None else da_aba
+                if chave in de_quem and de_quem[chave] != onde:
                     # A MESMA PESSOA NOVA em agendas de instituições diferentes:
                     # não há como escolher, e escolher errado a faria ser recusada
                     # em toda edição futura daquela agenda. Quem sabe é quem
                     # cadastra.
+                    #
+                    # COM A ABA PREENCHIDA ISTO NÃO DISPARA, e é o ganho: a mesma
+                    # pessoa em agendas de dois órgãos deixa de ser impasse quando
+                    # ela escreveu a qual deles a pessoa pertence.
                     ambiguos.add(str(pessoa))
-                de_quem[chave] = instituicao
+                de_quem[chave] = onde
 
     if ambiguos:
         raise RegraViolada(
@@ -1940,7 +2034,9 @@ def _criar_cadastros(
     for (vocabulario, valor), _campo in sorted(a_criar.items(), key=peso):
         if vocabulario != "instituicoes" and not de_quem:
             sessao.flush()
-            de_quem = _instituicao_de_cada_interlocutor(linhas, _indice(sessao), escolhidos)
+            de_quem = _instituicao_de_cada_interlocutor(
+                linhas, _indice(sessao), escolhidos, declarados
+            )
         if vocabulario == "instituicoes":
             # O CAMINHO CANÔNICO: a categoria vem da planilha e o TIPO NASCE DELA,
             # exatamente como `api/stakeholders.py` faz — "a tela de cadastro nao
