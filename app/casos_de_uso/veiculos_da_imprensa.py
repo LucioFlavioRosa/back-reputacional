@@ -58,6 +58,30 @@ CATEGORIA_DA_IMPRENSA = "Imprensa"
 
 #: O QUE CADA LISTA DE VEÍCULOS É, no cadastro compartilhado.
 #:
+#: OS TIPOS QUE PODEM SER O MESMO ATOR DE QUEM FALA NA IMPRENSA.
+#:
+#: POR QUE ISTO EXISTE, medido em 11/10/2026. A busca pelo cadastro existente
+#: filtrava pelo tipo da fonte, então para a Clipei só um cadastro `veiculo`
+#: contava. "BTG Pactual" e "Fitch Ratings" estavam cadastrados como `investidor`
+#: — invisíveis —, e a ingestão criou um SEGUNDO cadastro de cada como `veiculo`.
+#: O resultado é a companhia partida em dois registros: 12 agendas e zero menções
+#: num, 4 menções e zero agendas no outro, e nenhuma tela juntando.
+#:
+#: A REGRA DO HOMÔNIMO CONTINUA, e é ela que justifica a lista ser curta. Um nome
+#: de jornal igual ao de uma prefeitura é HOMÔNIMO: apontar a matéria para o órgão
+#: seria atribuição errada, e por isso `orgao`, `proposicao`, `entidade` e
+#: `area_interna` seguem de fora. Quem entra são os atores FINANCEIROS, que de
+#: fato falam na imprensa e se sentam à mesa: o banco que publica relatório é o
+#: mesmo banco credor, e a agência de rating é o mesmo ator nas duas pontas.
+#:
+#: E A PREFERÊNCIA PELO TIPO DA FONTE DECIDE O EMPATE (ver `achados`): quando o
+#: nome existe como `veiculo` E como `investidor`, a Clipei continua achando o
+#: veículo dela. Esta lista só age onde não há veículo — e ali ela troca a
+#: duplicata por um apontamento.
+TIPOS_DO_MESMO_ATOR: dict[str, frozenset[str]] = {
+    "veiculo": frozenset({"veiculo", "investidor", "credor"}),
+}
+
 #: O MOTOR SÓ CONHECE O NOME (`LISTAS_DE_VEICULOS`, em `dominio/ingestao_score`);
 #: a tradução para o par (categoria, subcategoria) mora aqui, que é a camada com
 #: banco. Pelo PAR, e não pelo nome da subcategoria sozinho:
@@ -230,12 +254,20 @@ def reconhecer(
             (Instituicao.tipo != tipo).label("de_outro_tipo"),
         ).where(
             Instituicao.nome_normalizado.in_(list(nomes)),
-            #: EM QUALQUER TIPO SÓ QUANDO QUEM FALA É UM PERFIL. O `Veículo` do
-            #: clipping é SEMPRE um meio de imprensa: um nome igual ao de um
-            #: órgão ali é HOMÔNIMO, e não o mesmo ator — apontar a matéria do
-            #: jornal para a prefeitura seria atribuição errada. O perfil de
-            #: rede é o contrário: o Instagram do Valor Econômico É o Valor.
-            *([] if tipo == "perfil_rede" else [Instituicao.tipo == tipo]),
+            #: EM QUALQUER TIPO SÓ QUANDO QUEM FALA É UM PERFIL: o Instagram do
+            #: Valor Econômico É o Valor.
+            #:
+            #: NOS OUTROS, NOS TIPOS QUE PODEM SER O MESMO ATOR — e não só no
+            #: tipo da fonte. Ver `TIPOS_DO_MESMO_ATOR`: um nome de jornal igual
+            #: ao de uma prefeitura é homônimo e fica de fora, mas o banco e a
+            #: agência de rating são o mesmo ator que o `investidor` cadastrado,
+            #: e filtrar só por `veiculo` fez a ingestão criar um segundo
+            #: cadastro de BTG Pactual e de Fitch Ratings.
+            *(
+                []
+                if tipo == "perfil_rede"
+                else [Instituicao.tipo.in_(sorted(TIPOS_DO_MESMO_ATOR.get(tipo, {tipo})))]
+            ),
         )
     ).all():
         #: O DO TIPO DA FONTE VENCE quando o nome existe nos dois: enquanto os

@@ -362,3 +362,124 @@ def test_o_mapa_cobre_TODA_a_escala_da_clipei():
 
     sem_numero = sorted(set(TIERS.values()) - set(RELEVANCIA_DO_TIER))
     assert not sem_numero, f"a escala da Clipei tem valor sem relevância: {sem_numero}"
+
+
+# ======================================= o mesmo ator, cadastrado de outro tipo
+def test_reconhecer_ACHA_o_investidor_de_mesmo_nome_em_vez_de_duplicar(sessao):
+    """O banco que publica relatório é o banco com quem a companhia se reúne.
+
+    O DEFEITO QUE ISTO FECHA, medido em 11/10/2026: a busca filtrava pelo tipo da
+    fonte, então um cadastro `investidor` era invisível para a Clipei. O nome
+    virava novo e a ingestão criava um SEGUNDO cadastro como `veiculo` — e a
+    companhia ficava partida em dois registros:
+
+        BTG Pactual   investidor  12 agendas,  0 menções
+        BTG Pactual   veiculo      0 agendas,  4 menções
+
+    Nenhuma tela junta os dois. Quem abre o BTG vê as reuniões sem as menções, ou
+    as menções sem as reuniões, dependendo de qual dos dois abriu. O mesmo com
+    Fitch Ratings: 11 agendas de um lado, 2 menções do outro.
+    """
+    ja = Instituicao(
+        nome="Banco Que Fala 42",
+        nome_normalizado=normalizar("Banco Que Fala 42"),
+        tipo="investidor",
+    )
+    sessao.add(ja)
+    sessao.flush()
+
+    reco = reconhecer(sessao, _da_planilha("Banco Que Fala 42"))
+
+    assert reco.novos == (), [v.nome for v in reco.novos]
+    assert reco.cadastrados[normalizar("Banco Que Fala 42")] == str(ja.id)
+
+
+def test_reconhecer_acha_o_credor_de_mesmo_nome(sessao):
+    """`credor` entra pela mesma razão do investidor: é o mesmo ator.
+
+    Dois tipos e não um porque a taxonomia os separa — "duas coisas a taxonomia
+    não distingue: um banco credor de um investidor (os dois moram em Mercado
+    Financeiro e de Capitais)", diz `TIPO_DA_CATEGORIA_DE_PUBLICO`. Quem fala na
+    imprensa pode estar cadastrado em qualquer um dos dois.
+    """
+    ja = Instituicao(
+        nome="Credor Que Fala 42",
+        nome_normalizado=normalizar("Credor Que Fala 42"),
+        tipo="credor",
+    )
+    sessao.add(ja)
+    sessao.flush()
+
+    reco = reconhecer(sessao, _da_planilha("Credor Que Fala 42"))
+
+    assert reco.novos == ()
+    assert reco.cadastrados[normalizar("Credor Que Fala 42")] == str(ja.id)
+
+
+def test_o_VEICULO_ainda_ganha_quando_os_dois_existem(sessao):
+    """A preferência pelo tipo da fonte não mudou, e é ela que mantém o passado.
+
+    POR QUE ISTO IMPORTA: enquanto BTG Pactual existir como `investidor` E como
+    `veiculo`, a Clipei tem de continuar achando o veículo dela — senão as menções
+    novas iriam para um cadastro e as antigas ficariam no outro, e a lente passaria
+    a contar o mesmo ator duas vezes. Alargar a busca sem esta preferência
+    trocaria uma divisão por outra, pior.
+    """
+    investidor = Instituicao(
+        nome="Dois Cadastros 42",
+        nome_normalizado=normalizar("Dois Cadastros 42"),
+        tipo="investidor",
+    )
+    veiculo = Instituicao(
+        nome="Dois Cadastros 42",
+        nome_normalizado=normalizar("Dois Cadastros 42"),
+        tipo="veiculo",
+    )
+    sessao.add_all([investidor, veiculo])
+    sessao.flush()
+
+    reco = reconhecer(sessao, _da_planilha("Dois Cadastros 42"))
+
+    assert reco.cadastrados[normalizar("Dois Cadastros 42")] == str(veiculo.id)
+
+
+def test_o_ORGAO_de_mesmo_nome_continua_sendo_HOMONIMO(sessao):
+    """A metade que a correção não pode levar embora.
+
+    Um nome de jornal igual ao de uma prefeitura é homônimo, e apontar a matéria
+    para o órgão seria atribuição errada. `orgao`, `proposicao`, `entidade` e
+    `area_interna` seguem fora de `TIPOS_DO_MESMO_ATOR` por isso — e sem este
+    teste, alargar a lista "só um pouco mais" não quebraria nada visível.
+    """
+    for tipo in ("orgao", "proposicao", "entidade", "area_interna"):
+        nome = f"Homônimo De {tipo} 42"
+        sessao.add(
+            Instituicao(nome=nome, nome_normalizado=normalizar(nome), tipo=tipo)
+        )
+    sessao.flush()
+
+    for tipo in ("orgao", "proposicao", "entidade", "area_interna"):
+        nome = f"Homônimo De {tipo} 42"
+        reco = reconhecer(sessao, _da_planilha(nome))
+        assert [v.nome for v in reco.novos] == [nome], f"{tipo} deixou de ser homônimo"
+
+
+def test_o_perfil_de_rede_continua_achando_em_QUALQUER_tipo(sessao):
+    """A Bites não mudou, e a medida diz que ela já cruzava os tipos.
+
+    Medido: das menções da Bites, 2.529 estão em `perfil_rede` e 53 em cadastros
+    `veiculo` — o vínculo entre tipos sempre funcionou ali, porque o Instagram do
+    Valor Econômico É o Valor. `TIPOS_DO_MESMO_ATOR` não entra nesse caminho.
+    """
+    ja = Instituicao(
+        nome="Orgão Com Perfil 42",
+        nome_normalizado=normalizar("Orgão Com Perfil 42"),
+        tipo="orgao",
+    )
+    sessao.add(ja)
+    sessao.flush()
+
+    reco = reconhecer(sessao, _da_planilha("Orgão Com Perfil 42"), "perfil_rede")
+
+    assert reco.novos == ()
+    assert reco.cadastrados[normalizar("Orgão Com Perfil 42")] == str(ja.id)
