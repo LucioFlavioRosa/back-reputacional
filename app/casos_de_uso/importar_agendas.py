@@ -1848,19 +1848,35 @@ def _reconferir(sessao: Session, a_criar, apontados) -> None:
             )
 
 
+#: "Ela declarou uma instituição, e eu não consigo dizer qual é."
+#:
+#: TRÊS ESTADOS, E NÃO DOIS, e foi um achado ALTA de revisão. "Não declarou" e
+#: "declarou algo que não resolve" davam o mesmo `None`, e `None` autorizava usar
+#: a instituição da agenda — então a segunda virava o chute calado que a
+#: preferência pela aba existe para fechar.
+#:
+#: SÓ O PRIMEIRO AUTORIZA O PADRÃO. Quem não declarou nada aceita a inferência de
+#: vizinhança de coluna; quem declarou e teve a declaração desfeita por uma
+#: mudança no cadastro, não.
+NAO_RESOLVE = object()
+
+
 def _instituicao_declarada(declarado: Mapping[str, object] | None, indice) -> object | None:
     """A instituição que a aba declarou para esta pessoa, resolvida para id.
 
-    `None` em três casos, e os três caem na instituição da agenda: não há
-    declaração; o nome declarado não existe no cadastro; ou ele é AMBÍGUO — e
-    sentinela em chave estrangeira estoura no `flush` com "can't adapt type
-    'object'", que é o achado Alto que `escolhidos` já consertou uma vez.
+    `None` quando não há declaração — e só isso autoriza cair na instituição da
+    agenda.
+
+    `NAO_RESOLVE` quando ela declarou algo e o cadastro não responde: o nome não
+    existe, ou é AMBÍGUO. Devolver a sentinela `AMBIGUO` em si não serve, porque
+    ela viraria chave estrangeira e estouraria no `flush` com "can't adapt type
+    'object'" — o achado Alto que `escolhidos` já consertou uma vez.
     """
     nome = (declarado or {}).get("instituicao_id")
     if not nome:
         return None
     achada = indice.get("instituicoes", {}).get(normalizar(str(nome)))
-    return None if achada is AMBIGUO else achada
+    return NAO_RESOLVE if achada is None or achada is AMBIGUO else achada
 
 
 def _instituicao_de_cada_interlocutor(
@@ -1917,6 +1933,8 @@ def _instituicao_de_cada_interlocutor(
     """
     de_quem: dict[str, object] = {}
     ambiguos: set[str] = set()
+    #: Quem declarou instituição que o cadastro não responde mais. Ver `NAO_RESOLVE`.
+    nao_resolvidos: set[str] = set()
     moldes = [
         molde
         for molde in GRUPOS_NUMERADOS["outra_parte"]["colunas"]
@@ -1959,6 +1977,20 @@ def _instituicao_de_cada_interlocutor(
                 #: A ABA ANTES DA AGENDA: o que ela declarou é explícito, a
                 #: instituição da linha é inferência.
                 da_aba = _instituicao_declarada(declarados.get(chave), indice)
+                if da_aba is NAO_RESOLVE:
+                    # O CADASTRO MUDOU ENTRE SUBIR E CONFIRMAR, e este é o
+                    # contrato que a confirmação já tem escrito: "quando algo
+                    # mudou, a resposta é 409 e não 422 — o que a pessoa mandou
+                    # estava certo quando ela olhou".
+                    #
+                    # O CASO: "Câmara Municipal" era única no upload, e alguém
+                    # cadastrou uma segunda pela Administração no meio do
+                    # caminho. Cair na instituição da agenda aqui faria a pessoa
+                    # NASCER no órgão errado — e, por ter nascido no órgão da
+                    # agenda, ela ainda seria vinculada a ela. Achado ALTA de
+                    # revisão.
+                    nao_resolvidos.add(str(pessoa))
+                    continue
                 onde = instituicao if da_aba is None else da_aba
                 if chave in de_quem and de_quem[chave] != onde:
                     # A MESMA PESSOA NOVA em agendas de instituições diferentes:
@@ -1972,6 +2004,16 @@ def _instituicao_de_cada_interlocutor(
                     ambiguos.add(str(pessoa))
                 de_quem[chave] = onde
 
+    if nao_resolvidos:
+        # `Conflito` E NÃO `RegraViolada`: o 409 diz "mudou desde que você
+        # olhou", e é a resposta honesta — a planilha estava certa, e a
+        # conferência também. Reconferir devolve a pendência com a frase que
+        # explica o que fazer.
+        raise Conflito(
+            f"A instituição declarada para {', '.join(sorted(nao_resolvidos))} "
+            "deixou de ser identificável no cadastro desde que você conferiu — ela "
+            "não existe mais, ou passou a ter homônimo. Confira de novo e escolha."
+        )
     if ambiguos:
         raise RegraViolada(
             f"{', '.join(sorted(ambiguos))} aparece em agendas de instituições "

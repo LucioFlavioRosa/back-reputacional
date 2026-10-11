@@ -4021,3 +4021,69 @@ def test_instituicao_declarada_AMBIGUA_nao_vira_silencio(cliente_admin, sessao, 
         ).first()
         is None
     )
+
+
+def test_a_instituicao_declarada_que_DEIXA_de_resolver_devolve_409(
+    cliente_admin, sessao, semente
+):
+    """O cadastro mudou entre subir e confirmar, e o 409 é a resposta honesta.
+
+    O CAMINHO, achado ALTA de revisão: no upload "Câmara Municipal" era única, a
+    declaração resolveu, e a conferência disse que estava tudo pronto. Alguém
+    cadastrou uma SEGUNDA Câmara Municipal pela Administração no meio do caminho,
+    e o nome virou ambíguo.
+
+    O QUE ACONTECIA: `_instituicao_declarada` devolvia `None` para a sentinela, e
+    `None` autorizava usar a instituição da AGENDA. A pessoa nascia no órgão
+    errado — e, por ter nascido no órgão da agenda, ainda era vinculada a ela.
+    Dois erros a partir de um nome que a pessoa escreveu certo.
+
+    E É O CONTRATO QUE A CONFIRMAÇÃO JÁ TINHA ESCRITO: "entre subir e confirmar,
+    alguém pode ter cadastrado pela tela de Administração a mesma instituição que
+    esta importação ia criar... quando algo mudou, a resposta é 409 e não 422: o
+    que a pessoa mandou estava certo quando ela olhou".
+
+    "NÃO DECLAROU" E "DECLAROU ALGO QUE NÃO RESOLVE" passaram a ser estados
+    diferentes (`NAO_RESOLVE`), porque só o primeiro autoriza a inferência.
+    """
+    from app.banco.tabelas_stakeholders import Instituicao as Inst
+
+    camara = _outra_instituicao(sessao)
+
+    conteudo = _com_interlocutor(
+        sessao,
+        semente,
+        semente["instituicao"].nome,
+        "Carla Nova",
+        declarar=("Carla Nova", camara.nome),
+    )
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("a.xlsx", conteudo, TIPO_XLSX)}
+    ).json()
+    #: A CONFERÊNCIA DISSE QUE ESTAVA PRONTO, e estava.
+    assert criada["pendencias"] == 0, criada["grupos"]
+
+    #: E ENTÃO O CADASTRO MUDOU, pela Administração.
+    sessao.add(
+        Inst(
+            nome=camara.nome,
+            nome_normalizado=normalizar(camara.nome),
+            #: Outro tipo, senão o índice único `(nome_normalizado, tipo)`
+            #: recusaria — e é exactamente assim que o homônimo nasce de verdade.
+            tipo="entidade",
+            uf="SP",
+        )
+    )
+    sessao.flush()
+
+    confirmacao = cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao")
+    assert confirmacao.status_code == 409, confirmacao.text
+    assert "deixou de ser identificável" in confirmacao.text, confirmacao.text
+
+    #: E NADA FOI CRIADO NO ÓRGÃO ERRADO.
+    assert (
+        sessao.scalars(
+            select(Interlocutor).where(Interlocutor.nome_normalizado == normalizar("Carla Nova"))
+        ).first()
+        is None
+    )
