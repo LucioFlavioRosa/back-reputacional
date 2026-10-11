@@ -247,8 +247,9 @@ class DossieSaida(BaseModel):
     #: tela. Isto não é um terceiro painel — é um cartão só, com abas, e as abas
     #: não cabem num contrato que a tela lê como "painel A" e "painel B".
     #:
-    #: VAZIO na lente que não vem de menção (Mercado, Institucional) e no mês
-    #: em que nenhuma dimensão explica nada.
+    #: VAZIO na Institucional, que não vem de menção (tem zero), e no mês em que
+    #: nenhuma dimensão explica nada. O MERCADO SAIU DESTA FRASE: ele é clipping
+    #: com menção ingerida, e traz quatro abas — ver `DIMENSOES_POR_LENTE`.
     onde_esta_a_causa: list[BlocoSaida] = Field(default_factory=list)
     #: O bloco do fim da tela: o que mudou no período, por intensidade, com as
     #: lacunas de dado no fim.
