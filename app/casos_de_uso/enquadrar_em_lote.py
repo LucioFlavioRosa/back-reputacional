@@ -1,20 +1,27 @@
 """Dar categoria de público a várias instituições de uma vez.
 
 POR QUE ISTO EXISTE, e o número é o argumento: subir a planilha real de Relações
-com Investidores criou 499 instituições, TODAS como "Entidade", porque a planilha
-não traz categoria de público. A aba de revisão as lista e sabe dizer "Está
-certo" sobre UMA linha por vez.
+com Investidores encheu a aba "Instituições e Contatos" com 499 pendências, e
+178 delas são INSTITUIÇÕES — todas como "Entidade", porque a planilha não traz
+categoria de público. (As outras 321 são os contatos, que não têm esse campo.) A
+aba de revisão as lista e sabe dizer "Está certo" sobre UMA linha por vez.
+
+O NÚMERO ESTAVA ERRADO AQUI e eu o corrigi: eu havia escrito "499 instituições",
+e 499 era o total da ABA, que junta duas tabelas. Medido na pilha depois de
+subir o arquivo real: 178 instituições, e o lote enquadrou as 178 numa chamada,
+sem nenhuma recusa, derivando o tipo `investidor`.
 
 Mas a resposta para quase todas é a MESMA — são gestoras e bancos, e a categoria
-é uma só. Quatrocentas e noventa e nove idas à lista de cadastro para digitar a
-mesma coisa não é revisão: é a pessoa desistindo na décima e a base ficando
-meio classificada, que é pior do que não classificada, porque ninguém sabe onde
+é uma só. Cento e setenta e oito idas à lista de cadastro para digitar a mesma
+coisa não é revisão: é a pessoa desistindo na décima e a base ficando meio
+classificada, que é pior do que não classificada, porque ninguém sabe onde
 parou.
 
 O TIPO SAI DA CATEGORIA, e é o que torna este gesto mais do que preencher um
 campo: `derivar_tipo` traduz categoria em tipo, e o tipo da instituição é o que
-`derivar_frente` usa para dizer de que frente é cada agenda dela. Enquadrar 499
-instituições reclassifica as agendas de todas elas.
+`derivar_frente` usa para dizer de que frente é cada agenda dela. Enquadrar as
+178 reclassifica as agendas de todas elas — e no caso real a mudança é de
+"Entidade" para "Investidor", numa planilha de Relações com Investidores.
 
 SÓ O QUE ESTÁ NA FILA, e é a trava que mantém isto seguro. Um lote que pudesse
 reescrever o tipo de qualquer instituição permitiria a um clique na aba de
@@ -38,7 +45,8 @@ from app.dominio.frentes import ROTULO_DO_TIPO_DE_INSTITUICAO
 
 #: QUANTAS INSTITUIÇÕES UM LOTE ACEITA.
 #:
-#: 500 porque a fila real tem 499, e o limite existe para haver um: sem ele, o
+#: 500 com folga sobre as 178 que a fila real tem, e o limite existe para haver
+#: um: sem ele, o
 #: tamanho do pedido é decidido por quem o manda. Não é proteção contra abuso —
 #: a rota exige `administra_dicionarios` —, é a diferença entre uma operação
 #: cujo custo se conhece e uma que pode levar o tempo que quiser.
@@ -50,8 +58,8 @@ class Recusado:
     """Uma instituição do lote que não pôde ser enquadrada, e por quê.
 
     O LOTE NÃO É TUDO-OU-NADA, e esta é a decisão de desenho mais importante
-    daqui. Com 499 linhas, uma colisão de nome faria o lote inteiro falhar e a
-    pessoa não teria como saber qual das 499. Enquadrar as que dão e DIZER quais
+    daqui. Com 178 linhas, uma colisão de nome faria o lote inteiro falhar e a
+    pessoa não teria como saber qual das 178. Enquadrar as que dão e DIZER quais
     não deram, com o motivo de cada uma, é o que permite o gesto acontecer.
     """
 
@@ -83,7 +91,7 @@ def enquadrar(
     `consolidar` É ESCOLHA DE QUEM REVISA, e não consequência automática. Dar a
     categoria resolve o motivo que a fila mostrava — "entrou sem categoria de
     público" —, mas consolidar é afirmar que o cadastro está certo, e quem
-    enquadra um lote de 499 pode querer que outra pessoa confira antes. É o mesmo
+    enquadra um lote de 178 pode querer que outra pessoa confira antes. É o mesmo
     princípio da consolidação uma a uma: ela sai por ação, não por um campo que
     ficou preenchido.
     """
@@ -116,7 +124,7 @@ def enquadrar(
     #:
     #: A `0002` cria `unique (nome_normalizado, tipo)` e o índice NÃO é parcial em
     #: `ativo`: uma instituição desativada continua ocupando o par. Sem esta
-    #: conferência, mudar o tipo de 499 linhas estoura em `IntegrityError` no
+    #: conferência, mudar o tipo de 178 linhas estoura em `IntegrityError` no
     #: flush — 500 para a pessoa, e sem dizer qual nome colidiu.
     ocupados = {
         nome

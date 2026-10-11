@@ -135,9 +135,10 @@ def enquadrar_instituicoes(
 ) -> EnquadramentoSaida:
     """Dá a mesma categoria de público a várias instituições da fila.
 
-    POR QUE ESTA ROTA EXISTE: a planilha real de RI criou 499 instituições sem
-    categoria, e a resposta para quase todas é a mesma. A consolidação uma a uma
-    faria a pessoa digitar a mesma coisa 499 vezes — e desistir na décima, com a
+    POR QUE ESTA ROTA EXISTE: a planilha real de RI criou 178 instituições sem
+    categoria (de 499 pendências na aba — o resto são contatos, que não têm esse
+    campo), e a resposta para quase todas é a mesma. A consolidação uma a uma
+    faria a pessoa digitar a mesma coisa 178 vezes — e desistir na décima, com a
     base meio classificada, que é pior do que não classificada porque ninguém
     sabe onde parou.
 

@@ -2330,9 +2330,12 @@ def _subcategoria_da_categoria(sessao: Session, categoria, nome: object) -> int 
 #: faltava era a marca DIZER o que há para fazer.
 #:
 #: E A DIFERENÇA É O QUE SE VÊ NA ABA. Medido com a planilha real de RI: 499 das
-#: 502 pendências são instituições, e TODAS nasceram assim — `3R Investimentos`,
-#: `AF Invest`, `ARX`, numa planilha de Relações com Investidores, todas como
-#: "Entidade". Sem este texto, a aba mostra 499 linhas repetindo a frase genérica
+#: 502 pendências caem na aba "Instituições e Contatos", e 178 delas são
+#: INSTITUIÇÕES — todas nasceram assim: `3R Investimentos`, `AF Invest`, `ARX`,
+#: numa planilha de Relações com Investidores, todas como "Entidade". (Esta linha
+#: dizia "499 das 502 pendências SÃO instituições", e estava errada: 499 é o total
+#: da aba, que junta duas tabelas.) Sem este texto, a aba mostra 499 linhas
+#: repetindo a frase genérica
 #: "entrou por planilha e ninguém conferiu", que não diz O QUE conferir. Com ele,
 #: cada linha nomeia o campo que falta e o efeito de ele faltar.
 #:
