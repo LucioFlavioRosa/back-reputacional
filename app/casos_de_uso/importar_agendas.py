@@ -69,6 +69,7 @@ from app.dominio.importacao_de_agendas import (
     Coluna,
     Divergencia,
     aba_de,
+    acao_efetiva,
     classificar,
     coluna_do_campo,
     colunas_do_cadastro,
@@ -1649,11 +1650,10 @@ def _decisoes(linhas) -> tuple[dict[tuple[str, str], str], dict[tuple[str, str],
         if linha.decisao == "descartada":
             continue
         for bruta in linha.divergencias or []:
-            #: O PADRÃO VALE QUANDO NINGUÉM DECIDIU — e a ordem importa: a decisão
-            #: da pessoa sempre vence. Apontar para um cadastro existente tem de
-            #: cancelar a criação que seria o padrão, senão o clique dela criaria
-            #: a duplicata que ele existia para evitar.
-            acao = bruta.get("acao") or bruta.get("acao_padrao")
+            #: UMA FUNÇÃO SÓ RESPONDE "o que vai acontecer" — ver `acao_efetiva`.
+            #: Eram quatro lugares lendo `acao` cru, e a revisão achou dois deles
+            #: errados depois do conserto do terceiro.
+            acao = acao_efetiva(bruta)
             if acao == "criar":
                 vocabulario = vocabulario_do_campo(bruta["campo"])
                 if vocabulario:
@@ -1676,7 +1676,12 @@ def _declarados_por_nome(linhas) -> dict[str, dict[str, object]]:
         if linha.decisao == "descartada":
             continue
         for bruta in linha.divergencias or []:
-            if bruta.get("acao") != "criar":
+            #: PELA AÇÃO EFETIVA, e aqui estava o defeito: este filtro exigia
+            #: `acao == "criar"`, e a criação por PADRÃO não passava. A
+            #: instituição nascia — e sem a abrangência e a relevância que a
+            #: pessoa escreveu na aba. Perda silenciosa, que é pior que a trava
+            #: que isto substituiu, porque a trava ela VÊ. Achado de revisão.
+            if acao_efetiva(bruta) != "criar":
                 continue
             declarado = _o_declarado_da_divergencia(bruta)
             if declarado:
@@ -2025,7 +2030,22 @@ def _criar_cadastros(
             # do modelo, e a planilha não o amplia.
             gravar(
                 sessao,
-                Tema(nome=valor, nivel="livre"),
+                #: `gerais`, E NAO `livre`: `livre` não é um nível. A
+                #: constraint `tema_nivel_check` e `NIVEIS_DE_TEMA` aceitam
+                #: `sensivel`, `estrategico` e `gerais` — confirmar uma
+                #: importação com tema novo devolvia CheckViolation, 500.
+                #:
+                #: NUNCA APARECEU porque era preciso declarar o tema na aba para
+                #: chegar aqui, e nenhum teste fazia isso de ponta a ponta. O
+                #: caminho ficou alcançável quando a importação parou de exigir a
+                #: aba (11/10/2026) — a mudança não criou o defeito, tirou-o do
+                #: esconderijo.
+                #:
+                #: E `gerais` É O NEUTRO: `estrategico` é vocabulário fechado do
+                #: modelo (os KPIs dependem dele, e a planilha não o amplia), e
+                #: `sensivel` seria uma afirmação sobre o tema que a planilha não
+                #: tem como fazer.
+                Tema(nome=valor, nivel="gerais"),
                 novo=True,
                 ao_colidir=(
                     f"Já existe um tema chamado {valor!r} — pode estar "
@@ -2228,7 +2248,9 @@ def _declaracoes_gravadas(
         if linha.decisao == "descartada":
             continue
         for bruta in linha.divergencias or []:
-            if bruta.get("acao") != "criar":
+            #: Mesma razão de `_declarados_por_nome`: o que vale é a ação
+            #: efetiva, não só a que a pessoa clicou.
+            if acao_efetiva(bruta) != "criar":
                 continue
             vocabulario = vocabulario_do_campo(bruta.get("campo") or "")
             if not vocabulario:

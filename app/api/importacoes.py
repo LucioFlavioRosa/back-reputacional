@@ -37,6 +37,7 @@ from app.dominio.importacao_de_agendas import (
     CHAVES_RESERVADAS,
     Divergencia,
     aba_de,
+    acao_efetiva,
     agrupar,
     coluna_do_campo,
     tipo_da_coluna,
@@ -214,12 +215,15 @@ def _decididas(linhas) -> list[ACriarSaida]:
         if linha.aba != "Agendas" or linha.decisao == "descartada":
             continue
         for bruta in linha.divergencias or []:
-            if not bruta.get("acao"):
+            #: PELA AÇÃO EFETIVA: o bloco "vou criar" da resposta tem de
+            #: mostrar também o que a confirmação criará por PADRÃO, senão a tela
+            #: promete menos do que o servidor vai fazer. Achado de revisão.
+            if not acao_efetiva(bruta):
                 continue
             chave = (
                 bruta["campo"],
                 bruta["valor"],
-                bruta["acao"],
+                acao_efetiva(bruta),
                 bruta.get("alvo"),
             )
             por_chave.setdefault(chave, []).append(linha.linha_origem)
@@ -252,6 +256,10 @@ def _grupos(sessao, linhas) -> list[GrupoSaida]:
                 )
                 for bruta in (linha.divergencias or [])
                 # A DECIDIDA NÃO É PENDÊNCIA. Ela vai para `a_criar`.
+                #: ABERTA É O QUE A PESSOA AINDA PODE DECIDIR, e aqui `acao`
+                #: cru é o certo: uma divergência com padrão continua aberta
+                #: para ela apontar. `acao_efetiva` responderia "criar" e
+                #: esconderia a oferta.
                 if not bruta.get("acao")
             ],
         )

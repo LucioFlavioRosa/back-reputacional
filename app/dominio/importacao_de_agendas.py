@@ -253,7 +253,7 @@ COLUNAS_DO_CADASTRO: dict[str, tuple[ColunaDeCadastro, ...]] = {
         ColunaDeCadastro("É porta-voz?", "eh_porta_voz"),
     ),
     # O TEMA SEGUE SENDO SÓ O NOME, e é decisão antiga que continua valendo: o
-    # `nivel` do tema criado pela importação é `livre`, porque tema ESTRATÉGICO é
+    # `nivel` do tema criado pela importação é `gerais`, porque tema ESTRATÉGICO é
     # vocabulário fechado do modelo — os KPIs dependem dele, e a planilha não o
     # amplia. Uma coluna "Nível" aqui ofereceria uma escolha que o servidor recusa.
     "temas": (ColunaDeCadastro("Tema", "nome", obrigatoria=True),),
@@ -1022,6 +1022,32 @@ class Divergencia:
     #: que não tem mais a planilha — só o que ficou gravado na divergência. Um campo que
     #: não viaja por aqui é um campo que a pessoa preencheu e que o cadastro nasce sem.
     declarado: dict[str, object] | None = None
+
+
+def acao_efetiva(bruta: Mapping[str, object]) -> str | None:
+    """O que VAI ACONTECER com esta divergência — a decisão da pessoa, ou o padrão.
+
+    POR QUE ISTO É UMA FUNÇÃO E NÃO UM `or` ESPALHADO: `acao` passou a ter duas
+    fontes quando a importação deixou de travar por cadastro ausente
+    (11/10/2026) — a decisão de quem confere, e o padrão do sistema. QUATRO
+    lugares leem esse campo: a coleta de decisões, os campos declarados que
+    viajam para a criação, as declarações gravadas, e o resumo da API.
+    Consertar um a um deixaria os outros três para a próxima vez, e foi o que
+    aconteceu: a revisão achou os campos da aba se perdendo em silêncio porque
+    `_declarados_por_nome` ainda exigia `acao == "criar"`.
+
+    A DECISÃO DELA SEMPRE VENCE. Apontar para um cadastro existente tem de
+    cancelar a criação que seria o padrão, senão o clique dela produziria a
+    duplicata que ele existia para evitar.
+
+    `None` quando ninguém decidiu e não há padrão — o caso de uma divergência que
+    só avisa, como a de possível duplicata.
+    """
+    decidida = bruta.get("acao")
+    if decidida:
+        return str(decidida)
+    padrao = bruta.get("acao_padrao")
+    return str(padrao) if padrao else None
 
 
 #: Os cinco tipos de coluna, e cada um é uma pergunta já respondida pela descrição.

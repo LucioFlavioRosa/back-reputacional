@@ -538,6 +538,22 @@ def test_o_grupo_oferece_o_nome_parecido_que_JA_existe(cliente_admin, sessao, se
     # A sugestão carrega nome E alvo: o nome que a pessoa reconhece e o id que
     # o servidor aceita em `apontar`.
     assert "Prefeitura Municipal de Campinas" in [s["nome"] for s in grupo["sugestoes"]]
+    assert all(s["alvo"] for s in grupo["sugestoes"]), grupo["sugestoes"]
+
+    # E A SUGESTÃO APARECE SEM TRAVAR — as duas metades da regra que o dono do
+    # produto pediu em 11/10/2026: "caso tenha suspeita de duplicação em qualquer
+    # campo deve mostrar para usuário decidir", junto com "o ponto principal é
+    # não barrar o registro".
+    #
+    # POR QUE ISTO PRECISA DE ASSERÇÃO: até 11/10/2026 a sugestão vinha num grupo
+    # que travava, e era a trava que fazia a pessoa olhar. Agora nada trava.
+    # Basta alguém "otimizar" a sugestão para só os grupos que travam — e, como
+    # nenhum trava, ela desapareceria inteira, sem teste nenhum cair.
+    #
+    # É ela que impede a duplicata: 3.809 instituições para 3.781 nomes
+    # distintos, com 28 duplicatas já no banco.
+    assert grupo["trava"] is False
+    assert corpo["pendencias"] == 0
 
 
 def test_o_que_trava_vem_ANTES_do_que_so_avisa(cliente_admin, sessao, semente):
