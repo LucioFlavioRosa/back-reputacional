@@ -1075,6 +1075,63 @@ def test_o_cadastro_que_NASCEU_entre_subir_e_confirmar_para_a_confirmacao(
     assert "Prefeitura de Campinas" in resposta.text
 
 
+def test_confirmar_SEM_CLICAR_EM_NADA_cria_o_cadastro_e_a_agenda(
+    cliente_admin, sessao, semente
+):
+    """O CAMINHO QUE O DONO DO PRODUTO PEDIU, de ponta a ponta.
+
+    "Várias reuniões em um dia": a pessoa baixa o modelo, escreve o nome da
+    instituição na coluna da agenda, sobe e confirma. Não abre a aba de cadastro,
+    não clica em "criar", não aponta para ninguém.
+
+    POR QUE ESTE TESTE EXISTE: a conferência pode dizer "pode confirmar" e o
+    servidor recusar. Foi o que aconteceu — achado Alto da revisão. A divergência
+    fica ABERTA de propósito (para a oferta de apontar sobreviver), e `_decisoes`
+    coletava criação apenas de divergência com `acao == "criar"`. O fluxo padrão
+    não criava nada: a linha deixava de ser resolvível na reconferência e a
+    confirmação estourava.
+
+    Os testes do bloco cobriam a PROPOSTA — nenhum ia até o fim sem clicar.
+    """
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    from app.banco.tabelas_stakeholders import Instituicao
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    valores = {
+        "Data": date(2026, 9, 25),
+        "Instituição": "Prefeitura de Itu",
+        "UF": "SP",
+    }
+    folha.append([valores.get(coluna) for coluna in cabecalho])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("dia.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+    #: A TELA DIZ QUE PODE CONFIRMAR: nada trava.
+    assert criada["pendencias"] == 0, criada["grupos"]
+
+    #: E O SERVIDOR TEM DE CONCORDAR — sem nenhum PATCH de resolução no meio.
+    resposta = cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao")
+    assert resposta.status_code == 201, resposta.text
+    assert resposta.json()["criadas"] == 1
+
+    #: A INSTITUIÇÃO NASCEU, incompleta e honesta: só o nome, sem categoria, com
+    #: o tipo que não finge decidir a frente.
+    nova = sessao.scalars(
+        select(Instituicao).where(Instituicao.nome == "Prefeitura de Itu")
+    ).one()
+    assert nova.categoria_publico_id is None
+    assert nova.tipo == "entidade"
+
+
 def test_confirmar_com_pendencia_que_trava_recusa(cliente_admin, sessao, semente):
     """O botão fica apagado na tela, e o servidor recusa por conta própria."""
     from datetime import date
@@ -1465,8 +1522,15 @@ def test_a_confirmacao_nao_faz_commit_por_conta_propria(cliente_admin, sessao, l
 # =============================================================================
 
 
-def _com_declaracao(sessao, semente, nome: str, tipo: str | None = None):
-    """Uma agenda com instituição nova, declarada na aba com (ou sem) o tipo."""
+def _com_declaracao(
+    sessao, semente, nome: str, tipo: str | None = None, unidade: str | None = None
+):
+    """Uma agenda com instituição nova, declarada na aba com (ou sem) o tipo.
+
+    `unidade` É PARA QUEM PRECISA DE LINHA PRESA. Instituição nova parou de
+    travar em 11/10/2026; unidade de negócio desconhecida continua, porque é
+    dicionário administrado. Opcional para os seis testes que não precisam.
+    """
     from datetime import date
 
     from openpyxl import load_workbook
@@ -1476,7 +1540,12 @@ def _com_declaracao(sessao, semente, nome: str, tipo: str | None = None):
     pasta = load_workbook(io.BytesIO(modelo))
     folha = pasta["Agendas"]
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
-    valores = {"Data": date(2026, 9, 25), "Instituição": nome, "UF": "SP"}
+    valores = {
+        "Data": date(2026, 9, 25),
+        "Instituição": nome,
+        "UF": "SP",
+        "Unidade de negócio": unidade,
+    }
     folha.append([valores.get(coluna) for coluna in cabecalho])
     _declarar(
         pasta,
@@ -1540,30 +1609,54 @@ def test_a_instituicao_criada_DERIVA_o_tipo_da_categoria(cliente_admin, sessao, 
     assert nova.categoria_publico_id is not None
 
 
-def test_instituicao_declarada_SEM_categoria_trava(cliente_admin, sessao, semente):
-    """Sem o tipo não há como criar sem adivinhar, e adivinhar erra a frente.
-    Travar devolve a decisão a quem sabe."""
+def test_instituicao_declarada_SEM_categoria_AVISA_e_nasce_incompleta(
+    cliente_admin, sessao, semente
+):
+    """ESTE TESTE REVERTE O PRÓPRIO NOME, e a razão é uma incoerência.
+
+    Ele dizia: "sem o tipo não há como criar sem adivinhar, e adivinhar erra a
+    frente. Travar devolve a decisão a quem sabe." O argumento era bom — e ficou
+    de pé sozinho quando um nome que NEM ESTÁ na aba passou a entrar sem
+    categoria (11/10/2026, pedido do dono do produto).
+
+    A INCOERÊNCIA: quem usou a aba e esqueceu a categoria levava a trava que quem
+    não usou a aba deixou de levar. Era punir o esforço parcial.
+
+    E ADIVINHAR CONTINUA SENDO ERRADO — por isso ninguém adivinha: o tipo sai
+    `TIPO_SEM_CATEGORIA` ("entidade"), que é justamente o único que NÃO crava
+    frente. A frente sai genérica e a mensagem diz isso. A decisão continua com
+    quem sabe; ela só não segura mais as outras 53 agendas do dia.
+    """
     conteudo = _com_declaracao(sessao, semente, "Orgao Sem Tipo")
 
     criada = cliente_admin.post(
         "/api/importacoes", files={"arquivo": ("a.xlsx", conteudo, TIPO_XLSX)}
     ).json()
 
-    assert criada["pendencias"] == 1
+    assert criada["pendencias"] == 0, criada["grupos"]
     mensagens = " ".join(
         d["mensagem"] for linha in criada["linhas"] for d in linha["divergencias"]
     ).lower()
+    #: A FRASE DIZ O QUE SE PERDE, e isso é metade do valor do aviso: sem a
+    #: categoria a instituição fica fora da taxonomia de públicos do Score.
     assert "categoria" in mensagens, mensagens
+    assert "taxonomia" in mensagens, mensagens
 
 
-def test_instituicao_declarada_com_categoria_INVALIDA_trava(cliente_admin, sessao, semente):
+def test_instituicao_declarada_com_categoria_INVALIDA_AVISA_e_nasce_incompleta(
+    cliente_admin, sessao, semente
+):
+    """Mesma reversão do teste acima, pelo outro caminho: a categoria existe na
+    célula e não está na lista. Um valor inventado não vale mais que um vazio —
+    nos dois casos o cadastro nasce sem categoria, e o aviso explica.
+    """
     conteudo = _com_declaracao(sessao, semente, "Coisa", tipo="inventado")
 
     criada = cliente_admin.post(
         "/api/importacoes", files={"arquivo": ("a.xlsx", conteudo, TIPO_XLSX)}
     ).json()
 
-    assert criada["pendencias"] == 1
+    assert criada["pendencias"] == 0, criada["grupos"]
 
 
 def test_cadastro_INATIVO_nao_resolve(cliente_admin, sessao, semente):
@@ -2677,12 +2770,17 @@ def test_excluir_a_linha_TIRA_a_pendencia_dela(cliente_admin, sessao, semente):
         files={
             "arquivo": (
                 "a.xlsx",
-                _com_declaracao(sessao, semente, "Órgão Inventado"),
+                #: A LINHA PRESA VEM DA UNIDADE, e não mais da instituição
+                #: nova: ela parou de travar em 11/10/2026. O assunto deste
+                #: teste é excluir a linha presa, e para isso ela precisa prender.
+                _com_declaracao(
+                    sessao, semente, "Órgão Inventado", unidade="Aegea Marte"
+                ),
                 TIPO_XLSX,
             )
         },
     ).json()
-    assert criada["pendencias"] == 1
+    assert criada["pendencias"] == 1, criada["grupos"]
     (presa,) = [
         linha for linha in criada["linhas"] if any(d["trava"] for d in linha["divergencias"])
     ]

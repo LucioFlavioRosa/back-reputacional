@@ -476,6 +476,10 @@ def subir(sessao: Sessao, usuario: UsuarioLogado, arquivo: Arquivo) -> Importaca
                     # editável reaparecer como pendência branda em vez de ir
                     # para o bloco "o que vou criar".
                     "acao": divergencia.acao,
+                    #: Ver a nota no `repositorio_importacao`: os dois lugares
+                    #: montam este dicionário à mão, e um campo que falte em um
+                    #: deles some ao gravar.
+                    "acao_padrao": divergencia.acao_padrao,
                     "alvo": divergencia.alvo,
                     "declarado": divergencia.declarado,
                 }

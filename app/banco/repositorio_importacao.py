@@ -115,6 +115,11 @@ def gravar_proposta(sessao: Session, linha: ImportacaoLinha, proposta) -> None:
                 "coluna": divergencia.coluna,
                 "sugestoes": list(divergencia.sugestoes),
                 "acao": divergencia.acao,
+                #: VIAJA JUNTO, e é a lição do `declarado` logo abaixo: "um campo
+                #: que não viaja por aqui é um campo que a pessoa preencheu e que
+                #: o cadastro nasce sem". Aqui o preço era pior — sem o padrão
+                #: gravado, a confirmação não sabia criar e devolvia 409.
+                "acao_padrao": divergencia.acao_padrao,
                 "alvo": divergencia.alvo,
                 "declarado": divergencia.declarado,
             }
