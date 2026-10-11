@@ -674,21 +674,41 @@ def _resolver(
             categoria is None
             or normalizar(str(categoria)) not in indice.get("categorias_publico", {})
         ):
+            # AVISA E DEIXA NASCER — era `trava=True` até 11/10/2026.
+            #
+            # A INCOERÊNCIA QUE ISTO CONSERTA (achado de revisão): um nome que
+            # NÃO está na aba passou a entrar sem categoria, e um nome que ESTÁ
+            # na aba sem categoria válida continuava travando. Quem usou a aba
+            # levava a trava que quem não usou deixou de levar — o oposto do que
+            # se quer, e contra o "todos os campos são opcionais" do pedido.
+            #
+            # UM CAMINHO SÓ PARA NASCER INCOMPLETO, qualquer que seja o jeito
+            # como o nome chegou. É o padrão de cadastro que o dono do produto
+            # pediu, com os parâmetros de cada caso vindo do que a aba trouxer.
+            #
+            # A FRASE DIZ O QUE SE PERDE porque ela escreveu algo ali e merece
+            # saber por que não valeu.
             divergencias.append(
                 Divergencia(
                     campo=campo,
                     valor=texto,
                     mensagem=(
-                        f"{coluna_nome}: {texto!r} foi declarada sem uma categoria de "
-                        "público válida. Escreva a categoria na coluna ao lado, na aba "
-                        "de instituições — é dela que sai o tipo, e o tipo define a "
-                        "frente da agenda."
+                        f"{coluna_nome}: vou cadastrar {texto!r} sem categoria de "
+                        "público — o que está na coluna ao lado não é uma categoria "
+                        "da lista. Sem ela a instituição fica fora da taxonomia de "
+                        "públicos do Score, e a frente da agenda sai genérica. "
+                        "Complete o cadastro na plataforma depois."
                     ),
-                    trava=True,
+                    trava=False,
                     coluna=coluna_nome,
+                    acao_padrao="criar",
+                    #: O RESTO DO QUE ELA ESCREVEU VIAJA, e sem isto o cadastro
+                    #: nasceria sem a abrangência e a relevância que ela
+                    #: preencheu — perder duas colunas por causa de uma terceira.
+                    declarado=declarado or None,
                 )
             )
-            return _Resolucao()
+            return _Resolucao(a_criar=(vocabulario, texto))
         # O QUE ELA DECLAROU NAS OUTRAS COLUNAS é conferido ANTES da promessa: um
         # valor fora da lista ali estouraria a confirmação, e a conferência teria dito
         # que estava tudo pronto.
@@ -784,6 +804,12 @@ def _resolver(
                 #
                 # E NÃO TRAVA NADA: `a_criar` põe a linha em "esperando criação",
                 # que é trabalho da confirmação, não pendência da pessoa.
+                #
+                # `acao_padrao` É O QUE FAZ A CONFIRMAÇÃO FUNCIONAR sem clique:
+                # `acao` vazia mantém a oferta de apontar, e isto diz à
+                # confirmação o que fazer quando ninguém aponta. Sem este campo o
+                # fluxo inteiro dava 409 — achado de revisão, com teste.
+                acao_padrao="criar",
             )
         )
         return _Resolucao(a_criar=(vocabulario, texto))
@@ -1623,7 +1649,11 @@ def _decisoes(linhas) -> tuple[dict[tuple[str, str], str], dict[tuple[str, str],
         if linha.decisao == "descartada":
             continue
         for bruta in linha.divergencias or []:
-            acao = bruta.get("acao")
+            #: O PADRÃO VALE QUANDO NINGUÉM DECIDIU — e a ordem importa: a decisão
+            #: da pessoa sempre vence. Apontar para um cadastro existente tem de
+            #: cancelar a criação que seria o padrão, senão o clique dela criaria
+            #: a duplicata que ele existia para evitar.
+            acao = bruta.get("acao") or bruta.get("acao_padrao")
             if acao == "criar":
                 vocabulario = vocabulario_do_campo(bruta["campo"])
                 if vocabulario:

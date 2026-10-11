@@ -994,6 +994,21 @@ class Divergencia:
     #: a confirmação precisa: ao percorrer as linhas, a instrução está ao lado do
     #: valor a que se refere, sem uma segunda consulta para casar as duas.
     acao: str | None = None
+    #: O QUE ACONTECE SE A PESSOA NÃO DECIDIR NADA — e é diferente de `acao`.
+    #:
+    #: `acao` é a decisão DELA; isto é o padrão do sistema. Os dois precisam ser
+    #: campos separados, e o motivo é um defeito real: quando o nome não está no
+    #: cadastro, a importação passou a criá-lo sem travar (11/10/2026), e a
+    #: divergência fica ABERTA de propósito — `linhas_com` ignora divergência com
+    #: `acao` preenchida, então marcá-la mataria a oferta de apontar para um nome
+    #: parecido. Só que a confirmação lê `acao` para saber o que criar: sem este
+    #: campo, quem subia e confirmava sem clicar em nada recebia 409.
+    #:
+    #: NÃO SE INFERE DO RESTO. A alternativa era tratar "divergência aberta, não
+    #: travante, de campo com vocabulário" como criar — e o aviso de possível
+    #: duplicata, que também é aberto e não travante, entraria na conta na
+    #: primeira vez que alguém mexesse nessa condição.
+    acao_padrao: str | None = None
     #: O id do cadastro escolhido, quando `acao == "apontar"`.
     alvo: str | None = None
     #: O QUE A PESSOA ESCREVEU NA ABA DE CADASTRO, campo → valor, quando o cadastro
