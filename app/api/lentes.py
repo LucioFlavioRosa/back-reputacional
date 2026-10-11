@@ -1136,6 +1136,29 @@ _CORES_DO_TIER = {
 LENTES_COM_VEICULO_E_TIER = ("imprensa", "mercado")
 
 
+def _lacuna_do_veiculo(codigo: str) -> str:
+    """Por que ESTA lente não tem o ranking de veículos — e a frase tem de ser
+    verdadeira sobre ela, não genérica.
+
+    ACHADO DE REVISÃO, e o erro foi meu duas vezes: a frase original era "por
+    ora esta tela só mostra veículo na lente Imprensa", que virou mentira no dia
+    em que o Mercado entrou. Troquei por "esta lente não traz veículo na carga",
+    e essa é FALSA para a Sociedade: medido, ela traz 2.582 menções com veículo,
+    em 1.103 valores distintos.
+
+    O QUE A SOCIEDADE TRAZ NÃO É VEÍCULO DE IMPRENSA: é perfil ou rede —
+    "deolhoemesteio", "casadevovodede", nomes de pessoas. O campo é o mesmo, o
+    conceito não, e `DIMENSOES_POR_LENTE` já a chama de "Rede". Ranquear isso
+    como "Top veículos", ao lado de tier, diria algo errado sobre o dado.
+    """
+    if codigo == "sociedade":
+        return (
+            "Nesta lente o campo do veículo guarda o perfil ou a rede, não um "
+            "veículo de imprensa — ele aparece como Rede, em Onde está a causa."
+        )
+    return "Esta lente não traz veículo na carga."
+
+
 def _volume_por_tier(
     sessao, lente, mes: date, calibracao: Calibracao, filtro: FiltroDeMencoes | None = None
 ) -> BlocoSaida:
@@ -1216,7 +1239,7 @@ def _veiculos(
             else Ficha(
                 origem=Procedencia.PLANILHA,
                 fonte=_nomes_das_fontes(sessao, lente.id),
-                lacunas=("Esta lente não traz veículo na carga.",),
+                lacunas=(_lacuna_do_veiculo(lente.codigo),),
             )
         )
         return (
@@ -1441,7 +1464,9 @@ def _materias_recentes(
             else Ficha(
                 origem=Procedencia.PLANILHA,
                 fonte=_nomes_das_fontes(sessao, lente.id),
-                lacunas=("Esta lente não traz matéria com veículo na carga.",),
+                #: A Sociedade NÃO chega aqui (tem lista própria, logo
+                #: acima); quem chega é Clientes, que não vem de clipping.
+                lacunas=("Esta lente não traz matéria de clipping na carga.",),
             )
         )
         return _bloco(

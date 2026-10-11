@@ -421,6 +421,19 @@ def test_o_mercado_tem_os_quatro_blocos_de_veiculo_como_a_imprensa(sessao):
             tier="muito_relevante", veiculo="Valor Econômico",
         )
     )
+    #: E UM CHAMARIZ NA IMPRENSA, no mesmo mês (achado de revisão): sem ele, uma
+    #: consulta que esquecesse de filtrar por lente passaria, porque a única
+    #: menção do mês seria a do Mercado. Com os dois, o bloco do Mercado só
+    #: fecha se o filtro de lente existir de verdade.
+    clipei = sessao.scalars(
+        select(ScoreFonte).where(ScoreFonte.codigo == "clipei")
+    ).one()
+    sessao.add(
+        Mencao(
+            fonte_id=clipei.id, mes=MES, sentimento="neg",
+            tier="menos_relevante", veiculo="Rádio Betel 87.9 FM",
+        )
+    )
     sessao.flush()
 
     dossie = obter_dossie(sessao=sessao, usuario=_QuemOlha(), codigo="mercado", mes="2026-06")
@@ -454,9 +467,15 @@ def test_o_mercado_tem_os_quatro_blocos_de_veiculo_como_a_imprensa(sessao):
 def test_as_lentes_sem_veiculo_continuam_vazias_e_dizem_o_motivo(sessao):
     """O outro lado da mudança: trazer o Mercado NÃO abriu para todas.
 
-    Sociedade e Clientes não têm veículo nem tier na carga — para elas o bloco
-    sairia vazio de qualquer jeito, e a lacuna tem de dizer isso em vez de
-    "por ora só na Imprensa", que virou mentira no dia em que o Mercado entrou.
+    E A LACUNA TEM DE SER VERDADEIRA SOBRE CADA UMA, que é onde eu errei duas
+    vezes (achado de revisão). Medido:
+
+        sociedade   2.842 menções   ZERO com tier   2.582 com veículo
+        clientes        0 menções
+
+    Então "não tem tier" é verdade para as duas, e "não tem veículo" é FALSO
+    para a Sociedade — o campo dela guarda perfil e rede ("deolhoemesteio",
+    "Stela Farias"), não veículo de imprensa. Ver `_lacuna_do_veiculo`.
 
     SEM ESTE TESTE, trocar o `!=` por um `not in` mal escrito abriria para todo
     mundo e os blocos vazios voltariam a aparecer como moldura sem conteúdo.
@@ -472,6 +491,17 @@ def test_as_lentes_sem_veiculo_continuam_vazias_e_dizem_o_motivo(sessao):
         for lacuna in dossie.volume_por_tier.ficha.lacunas:
             assert "por ora" not in lacuna.lower(), lacuna
             assert "Imprensa" not in lacuna or "CRM" in lacuna, lacuna
+
+    #: E A FRASE DO VEÍCULO É A DE CADA UMA. A Sociedade TEM veículo (2.582
+    #: menções, medido) — dizer que não tem seria trocar uma mentira por outra.
+    sociedade = obter_dossie(
+        sessao=sessao, usuario=_QuemOlha(), codigo="sociedade", mes="2026-06"
+    )
+    assert "perfil ou a rede" in sociedade.top_veiculos.ficha.lacunas[0]
+    clientes = obter_dossie(
+        sessao=sessao, usuario=_QuemOlha(), codigo="clientes", mes="2026-06"
+    )
+    assert "não traz veículo na carga" in clientes.top_veiculos.ficha.lacunas[0]
 
 
 def test_materias_recentes_sobe_o_teto_quando_ha_recorte(sessao):
