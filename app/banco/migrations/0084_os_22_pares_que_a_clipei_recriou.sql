@@ -51,7 +51,21 @@ select p.id as perfil, v.id as veiculo
    --: VER A `0077`: julgamento humano gravado não se desfaz sozinho. Um perfil
    --: ligado a uma pessoa do CRM é decisão de alguém, e fundi-lo levaria o
    --: vínculo embora. Zero deles hoje, e a guarda fica.
-   and p.interlocutor_id is null;
+   and p.interlocutor_id is null
+   --: E O JULGAMENTO HUMANO BARRA A FUSÃO, que é o contrato que a `0078`
+   --: escreveu: "a decisão vale mais que a tela... guardado, ele também protege
+   --: de uma fusão automática futura: qualquer regra nova que resolva casar por
+   --: semelhança tem de consultar isto primeiro". Se alguém olhou o par e disse
+   --: que são atores diferentes, esta migration não tem o que fundir.
+   --:
+   --: `least`/`greatest` PORQUE O PAR NÃO TEM LADO: a `0078` o guarda sempre com
+   --: `esquerda < direita` pelo uuid, e procurar numa direção só deixaria metade
+   --: dos julgamentos passar.
+   and not exists (
+         select 1 from ator_distinto d
+          where d.esquerda = least(p.id, v.id)
+            and d.direita = greatest(p.id, v.id)
+       );
 
 --: TRÊS LADOS OU MAIS NÃO SE FUNDE SOZINHO: com dois veículos de mesmo nome não
 --: há como saber qual é o ator, e escolher errado espalha as menções no cadastro
@@ -78,10 +92,8 @@ update interacao i
   from par_recriado r
  where i.instituicao_id = r.perfil;
 
-delete from ator_distinto
- where esquerda in (select perfil from par_recriado)
-    or direita in (select perfil from par_recriado);
-
+--: SEM `delete from ator_distinto`, pelo mesmo motivo da `0083`: a `0078` tem
+--: `on delete cascade`, e o par julgado nem entra na temporária.
 delete from instituicao where id in (select perfil from par_recriado);
 
 do $$
@@ -91,11 +103,20 @@ declare
 begin
     select count(*) into fundidos from par_recriado;
 
+    --: SEM OS JULGADOS: um par que alguém disse ser de atores diferentes não é
+    --: "par restante" — ele é uma pergunta já respondida, e contá-lo faria o
+    --: aviso pedir trabalho que não existe.
     select count(*) into sobrou
       from instituicao p
       join instituicao v
         on v.nome_normalizado = p.nome_normalizado and v.tipo = 'veiculo'
-     where p.tipo = 'perfil_rede' and p.interlocutor_id is null;
+     where p.tipo = 'perfil_rede'
+       and p.interlocutor_id is null
+       and not exists (
+             select 1 from ator_distinto d
+              where d.esquerda = least(p.id, v.id)
+                and d.direita = greatest(p.id, v.id)
+           );
 
     raise notice 'perfis recriados pela Clipei, fundidos no veiculo: %', fundidos;
     raise notice 'pares restantes (devia ser 0, ou so os de 3+ lados): %', sobrou;

@@ -62,7 +62,21 @@ select v.id as veiculo, f.id as financeiro, f.tipo as tipo_que_fica
   join instituicao f
     on f.nome_normalizado = v.nome_normalizado
    and f.tipo in ('investidor', 'credor')
- where v.tipo = 'veiculo';
+ where v.tipo = 'veiculo'
+   --: E O JULGAMENTO HUMANO BARRA A FUSÃO, que é o contrato que a `0078`
+   --: escreveu: "a decisão vale mais que a tela... guardado, ele também protege
+   --: de uma fusão automática futura: qualquer regra nova que resolva casar por
+   --: semelhança tem de consultar isto primeiro". Se alguém olhou o par e disse
+   --: que são atores diferentes, esta migration não tem o que fundir.
+   --:
+   --: `least`/`greatest` PORQUE O PAR NÃO TEM LADO: a `0078` o guarda sempre com
+   --: `esquerda < direita` pelo uuid, e procurar numa direção só deixaria metade
+   --: dos julgamentos passar.
+   and not exists (
+         select 1 from ator_distinto d
+          where d.esquerda = least(v.id, f.id)
+            and d.direita = greatest(v.id, f.id)
+       );
 
 --: TRÊS LADOS OU MAIS NÃO SE FUNDE SOZINHO. Com dois investidores de mesmo nome,
 --: ou dois veículos, não há como saber qual é o ator — e escolher errado espalha
@@ -94,13 +108,10 @@ update interacao i
   from par_financeiro p
  where i.instituicao_id = p.veiculo;
 
---: O PAR JÁ DECIDIDO COMO "OUTRO ATOR" SAI DA FILA junto com o cadastro: a linha
---: de `ator_distinto` que aponta para o veículo que vai deixar de existir não diz
---: mais nada, e a chave estrangeira a seguraria.
-delete from ator_distinto
- where esquerda in (select veiculo from par_financeiro)
-    or direita in (select veiculo from par_financeiro);
-
+--: SEM `delete from ator_distinto`: a `0078` declara `on delete cascade` — "apagada
+--: a instituição, o par deixou de existir" —, então o que sobra sai sozinho. E o par
+--: que alguém DECIDIU ser de atores diferentes nem chega aqui: ele é barrado na
+--: formação da temporária, acima.
 delete from instituicao where id in (select veiculo from par_financeiro);
 
 do $$
@@ -112,12 +123,19 @@ begin
 
     --: O QUE DEVERIA SOBRAR É ZERO, e um número aqui diz "há par de três lados",
     --: que é o caso que esta migration deixa de propósito para quem administra.
+    --: SEM OS JULGADOS: um par que alguém disse ser de atores diferentes não é
+    --: "par restante" — é uma pergunta já respondida.
     select count(*) into sobrou
       from instituicao v
       join instituicao f
         on f.nome_normalizado = v.nome_normalizado
        and f.tipo in ('investidor', 'credor')
-     where v.tipo = 'veiculo';
+     where v.tipo = 'veiculo'
+       and not exists (
+             select 1 from ator_distinto d
+              where d.esquerda = least(v.id, f.id)
+                and d.direita = greatest(v.id, f.id)
+           );
 
     raise notice 'veiculos fundidos no ator financeiro: %', fundidos;
     raise notice 'pares restantes (devia ser 0, ou so os de 3+ lados): %', sobrou;
