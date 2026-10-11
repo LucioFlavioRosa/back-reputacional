@@ -1061,6 +1061,8 @@ def test_o_PERFIL_DE_REDE_e_recusado_e_NAO_derruba_o_lote(cliente_admin, sessao)
     assert len(corpo["recusadas"]) == 1
     assert corpo["recusadas"][0]["nome"] == "perfilnalote_zz96"
     assert "perfil de rede" in corpo["recusadas"][0]["motivo"]
+    #: E A MENSAGEM DIZ O QUE FAZER: o que falta num perfil é o CARGO.
+    assert "CARGO" in corpo["recusadas"][0]["motivo"]
 
     #: O PERFIL FICOU INTACTO, cargo e tipo.
     sessao.refresh(perfil)
@@ -1155,3 +1157,84 @@ def test_o_id_REPETIDO_no_pedido_nao_vira_duas_recusas(cliente_admin, sessao):
 
     assert corpo["enquadradas"] == 1, corpo
     assert corpo["recusadas"] == []
+
+
+def test_o_perfil_de_rede_SEM_CARGO_tambem_e_recusado(cliente_admin, sessao):
+    """O MESMO ACHADO ALTA, uma segunda vez — e a segunda foi o meu conserto
+    pela METADE.
+
+    Eu havia recusado o perfil que carrega `cargo` ou `interlocutor_id`, porque o
+    banco tem CHECK de que os dois só existem em `tipo = 'perfil_rede'`. E deixei
+    PASSAR o perfil que não tem nenhum dos dois: ele não viola constraint
+    nenhuma, então virava `orgao` em silêncio.
+
+    MAS ELE É O CASO MAIS POBRE, não o mais inofensivo:
+    `veiculos_da_imprensa._motivo_da_revisao` diz em voz alta que ele entrou "sem
+    cargo reconhecido, então ficou sem categoria de público. Diga o CARGO para o
+    perfil entrar na taxonomia". A pendência dele pede o CARGO, não um tipo novo —
+    e são os 1.108 perfis que a primeira carga da Bites criou.
+
+    CONVERTÊ-LO EM `orgao` APAGARIA O FATO de que ele é um perfil de rede: o
+    vínculo com a pessoa do CRM deixaria de ser possível (o CHECK da `0073` só
+    permite `interlocutor_id` em perfil), e a fila de duplicados perderia o par
+    perfil × veículo que ela existe para perguntar.
+    """
+    categoria = _categoria_de(sessao, "orgao")
+    nome = "perfilpelado_zz99"
+    pelado = Instituicao(
+        nome=nome,
+        nome_normalizado=normalizar(nome),
+        tipo="perfil_rede",
+        #: SEM CARGO E SEM PESSOA: não viola CHECK nenhum, e era por isso que
+        #: passava.
+        cargo=None,
+        interlocutor_id=None,
+        pendente_de_revisao=True,
+    )
+    sessao.add(pelado)
+    sessao.flush()
+
+    corpo = cliente_admin.post(
+        "/api/revisao-de-cadastros/instituicoes/enquadramento",
+        json={"ids": [str(pelado.id)], "categoria_publico_id": categoria.id},
+    ).json()
+
+    assert corpo["enquadradas"] == 0, corpo
+    assert len(corpo["recusadas"]) == 1
+    assert "perfil de rede" in corpo["recusadas"][0]["motivo"]
+
+    #: CONTINUA PERFIL DE REDE, e continua na fila pedindo o cargo.
+    sessao.refresh(pelado)
+    assert pelado.tipo == "perfil_rede"
+    assert pelado.categoria_publico_id is None
+    assert pelado.pendente_de_revisao is True
+
+
+def test_o_lock_do_lote_tem_ORDEM(sessao):
+    """Travar várias linhas sem ordem definida deixa o Postgres escolher.
+
+    DOIS LOTES COM CONJUNTOS CRUZADOS podem travar subconjuntos em ordens
+    diferentes — deadlock, que chega como 500 para quem clicou. Achado de
+    revisão.
+
+    E A DISCIPLINA JÁ EXISTIA NO REPOSITÓRIO, com o comentário dizendo o porquê:
+    `api/score.py` trava "em ordem de id — a mesma disciplina da reconferência da
+    taxonomia". Eu escrevi um `with_for_update` novo sem olhar o que já estava
+    ali, e é isso que esta âncora lembra a quem vier depois.
+    """
+    import inspect
+
+    from app.casos_de_uso import enquadrar_em_lote
+
+    fonte = inspect.getsource(enquadrar_em_lote.enquadrar)
+    #: A POSIÇÃO, e não uma janela de N caracteres antes: o comentário que
+    #: explica o lock é longo, e uma janela fixa falhava por isso — dizendo que
+    #: a ordem não existia quando ela existia. `.with_for_update()` com ponto e
+    #: parênteses é o CÓDIGO; o comentário fala de `with_for_update` sem eles.
+    assert ".order_by(Instituicao.id)" in fonte, (
+        "o lock do lote precisa de ordem: sem ela, dois lotes cruzados podem "
+        "travar em ordens diferentes e dar deadlock"
+    )
+    assert fonte.index(".order_by(Instituicao.id)") < fonte.index(
+        ".with_for_update()"
+    ), "o `order_by` tem de vir ANTES do `with_for_update` na mesma consulta"

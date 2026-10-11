@@ -176,10 +176,26 @@ def enquadrar(
     #: outra pessoa"), então dois lotes ao mesmo tempo é o caso normal, não a
     #: exceção. O lock serializa os dois: o segundo espera, lê a linha já
     #: consolidada, e recusa — que é o que ele deve fazer.
+    #:
+    #: `order_by(Instituicao.id)` ANTES DO LOCK, e isso é o conserto de um segundo
+    #: achado de revisão: travar várias linhas sem ordem definida deixa o Postgres
+    #: escolher, e dois lotes com conjuntos CRUZADOS podem travar subconjuntos em
+    #: ordens diferentes — deadlock, que chega como 500 para quem clicou.
+    #:
+    #: E A DISCIPLINA JÁ EXISTIA NO REPOSITÓRIO, com o comentário dizendo o
+    #: porquê: `api/score.py` trava "em ordem de id — a mesma disciplina da
+    #: reconferência da taxonomia". Eu escrevi um `with_for_update` novo sem
+    #: olhar o que já estava ali.
+    #:
+    #: A ORDEM DO LOCK NÃO É A ORDEM DAS RECUSAS: o laço continua percorrendo
+    #: `ids`, que é a ordem do pedido, e é essa que a tela lê de cima para baixo.
     pedidas = {
         linha.id: linha
         for linha in sessao.scalars(
-            select(Instituicao).where(Instituicao.id.in_(ids)).with_for_update()
+            select(Instituicao)
+            .where(Instituicao.id.in_(ids))
+            .order_by(Instituicao.id)
+            .with_for_update()
         )
     }
 
@@ -257,30 +273,40 @@ def enquadrar(
                 )
             )
             continue
-        if novo_tipo != "perfil_rede" and (linha.cargo or linha.interlocutor_id):
-            #: O PERFIL DE REDE CARREGA CARGO E A PESSOA DE QUEM ELE É, e o banco
-            #: tem CHECK de que os dois só existem em `tipo = 'perfil_rede'` — ver
-            #: as migrations `0073` e `0076`.
+        if linha.tipo == "perfil_rede" and novo_tipo != "perfil_rede":
+            #: TODO PERFIL DE REDE, e não só o que tem cargo ou pessoa.
             #:
-            #: ACHADO DE REVISÃO COM SEVERIDADE ALTA, E ALCANÇÁVEL DE VERDADE: a
-            #: ingestão de menções cria perfil de rede PENDENTE, então eles estão
-            #: na fila. Medido removendo esta recusa e o savepoint: 500, com
-            #: `CheckViolation: instituicao_cargo_so_de_perfil` — o lote INTEIRO
-            #: caía por uma linha.
+            #: DOIS ACHADOS DE REVISÃO COM SEVERIDADE ALTA, no mesmo lugar, e o
+            #: segundo foi o meu conserto pela METADE: eu recusei o perfil que
+            #: carrega `cargo` ou `interlocutor_id` — porque o banco tem CHECK de
+            #: que os dois só existem em `tipo = 'perfil_rede'` (migrations `0073`
+            #: e `0076`) — e deixei PASSAR o perfil que não tem nenhum dos dois.
             #:
-            #: RECUSAR, E NÃO LIMPAR OS CAMPOS: o cargo é o que o fornecedor
-            #: informou e `interlocutor_id` é o vínculo com a pessoa do CRM —
-            #: apagar os dois em silêncio num lote de 178 destruiria informação que
-            #: ninguém pediu para destruir. É a mesma recusa que o cadastro um a um
+            #: MEDIDO removendo a recusa e o savepoint: 500 com `CheckViolation:
+            #: instituicao_cargo_so_de_perfil`. Uma linha derrubava as 178.
+            #:
+            #: MAS O PERFIL SEM CARGO É O CASO MAIS POBRE, não o mais inofensivo:
+            #: `veiculos_da_imprensa._motivo_da_revisao` diz em voz alta que ele
+            #: entrou "sem cargo reconhecido, então ficou sem categoria de
+            #: público. Diga o CARGO para o perfil entrar na taxonomia". A
+            #: pendência dele pede o cargo, não um tipo novo — e são os 1.108
+            #: perfis que a primeira carga da Bites criou.
+            #:
+            #: CONVERTÊ-LO EM `orgao` APAGARIA O FATO de que ele é um perfil de
+            #: rede: o vínculo com a pessoa do CRM deixaria de ser possível, e a
+            #: fila de duplicados perderia o par perfil × veículo que ela existe
+            #: para perguntar. Em silêncio, num lote de 178.
+            #:
+            #: RECUSAR, E NÃO LIMPAR NADA. É a mesma recusa que o cadastro um a um
             #: já faz (`_conferir_campos_de_perfil`), "para a mensagem falar de
             #: cadastro em vez de constraint".
             recusadas.append(
                 Recusado(
                     str(linha.id),
                     linha.nome,
-                    "É um perfil de rede, e ele guarda o cargo informado e a "
-                    "pessoa de quem é. Mudar o tipo apagaria os dois — edite-o "
-                    "pela lista de cadastro.",
+                    "É um perfil de rede, e o lote daria a ele um tipo de "
+                    "instituição. O que falta num perfil é o CARGO, que é de onde "
+                    "sai a categoria dele — informe-o pela lista de cadastro.",
                 )
             )
             continue
