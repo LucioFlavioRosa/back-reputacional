@@ -213,7 +213,12 @@ class DossieSaida(BaseModel):
     #: A LINHA DO TEMPO DOS FATOS DE MERCADO, abaixo da Evolução — e só na lente
     #: Mercado; `None` nas outras. Ele ERA a Evolução dela, e deixou de ser
     #: quando se mediu que a lente tem série mensal. Ver `_eventograma`.
-    eventograma: BlocoSaida | None = None
+    #: SEM `= None`, de propósito: com default, o campo sai do `required` do
+    #: OpenAPI, e um cliente gerado do schema o tiparia `Bloco | undefined`.
+    #: `undefined` não é "não tem", é "ninguém disse" — e o front declara o
+    #: campo obrigatório e anulável justamente para que "não tem" seja dito.
+    #: Achado de revisão.
+    eventograma: BlocoSaida | None
     #: O quadro ao lado da evolução — até três sinais da série, mais as lacunas.
     sinais_da_evolucao: list[str] = Field(default_factory=list)
     #: A rosca de volume por tier, ao lado do Top 5 veículos — ver
