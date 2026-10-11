@@ -20,6 +20,12 @@ POR QUE ESTE ARQUIVO EXISTE. A marca é uma linha por nascimento, e uma linha
 esquecida não quebra nada: o cadastro entra, a tela funciona, e ele simplesmente
 nunca aparece na fila. Uma fila que não tem tudo é pior que fila nenhuma, porque
 ensina a confiar nela.
+
+E A SEGUNDA METADE, de 11/10/2026: a ROTA que lê a fila e o ato que tira dela.
+Durante um dia a coluna existiu sem ninguém a ler — o pior estado possível,
+porque a importação PAROU DE TRAVAR contando com uma revisão que não acontecia.
+O dono do produto cobrou: "e pedi também por uma aba extra somente para
+conferência de novos registros e não vi".
 """
 
 from __future__ import annotations
@@ -227,3 +233,253 @@ def test_quem_a_PESSOA_cadastra_pela_tela_NAO_entra_na_fila(sessao):
         select(Instituicao).where(Instituicao.nome_normalizado == normalizar(nome))
     )
     assert feita.pendente_de_revisao is False
+
+
+# -- A ABA: a rota que lê a fila, e o ato que tira dela ------------------------
+
+
+@pytest.fixture
+def cliente_sem_admin(sessao):
+    """`crm_edicao` abre o portal do CRM e NÃO administra cadastros.
+
+    É o contrapeso EXATO da guarda, e não um perfil sem acesso a nada — que
+    passaria com qualquer dependência, inclusive com a errada.
+    """
+    try:
+        yield _cliente(sessao, "crm_edicao")
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_a_rota_LISTA_as_tres_abas_sempre(cliente_admin):
+    """As três, inclusive as vazias, e na ordem da tela.
+
+    UMA ABA QUE DESAPARECE QUANDO ESTÁ LIMPA é uma aba que ninguém aprende a
+    olhar: quem abre o Cadastro compartilhado precisa ver que a revisão existe e
+    que não há nada pendente — não um espaço em branco indistinguível de uma
+    tela que não carregou.
+    """
+    resposta = cliente_admin.get("/api/revisao-de-cadastros")
+    assert resposta.status_code == 200, resposta.text
+
+    abas = resposta.json()
+    assert [aba["id"] for aba in abas] == ["instituicoes", "assuntos", "porta_vozes"]
+    assert [aba["rotulo"] for aba in abas] == [
+        "Instituições e Contatos",
+        "Temas",
+        "Representantes Aegea",
+    ]
+
+
+def test_quem_NAO_administra_cadastros_nao_le_a_fila(cliente_sem_admin):
+    """Mais estrito que as listagens de cadastro, que pedem `ve_diretorio`.
+
+    A FILA NÃO É A BASE: um registro aqui diz que a plataforma não confia naquele
+    enquadramento ainda. Quem não pode consertar não ganha nada em ver a lista do
+    que está por consertar — e a lista carrega o motivo, que é uma dúvida
+    interna sobre o dado.
+    """
+    assert cliente_sem_admin.get("/api/revisao-de-cadastros").status_code == 403
+
+
+def test_os_quatro_nascimentos_APARECEM_cada_um_na_sua_aba(cliente_admin, sessao):
+    """O mapa de `DA_FILA`, afirmado pela ROTA e não pela coluna.
+
+    `test_os_QUATRO_cadastros_da_importacao_de_agendas_nascem_pendentes` prova que
+    a marca foi gravada. Este prova que ela CHEGA NA TELA, e na aba certa — que é
+    o que o dono do produto pediu e o que faltava.
+    """
+    conteudo = _agenda_com(
+        sessao,
+        **{
+            "Data": date(2026, 9, 25),
+            "Instituição": "Órgão Da Aba Zz73",
+            "UF": "SP",
+            "Interlocutor 1": "Pessoa Da Aba Zz73",
+            "Pessoa da Aegea 1": "Representante Da Aba Zz73",
+            "Tema 1": "Assunto Da Aba Zz73",
+        },
+    )
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("dia.xlsx", conteudo, TIPO_XLSX)}
+    ).json()
+    assert criada["pendencias"] == 0, criada["grupos"]
+    assert (
+        cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao").status_code
+        == 201
+    )
+
+    abas = {
+        aba["id"]: {p["nome"]: p for p in aba["pendentes"]}
+        for aba in cliente_admin.get("/api/revisao-de-cadastros").json()
+    }
+
+    esperado = (
+        ("instituicoes", "Órgão Da Aba Zz73", "instituicao"),
+        ("instituicoes", "Pessoa Da Aba Zz73", "interlocutor"),
+        ("assuntos", "Assunto Da Aba Zz73", "tema"),
+        ("porta_vozes", "Representante Da Aba Zz73", "pessoa_aegea"),
+    )
+    for aba, nome, tipo in esperado:
+        assert nome in abas[aba], f"{nome} não apareceu na aba {aba}: {list(abas[aba])}"
+        assert abas[aba][nome]["tipo"] == tipo
+
+
+def test_a_fila_DIZ_a_instituicao_de_cada_pessoa_homonima(cliente_admin, sessao):
+    """O caso real, e é a razão de `contexto` existir.
+
+    A PLANILHA DE RI tem quatro nomes em duas instituições cada, e desde
+    11/10/2026 cada um nasce DUAS VEZES, de propósito — a `0002` diz que "mesmo
+    nome em instituições diferentes são pessoas diferentes".
+
+    SEM A INSTITUIÇÃO AO LADO a aba mostraria "Artur Santa" duas vezes, com o
+    mesmo motivo, e quem revisa não teria como saber qual é o do Banco XP e qual
+    é o da XP Asset. A fila ficaria ilegível justamente no caso que a fez
+    existir — e pior que ilegível: convidaria a fundir os dois.
+    """
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    for casa in ("Banco Zz74 Um", "Banco Zz74 Dois"):
+        folha.append(
+            [
+                {
+                    "Data": date(2026, 9, 25),
+                    "Instituição": casa,
+                    "UF": "SP",
+                    "Interlocutor 1": "Pessoa Em Duas Zz74",
+                }.get(coluna)
+                for coluna in cabecalho
+            ]
+        )
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("ri.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+    assert criada["pendencias"] == 0, criada["grupos"]
+    assert (
+        cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao").status_code
+        == 201
+    )
+
+    aba = next(
+        a
+        for a in cliente_admin.get("/api/revisao-de-cadastros").json()
+        if a["id"] == "instituicoes"
+    )
+    as_duas = [
+        p for p in aba["pendentes"] if p["nome"] == "Pessoa Em Duas Zz74"
+    ]
+    assert len(as_duas) == 2, as_duas
+
+    #: AS DUAS SÃO DISTINGUÍVEIS, e é só o `contexto` que as distingue.
+    assert {p["contexto"] for p in as_duas} == {"Banco Zz74 Um", "Banco Zz74 Dois"}
+    #: E AS DUAS DIZEM POR QUÊ.
+    for pendente in as_duas:
+        assert "2 instituições" in pendente["motivo"]
+
+
+def test_consolidar_TIRA_da_fila_e_APAGA_o_motivo(cliente_admin, sessao):
+    """O ato de revisar, e os dois efeitos que ele tem.
+
+    O MOTIVO SAI COM A PENDÊNCIA porque ele é a PERGUNTA que a fila fazia.
+    Mantê-lo deixaria "apareceu em 2 instituições — confirme se são a mesma
+    pessoa" grudado num cadastro sobre o qual alguém JÁ confirmou, pronto para
+    reaparecer na próxima tela que o leia.
+    """
+    nome = "Entidade Consolidada Zz75"
+    registro = Instituicao(
+        nome=nome,
+        nome_normalizado=normalizar(nome),
+        tipo="entidade",
+        uf="SP",
+        pendente_de_revisao=True,
+        motivo_da_revisao="Nasceu da planilha de teste.",
+    )
+    sessao.add(registro)
+    sessao.flush()
+
+    na_fila = cliente_admin.get("/api/revisao-de-cadastros").json()[0]["pendentes"]
+    assert nome in [p["nome"] for p in na_fila]
+
+    resposta = cliente_admin.post(
+        f"/api/revisao-de-cadastros/instituicao/{registro.id}/consolidacao"
+    )
+    assert resposta.status_code == 200, resposta.text
+    assert resposta.json()["ja_estava_consolidado"] is False
+    assert resposta.json()["pendente"]["motivo"] is None
+    #: O CONTEXTO CONTINUA, porque ele descreve o cadastro e não a pendência.
+    assert resposta.json()["pendente"]["contexto"] == "Entidade · SP"
+
+    sessao.refresh(registro)
+    assert registro.pendente_de_revisao is False
+    assert registro.motivo_da_revisao is None
+
+    #: E SAIU DA LISTA.
+    depois = cliente_admin.get("/api/revisao-de-cadastros").json()[0]["pendentes"]
+    assert nome not in [p["nome"] for p in depois]
+
+
+def test_consolidar_DUAS_VEZES_diz_que_ja_estava(cliente_admin, sessao):
+    """Duas pessoas na mesma aba é o caso NORMAL, não a exceção.
+
+    O PEDIDO É EXPLÍCITO: "inclusive pode ser trabalho de outra pessoa". Recusar
+    o segundo clique seria inventar um conflito onde não há desacordo — o estado
+    final é o que as duas pessoas queriam. O booleano existe para a tela dizer
+    "outra pessoa já consolidou este" em vez de piscar uma confirmação falsa.
+    """
+    nome = "Entidade Duas Vezes Zz76"
+    registro = Instituicao(
+        nome=nome,
+        nome_normalizado=normalizar(nome),
+        tipo="entidade",
+        pendente_de_revisao=True,
+    )
+    sessao.add(registro)
+    sessao.flush()
+
+    rota = f"/api/revisao-de-cadastros/instituicao/{registro.id}/consolidacao"
+    assert cliente_admin.post(rota).json()["ja_estava_consolidado"] is False
+    segunda = cliente_admin.post(rota)
+    assert segunda.status_code == 200, segunda.text
+    assert segunda.json()["ja_estava_consolidado"] is True
+
+
+def test_o_id_que_nao_e_do_tipo_da_404_e_nao_500(cliente_admin):
+    """`sessao.get(Tema, "abc")` estoura `DataError` e aborta a transação.
+
+    UM 500 ONDE O CERTO É 404, e o custo é maior que a resposta errada: o
+    `DataError` aborta a transação do pedido INTEIRO no Postgres, então qualquer
+    coisa que viesse depois na mesma sessão também falharia.
+
+    E ESTE NÃO É UM CASO HIPOTÉTICO: o id vem da URL, e o front monta a URL com
+    o id que a listagem devolveu como TEXTO — um `tema` com id inteiro e uma
+    `instituicao` com UUID saem da mesma lista, pela mesma rota.
+    """
+    assert cliente_admin.post(
+        "/api/revisao-de-cadastros/tema/nao-sou-numero/consolidacao"
+    ).status_code == 404
+    assert cliente_admin.post(
+        "/api/revisao-de-cadastros/instituicao/nao-sou-uuid/consolidacao"
+    ).status_code == 404
+    #: E O TIPO QUE NÃO É DA FILA.
+    assert cliente_admin.post(
+        "/api/revisao-de-cadastros/mencao/1/consolidacao"
+    ).status_code == 404
+
+
+def test_toda_tabela_da_fila_SAI_pela_rota():
+    """Âncora: as quatro que entram na fila são as quatro que a rota consolida.
+
+    SEM ELA, uma tabela acrescentada a `_TABELAS` e esquecida em `POR_TIPO`
+    apareceria na aba e recusaria a consolidação — a pessoa veria um registro
+    que não sai, e descobriria pelo 404. `POR_TIPO` é derivado de `_TABELAS` por
+    essa razão; este teste prende a derivação ao mapa de `DA_FILA`, que é o
+    pedido do dono do produto escrito em código.
+    """
+    from app.casos_de_uso.fila_de_revisao import POR_TIPO
+
+    assert set(POR_TIPO) == {tabela.__tablename__ for tabela, _ in DA_FILA}

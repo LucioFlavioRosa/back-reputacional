@@ -363,3 +363,111 @@ def test_a_conferencia_AVISA_das_duas_grafias(cliente_admin, sessao):
     assert "Renan Tibúrcio Zz61" in avisos[0]
     #: E NÃO TRAVA.
     assert criada["pendencias"] == 0
+
+
+# -- os dois achados da revisão do 93c3351 ------------------------------------
+
+
+def test_o_resumo_CONTA_os_dois_cadastros_de_quem_nasce_duas_vezes(
+    cliente_admin, sessao
+):
+    """O número que a pessoa lê depois de subir a planilha, e ele subcontava.
+
+    ACHADO DE REVISÃO DO CODEX: `criados += 1` ficava FORA do laço dos destinos,
+    então um nome que nasce em duas instituições contava 1 e inseria 2. Com o
+    arquivo real de RI, a confirmação respondeu `cadastros: 505` tendo gravado
+    509 — os quatro nomes em duas casas valendo metade.
+
+    E O ERRO ERA INVISÍVEL: nada quebra, nenhuma linha falta no banco. Só o
+    resumo mente, e um resumo que subconta é pior que resumo nenhum — ele convida
+    a conferir o que já está certo.
+    """
+    conteudo = _duas_agendas_da_mesma_pessoa(sessao)
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("ri.xlsx", conteudo, TIPO_XLSX)}
+    ).json()
+    assert criada["pendencias"] == 0, criada["grupos"]
+
+    confirmacao = cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao")
+    assert confirmacao.status_code == 201, confirmacao.text
+
+    #: QUANTAS LINHAS NASCERAM DE VERDADE, contadas no banco.
+    nascidos = sessao.scalars(
+        select(Interlocutor).where(
+            Interlocutor.nome_normalizado == normalizar("Pessoa Em Duas Zz78")
+        )
+    ).all()
+    assert len(nascidos) == 2, [n.nome for n in nascidos]
+
+    #: E O RESUMO DIZ O MESMO NÚMERO. Duas instituições + dois interlocutores.
+    assert confirmacao.json()["cadastros"] == 4, confirmacao.json()
+
+
+def _duas_agendas_da_mesma_pessoa(sessao) -> bytes:
+    """Duas linhas, duas instituições novas, a MESMA pessoa nas duas."""
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    for casa in ("Banco Zz78 Um", "Banco Zz78 Dois"):
+        folha.append(
+            [
+                {
+                    "Data": date(2026, 9, 25),
+                    "Instituição": casa,
+                    "UF": "SP",
+                    "Interlocutor 1": "Pessoa Em Duas Zz78",
+                }.get(coluna)
+                for coluna in cabecalho
+            ]
+        )
+    saida = io.BytesIO()
+    pasta.save(saida)
+    return saida.getvalue()
+
+
+def test_o_aviso_de_grafia_NAO_cruza_vocabularios(cliente_admin, sessao):
+    """Um tema e uma instituição com o mesmo nome normalizado NÃO são duas grafias.
+
+    ACHADO DE REVISÃO DO CODEX: `_avisar_as_duas_grafias` agrupava por
+    `normalizar(valor)` sem o vocabulário, mas a deduplicação que ele EXPLICA é
+    por `(vocabulario, normalizar(valor))` — duas tabelas diferentes não colidem
+    entre si. O aviso prometia uma deduplicação que não ia acontecer.
+
+    E AVISO FALSO NUMA TELA DE AVISO é o que ensina a ignorá-la: a conferência
+    inteira depende de a pessoa ler o que está escrito ali.
+
+    'Água' E 'Agua' é o par mínimo: `normalizar` tira o acento, então os dois
+    viram a mesma chave — e nem por isso o tema e a instituição se fundem.
+    """
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    folha.append(
+        [
+            {
+                "Data": date(2026, 9, 25),
+                "Instituição": "Agua Zz79",
+                "UF": "SP",
+                "Tema 1": "Água Zz79",
+            }.get(coluna)
+            for coluna in cabecalho
+        ]
+    )
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    criada = cliente_admin.post(
+        "/api/importacoes",
+        files={"arquivo": ("agua.xlsx", saida.getvalue(), TIPO_XLSX)},
+    ).json()
+
+    grafias = [
+        d["mensagem"]
+        for linha in criada["linhas"]
+        for d in linha["divergencias"]
+        if "escrito de" in d["mensagem"]
+    ]
+    assert grafias == [], grafias
+    assert criada["pendencias"] == 0, criada["grupos"]

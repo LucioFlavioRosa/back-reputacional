@@ -1567,20 +1567,30 @@ def _avisar_as_duas_grafias(propostas: list[Proposta]) -> list[Proposta]:
     já está no cadastro, a resolução por linha já casa as duas grafias — é para
     isso que `nome_normalizado` existe.
     """
-    #: nome normalizado -> as grafias que o arquivo trouxe, na ordem de aparição.
-    grafias: dict[str, list[str]] = {}
-    a_criar: set[str] = set()
+    #: (vocabulário, nome normalizado) -> as grafias que o arquivo trouxe, na
+    #: ordem de aparição.
+    #:
+    #: O VOCABULÁRIO ENTRA NA CHAVE porque a deduplicação que este aviso explica
+    #: é por `(vocabulario, normalizar(valor))` — duas tabelas diferentes não
+    #: colidem entre si. Achado de revisão do Codex: agrupando só pelo nome, um
+    #: tema e uma instituição com o mesmo texto normalizado viravam "duas
+    #: grafias", e a conferência prometia uma deduplicação que não vai acontecer.
+    #: Aviso falso numa tela de aviso é o que ensina a ignorá-la.
+    grafias: dict[tuple[str, str], list[str]] = {}
+    a_criar: set[tuple[str, str]] = set()
     for proposta in propostas:
         for vocabulario, nome in proposta.a_criar:
             if vocabulario in VOCABULARIOS_QUE_A_IMPORTACAO_CRIA:
-                a_criar.add(normalizar(nome))
+                a_criar.add((vocabulario, normalizar(nome)))
         for coluna in aba_de(ABA_PRINCIPAL).colunas:
             if not coluna.vocabulario:
                 continue
             bruto = proposta.linha.celulas.get(coluna.nome)
             if not bruto:
                 continue
-            formas = grafias.setdefault(normalizar(str(bruto)), [])
+            formas = grafias.setdefault(
+                (coluna.vocabulario, normalizar(str(bruto))), []
+            )
             if str(bruto) not in formas:
                 formas.append(str(bruto))
 
@@ -1597,7 +1607,11 @@ def _avisar_as_duas_grafias(propostas: list[Proposta]) -> list[Proposta]:
             if not coluna.vocabulario:
                 continue
             bruto = proposta.linha.celulas.get(coluna.nome)
-            formas = de_duas.get(normalizar(str(bruto))) if bruto else None
+            formas = (
+                de_duas.get((coluna.vocabulario, normalizar(str(bruto))))
+                if bruto
+                else None
+            )
             if not formas:
                 continue
             proposta.divergencias.append(
@@ -2472,6 +2486,19 @@ def _criar_cadastros(
                         "declarar de novo na planilha."
                     ),
                 )
+                criados += 1
+            #: `continue`: ESTA É A ÚNICA RAMIFICAÇÃO QUE CRIA MAIS DE UMA LINHA.
+            #:
+            #: O `criados += 1` no fim do laço conta UMA criação por nome, e era
+            #: verdade até 11/10/2026, quando um nome em duas instituições passou a
+            #: nascer duas vezes. Achado de revisão do Codex: a confirmação da
+            #: planilha real de RI respondeu `cadastros: 505` tendo inserido 509 —
+            #: os 4 nomes em duas casas contavam 4 em vez de 8.
+            #:
+            #: E ESSE NÚMERO É O QUE A PESSOA LÊ na tela depois de subir a planilha.
+            #: Um resumo que subconta é pior que resumo nenhum: ele convida a
+            #: conferir o que já está certo.
+            continue
         elif vocabulario == "pessoas_aegea":
             do_cadastro = dict(declarados.get(normalizar(valor)) or {})
             gravar(

@@ -18,6 +18,7 @@ from app.api import (
     consulta_profundidade,
     dicionarios,
     exportacoes,
+    fila_de_revisao,
     importacao_de_subtemas,
     importacoes,
     interacoes,
@@ -165,6 +166,7 @@ def criar_app() -> FastAPI:
     app.include_router(cadastro_duplicado.rotas)
     app.include_router(catalogo.rotas)
     app.include_router(dicionarios.rotas)
+    app.include_router(fila_de_revisao.rotas)
     app.include_router(importacoes.rotas)
     # Prefixo PROPRIO (/api/taxonomia/subtemas), e nao sob /api/importacoes:
     # la existe POST /api/importacoes/{importacao_id}/confirmacao, e o
