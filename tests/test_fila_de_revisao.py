@@ -1073,34 +1073,51 @@ def test_o_PERFIL_DE_REDE_e_recusado_e_NAO_derruba_o_lote(cliente_admin, sessao)
     assert boa.tipo == "orgao"
 
 
-def test_o_lote_TRAVA_as_linhas_que_vai_mexer(cliente_admin, sessao):
-    """ACHADO DE REVISÃO COM SEVERIDADE ALTA: era um lost update.
+def test_a_consulta_do_lote_TRAVA_as_linhas_E_EM_ORDEM():
+    """As duas cláusulas do lock, e cada uma fecha uma corrida diferente.
 
-    O lote lia as linhas, testava `pendente_de_revisao` EM MEMÓRIA e só gravava no
-    flush. Dois lotes sobre ids que se cruzam passavam os dois pelo teste antes de
-    qualquer commit, e o segundo reescrevia categoria, subcategoria e TIPO de uma
-    linha que o primeiro já havia consolidado — quebrando em silêncio a trava "só
-    o que está na fila", com as duas requisições respondendo 200.
+    `FOR UPDATE` — achado ALTA: o lote lia as linhas, testava
+    `pendente_de_revisao` EM MEMÓRIA e só gravava no flush. Dois lotes sobre ids
+    cruzados passavam os dois pelo teste antes de qualquer commit, e o segundo
+    reescrevia categoria, subcategoria e TIPO de uma linha que o primeiro já
+    havia consolidado — em silêncio, com as duas requisições respondendo 200.
 
-    O QUE ESTE TESTE AFIRMA é que a leitura pede o lock. Provar a corrida de
-    verdade exigiria duas conexões e um `commit` no meio, e a fixture da suíte
-    roda tudo numa transação que termina em rollback — duas sessões não veriam
-    uma à outra.
+    `ORDER BY id` — achado MÉDIA: sem ordem o Postgres escolhe a de aquisição, e
+    dois lotes com conjuntos cruzados podem travar subconjuntos em ordens
+    diferentes. Deadlock, que chega como 500 para quem clicou. É a disciplina que
+    `api/score.py` já registra, "em ordem de id".
 
-    ENTÃO A ÂNCORA É A FONTE, e ela pega o único modo como este conserto se
-    perde: alguém reescrevendo a consulta sem o `with_for_update`. Uma primeira
-    versão deste teste também compilava a consulta e procurava "FOR UPDATE" no
-    SQL — isso testava o SQLAlchemy, não este código, e não dizia nada sobre o
-    lote.
+    PROVAR A CORRIDA DE VERDADE exigiria duas conexões e um `commit` no meio, e a
+    fixture da suíte roda tudo numa transação que termina em rollback — duas
+    sessões não veriam uma à outra. Então a âncora é o SQL.
+
+    E ESTA É A TERCEIRA VERSÃO DESTA ÂNCORA, as duas primeiras minhas e erradas
+    de modos opostos:
+
+    1. compilar um `select` montado DENTRO do teste — testava o SQLAlchemy, e
+       não dizia nada sobre o lote;
+    2. inspecionar a fonte de `enquadrar` com `inspect.getsource` e procurar as
+       cláusulas no TEXTO — achado de revisão: um `.order_by(Instituicao.id)`
+       acrescentado em qualquer outra consulta da função faria o alarme passar
+       com a consulta travada sem ordem.
+
+    `consulta_travada` existe para resolver as duas: é uma função do caso de uso,
+    e o teste compila o SQL DELA.
     """
-    import inspect
+    from sqlalchemy.dialects import postgresql
 
-    from app.casos_de_uso import enquadrar_em_lote
+    from app.casos_de_uso.enquadrar_em_lote import consulta_travada
 
-    fonte = inspect.getsource(enquadrar_em_lote.enquadrar)
-    assert "with_for_update()" in fonte, (
+    sql = str(
+        consulta_travada([uuid.uuid4()]).compile(dialect=postgresql.dialect())
+    )
+    assert "FOR UPDATE" in sql, (
         "a leitura do lote precisa travar as linhas: sem isso, dois lotes "
         "cruzados reescrevem o que o outro consolidou"
+    )
+    assert "ORDER BY instituicao.id" in sql, (
+        "o lock do lote precisa de ORDEM: sem ela, dois lotes cruzados podem "
+        "travar subconjuntos em ordens diferentes e dar deadlock"
     )
 
 
@@ -1208,33 +1225,3 @@ def test_o_perfil_de_rede_SEM_CARGO_tambem_e_recusado(cliente_admin, sessao):
     assert pelado.tipo == "perfil_rede"
     assert pelado.categoria_publico_id is None
     assert pelado.pendente_de_revisao is True
-
-
-def test_o_lock_do_lote_tem_ORDEM(sessao):
-    """Travar várias linhas sem ordem definida deixa o Postgres escolher.
-
-    DOIS LOTES COM CONJUNTOS CRUZADOS podem travar subconjuntos em ordens
-    diferentes — deadlock, que chega como 500 para quem clicou. Achado de
-    revisão.
-
-    E A DISCIPLINA JÁ EXISTIA NO REPOSITÓRIO, com o comentário dizendo o porquê:
-    `api/score.py` trava "em ordem de id — a mesma disciplina da reconferência da
-    taxonomia". Eu escrevi um `with_for_update` novo sem olhar o que já estava
-    ali, e é isso que esta âncora lembra a quem vier depois.
-    """
-    import inspect
-
-    from app.casos_de_uso import enquadrar_em_lote
-
-    fonte = inspect.getsource(enquadrar_em_lote.enquadrar)
-    #: A POSIÇÃO, e não uma janela de N caracteres antes: o comentário que
-    #: explica o lock é longo, e uma janela fixa falhava por isso — dizendo que
-    #: a ordem não existia quando ela existia. `.with_for_update()` com ponto e
-    #: parênteses é o CÓDIGO; o comentário fala de `with_for_update` sem eles.
-    assert ".order_by(Instituicao.id)" in fonte, (
-        "o lock do lote precisa de ordem: sem ela, dois lotes cruzados podem "
-        "travar em ordens diferentes e dar deadlock"
-    )
-    assert fonte.index(".order_by(Instituicao.id)") < fonte.index(
-        ".with_for_update()"
-    ), "o `order_by` tem de vir ANTES do `with_for_update` na mesma consulta"

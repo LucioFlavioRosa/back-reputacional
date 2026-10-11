@@ -58,6 +58,40 @@ from app.dominio.frentes import (
 MAXIMO_DO_LOTE = 500
 
 
+def consulta_travada(ids: list[UUID]):
+    """A leitura que trava as linhas do lote, numa função para poder ser olhada.
+
+    PÚBLICA E SEPARADA por um achado de revisão sobre o TESTE, não sobre o
+    código. A âncora anterior inspecionava a fonte de `enquadrar` com
+    `inspect.getsource` e comparava a posição de dois pedaços de texto — e um
+    `.order_by(Instituicao.id)` acrescentado em qualquer outra consulta da
+    função faria o alarme passar com a consulta travada SEM ordem.
+
+    UM ALARME QUE PODE PASSAR ERRADO é pior que alarme nenhum, porque ensina a
+    confiar nele. Com a consulta numa função, o teste compila o SQL DESTA
+    consulta e cobra as duas cláusulas — e aí ele fala sobre o código, e não
+    sobre o texto do arquivo.
+
+    AS DUAS CLÁUSULAS, e cada uma resolve uma corrida diferente:
+
+    `FOR UPDATE` — sem ele o lote lia as linhas, testava `pendente_de_revisao`
+    em memória e só gravava no flush; dois lotes sobre ids cruzados passavam os
+    dois pelo teste e o segundo reescrevia o que o primeiro consolidou, com as
+    duas requisições respondendo 200.
+
+    `ORDER BY id` — sem ele o Postgres escolhe a ordem de aquisição, e dois
+    lotes com conjuntos cruzados podem travar subconjuntos em ordens diferentes:
+    deadlock. É a disciplina que `api/score.py` já registra — "em ordem de id, a
+    mesma disciplina da reconferência da taxonomia".
+    """
+    return (
+        select(Instituicao)
+        .where(Instituicao.id.in_(ids))
+        .order_by(Instituicao.id)
+        .with_for_update()
+    )
+
+
 def _categorias_com_tipo(sessao: Session) -> set[int]:
     """Os ids das categorias ATIVAS que definem um tipo de instituição.
 
@@ -190,13 +224,7 @@ def enquadrar(
     #: A ORDEM DO LOCK NÃO É A ORDEM DAS RECUSAS: o laço continua percorrendo
     #: `ids`, que é a ordem do pedido, e é essa que a tela lê de cima para baixo.
     pedidas = {
-        linha.id: linha
-        for linha in sessao.scalars(
-            select(Instituicao)
-            .where(Instituicao.id.in_(ids))
-            .order_by(Instituicao.id)
-            .with_for_update()
-        )
+        linha.id: linha for linha in sessao.scalars(consulta_travada(ids))
     }
 
     #: OS NOMES JÁ OCUPADOS NO TIPO DE DESTINO, numa consulta só.
