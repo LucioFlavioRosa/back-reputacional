@@ -31,6 +31,7 @@ conferência de novos registros e não vi".
 from __future__ import annotations
 
 import io
+import uuid
 from datetime import date
 
 import pytest
@@ -38,7 +39,11 @@ from openpyxl import load_workbook
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
-from app.banco.tabelas_catalogo import CategoriaPublico, Tema
+from app.banco.tabelas_catalogo import (
+    CategoriaPublico,
+    SubcategoriaPublico,
+    Tema,
+)
 from app.banco.tabelas_stakeholders import Instituicao, Interlocutor, PessoaAegea
 from app.casos_de_uso import importar_agendas, modelo_de_importacao
 from app.casos_de_uso.veiculos_da_imprensa import criar, reconhecer
@@ -724,3 +729,287 @@ def test_o_perfil_COM_cargo_nao_e_chamado_de_SEM_cargo_quando_a_categoria_falta(
     #: E O VEÍCULO NÃO DEPENDE DISSO: a pergunta dele é a subcategoria, sempre.
     assert "subcategoria" in _motivo_da_revisao("veiculo", False)
     assert "subcategoria" in _motivo_da_revisao("veiculo", True)
+
+
+# -- o enquadramento em LOTE ---------------------------------------------------
+#
+# POR QUE EXISTE, e o número é o argumento: a planilha real de RI criou 499
+# instituições, TODAS como "Entidade", e a resposta para quase todas é a mesma.
+# Quatrocentas e noventa e nove idas à lista de cadastro para digitar a mesma
+# coisa não é revisão: é a pessoa desistindo na décima, com a base meio
+# classificada — pior que não classificada, porque ninguém sabe onde parou.
+
+
+def _pendente(sessao, nome: str, tipo: str = "entidade") -> Instituicao:
+    """Uma instituição como a planilha a cria: tipo genérico e na fila."""
+    registro = Instituicao(
+        nome=nome,
+        nome_normalizado=normalizar(nome),
+        tipo=tipo,
+        uf="SP",
+        pendente_de_revisao=True,
+        motivo_da_revisao="Entrou pela planilha sem categoria de público.",
+    )
+    sessao.add(registro)
+    sessao.flush()
+    return registro
+
+
+def _categoria_de(sessao, tipo_desejado: str):
+    """Uma categoria ATIVA cujo tipo derivado é o pedido.
+
+    LIDA DO MAPA e não escrita à mão: `TIPO_DA_CATEGORIA_DE_PUBLICO` é quem
+    decide, e um teste que fixasse "Poder Executivo" quebraria no dia em que a
+    taxonomia mudasse — dizendo que o lote está errado quando mudou foi o mapa.
+    """
+    from app.dominio.frentes import TIPO_DA_CATEGORIA_DE_PUBLICO
+
+    codigos = [
+        codigo
+        for codigo, tipo in TIPO_DA_CATEGORIA_DE_PUBLICO.items()
+        if tipo == tipo_desejado
+    ]
+    return sessao.scalar(
+        select(CategoriaPublico).where(
+            CategoriaPublico.codigo.in_(codigos), CategoriaPublico.ativo.is_(True)
+        )
+    )
+
+
+def test_o_LOTE_enquadra_todas_e_deriva_o_tipo_de_uma_vez(cliente_admin, sessao):
+    """O gesto inteiro: a categoria vai nas três, e o tipo sai dela.
+
+    O TIPO É O QUE TORNA ISTO MAIS QUE PREENCHER UM CAMPO: `derivar_tipo` traduz
+    categoria em tipo, e o tipo da instituição é o que `derivar_frente` usa para
+    dizer de que frente é cada agenda dela. Enquadrar o lote reclassifica as
+    agendas de todas elas.
+    """
+    categoria = _categoria_de(sessao, "orgao")
+    tres = [_pendente(sessao, f"Entidade Do Lote {n} Zz90") for n in (1, 2, 3)]
+
+    resposta = cliente_admin.post(
+        "/api/revisao-de-cadastros/instituicoes/enquadramento",
+        json={
+            "ids": [str(r.id) for r in tres],
+            "categoria_publico_id": categoria.id,
+            "consolidar": True,
+        },
+    )
+    assert resposta.status_code == 200, resposta.text
+    corpo = resposta.json()
+    assert corpo["enquadradas"] == 3
+    assert corpo["consolidadas"] == 3
+    assert corpo["tipo"] == "orgao"
+    assert corpo["recusadas"] == []
+
+    for registro in tres:
+        sessao.refresh(registro)
+        assert registro.categoria_publico_id == categoria.id
+        assert registro.tipo == "orgao"
+        #: E SAÍRAM DA FILA, motivo e tudo.
+        assert registro.pendente_de_revisao is False
+        assert registro.motivo_da_revisao is None
+
+
+def test_o_LOTE_pode_enquadrar_SEM_consolidar(cliente_admin, sessao):
+    """Enquadrar e consolidar são decisões diferentes.
+
+    Dar a categoria resolve o MOTIVO que a fila mostrava; consolidar é afirmar
+    que o cadastro está certo. Quem enquadra 499 de uma vez pode querer que outra
+    pessoa confira antes — e é o mesmo princípio da consolidação uma a uma: ela
+    sai por ação, não por um campo que ficou preenchido.
+    """
+    categoria = _categoria_de(sessao, "orgao")
+    uma = _pendente(sessao, "Entidade Sem Consolidar Zz91")
+
+    corpo = cliente_admin.post(
+        "/api/revisao-de-cadastros/instituicoes/enquadramento",
+        json={
+            "ids": [str(uma.id)],
+            "categoria_publico_id": categoria.id,
+            "consolidar": False,
+        },
+    ).json()
+    assert corpo["enquadradas"] == 1
+    assert corpo["consolidadas"] == 0
+
+    sessao.refresh(uma)
+    assert uma.categoria_publico_id == categoria.id
+    assert uma.pendente_de_revisao is True
+
+
+def test_o_LOTE_recusa_a_colisao_de_nome_e_ENQUADRA_o_resto(cliente_admin, sessao):
+    """A decisão de desenho mais importante: o lote NÃO é tudo-ou-nada.
+
+    Com 499 linhas, uma colisão de nome faria o lote inteiro falhar e a pessoa não
+    teria como saber qual das 499. Enquadrar as que dão e DIZER quais não deram,
+    com o motivo de cada uma, é o que permite o gesto acontecer.
+
+    E A COLISÃO É REAL, não zelo: a `0002` cria `unique (nome_normalizado, tipo)`
+    e o índice NÃO é parcial em `ativo`. Sem a conferência, mudar o tipo estoura
+    em `IntegrityError` no flush — 500 para a pessoa, sem dizer qual nome colidiu.
+    """
+    categoria = _categoria_de(sessao, "orgao")
+    #: QUEM JÁ OCUPA O PAR, do tipo de destino.
+    ja_existe = "Nome Que Colide Zz92"
+    sessao.add(
+        Instituicao(
+            nome=ja_existe, nome_normalizado=normalizar(ja_existe), tipo="orgao"
+        )
+    )
+    sessao.flush()
+
+    colidente = _pendente(sessao, ja_existe)
+    boa = _pendente(sessao, "Nome Que Passa Zz92")
+
+    corpo = cliente_admin.post(
+        "/api/revisao-de-cadastros/instituicoes/enquadramento",
+        json={
+            "ids": [str(colidente.id), str(boa.id)],
+            "categoria_publico_id": categoria.id,
+        },
+    ).json()
+
+    #: A BOA PASSOU.
+    assert corpo["enquadradas"] == 1
+    sessao.refresh(boa)
+    assert boa.tipo == "orgao"
+
+    #: E A OUTRA FOI RECUSADA COM NOME E MOTIVO ACIONÁVEL.
+    assert len(corpo["recusadas"]) == 1
+    recusada = corpo["recusadas"][0]
+    assert recusada["nome"] == ja_existe
+    assert "duplicata" in recusada["motivo"]
+    sessao.refresh(colidente)
+    assert colidente.tipo == "entidade"
+    assert colidente.pendente_de_revisao is True
+
+
+def test_o_LOTE_recusa_duas_pendencias_de_MESMO_NOME(cliente_admin, sessao):
+    """O caso que o dono do produto nomeou, e aqui ele deixa de ser hipótese.
+
+      "se o 'valor' for classificado como financeiro e em outro momento 'o valor'
+      for registrado como veículo, devemos apontar essa possível duplicação"
+
+    Duas pendências com o mesmo nome normalizado em tipos diferentes hoje passam a
+    querer o MESMO par `(nome_normalizado, tipo)`. É o LOTE que as junta — e sem
+    esta conferência a segunda estouraria no flush, derrubando as 499 com ela.
+    """
+    categoria = _categoria_de(sessao, "orgao")
+    nome = "O Valor Zz93"
+    uma = _pendente(sessao, nome, tipo="entidade")
+    outra = _pendente(sessao, nome, tipo="veiculo")
+
+    corpo = cliente_admin.post(
+        "/api/revisao-de-cadastros/instituicoes/enquadramento",
+        json={
+            "ids": [str(uma.id), str(outra.id)],
+            "categoria_publico_id": categoria.id,
+        },
+    ).json()
+
+    assert len(corpo["recusadas"]) == 2, corpo
+    for recusada in corpo["recusadas"]:
+        assert "duplicata" in recusada["motivo"]
+    #: NENHUMA DAS DUAS MUDOU: a pergunta é qual delas é a de verdade, e o lote
+    #: não tem como responder.
+    sessao.refresh(uma)
+    sessao.refresh(outra)
+    assert {uma.tipo, outra.tipo} == {"entidade", "veiculo"}
+
+
+def test_o_LOTE_nao_alcanca_quem_JA_FOI_consolidado(cliente_admin, sessao):
+    """A trava que mantém isto seguro, e ela é a razão de a rota viver sob a fila.
+
+    UM LOTE QUE PUDESSE REESCREVER O TIPO DE QUALQUER INSTITUIÇÃO permitiria a um
+    clique na aba de revisão varrer a curadoria de 3.785 cadastros feitos à mão. O
+    que está pendente nasceu de planilha e ninguém conferiu — é exatamente o que
+    este gesto serve. O resto se edita um a um, onde a tela mostra o cadastro
+    inteiro.
+    """
+    categoria = _categoria_de(sessao, "orgao")
+    curada = "Entidade Curada A Mao Zz94"
+    registro = Instituicao(
+        nome=curada, nome_normalizado=normalizar(curada), tipo="entidade", uf="RS"
+    )
+    sessao.add(registro)
+    sessao.flush()
+    assert registro.pendente_de_revisao is False
+
+    corpo = cliente_admin.post(
+        "/api/revisao-de-cadastros/instituicoes/enquadramento",
+        json={"ids": [str(registro.id)], "categoria_publico_id": categoria.id},
+    ).json()
+
+    assert corpo["enquadradas"] == 0
+    assert len(corpo["recusadas"]) == 1
+    assert "consolidada" in corpo["recusadas"][0]["motivo"]
+    sessao.refresh(registro)
+    assert registro.tipo == "entidade"
+    assert registro.categoria_publico_id is None
+
+
+def test_o_LOTE_recusa_subcategoria_de_OUTRA_categoria(cliente_admin, sessao):
+    """A conferência pesa mais aqui do que no cadastro um a um.
+
+    Uma subcategoria que não pertence à categoria seria gravada em até 500 linhas
+    de uma vez, e desfazer isso é outro lote. A FK não expressa o cruzamento —
+    ele é regra de domínio.
+    """
+    categoria = _categoria_de(sessao, "orgao")
+    estranha = sessao.scalar(
+        select(SubcategoriaPublico).where(
+            SubcategoriaPublico.categoria_publico_id != categoria.id,
+            SubcategoriaPublico.ativo.is_(True),
+        )
+    )
+    uma = _pendente(sessao, "Entidade Com Sub Errada Zz95")
+
+    resposta = cliente_admin.post(
+        "/api/revisao-de-cadastros/instituicoes/enquadramento",
+        json={
+            "ids": [str(uma.id)],
+            "categoria_publico_id": categoria.id,
+            "subcategoria_publico_id": estranha.id,
+        },
+    )
+    assert resposta.status_code == 422, resposta.text
+    assert "não pertence" in resposta.text
+
+    #: E NADA FOI GRAVADO.
+    sessao.refresh(uma)
+    assert uma.categoria_publico_id is None
+
+
+def test_o_LOTE_tem_TETO(cliente_admin, sessao):
+    """O limite existe para haver um.
+
+    Sem ele, o tamanho do pedido é decidido por quem o manda. Não é proteção
+    contra abuso — a rota exige `administra_dicionarios` —, é a diferença entre
+    uma operação cujo custo se conhece e uma que pode levar o tempo que quiser.
+    """
+    from uuid import uuid4
+
+    from app.casos_de_uso.enquadrar_em_lote import MAXIMO_DO_LOTE
+
+    categoria = _categoria_de(sessao, "orgao")
+    resposta = cliente_admin.post(
+        "/api/revisao-de-cadastros/instituicoes/enquadramento",
+        json={
+            "ids": [str(uuid4()) for _ in range(MAXIMO_DO_LOTE + 1)],
+            "categoria_publico_id": categoria.id,
+        },
+    )
+    assert resposta.status_code == 422, resposta.text
+    assert str(MAXIMO_DO_LOTE) in resposta.text
+
+
+def test_quem_NAO_administra_cadastros_nao_enquadra_em_lote(cliente_sem_admin, sessao):
+    """A mesma guarda da leitura, e aqui ela protege uma escrita de 500 linhas."""
+    assert (
+        cliente_sem_admin.post(
+            "/api/revisao-de-cadastros/instituicoes/enquadramento",
+            json={"ids": [str(uuid.uuid4())], "categoria_publico_id": 1},
+        ).status_code
+        == 403
+    )

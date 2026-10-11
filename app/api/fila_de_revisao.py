@@ -20,13 +20,17 @@ está por consertar.
 from __future__ import annotations
 
 from datetime import datetime
+from uuid import UUID
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 
 from app.api.dependencias import UsuarioQueAdministraCadastros, obter_usuario_atual
 from app.banco.sessao import SessaoDoPedido
-from app.casos_de_uso import fila_de_revisao
+from app.banco.tabelas_catalogo import CategoriaPublico, SubcategoriaPublico
+from app.casos_de_uso import enquadrar_em_lote, fila_de_revisao
+from app.dominio.erros import RegraViolada
 
 rotas = APIRouter(
     prefix="/api/revisao-de-cadastros",
@@ -95,3 +99,107 @@ def consolidar(
     return ConsolidacaoSaida(
         pendente=PendenteSaida(**vars(pendente)), ja_estava_consolidado=ja_estava
     )
+
+
+class EnquadramentoEntrada(BaseModel):
+    """Uma categoria de público para várias instituições da fila."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ids: list[UUID] = Field(min_length=1)
+    categoria_publico_id: int
+    subcategoria_publico_id: int | None = None
+    #: ESCOLHA DE QUEM REVISA, e não consequência automática — ver `enquadrar`.
+    consolidar: bool = True
+
+
+class RecusadaSaida(BaseModel):
+    id: str
+    nome: str
+    motivo: str
+
+
+class EnquadramentoSaida(BaseModel):
+    enquadradas: int
+    consolidadas: int
+    #: O tipo que a categoria implica, para a tela dizer o que aconteceu.
+    tipo: str
+    recusadas: list[RecusadaSaida]
+
+
+@rotas.post("/instituicoes/enquadramento", response_model=EnquadramentoSaida)
+def enquadrar_instituicoes(
+    sessao: Sessao,
+    usuario: UsuarioQueAdministraCadastros,
+    entrada: EnquadramentoEntrada,
+) -> EnquadramentoSaida:
+    """Dá a mesma categoria de público a várias instituições da fila.
+
+    POR QUE ESTA ROTA EXISTE: a planilha real de RI criou 499 instituições sem
+    categoria, e a resposta para quase todas é a mesma. A consolidação uma a uma
+    faria a pessoa digitar a mesma coisa 499 vezes — e desistir na décima, com a
+    base meio classificada, que é pior do que não classificada porque ninguém
+    sabe onde parou.
+
+    FORA DE `/api/instituicoes` de propósito, e sob a fila: ela só alcança o que
+    está pendente de revisão. E o prefixo importa para o front — o barramento
+    recarrega o catálogo inteiro a cada escrita numa rota de catálogo, casando por
+    prefixo, e aqui a recarga é NECESSÁRIA: o tipo da instituição muda, e com ele
+    a frente de toda agenda dela. Ver a nota no cliente.
+    """
+    _conferir_categoria(
+        sessao, entrada.categoria_publico_id, entrada.subcategoria_publico_id
+    )
+    resultado = enquadrar_em_lote.enquadrar(
+        sessao,
+        ids=entrada.ids,
+        categoria_publico_id=entrada.categoria_publico_id,
+        subcategoria_publico_id=entrada.subcategoria_publico_id,
+        consolidar=entrada.consolidar,
+    )
+    return EnquadramentoSaida(
+        enquadradas=resultado.enquadradas,
+        consolidadas=resultado.consolidadas,
+        tipo=resultado.tipo,
+        recusadas=[RecusadaSaida(**vars(r)) for r in resultado.recusadas],
+    )
+
+
+def _conferir_categoria(
+    sessao: Sessao, categoria_publico_id: int, subcategoria_publico_id: int | None
+) -> None:
+    """A MESMA REGRA DE `_conferir_categoria_publico` em `stakeholders.py`.
+
+    A chave estrangeira já recusa o id que não existe, mas não o DESATIVADO, e
+    nunca o cruzamento categoria × subcategoria — esse pareamento é regra de
+    domínio, não algo que uma FK sozinha expresse.
+
+    E AQUI ELA PESA MAIS DO QUE LÁ: uma subcategoria que não pertence à categoria
+    seria gravada em até 500 linhas de uma vez, e desfazer isso é outro lote.
+    """
+    valida = sessao.scalar(
+        select(CategoriaPublico.id).where(
+            CategoriaPublico.id == categoria_publico_id,
+            CategoriaPublico.ativo.is_(True),
+        )
+    )
+    if valida is None:
+        raise RegraViolada(
+            f"Categoria de público inválida: {categoria_publico_id!r}."
+        )
+    if subcategoria_publico_id is None:
+        return
+    dona = sessao.scalar(
+        select(SubcategoriaPublico.categoria_publico_id).where(
+            SubcategoriaPublico.id == subcategoria_publico_id,
+            SubcategoriaPublico.ativo.is_(True),
+        )
+    )
+    if dona is None:
+        raise RegraViolada(
+            f"Subcategoria de público inválida: {subcategoria_publico_id!r}."
+        )
+    if dona != categoria_publico_id:
+        raise RegraViolada(
+            "A subcategoria escolhida não pertence a esta categoria de público."
+        )
