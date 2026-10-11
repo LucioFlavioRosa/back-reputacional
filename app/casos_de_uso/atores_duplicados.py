@@ -62,6 +62,32 @@ TIPO_DE_ORIGEM = "perfil_rede"
 #: nomes dele — os testes e a API continuam lendo daqui.
 
 
+#: O QUE O SOBREVIVENTE HERDA de quem sai, quando ele não tem.
+#:
+#: POR QUE ISTO EXISTE (achado ALTA de revisão, 11/10/2026): `fundir` movia as
+#: chaves estrangeiras e apagava a linha. Tolerável enquanto quem saía era o perfil
+#: cru do social listening; com a fusão aberta a qualquer tipo, sai um `investidor`
+#: com `tier` e categoria de público, e esses campos sumiam.
+#:
+#: E NOS PARES DO CRM A PERDA SERIA POR SORTEIO: `ALMG` (entidade) e `ALMG` (orgao)
+#: têm zero menções e o mesmo nome, então quem sai é decidido pelo UUID.
+#:
+#: `cargo` NÃO ESTÁ AQUI, e é o único de fora: o CHECK
+#: `instituicao_cargo_so_de_perfil` não deixa um veículo ter cargo, então herdá-lo
+#: estouraria o banco. A perda dele continua dita em voz alta no docstring.
+#:
+#: `nome` E `tipo` TAMBÉM NÃO: são a identidade do sobrevivente, e trocá-los faria
+#: a fusão virar renomeação — outro gesto, com outras consequências.
+CAMPOS_QUE_O_SOBREVIVENTE_HERDA = (
+    "nome_completo",
+    "esfera_id",
+    "uf",
+    "tier",
+    "categoria_publico_id",
+    "subcategoria_publico_id",
+)
+
+
 @dataclass(frozen=True)
 class Candidato:
     """Um cadastro que PODE ser o mesmo ator do perfil."""
@@ -74,10 +100,19 @@ class Candidato:
 
 @dataclass(frozen=True)
 class Duplicado:
-    """Um perfil de rede e os cadastros com que ele se parece."""
+    """Um cadastro que vai SAIR, e os cadastros com que ele se parece."""
 
     id: uuid.UUID
     nome: str
+    #: O TIPO DE QUEM VAI SAIR, e sem ele a tela mentia (achado de revisão,
+    #: 11/10/2026).
+    #:
+    #: Enquanto a fila só olhava `perfil_rede`, o tipo do lado ancorado era
+    #: conhecido por construção e a tela escrevia "Perfil de rede" fixo. Com a fila
+    #: aberta a todos, `ALMG` (entidade) + `ALMG` (orgao) fazia a tela dizer que ia
+    #: apagar um perfil de rede — e quem decide lia o tipo errado do registro que
+    #: desaparece.
+    tipo: str
     cargo: str | None
     mencoes: int
     candidatos: tuple[Candidato, ...]
@@ -210,6 +245,7 @@ def listar(sessao: Session) -> list[Duplicado]:
                 Duplicado(
                     id=perfil.id,
                     nome=perfil.nome,
+                    tipo=perfil.tipo,
                     cargo=perfil.cargo,
                     mencoes=mencoes.get(perfil.id, 0),
                     candidatos=tuple(sorted(candidatos, key=lambda c: -c.mencoes)),
@@ -310,9 +346,14 @@ def fundir(
     continua garantida, mas pela ORDEM DA FILA e não por um `if` de tipo. Quem
     chama por fora pode inverter, e é decisão de quem chama.
 
+    O SOBREVIVENTE HERDA O QUE ELE NÃO TEM — `CAMPOS_QUE_O_SOBREVIVENTE_HERDA` —, e
+    o CONFLITO RECUSA com 422 dizendo quais campos divergem. Era perda silenciosa
+    até 11/10/2026: as chaves estrangeiras passavam e a linha era apagada, com a
+    categoria de público e o tier dela dentro.
+
     O QUE SE PERDE, dito em voz alta: o `cargo` de quem sai, se ele tiver — o CHECK
     `instituicao_cargo_so_de_perfil` existe de propósito, e um jornal não tem
-    cargo.
+    cargo. É o único campo que não viaja.
     """
     if que_sai_id == sobrevivente_id:
         raise RegraViolada("Um cadastro nao funde com ele mesmo.")
@@ -351,6 +392,34 @@ def fundir(
             "Este perfil esta ligado a uma pessoa do CRM. Desfaca a ligacao "
             "antes de fundir, ou funda no cadastro da pessoa."
         )
+
+    #: O CONFLITO RECUSA ANTES DE QUALQUER ESCRITA, e com os nomes dos campos.
+    #:
+    #: Dois valores diferentes preenchidos são duas afirmações de GENTE sobre o
+    #: mesmo ator — uma diz que é Tier 1, a outra que é Tier 3. Escolher uma em
+    #: silêncio é o chute calado que esta semana cobrou três vezes; e escolher a do
+    #: sobrevivente só porque ele é o sobrevivente seria escolher por sorteio nos
+    #: pares de zero menções, onde quem sai é decidido pelo UUID.
+    divergentes = [
+        campo
+        for campo in CAMPOS_QUE_O_SOBREVIVENTE_HERDA
+        if getattr(perfil, campo) is not None
+        and getattr(sobrevivente, campo) is not None
+        and getattr(perfil, campo) != getattr(sobrevivente, campo)
+    ]
+    if divergentes:
+        raise RegraViolada(
+            f"{perfil.nome!r} e {sobrevivente.nome!r} discordam em "
+            f"{', '.join(divergentes)}. Alguém preencheu os dois, e fundir "
+            "escolheria um sem dizer: acerte o cadastro que fica e funda depois."
+        )
+
+    #: E O SOBREVIVENTE HERDA O QUE ELE NÃO TEM. Sem conflito não há escolha a
+    #: fazer, e deixar o campo cair junto com a linha seria perder trabalho de
+    #: alguém por nada.
+    for campo in CAMPOS_QUE_O_SOBREVIVENTE_HERDA:
+        if getattr(sobrevivente, campo) is None:
+            setattr(sobrevivente, campo, getattr(perfil, campo))
 
     #: AS MENÇÕES PASSAM: o dossiê do ator fica num só lugar.
     sessao.execute(

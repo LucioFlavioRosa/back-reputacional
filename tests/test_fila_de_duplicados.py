@@ -1,19 +1,35 @@
 """A fila do mesmo ator cadastrado duas vezes, e as duas respostas.
 
-A `0077` fundiu os homônimos exatos sozinha. O que sobra é o par que só casa
-depois de tirar pontuação — `valoreconomico` ↔ `Valor Econômico` —, e ali
-semelhança não é identidade: `Diário SM` e `Diários M` casam assim, `bmc.news`
-casa com DOIS veículos.
+TRÊS COISAS MUDARAM EM 11/10/2026, pelo princípio do dono do produto — "qualquer
+fonte de dados tem acesso à mesma base de instituições e interlocutores... o BTG
+podemos ter acesso em rede social, em reunião de investimento ou imprensa, mas ele
+continua sendo um só":
+
+* a fila olha QUALQUER TIPO, e não só `perfil_rede` como origem;
+* o HOMÔNIMO EXATO VOLTOU. O cabeçalho antigo dizia que ele era "da `0077`, que
+  funde sem perguntar" — e a `0077` escreveu que a ingestão não recriaria o par. A
+  Clipei recriou 22 (a `0084` fundiu), e as 4 que sobram foram feitas por GENTE no
+  CRM: ALMG, ANA, BNDES e Itaú BBA. Nenhuma migration vai fundi-las, porque "quem
+  decide como enquadrar é o time";
+* a comparação ganhou a SEMELHANÇA, além da chave achatada — é o caso "Valor"
+  contra "o Valor", que o dono do produto deu e que nenhuma das duas chaves pegava.
+
+E SEMELHANÇA NÃO É IDENTIDADE, que é a razão de nada fundir sozinho: `Diário SM` e
+`Diários M` casam na chave achatada, e `bmc.news` casa com DOIS veículos.
 
 O QUE ESTES TESTES PROTEGEM:
 
-* a fila mostra o par parecido, com as menções de cada lado (é o número que diz
-  qual é a linha com história);
-* e NÃO mostra: o homônimo exato (é da `0077`), o par que alguém já declarou
-  distinto, o perfil ligado a uma pessoa do CRM;
-* a fusão move as menções para o sobrevivente e apaga o perfil;
-* a fusão RECUSA o caminho inverso — apagar o veículo curado dentro do handle
-  do fornecedor;
+* a fila mostra o par — chave achatada igual, ou semelhança acima do corte —, com
+  as menções de cada lado (é o número que diz qual é a linha com história), e com
+  o TIPO de quem vai sair;
+* e NÃO mostra: o par que alguém já declarou distinto, o perfil ligado a uma
+  pessoa do CRM, nem o nome apenas parecido de longe (o corte é medido);
+* a pergunta aparece UMA vez, ancorada em quem sai, por uma ordem TOTAL — sem o
+  `id` no desempate, os pares do CRM desapareciam da fila;
+* a fusão move as menções, faz o sobrevivente HERDAR o que ele não tem, e RECUSA
+  quando os dois discordam num campo;
+* a fusão RECUSA o caminho inverso — apagar a linha com história dentro da linha
+  crua —, pela mesma regra que ancora a fila;
 * "são atores diferentes" tira o par da fila, nas duas ordens, e clicar duas
   vezes não é erro.
 """
@@ -562,3 +578,80 @@ def test_a_rota_guarda_o_par_distinto(cliente, sessao):
     #: E QUEM DECIDIU fica registrado: a fusão não tem volta, e o par recusado
     #: barra fusão automática futura.
     assert guardado.decidido_por is not None
+
+
+# ====================== a fusão não joga fora o cadastro de quem sai
+def test_a_fusao_FAZ_O_SOBREVIVENTE_HERDAR_o_que_ele_nao_tem(sessao):
+    """O cadastro de quem sai não vai para o lixo com a linha.
+
+    O DEFEITO QUE ISTO FECHA (achado ALTA de revisão): `fundir` movia as chaves
+    estrangeiras e apagava a linha. Era tolerável enquanto quem saía era o perfil
+    cru do social listening — o único campo perdido era o `cargo`, que o CHECK nem
+    deixa o veículo ter. Com a fusão aberta a qualquer tipo, sai um `investidor`
+    com `tier` e categoria de público, e esses campos sumiam.
+
+    E NOS PARES DO CRM A PERDA SERIA POR SORTEIO: `ALMG` (entidade) e `ALMG`
+    (orgao) têm zero menções e o mesmo nome, então quem sai é decidido pelo UUID.
+    Perder a categoria de público por sorteio é inaceitável — é ela que torna a
+    instituição visível para a taxonomia do Score.
+    """
+    que_sai = _cadastrar(sessao, "Herdeiro Zz91", "perfil_rede")
+    que_sai.uf = "RS"
+    que_sai.tier = 2
+    fica = _cadastrar(sessao, "Herdeiro Zz91 ", "veiculo")
+    assert fica.uf is None and fica.tier is None
+    sessao.flush()
+
+    atores_duplicados.fundir(sessao, que_sai_id=que_sai.id, sobrevivente_id=fica.id)
+    sessao.flush()
+
+    assert fica.uf == "RS"
+    assert fica.tier == 2
+
+
+def test_a_fusao_RECUSA_quando_os_dois_discordam(sessao):
+    """Dois valores preenchidos e diferentes são duas afirmações de gente.
+
+    ESCOLHER UMA EM SILÊNCIO é o chute calado que esta semana cobrou três vezes. E
+    escolher a do sobrevivente só porque ele é o sobrevivente seria escolher por
+    sorteio nos pares de zero menções, onde quem sai é decidido pelo UUID.
+
+    A RECUSA DIZ QUAIS CAMPOS DIVERGEM, senão "não deu" manda a pessoa procurar.
+    """
+    que_sai = _cadastrar(sessao, "Discordante Zz92", "perfil_rede")
+    que_sai.tier = 1
+    fica = _cadastrar(sessao, "Discordante Zz92 ", "veiculo")
+    fica.tier = 3
+    sessao.flush()
+
+    with pytest.raises(RegraViolada, match="tier"):
+        atores_duplicados.fundir(
+            sessao, que_sai_id=que_sai.id, sobrevivente_id=fica.id
+        )
+
+    #: E NADA FOI ESCRITO: a recusa vem antes de qualquer `update`.
+    assert fica.tier == 3
+    assert sessao.get(Instituicao, que_sai.id) is not None
+
+
+def test_a_fila_DIZ_O_TIPO_de_quem_vai_sair(sessao):
+    """Sem isto a tela mentia, e mentia no campo que mais importa.
+
+    A tela escrevia "Perfil de rede" fixo para o lado que sai — correto enquanto a
+    fila só olhava `perfil_rede`. Com a fila aberta a todos, `ALMG` (entidade) +
+    `ALMG` (orgao) fazia a tela dizer que ia apagar um perfil de rede, e quem
+    decide lia o tipo errado do registro que desaparece.
+    """
+    uma = _cadastrar(sessao, "Tipada Zz93", "entidade")
+    outra = _cadastrar(sessao, "Tipada Zz93 ", "orgao")
+
+    perguntas = [
+        d for d in atores_duplicados.listar(sessao) if d.id in {uma.id, outra.id}
+    ]
+
+    assert len(perguntas) == 1
+    (pergunta,) = perguntas
+    #: O TIPO É O DE QUEM SAI, e não um fixo.
+    esperado = uma.tipo if pergunta.id == uma.id else outra.tipo
+    assert pergunta.tipo == esperado
+    assert pergunta.tipo in ("entidade", "orgao")

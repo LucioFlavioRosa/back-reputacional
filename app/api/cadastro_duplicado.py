@@ -54,6 +54,9 @@ class CandidatoSaida(BaseModel):
 class DuplicadoSaida(BaseModel):
     id: UUID
     nome: str
+    #: O TIPO DE QUEM VAI SAIR. A tela escrevia "Perfil de rede" fixo, e com a fila
+    #: aberta a todos os tipos isso passou a ser mentira para os pares do CRM.
+    tipo: str
     cargo: str | None
     mencoes: int
     candidatos: list[CandidatoSaida]
