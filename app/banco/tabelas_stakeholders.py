@@ -85,6 +85,27 @@ class Instituicao(Tabela):
         SmallInteger, ForeignKey("subcategoria_publico.id"), nullable=True
     )
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
+    #: ESTE CADASTRO NASCEU DE PLANILHA E NINGUÉM O CONSOLIDOU AINDA.
+    #:
+    #: A FILA DE REVISÃO das três abas de Cadastro compartilhado sai daqui —
+    #: pedido do dono do produto (11/10/2026): "o profissional consegue subir a
+    #: planilha sem problemas e pode revisar depois, e inclusive pode ser trabalho
+    #: de outra pessoa. Queremos dar padronização, mas com menor impacto".
+    #:
+    #: NÃO SE DERIVA DA INCOMPLETUDE, e eu tentei: das 99 instituições que
+    #: aparecem em agendas, só 58 têm categoria de público. A ausência é o estado
+    #: NORMAL do CRM, e a fila nasceria com 250 das 544 agendas dentro — ruído, e
+    #: ruído é o que faz ninguém olhar. O que distingue é a PROCEDÊNCIA.
+    #:
+    #: E NÃO É `ativo`: o que nasce de planilha está EM circulação — a menção
+    #: aponta para ele, a agenda existe —, só falta alguém conferir o
+    #: enquadramento. `ativo=false` esconderia o dado que acabou de entrar.
+    #:
+    #: SAI POR AÇÃO DE QUEM REVISA. "Consolidar" é uma decisão, não um campo que
+    #: ficou preenchido: ligar a saída a um campo faria a fila esvaziar sozinha com
+    #: um preenchimento parcial, e ninguém teria dito nada.
+    pendente_de_revisao: Mapped[bool] = mapped_column(Boolean, default=False)
+
     criado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -117,6 +138,27 @@ class Interlocutor(Tabela):
     )
     tipo: Mapped[str | None] = mapped_column(Text, nullable=True)
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
+    #: ESTE CADASTRO NASCEU DE PLANILHA E NINGUÉM O CONSOLIDOU AINDA.
+    #:
+    #: A FILA DE REVISÃO das três abas de Cadastro compartilhado sai daqui —
+    #: pedido do dono do produto (11/10/2026): "o profissional consegue subir a
+    #: planilha sem problemas e pode revisar depois, e inclusive pode ser trabalho
+    #: de outra pessoa. Queremos dar padronização, mas com menor impacto".
+    #:
+    #: NÃO SE DERIVA DA INCOMPLETUDE, e eu tentei: das 99 instituições que
+    #: aparecem em agendas, só 58 têm categoria de público. A ausência é o estado
+    #: NORMAL do CRM, e a fila nasceria com 250 das 544 agendas dentro — ruído, e
+    #: ruído é o que faz ninguém olhar. O que distingue é a PROCEDÊNCIA.
+    #:
+    #: E NÃO É `ativo`: o que nasce de planilha está EM circulação — a menção
+    #: aponta para ele, a agenda existe —, só falta alguém conferir o
+    #: enquadramento. `ativo=false` esconderia o dado que acabou de entrar.
+    #:
+    #: SAI POR AÇÃO DE QUEM REVISA. "Consolidar" é uma decisão, não um campo que
+    #: ficou preenchido: ligar a saída a um campo faria a fila esvaziar sozinha com
+    #: um preenchimento parcial, e ninguém teria dito nada.
+    pendente_de_revisao: Mapped[bool] = mapped_column(Boolean, default=False)
+
     criado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -159,6 +201,27 @@ class PessoaAegea(Tabela):
         SmallInteger, ForeignKey("area_pessoa.id"), nullable=True
     )
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
+    #: ESTE CADASTRO NASCEU DE PLANILHA E NINGUÉM O CONSOLIDOU AINDA.
+    #:
+    #: A FILA DE REVISÃO das três abas de Cadastro compartilhado sai daqui —
+    #: pedido do dono do produto (11/10/2026): "o profissional consegue subir a
+    #: planilha sem problemas e pode revisar depois, e inclusive pode ser trabalho
+    #: de outra pessoa. Queremos dar padronização, mas com menor impacto".
+    #:
+    #: NÃO SE DERIVA DA INCOMPLETUDE, e eu tentei: das 99 instituições que
+    #: aparecem em agendas, só 58 têm categoria de público. A ausência é o estado
+    #: NORMAL do CRM, e a fila nasceria com 250 das 544 agendas dentro — ruído, e
+    #: ruído é o que faz ninguém olhar. O que distingue é a PROCEDÊNCIA.
+    #:
+    #: E NÃO É `ativo`: o que nasce de planilha está EM circulação — a menção
+    #: aponta para ele, a agenda existe —, só falta alguém conferir o
+    #: enquadramento. `ativo=false` esconderia o dado que acabou de entrar.
+    #:
+    #: SAI POR AÇÃO DE QUEM REVISA. "Consolidar" é uma decisão, não um campo que
+    #: ficou preenchido: ligar a saída a um campo faria a fila esvaziar sozinha com
+    #: um preenchimento parcial, e ninguém teria dito nada.
+    pendente_de_revisao: Mapped[bool] = mapped_column(Boolean, default=False)
+
     criado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

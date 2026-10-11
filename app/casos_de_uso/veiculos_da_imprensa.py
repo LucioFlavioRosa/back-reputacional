@@ -385,6 +385,16 @@ def criar(
             #: produto apontou como faltando no cadastro automático — e ele
             #: faltava mesmo: 39 dos 2.670 veículos tinham relevância.
             tier=veiculo.tier,
+            #: NASCE PENDENTE DE REVISÃO, como todo cadastro que vem de planilha.
+            #:
+            #: MESMO TENDO PASSADO PELA CONFERÊNCIA DA INGESTÃO, e a diferença é o
+            #: que cada uma pergunta: ali a pessoa autoriza a CRIAÇÃO olhando nome,
+            #: praça, alcance e cargo — ela diz "este veículo existe e deve
+            #: entrar". O ENQUADRAMENTO é outra pergunta: a subcategoria é lógica
+            #: editorial que nenhuma coluna da Clipei informa, e é dela que a lente
+            #: Mercado depende. Quem autoriza 2.631 criações numa tela não decide
+            #: 2.631 enquadramentos na mesma tela.
+            pendente_de_revisao=True,
         )
         sessao.add(registro)
         criados[normalizar(nome)] = registro

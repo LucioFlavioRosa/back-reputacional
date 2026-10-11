@@ -2207,6 +2207,12 @@ def _criar_cadastros(
                         else None
                     ),
                     **_campos_do_cadastro("instituicoes", do_cadastro, indice),
+                    #: NASCE PENDENTE DE REVISÃO — ver a coluna em
+                    #: `tabelas_stakeholders`. A planilha entra sem barreira, e o
+                    #: enquadramento fica para quem revisa: "o profissional
+                    #: consegue subir a planilha sem problemas e pode revisar
+                    #: depois, e inclusive pode ser trabalho de outra pessoa".
+                    pendente_de_revisao=True,
                 ),
                 novo=True,
                 ao_colidir=(
@@ -2227,6 +2233,7 @@ def _criar_cadastros(
                     # pessoa tomou na conferência quando o nome era ambíguo.
                     instituicao_id=de_quem.get(normalizar(valor)),
                     **_campos_do_cadastro("interlocutores", do_cadastro, indice),
+                    pendente_de_revisao=True,
                 ),
                 novo=True,
                 ao_colidir=(
@@ -2243,6 +2250,7 @@ def _criar_cadastros(
                     nome=valor,
                     nome_normalizado=normalizar(valor),
                     **_campos_do_cadastro("pessoas_aegea", do_cadastro, indice),
+                    pendente_de_revisao=True,
                 ),
                 novo=True,
                 ao_colidir=(
@@ -2273,7 +2281,7 @@ def _criar_cadastros(
                 #: modelo (os KPIs dependem dele, e a planilha não o amplia), e
                 #: `sensivel` seria uma afirmação sobre o tema que a planilha não
                 #: tem como fazer.
-                Tema(nome=valor, nivel="gerais"),
+                Tema(nome=valor, nivel="gerais", pendente_de_revisao=True),
                 novo=True,
                 ao_colidir=(
                     f"Já existe um tema chamado {valor!r} — pode estar "
