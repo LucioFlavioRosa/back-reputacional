@@ -328,7 +328,17 @@ def callback(
         destino = (
             configuracao.url_do_front.rstrip("/") + "/?erro=" + quote(str(recusa))
         )
-        return RedirectResponse(destino, status_code=status.HTTP_303_SEE_OTHER)
+        recusada = RedirectResponse(destino, status_code=status.HTTP_303_SEE_OTHER)
+        # O COOKIE DE PEDIDO MORRE AQUI TAMBÉM, e não só no sucesso.
+        #
+        # Ele vale dez minutos e carrega `estado|nonce|verificador`. Depois de
+        # uma recusa não serve para mais nada, mas sobrevivia — e com ele o
+        # mesmo pedido podia ser reapresentado ao callback por todo o prazo.
+        # Nenhuma dessas tentativas concede sessão (a recusa não grava cookie de
+        # sessão, e há teste disso); o defeito era a assimetria com o sucesso,
+        # que apaga. Achado de revisão.
+        recusada.delete_cookie(COOKIE_DO_PEDIDO, path="/")
+        return recusada
 
     registrar_acesso.registrar(
         sessao,
