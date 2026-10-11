@@ -36,12 +36,17 @@ from dataclasses import dataclass, field
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.banco.tabelas_catalogo import CategoriaPublico
 from app.banco.tabelas_stakeholders import Instituicao
 from app.casos_de_uso.derivar_tipo import derivar_tipo
 from app.dominio.erros import RegraViolada
-from app.dominio.frentes import ROTULO_DO_TIPO_DE_INSTITUICAO
+from app.dominio.frentes import (
+    ROTULO_DO_TIPO_DE_INSTITUICAO,
+    TIPO_DA_CATEGORIA_DE_PUBLICO,
+)
 
 #: QUANTAS INSTITUIÇÕES UM LOTE ACEITA.
 #:
@@ -51,6 +56,30 @@ from app.dominio.frentes import ROTULO_DO_TIPO_DE_INSTITUICAO
 #: a rota exige `administra_dicionarios` —, é a diferença entre uma operação
 #: cujo custo se conhece e uma que pode levar o tempo que quiser.
 MAXIMO_DO_LOTE = 500
+
+
+def _categorias_com_tipo(sessao: Session) -> set[int]:
+    """Os ids das categorias ATIVAS que definem um tipo de instituição.
+
+    LIDO DO BANCO cruzando com `TIPO_DA_CATEGORIA_DE_PUBLICO`, e não da constante
+    sozinha: o mapa é por CÓDIGO e o pedido vem por id, então alguém tem de
+    traduzir. Fazer isso aqui é o que permite a recusa dizer "esta categoria não
+    define tipo" em vez de deixar `derivar_tipo` dizer "informe a categoria de
+    público" — que é verdade no cadastro um a um e mentira num lote onde a
+    categoria FOI informada. Achado de revisão.
+    """
+    codigos = {
+        codigo for codigo, tipo in TIPO_DA_CATEGORIA_DE_PUBLICO.items() if tipo
+    }
+    return {
+        ident
+        for ident, in sessao.execute(
+            select(CategoriaPublico.id).where(
+                CategoriaPublico.codigo.in_(codigos),
+                CategoriaPublico.ativo.is_(True),
+            )
+        )
+    }
 
 
 @dataclass(frozen=True)
@@ -97,6 +126,13 @@ def enquadrar(
     """
     if not ids:
         raise RegraViolada("Nenhuma instituição foi escolhida.")
+    #: SEM REPETIDOS, preservando a ordem do pedido.
+    #:
+    #: A ORDEM IMPORTA porque é a ordem em que as recusas voltam, e a tela as lê
+    #: de cima para baixo. E a deduplicação SUBSTITUI um "cinto" que eu havia
+    #: posto no laço — achado de revisão: ele "sugeria uma proteção que não
+    #: resolve concorrência", e o id repetido era o único caso que ele cobria.
+    ids = list(dict.fromkeys(ids))
     if len(ids) > MAXIMO_DO_LOTE:
         raise RegraViolada(
             f"Um lote aceita até {MAXIMO_DO_LOTE} instituições, e vieram {len(ids)}. "
@@ -106,6 +142,17 @@ def enquadrar(
     #: O TIPO É DERIVADO UMA VEZ, e não por linha: a categoria é a mesma para
     #: todo o lote, então o tipo também é. `tipo=None` faz `derivar_tipo` usar a
     #: categoria, que é precisamente o que este caso de uso quer dizer.
+    #:
+    #: A CATEGORIA SEM TIPO É CONFERIDA ANTES, e não deixada para `derivar_tipo`:
+    #: ela levantaria "Informe a categoria de público", que é verdade no cadastro
+    #: um a um — onde a categoria pode vir vazia — e MENTIRA aqui, onde ela foi
+    #: informada e o que falta é ela mapear para um tipo. Quem lê "informe a
+    #: categoria" depois de ter escolhido uma procura o erro no lugar errado.
+    if categoria_publico_id not in _categorias_com_tipo(sessao):
+        raise RegraViolada(
+            "Esta categoria de público não define tipo de instituição, e o lote "
+            "existe para dar o tipo. Escolha outra."
+        )
     novo_tipo = derivar_tipo(
         sessao,
         tipo=None,
@@ -113,10 +160,26 @@ def enquadrar(
         atual=None,
     )
 
+    #: `with_for_update`: AS LINHAS DO LOTE FICAM TRAVADAS ATÉ O COMMIT.
+    #:
+    #: ACHADO DE REVISÃO COM SEVERIDADE ALTA, e era um lost update de verdade: o
+    #: lote lia as linhas, testava `pendente_de_revisao` EM MEMÓRIA e só gravava
+    #: no flush. Dois lotes sobre ids que se cruzam passavam os dois pelo teste
+    #: antes de qualquer commit, e o segundo reescrevia categoria, subcategoria e
+    #: TIPO de uma linha que o primeiro já havia consolidado.
+    #:
+    #: ISSO QUEBRAVA A TRAVA "só o que está na fila", que é a razão de a rota
+    #: viver sob a fila de revisão — e quebrava em SILÊNCIO, porque as duas
+    #: requisições respondiam 200.
+    #:
+    #: E A FILA É TRABALHO DE EQUIPE POR DESENHO ("inclusive pode ser trabalho de
+    #: outra pessoa"), então dois lotes ao mesmo tempo é o caso normal, não a
+    #: exceção. O lock serializa os dois: o segundo espera, lê a linha já
+    #: consolidada, e recusa — que é o que ele deve fazer.
     pedidas = {
         linha.id: linha
         for linha in sessao.scalars(
-            select(Instituicao).where(Instituicao.id.in_(ids))
+            select(Instituicao).where(Instituicao.id.in_(ids)).with_for_update()
         )
     }
 
@@ -194,22 +257,78 @@ def enquadrar(
                 )
             )
             continue
+        if novo_tipo != "perfil_rede" and (linha.cargo or linha.interlocutor_id):
+            #: O PERFIL DE REDE CARREGA CARGO E A PESSOA DE QUEM ELE É, e o banco
+            #: tem CHECK de que os dois só existem em `tipo = 'perfil_rede'` — ver
+            #: as migrations `0073` e `0076`.
+            #:
+            #: ACHADO DE REVISÃO COM SEVERIDADE ALTA, E ALCANÇÁVEL DE VERDADE: a
+            #: ingestão de menções cria perfil de rede PENDENTE, então eles estão
+            #: na fila. Medido removendo esta recusa e o savepoint: 500, com
+            #: `CheckViolation: instituicao_cargo_so_de_perfil` — o lote INTEIRO
+            #: caía por uma linha.
+            #:
+            #: RECUSAR, E NÃO LIMPAR OS CAMPOS: o cargo é o que o fornecedor
+            #: informou e `interlocutor_id` é o vínculo com a pessoa do CRM —
+            #: apagar os dois em silêncio num lote de 178 destruiria informação que
+            #: ninguém pediu para destruir. É a mesma recusa que o cadastro um a um
+            #: já faz (`_conferir_campos_de_perfil`), "para a mensagem falar de
+            #: cadastro em vez de constraint".
+            recusadas.append(
+                Recusado(
+                    str(linha.id),
+                    linha.nome,
+                    "É um perfil de rede, e ele guarda o cargo informado e a "
+                    "pessoa de quem é. Mudar o tipo apagaria os dois — edite-o "
+                    "pela lista de cadastro.",
+                )
+            )
+            continue
 
-        linha.categoria_publico_id = categoria_publico_id
-        linha.subcategoria_publico_id = subcategoria_publico_id
-        linha.tipo = novo_tipo
+        #: UM SAVEPOINT POR LINHA, e é a rede que torna verdadeira a promessa de
+        #: "não estoura em IntegrityError".
+        #:
+        #: ACHADO DE REVISÃO (MÉDIA): as conferências acima são feitas ANTES do
+        #: flush, e entre uma e outro cabe outra transação ocupando o mesmo par
+        #: `(nome_normalizado, tipo)`. Elas continuam valendo — é delas que sai a
+        #: mensagem que diz O QUE fazer —, mas a última palavra é do índice.
+        #:
+        #: E A MEDIÇÃO MOSTROU QUE OS DOIS CONSERTOS SÃO COMPLEMENTARES: sem a
+        #: recusa do perfil mas COM o savepoint, o lote não caía e a recusa dizia
+        #: "já existe outra instituição com este nome" — razão errada para a linha
+        #: certa. O savepoint evita o estrago; a conferência diz a verdade.
+        #:
+        #: A MUTAÇÃO FICA DENTRO DO SAVEPOINT, e a ordem é fácil de errar: é a
+        #: lição que `app/banco/gravar.py` registra em voz alta. Um flush que falha
+        #: marca a SESSÃO INTEIRA para rollback, e o savepoint só a protege se a
+        #: escrita estiver dentro dele — com ela de fora, o próximo comando estoura
+        #: `PendingRollbackError`, um erro sem relação aparente com o que a pessoa
+        #: fez.
+        try:
+            with sessao.begin_nested():
+                linha.categoria_publico_id = categoria_publico_id
+                linha.subcategoria_publico_id = subcategoria_publico_id
+                linha.tipo = novo_tipo
+                if consolidar:
+                    linha.pendente_de_revisao = False
+                    linha.motivo_da_revisao = None
+                sessao.flush()
+        except IntegrityError:
+            recusadas.append(
+                Recusado(
+                    str(ident),
+                    linha.nome,
+                    f"O banco recusou: já existe outra instituição com este nome "
+                    f"do tipo {rotulo!r}. É possível duplicata — resolva em "
+                    f"'Possíveis duplicados'.",
+                )
+            )
+            continue
+
         enquadradas += 1
-        #: O NOME PASSA A OCUPAR O PAR, para a segunda linha do lote com o mesmo
-        #: nome não passar atrás da primeira. A contagem acima já pega o caso, e
-        #: isto é o cinto: as duas conferências custam nada e o erro que elas
-        #: evitam é um `IntegrityError` no flush.
-        ocupados.add(linha.nome_normalizado)
         if consolidar:
-            linha.pendente_de_revisao = False
-            linha.motivo_da_revisao = None
             consolidadas += 1
 
-    sessao.flush()
     return Resultado(
         enquadradas=enquadradas,
         consolidadas=consolidadas,

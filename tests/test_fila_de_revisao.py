@@ -1013,3 +1013,145 @@ def test_quem_NAO_administra_cadastros_nao_enquadra_em_lote(cliente_sem_admin, s
         ).status_code
         == 403
     )
+
+
+# -- os três achados da revisão do lote ---------------------------------------
+
+
+def test_o_PERFIL_DE_REDE_e_recusado_e_NAO_derruba_o_lote(cliente_admin, sessao):
+    """ACHADO DE REVISÃO COM SEVERIDADE ALTA, e era alcançável de verdade.
+
+    O perfil de rede carrega `cargo` (o que o fornecedor informou) e
+    `interlocutor_id` (a pessoa de quem ele é), e o banco tem CHECK de que os dois
+    só existem em `tipo = 'perfil_rede'` — migrations `0073` e `0076`.
+
+    E A INGESTÃO DE MENÇÕES CRIA PERFIL DE REDE PENDENTE, então eles estão na
+    fila: selecionar um derrubava o lote INTEIRO em `IntegrityError` no flush. Não
+    era hipótese — era a fila real.
+
+    RECUSAR, E NÃO LIMPAR OS CAMPOS: apagar o cargo e o vínculo em silêncio, num
+    lote de 178, destruiria informação que ninguém pediu para destruir.
+
+    E O RESTO DO LOTE PASSA, que é a promessa de "não é tudo-ou-nada".
+    """
+    categoria = _categoria_de(sessao, "orgao")
+    perfil = Instituicao(
+        nome="perfilnalote_zz96",
+        nome_normalizado=normalizar("perfilnalote_zz96"),
+        tipo="perfil_rede",
+        cargo="Deputado estadual",
+        pendente_de_revisao=True,
+    )
+    sessao.add(perfil)
+    sessao.flush()
+    boa = _pendente(sessao, "Entidade Que Passa Zz96")
+
+    resposta = cliente_admin.post(
+        "/api/revisao-de-cadastros/instituicoes/enquadramento",
+        json={
+            "ids": [str(perfil.id), str(boa.id)],
+            "categoria_publico_id": categoria.id,
+        },
+    )
+    #: 200, E NÃO 500: o lote não estoura.
+    assert resposta.status_code == 200, resposta.text
+    corpo = resposta.json()
+
+    assert corpo["enquadradas"] == 1
+    assert len(corpo["recusadas"]) == 1
+    assert corpo["recusadas"][0]["nome"] == "perfilnalote_zz96"
+    assert "perfil de rede" in corpo["recusadas"][0]["motivo"]
+
+    #: O PERFIL FICOU INTACTO, cargo e tipo.
+    sessao.refresh(perfil)
+    assert perfil.tipo == "perfil_rede"
+    assert perfil.cargo == "Deputado estadual"
+    #: E A OUTRA PASSOU.
+    sessao.refresh(boa)
+    assert boa.tipo == "orgao"
+
+
+def test_o_lote_TRAVA_as_linhas_que_vai_mexer(cliente_admin, sessao):
+    """ACHADO DE REVISÃO COM SEVERIDADE ALTA: era um lost update.
+
+    O lote lia as linhas, testava `pendente_de_revisao` EM MEMÓRIA e só gravava no
+    flush. Dois lotes sobre ids que se cruzam passavam os dois pelo teste antes de
+    qualquer commit, e o segundo reescrevia categoria, subcategoria e TIPO de uma
+    linha que o primeiro já havia consolidado — quebrando em silêncio a trava "só
+    o que está na fila", com as duas requisições respondendo 200.
+
+    O QUE ESTE TESTE AFIRMA é que a leitura pede o lock. Provar a corrida de
+    verdade exigiria duas conexões e um `commit` no meio, e a fixture da suíte
+    roda tudo numa transação que termina em rollback — duas sessões não veriam
+    uma à outra.
+
+    ENTÃO A ÂNCORA É A FONTE, e ela pega o único modo como este conserto se
+    perde: alguém reescrevendo a consulta sem o `with_for_update`. Uma primeira
+    versão deste teste também compilava a consulta e procurava "FOR UPDATE" no
+    SQL — isso testava o SQLAlchemy, não este código, e não dizia nada sobre o
+    lote.
+    """
+    import inspect
+
+    from app.casos_de_uso import enquadrar_em_lote
+
+    fonte = inspect.getsource(enquadrar_em_lote.enquadrar)
+    assert "with_for_update()" in fonte, (
+        "a leitura do lote precisa travar as linhas: sem isso, dois lotes "
+        "cruzados reescrevem o que o outro consolidou"
+    )
+
+
+def test_a_categoria_que_NAO_define_tipo_e_recusada_com_a_mensagem_certa(
+    cliente_admin, sessao
+):
+    """ACHADO DE REVISÃO: a mensagem de `derivar_tipo` mente neste contexto.
+
+    Ela diz "Informe a categoria de público", que é verdade no cadastro um a um —
+    onde a categoria pode vir vazia — e MENTIRA aqui: a categoria foi informada, e
+    o que falta é ela mapear para um tipo. Quem lê "informe a categoria" depois de
+    ter escolhido uma vai procurar o erro no lugar errado.
+    """
+    from app.dominio.frentes import TIPO_DA_CATEGORIA_DE_PUBLICO
+
+    sem_tipo = sessao.scalar(
+        select(CategoriaPublico).where(
+            CategoriaPublico.codigo.notin_(list(TIPO_DA_CATEGORIA_DE_PUBLICO)),
+            CategoriaPublico.ativo.is_(True),
+        )
+    )
+    if sem_tipo is None:
+        pytest.skip("toda categoria ativa define tipo — nada a afirmar aqui")
+
+    uma = _pendente(sessao, "Entidade Sem Tipo Zz97")
+    resposta = cliente_admin.post(
+        "/api/revisao-de-cadastros/instituicoes/enquadramento",
+        json={"ids": [str(uma.id)], "categoria_publico_id": sem_tipo.id},
+    )
+    assert resposta.status_code == 422, resposta.text
+    assert "não define tipo" in resposta.text
+    assert "Informe a categoria" not in resposta.text
+
+
+def test_o_id_REPETIDO_no_pedido_nao_vira_duas_recusas(cliente_admin, sessao):
+    """A deduplicação que substituiu o "cinto" do laço.
+
+    O cinto era `ocupados.add(...)` dentro do laço, e a revisão apontou que ele
+    "sugeria uma proteção que não resolve concorrência" — o id repetido era o
+    único caso que ele cobria, e a contagem `quantas_vezes` já pegava duas linhas
+    DIFERENTES de mesmo nome. Deduplicar o pedido resolve o caso real e não
+    promete nada sobre concorrência, que é o que o savepoint e o lock fazem.
+    """
+    categoria = _categoria_de(sessao, "orgao")
+    uma = _pendente(sessao, "Entidade Repetida Zz98")
+
+    corpo = cliente_admin.post(
+        "/api/revisao-de-cadastros/instituicoes/enquadramento",
+        json={
+            "ids": [str(uma.id), str(uma.id), str(uma.id)],
+            "categoria_publico_id": categoria.id,
+        },
+    ).json()
+
+    assert corpo["enquadradas"] == 1, corpo
+    assert corpo["recusadas"] == []
