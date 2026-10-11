@@ -471,15 +471,47 @@ def test_a_uf_ausente_trava_porque_InteracaoEntrada_a_exige(sessao, semente):
     assert any(d.campo == "uf" for d in proposta.divergencias)
 
 
-def test_a_instituicao_desconhecida_trava(sessao, semente):
+def test_a_instituicao_desconhecida_NAO_trava_mais_e_e_criada(sessao, semente):
+    """ESTE TESTE REVERTE A DECISÃO QUE O PRÓPRIO NOME DELE AFIRMAVA.
+
+    Ele se chamava `test_a_instituicao_desconhecida_trava`, e travava mesmo: um
+    nome fora do cadastro barrava a linha inteira, com a mensagem "se é novo,
+    escreva-o também na aba de cadastro da planilha".
+
+    O DONO DO PRODUTO PEDIU O CONTRÁRIO (11/10/2026): "tem muitas travas; queria
+    algo mais similar ao que temos com planilhas da Clipei e Bites — se não
+    tiver um registro de empresa ou pessoa na base, esse registro [é criado]
+    automaticamente (...) o ponto principal é não barrar o registro (...) isso é
+    necessário porque quando temos várias reuniões num dia o registro completo
+    pode ser uma dificuldade".
+
+    E A TRAVA NÃO ERA "FALTA DADO", era "falta dado EM DOIS LUGARES": a
+    importação já sabia criar instituição, interlocutor, pessoa da Aegea e tema
+    — só exigia o nome repetido na aba de cadastro. Com várias reuniões num dia,
+    preencher duas abas por nome novo é o que faz o registro não acontecer.
+
+    PARA VOLTAR: em `_resolver` (`app/casos_de_uso/importar_agendas.py`), o ramo
+    final do `else` voltaria a `trava=True` com a mensagem antiga.
+    """
     conteudo = _preenchida(
         sessao, agendas=[_agenda(semente, **{"Instituição": "Prefeitura de Campinas"})]
     )
 
     (proposta,) = importar_agendas.propor(sessao, conteudo)
 
-    assert proposta.entrada is None
-    assert any(d.campo == "instituicao_id" and d.trava for d in proposta.divergencias)
+    #: NADA TRAVA.
+    assert not any(d.trava for d in proposta.divergencias), [
+        d.mensagem for d in proposta.divergencias if d.trava
+    ]
+    #: E A CRIAÇÃO ESTÁ PEDIDA, com o nome que a pessoa escreveu — é disso que a
+    #: confirmação precisa, e é o que a conferência mostra como aviso.
+    assert ("instituicoes", "Prefeitura de Campinas") in proposta.a_criar
+    aviso = next(d for d in proposta.divergencias if d.campo == "instituicao_id")
+    assert "complete o cadastro na plataforma" in aviso.mensagem
+    #: E A DIVERGÊNCIA FICA ABERTA (`acao` vazia), que é o que mantém a oferta de
+    #: apontar para um cadastro parecido em vez de criar o segundo. Com `acao`
+    #: preenchida, `linhas_com` a trataria como já decidida e o "apontar" morreria.
+    assert aviso.acao is None
 
 
 def test_a_instituicao_DECLARADA_na_aba_nao_trava_e_espera_criacao(sessao, semente):
@@ -832,14 +864,27 @@ def test_a_proposta_diz_O_QUE_vai_criar(sessao, semente):
 
 def test_esperar_criacao_e_diferente_de_estar_travada(sessao, semente):
     """As duas dão `entrada is None`, e a tela precisa distingui-las: uma pede
-    decisão da pessoa, a outra só espera a confirmação."""
+    decisão da pessoa, a outra só espera a confirmação.
+
+    O EXEMPLO DA TRAVA MUDOU, e o propósito não (11/10/2026). Antes o lado
+    travado era uma instituição não declarada na aba — e isso deixou de travar,
+    por pedido do dono do produto. A distinção em si continua existindo no código
+    (`Proposta.travada` contra `Proposta.esperando_criacao`) e a tela continua
+    precisando dela; só o conjunto do que cai em cada lado mudou.
+
+    AGORA O LADO TRAVADO É UM DICIONÁRIO ADMINISTRADO — unidade de negócio. Ele
+    trava de propósito, e o motivo está escrito em
+    `VOCABULARIOS_QUE_A_IMPORTACAO_CRIA`: "uma unidade de negócio nova é decisão
+    de estrutura da companhia, não um nome que se digita no meio de 54 agendas".
+    """
     esperando = _preenchida(
         sessao,
         agendas=[_agenda(semente, **{"Instituição": "Prefeitura de Campinas"})],
         declarar={"instituicoes": ["Prefeitura de Campinas"]},
     )
     travada = _preenchida(
-        sessao, agendas=[_agenda(semente, **{"Instituição": "Prefeitura de Campos"})]
+        sessao,
+        agendas=[_agenda(semente, **{"Unidade de negócio": "Aegea Marte"})],
     )
 
     (a,) = importar_agendas.propor(sessao, esperando)
@@ -847,6 +892,10 @@ def test_esperar_criacao_e_diferente_de_estar_travada(sessao, semente):
 
     assert a.entrada is None and a.a_criar and not any(d.trava for d in a.divergencias)
     assert b.entrada is None and not b.a_criar and any(d.trava for d in b.divergencias)
+    #: E A MENSAGEM MANDA PARA O LUGAR CERTO, que é metade do valor da trava: ela
+    #: existe para dizer "isto não se resolve na planilha".
+    trava = next(d for d in b.divergencias if d.trava)
+    assert "Administração" in trava.mensagem
 
 def test_linha_filha_com_cadastro_declarado_NAO_perde_os_outros_campos(sessao, semente):
     """O DEFEITO 2: a linha inteira era descartada, levando Presença e Principal.

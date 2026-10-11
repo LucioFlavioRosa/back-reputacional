@@ -256,6 +256,19 @@ FRENTE_UNICA_DO_TIPO: dict[str, Frente] = {
     tipo: frente for frente, tipo in TIPO_DE_INSTITUICAO.items() if tipo != "entidade"
 }
 
+#: O TIPO DE QUEM NASCE SEM CATEGORIA DE PÚBLICO — a instituição que a importação
+#: de agendas cria a partir de um nome solto, sem a aba de cadastro preenchida.
+#:
+#: POR QUE "entidade", e a razão está no mapa logo acima: ele é o ÚNICO tipo que
+#: não aparece em `FRENTE_UNICA_DO_TIPO`. Todos os outros cravam uma frente só
+#: por existirem, e cravar a frente errada em toda agenda de uma instituição é
+#: pior que ficar na genérica — `derivar_frente` cai no formato da interação e,
+#: sem ele, em `PARCEIROS`.
+#:
+#: NÃO É ESTADO NOVO: 205 das 3.809 instituições já estão sem categoria. O que é
+#: novo é a importação poder produzi-lo, e o alerta na agenda que o denuncia.
+TIPO_SEM_CATEGORIA = "entidade"
+
 #: A frente determina qual extensão é aceita. Uma interação de Governo com
 #: dados de imprensa é um erro de programação, não um caso de uso.
 EXTENSAO_POR_FRENTE: dict[Frente, type[Extensao]] = {
