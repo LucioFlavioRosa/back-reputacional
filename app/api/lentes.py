@@ -1130,9 +1130,19 @@ _CORES_DO_TIER = {
 #: Ou seja: os dois gráficos lado a lado não repetem nada. Era o recorte por
 #: público-alvo Investidores (migration 0048) virando fonte econômica de fato.
 #:
-#: SOCIEDADE E CLIENTES FICAM FORA porque não têm o campo — para elas o bloco
-#: sairia vazio de qualquer jeito. A Institucional fica fora por vir do CRM, e
-#: isso é conferido à parte (`lente_e_interna`), porque a mensagem é outra.
+#: SOCIEDADE E CLIENTES FICAM FORA, e por razões DIFERENTES — vale dizer qual,
+#: porque eu já errei essa frase duas vezes:
+#:
+#:   Clientes não tem menção nenhuma. Nada a mostrar.
+#:
+#:   Sociedade TEM `veiculo` (2.582 menções, 1.103 valores) e ZERO tier. Mas o
+#:   que ela guarda ali é perfil e rede — "deolhoemesteio", "Stela Farias" —,
+#:   não veículo de imprensa. Ranquear isso como "Top veículos", ao lado de
+#:   tier, diria algo errado sobre o dado. Ver `_lacuna_do_veiculo`, que é o que
+#:   explica isso para quem está na tela.
+#:
+#: A Institucional fica fora por vir do CRM, e isso é conferido à parte
+#: (`lente_e_interna`), porque a mensagem é outra.
 LENTES_COM_VEICULO_E_TIER = ("imprensa", "mercado")
 
 

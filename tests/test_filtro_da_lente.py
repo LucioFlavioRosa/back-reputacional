@@ -464,6 +464,55 @@ def test_o_mercado_tem_os_quatro_blocos_de_veiculo_como_a_imprensa(sessao):
     assert not dossie.top_veiculos.ficha.lacunas
 
 
+def test_o_mercado_tem_onde_esta_a_causa_menos_a_aba_de_jornalista(sessao):
+    """O último elemento que era só da Imprensa — e a premissa que o barrava era
+    FALSA.
+
+    O comentário de `DIMENSOES_POR_LENTE` punha Mercado e Institucional juntas:
+    "a fonte é estudo e agenda, não menção ingerida. Rodar os cortes devolveria
+    zero, e zero numa tela se lê como 'não houve'".
+
+    Verdade para a Institucional, falso para o Mercado. Medido:
+
+        MERCADO        327 menções   tema 327 (34 distintos)   atributo 327 (8)
+                                     veículo 327               uf 327 (10 UFs)
+                                     autor 0
+        INSTITUCIONAL    0 menções
+
+    Quatro das cinco dimensões da Imprensa estão 100% preenchidas no Mercado.
+
+    E O JORNALISTA NÃO ENTRA, que é a única diferença — e não é desvantagem do
+    Mercado: o campo `autor` está vazio nas DUAS lentes (a Imprensa tem 25.457
+    menções e ZERO autores). A aba dela existe para nomear o diretório de
+    jornalistas, conceito de imprensa e não de relação com investidor. Dar ao
+    Mercado uma aba vazia seria o defeito que o comentário descreve.
+    """
+    clipei_investidores = sessao.scalars(
+        select(ScoreFonte).where(ScoreFonte.codigo == "clipei_investidores")
+    ).one()
+    sessao.add(
+        Mencao(
+            fonte_id=clipei_investidores.id, mes=MES, sentimento="pos",
+            tier="muito_relevante", veiculo="Valor Econômico",
+            tema_texto="Governança", atributo="1. Governança", uf="SP",
+        )
+    )
+    sessao.flush()
+
+    dossie = obter_dossie(sessao=sessao, usuario=_QuemOlha(), codigo="mercado", mes="2026-06")
+
+    recortes = [bloco.recorta for bloco in dossie.onde_esta_a_causa]
+    assert recortes == ["tema", "atributo", "veiculo", "uf"], recortes
+    #: E NENHUMA ABA VAZIA: uma aba sem dado se lê como "não houve", e era o
+    #: argumento do comentário original. Se as abas vierem sem linha, a mudança
+    #: produziu exatamente o que ela queria evitar.
+    for bloco in dossie.onde_esta_a_causa:
+        assert bloco.dados, f"a aba {bloco.recorta} veio vazia"
+
+    #: O JORNALISTA NÃO ENTRA, e é a única diferença com a Imprensa.
+    assert "autor" not in recortes
+
+
 def test_as_lentes_sem_veiculo_continuam_vazias_e_dizem_o_motivo(sessao):
     """O outro lado da mudança: trazer o Mercado NÃO abriu para todas.
 

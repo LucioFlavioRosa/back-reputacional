@@ -97,9 +97,27 @@ class Presenca:
 #: TIER NÃO ENTRA NA IMPRENSA porque ele já é o painel A da lente: uma aba que
 #: repete um painel da mesma tela gasta a vez de uma que não está em nenhum.
 #:
-#: MERCADO E INSTITUCIONAL NÃO ESTÃO AQUI, e é a mesma razão que esvazia os
-#: painéis delas: a fonte é estudo e agenda, não menção ingerida. Rodar os
-#: cortes devolveria zero, e zero numa tela se lê como "não houve".
+#: A INSTITUCIONAL NÃO ESTÁ AQUI: a fonte dela é agenda, não menção ingerida —
+#: ela tem ZERO menções. Rodar os cortes devolveria zero, e zero numa tela se lê
+#: como "não houve".
+#:
+#: O MERCADO ESTAVA JUNTO DELA, E ERA ERRO MEU DE PREMISSA. O comentário dizia
+#: "a fonte é estudo e agenda" para os dois. Para o Mercado isso é falso: ele é
+#: o clipping da Clipei recortado por público-alvo Investidores (migration
+#: 0048), e tem menção ingerida como a Imprensa. Medido:
+#:
+#:     MERCADO        327 menções    tema 327 (34 distintos)   atributo 327 (8)
+#:                                   veículo 327               uf 327 (10 UFs)
+#:                                   autor 0
+#:     INSTITUCIONAL    0 menções
+#:
+#: Quatro das cinco dimensões da Imprensa estão 100% preenchidas no Mercado, e
+#: nenhum corte devolveria zero.
+#:
+#: O `autor` NÃO ENTRA, e não é desvantagem do Mercado: ele está vazio nas DUAS
+#: lentes — a Imprensa tem 25.457 menções e ZERO autores. A aba "Jornalista"
+#: dela está lá por decisão de produto (nomeia o diretório), não por ter dado.
+#: Dar ao Mercado uma aba vazia seria o defeito que este comentário descreve.
 DIMENSOES_POR_LENTE: dict[str, tuple[Dimensao, ...]] = {
     "sociedade": (
         Dimensao("tema", "Pilar (N1)", "tema_texto"),
@@ -116,6 +134,20 @@ DIMENSOES_POR_LENTE: dict[str, tuple[Dimensao, ...]] = {
         Dimensao("veiculo", "Veículo", "veiculo"),
         Dimensao("uf", "UF", "uf"),
         Dimensao("autor", "Jornalista", "autor", nomeia_o_diretorio=True),
+    ),
+    #: AS MESMAS DA IMPRENSA, MENOS O JORNALISTA — ver a nota acima: o campo
+    #: `autor` está vazio nas duas lentes, e a aba dela existe para nomear o
+    #: diretório de jornalistas, que é um conceito de imprensa, não de
+    #: relação com investidor.
+    #:
+    #: E O TIER NÃO ENTRA, pela mesma razão que não entra na Imprensa: ele já é
+    #: a rosca no alto da tela, e uma aba que repete um painel da mesma tela
+    #: gasta a vez de uma que não está em nenhum lugar.
+    "mercado": (
+        Dimensao("tema", "Pilar (N1)", "tema_texto"),
+        Dimensao("atributo", "Atributo", "atributo"),
+        Dimensao("veiculo", "Veículo", "veiculo"),
+        Dimensao("uf", "UF", "uf"),
     ),
     "clientes": (
         Dimensao("tema", "Pilar (N1)", "tema_texto"),
