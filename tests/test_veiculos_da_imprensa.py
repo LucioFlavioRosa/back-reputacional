@@ -129,21 +129,36 @@ def test_reconhecer_casa_por_nome_NORMALIZADO(sessao):
     assert reco.novos == (), "acento e caixa não podem criar veículo novo"
 
 
-def test_reconhecer_ignora_instituicao_que_nao_e_veiculo(sessao):
-    """Um ÓRGÃO com o mesmo nome não serve: o índice único é por
-    `(nome_normalizado, tipo)`, e a menção aponta para veículo."""
-    sessao.add(
-        Instituicao(
-            nome="Homônimo 42",
-            nome_normalizado=normalizar("Homônimo 42"),
-            tipo="orgao",
-        )
+def test_reconhecer_ACHA_qualquer_tipo_porque_a_base_e_UMA_SO(sessao):
+    """Um ÓRGÃO com o mesmo nome É o mesmo ator, e a regra mudou em 11/10/2026.
+
+    ESTE TESTE AFIRMAVA O CONTRÁRIO, e estava certo pela regra de então: "um órgão
+    com o mesmo nome não serve: o índice único é por `(nome_normalizado, tipo)`, e
+    a menção aponta para veículo". O dono do produto trocou a regra:
+
+        "qualquer fonte de dados tem acesso à mesma base de instituições e
+        interlocutores, não interessa se é no CRM, redes sociais ou imprensa. O
+        BTG por exemplo podemos ter acesso em rede social, em reunião de
+        investimento ou imprensa, mas ele continua sendo um só, se comunicando e
+        relacionando em diferentes níveis."
+
+    E O CUSTO DA REGRA ANTIGA ESTÁ MEDIDO: 24 atores ficaram partidos em dois
+    cadastros. BTG Pactual e Fitch Ratings como `investidor` + `veiculo` — 23
+    agendas num registro, 6 menções no outro —, e 22 pares `perfil_rede` +
+    `veiculo`, com 310 menções de um lado e 37 do outro.
+    """
+    ja = Instituicao(
+        nome="Homônimo 42",
+        nome_normalizado=normalizar("Homônimo 42"),
+        tipo="orgao",
     )
+    sessao.add(ja)
     sessao.flush()
 
     reco = reconhecer(sessao, _da_planilha("Homônimo 42"))
 
-    assert [v.nome for v in reco.novos] == ["Homônimo 42"]
+    assert reco.novos == (), [v.nome for v in reco.novos]
+    assert reco.cadastrados[normalizar("Homônimo 42")] == str(ja.id)
 
 
 def test_reconhecer_com_planilha_sem_veiculo_nenhum(sessao):
@@ -443,25 +458,54 @@ def test_o_VEICULO_ainda_ganha_quando_os_dois_existem(sessao):
     assert reco.cadastrados[normalizar("Dois Cadastros 42")] == str(veiculo.id)
 
 
-def test_o_ORGAO_de_mesmo_nome_continua_sendo_HOMONIMO(sessao):
-    """A metade que a correção não pode levar embora.
+def test_a_ingestao_NAO_MUDA_o_enquadramento_de_quem_ja_existe(sessao):
+    """"Quem decide como enquadrar é o time que está registrando a primeira vez ou
+    editando posteriormente."
 
-    Um nome de jornal igual ao de uma prefeitura é homônimo, e apontar a matéria
-    para o órgão seria atribuição errada. `orgao`, `proposicao`, `entidade` e
-    `area_interna` seguem fora de `TIPOS_DO_MESMO_ATOR` por isso — e sem este
-    teste, alargar a lista "só um pouco mais" não quebraria nada visível.
+    É A OUTRA METADE DA REGRA NOVA, e sem ela a primeira é perigosa: a busca
+    passou a achar o cadastro em QUALQUER tipo, então ela agora encontra o órgão, a
+    entidade, o investidor. Se a ingestão aproveitasse para "corrigir" o tipo ou a
+    categoria do que achou, uma subida de clipping reclassificaria o cadastro que
+    alguém montou à mão — e a frente de toda agenda daquela instituição mudaria
+    junto, porque `derivar_frente` sai do tipo.
+
+    POR ISSO ESTE TESTE PERCORRE OS TIPOS: ele afirma, para cada um, que o cadastro
+    sai da ingestão exatamente como entrou.
     """
-    for tipo in ("orgao", "proposicao", "entidade", "area_interna"):
-        nome = f"Homônimo De {tipo} 42"
-        sessao.add(
-            Instituicao(nome=nome, nome_normalizado=normalizar(nome), tipo=tipo)
-        )
-    sessao.flush()
+    from app.banco.tabelas_catalogo import CategoriaPublico
 
-    for tipo in ("orgao", "proposicao", "entidade", "area_interna"):
-        nome = f"Homônimo De {tipo} 42"
+    imprensa = sessao.scalar(
+        select(CategoriaPublico.id).where(CategoriaPublico.nome == CATEGORIA_DA_IMPRENSA)
+    )
+    for tipo in ("orgao", "proposicao", "entidade", "area_interna", "investidor"):
+        nome = f"Enquadrado Como {tipo} 42"
+        ja = Instituicao(
+            nome=nome,
+            nome_normalizado=normalizar(nome),
+            tipo=tipo,
+            #: Uma categoria PROPOSITALMENTE diferente da que a ingestão daria a um
+            #: veículo: se ela sobrescrevesse, o teste veria.
+            categoria_publico_id=None,
+        )
+        sessao.add(ja)
+        sessao.flush()
+
         reco = reconhecer(sessao, _da_planilha(nome))
-        assert [v.nome for v in reco.novos] == [nome], f"{tipo} deixou de ser homônimo"
+        criar(sessao, reco.novos)
+        sessao.flush()
+        sessao.refresh(ja)
+
+        assert ja.tipo == tipo, f"a ingestão mudou o tipo de {nome}"
+        assert ja.categoria_publico_id != imprensa, (
+            f"a ingestão classificou {nome} como imprensa"
+        )
+        #: E NÃO NASCEU UM SEGUNDO: é a regra nova agindo, e a razão de ela existir.
+        quantos = sessao.scalar(
+            select(func.count(Instituicao.id)).where(
+                Instituicao.nome_normalizado == normalizar(nome)
+            )
+        )
+        assert quantos == 1, f"{nome} ficou com {quantos} cadastros"
 
 
 def test_o_perfil_de_rede_continua_achando_em_QUALQUER_tipo(sessao):

@@ -58,30 +58,6 @@ CATEGORIA_DA_IMPRENSA = "Imprensa"
 
 #: O QUE CADA LISTA DE VEÍCULOS É, no cadastro compartilhado.
 #:
-#: OS TIPOS QUE PODEM SER O MESMO ATOR DE QUEM FALA NA IMPRENSA.
-#:
-#: POR QUE ISTO EXISTE, medido em 11/10/2026. A busca pelo cadastro existente
-#: filtrava pelo tipo da fonte, então para a Clipei só um cadastro `veiculo`
-#: contava. "BTG Pactual" e "Fitch Ratings" estavam cadastrados como `investidor`
-#: — invisíveis —, e a ingestão criou um SEGUNDO cadastro de cada como `veiculo`.
-#: O resultado é a companhia partida em dois registros: 12 agendas e zero menções
-#: num, 4 menções e zero agendas no outro, e nenhuma tela juntando.
-#:
-#: A REGRA DO HOMÔNIMO CONTINUA, e é ela que justifica a lista ser curta. Um nome
-#: de jornal igual ao de uma prefeitura é HOMÔNIMO: apontar a matéria para o órgão
-#: seria atribuição errada, e por isso `orgao`, `proposicao`, `entidade` e
-#: `area_interna` seguem de fora. Quem entra são os atores FINANCEIROS, que de
-#: fato falam na imprensa e se sentam à mesa: o banco que publica relatório é o
-#: mesmo banco credor, e a agência de rating é o mesmo ator nas duas pontas.
-#:
-#: E A PREFERÊNCIA PELO TIPO DA FONTE DECIDE O EMPATE (ver `achados`): quando o
-#: nome existe como `veiculo` E como `investidor`, a Clipei continua achando o
-#: veículo dela. Esta lista só age onde não há veículo — e ali ela troca a
-#: duplicata por um apontamento.
-TIPOS_DO_MESMO_ATOR: dict[str, frozenset[str]] = {
-    "veiculo": frozenset({"veiculo", "investidor", "credor"}),
-}
-
 #: O MOTOR SÓ CONHECE O NOME (`LISTAS_DE_VEICULOS`, em `dominio/ingestao_score`);
 #: a tradução para o par (categoria, subcategoria) mora aqui, que é a camada com
 #: banco. Pelo PAR, e não pelo nome da subcategoria sozinho:
@@ -254,20 +230,39 @@ def reconhecer(
             (Instituicao.tipo != tipo).label("de_outro_tipo"),
         ).where(
             Instituicao.nome_normalizado.in_(list(nomes)),
-            #: EM QUALQUER TIPO SÓ QUANDO QUEM FALA É UM PERFIL: o Instagram do
-            #: Valor Econômico É o Valor.
+            #: EM QUALQUER TIPO, PARA QUALQUER FONTE — e esta é a regra que o
+            #: dono do produto deu em 11/10/2026: "qualquer fonte de dados tem
+            #: acesso à mesma base de instituições e interlocutores, não interessa
+            #: se é no CRM, redes sociais ou imprensa. O BTG podemos ter acesso em
+            #: rede social, em reunião de investimento ou imprensa, mas ele
+            #: continua sendo um só, se comunicando e relacionando em diferentes
+            #: níveis".
             #:
-            #: NOS OUTROS, NOS TIPOS QUE PODEM SER O MESMO ATOR — e não só no
-            #: tipo da fonte. Ver `TIPOS_DO_MESMO_ATOR`: um nome de jornal igual
-            #: ao de uma prefeitura é homônimo e fica de fora, mas o banco e a
-            #: agência de rating são o mesmo ator que o `investidor` cadastrado,
-            #: e filtrar só por `veiculo` fez a ingestão criar um segundo
-            #: cadastro de BTG Pactual e de Fitch Ratings.
-            *(
-                []
-                if tipo == "perfil_rede"
-                else [Instituicao.tipo.in_(sorted(TIPOS_DO_MESMO_ATOR.get(tipo, {tipo})))]
-            ),
+            #: ANTES SE FILTRAVA PELO TIPO DA FONTE, e o custo está medido: 24
+            #: atores ficaram partidos em dois cadastros. "BTG Pactual" e "Fitch
+            #: Ratings" existiam como `investidor` — invisíveis para a Clipei —, e
+            #: a ingestão criou um `veiculo` de cada: 23 agendas num registro, 6
+            #: menções no outro, e nenhuma tela juntando. Os outros 22 são
+            #: `perfil_rede` + `veiculo`, com 310 menções de um lado e 37 do
+            #: outro.
+            #:
+            #: E A `0077` TINHA ESCRITO QUE ISSO ESTAVA RESOLVIDO: "a ingestão já
+            #: foi corrigida, então a próxima subida não cria o par de novo". Era
+            #: verdade para a Bites, que sempre buscou em qualquer tipo. Falso
+            #: para a Clipei, que não buscava — e foi ela que recriou os 22.
+            #:
+            #: QUEM ENQUADRA É O TIME, não esta busca: "quem decide como enquadrar
+            #: é o time que está registrando a primeira vez ou editando
+            #: posteriormente". A busca acha o ator; o tipo, a categoria e a
+            #: subcategoria são de quem cadastra, e esta função nunca os muda num
+            #: cadastro que já existe.
+            #:
+            #: O HOMÔNIMO NÃO DESAPARECEU, MUDOU DE DONO. A regra antiga decidia
+            #: sozinha que nome igual com tipo diferente é outro ator, e essa
+            #: decisão produziu os 24. O que falta, e está registrado como
+            #: próximo passo, é a conferência MOSTRAR "este nome já existe como
+            #: perfil de rede; é o mesmo ator?" — a regra do dono do produto para
+            #: suspeita de duplicação é mostrar para a pessoa decidir.
         )
     ).all():
         #: O DO TIPO DA FONTE VENCE quando o nome existe nos dois: enquanto os
