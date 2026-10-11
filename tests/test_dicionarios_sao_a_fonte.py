@@ -309,7 +309,13 @@ def test_o_dicionario_NAO_serve_as_colunas_de_CONTROLE(sessao):
     outro teste caiu. Um teste que lê a mesma constante que o código lê não testa
     a constante.
     """
-    NUNCA_NO_PAYLOAD = ("ativo", "pendente_de_revisao")
+    #: A TERCEIRA ENTROU EM 11/10/2026, e por achado de revisão: `COLUNAS_DE_CONTROLE`
+    #: já excluía `motivo_da_revisao`, mas esta lista não a cobrava — então tirá-la
+    #: da constante faria a frase do motivo ("confirme se são a mesma pessoa, se ela
+    #: mudou de casa, ou se são homônimas") aparecer em todo filtro e formulário da
+    #: plataforma, sem nenhum teste cair. É a MESMA lacuna por onde
+    #: `pendente_de_revisao` vazou, deixada aberta para a coluna seguinte.
+    NUNCA_NO_PAYLOAD = ("ativo", "pendente_de_revisao", "motivo_da_revisao")
 
     payload = listar_dicionarios(sessao)
     assert payload, "o dicionário veio vazio, e o teste mediria o nada"
@@ -332,10 +338,15 @@ def test_toda_coluna_de_CONTROLE_esta_na_lista(sessao):
     from app.banco.tabelas_catalogo import Tema
     from app.banco.tabelas_stakeholders import Instituicao, Interlocutor, PessoaAegea
 
-    #: O QUE CONTA COMO CONTROLE: coluna booleana que não descreve o registro, e
-    #: sim o estado dele no fluxo de trabalho. `e_risco` é booleana e DESCREVE o
-    #: tema, então não entra — por isso a lista é por nome e não por tipo.
-    DE_CONTROLE = {"ativo", "pendente_de_revisao"}
+    #: O QUE CONTA COMO CONTROLE: coluna que não descreve o registro, e sim o
+    #: estado dele no fluxo de trabalho. `e_risco` é booleana e DESCREVE o tema,
+    #: então não entra — por isso a lista é por nome e não por tipo.
+    #:
+    #: E `motivo_da_revisao` MOSTRA QUE NEM É SÓ BOOLEANA: ela é texto, e é
+    #: controle porque o que ela guarda é uma pergunta da plataforma para quem
+    #: revisa, não um fato sobre o ator. "Controle" é o papel do dado, não o tipo
+    #: da coluna — e foi por supor o tipo que esta lista nasceu incompleta.
+    DE_CONTROLE = {"ativo", "pendente_de_revisao", "motivo_da_revisao"}
     for tabela in (Instituicao, Interlocutor, Tema, PessoaAegea):
         nomes = {c.name for c in tabela.__table__.columns}
         faltando = sorted((nomes & DE_CONTROLE) - COLUNAS_DE_CONTROLE)
