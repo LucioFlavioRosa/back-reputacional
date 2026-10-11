@@ -325,7 +325,7 @@ def test_a_fusao_leva_as_mencoes_e_apaga_o_perfil(sessao, bites):
     id_do_perfil, id_do_veiculo = perfil.id, veiculo.id
 
     atores_duplicados.fundir(
-        sessao, perfil_id=id_do_perfil, sobrevivente_id=id_do_veiculo
+        sessao, que_sai_id=id_do_perfil, sobrevivente_id=id_do_veiculo
     )
 
     sobrou = sessao.scalar(
@@ -339,19 +339,60 @@ def test_a_fusao_leva_as_mencoes_e_apaga_o_perfil(sessao, bites):
 
 
 def test_a_fusao_RECUSA_apagar_o_veiculo_curado(sessao):
-    """O caminho inverso não é oferecido.
+    """O caminho inverso não é oferecido, e a recusa é do SERVIDOR.
 
     O veículo é a linha com categoria, subcategoria, UF e frente, e com o nome
     escrito por gente. Fundir ele dentro do handle do fornecedor perderia a
     curadoria — e quem clica numa tela de duplicados não está pedindo isso.
+
+    A GUARDA MUDOU DE FORMA EM 11/10/2026, não de existência. Era `if perfil.tipo
+    != TIPO_DE_ORIGEM`; ao abrir a fusão para todos os tipos eu a troquei por "a
+    ordem da fila garante", e este teste caiu com razão: a ordem da fila é a TELA, e
+    esconder o botão é conveniência — um `curl` basta.
+
+    AGORA É A MESMA REGRA DA FILA (`_esta_do_lado_que_pergunta`), consultada pelos
+    dois lugares: a fila para ancorar a pergunta, a fusão para recusar o inverso.
     """
     perfil = _cadastrar(sessao, "valorzz66", "perfil_rede")
     veiculo = _cadastrar(sessao, "Valor Zz66", "veiculo")
 
-    with pytest.raises(RegraViolada, match="perfil de rede"):
+    with pytest.raises(RegraViolada, match="deve sobreviver"):
         atores_duplicados.fundir(
-            sessao, perfil_id=veiculo.id, sobrevivente_id=perfil.id
+            sessao, que_sai_id=veiculo.id, sobrevivente_id=perfil.id
         )
+
+
+def test_a_fusao_RECUSA_apagar_a_linha_com_MAIS_MENCOES(sessao, bites):
+    """O caso que a guarda antiga NÃO cobria, e é o ganho da regra nova.
+
+    A guarda antiga olhava TIPO: só recusava fundir um não-perfil dentro de um
+    perfil. Dois veículos passavam — e dar baixa num veículo de muitas menções
+    dentro de um de poucas é a mesma perda de história, com os mesmos cliques.
+
+    E ISTO NÃO É HIPÓTESE: medido, há 5 pares `veiculo`+`veiculo` de chave achatada
+    igual na base, e a fila passou a mostrá-los.
+    """
+    def quantas(dono):
+        return sessao.scalar(
+            select(func.count()).select_from(Mencao).where(Mencao.instituicao_id == dono.id)
+        )
+
+    muitas = _cadastrar(sessao, "Neofeed Zz67", "veiculo")
+    poucas = _cadastrar(sessao, "Neo Feed Zz67", "veiculo")
+    for _ in range(3):
+        _mencao(sessao, muitas, bites)
+    _mencao(sessao, poucas, bites)
+    assert quantas(muitas) == 3
+
+    with pytest.raises(RegraViolada, match="deve sobreviver"):
+        atores_duplicados.fundir(
+            sessao, que_sai_id=muitas.id, sobrevivente_id=poucas.id
+        )
+
+    #: E NA DIREÇÃO CERTA FUNCIONA — senão o teste acima passaria por a fusão
+    #: estar quebrada, e não pela guarda.
+    atores_duplicados.fundir(sessao, que_sai_id=poucas.id, sobrevivente_id=muitas.id)
+    assert quantas(muitas) == 4
 
 
 def test_a_fusao_recusa_o_perfil_ligado_a_uma_pessoa(sessao):
@@ -363,7 +404,7 @@ def test_a_fusao_recusa_o_perfil_ligado_a_uma_pessoa(sessao):
 
     with pytest.raises(RegraViolada, match="pessoa"):
         atores_duplicados.fundir(
-            sessao, perfil_id=perfil.id, sobrevivente_id=veiculo.id
+            sessao, que_sai_id=perfil.id, sobrevivente_id=veiculo.id
         )
 
 
@@ -372,7 +413,7 @@ def test_a_fusao_recusa_o_cadastro_com_ele_mesmo(sessao):
 
     with pytest.raises(RegraViolada, match="ele mesmo"):
         atores_duplicados.fundir(
-            sessao, perfil_id=perfil.id, sobrevivente_id=perfil.id
+            sessao, que_sai_id=perfil.id, sobrevivente_id=perfil.id
         )
 
 
@@ -389,7 +430,7 @@ def test_a_fusao_LEVA_AS_PESSOAS_do_perfil(sessao):
     sessao.add(pessoa)
     sessao.flush()
 
-    atores_duplicados.fundir(sessao, perfil_id=perfil.id, sobrevivente_id=veiculo.id)
+    atores_duplicados.fundir(sessao, que_sai_id=perfil.id, sobrevivente_id=veiculo.id)
 
     sessao.expire_all()
     assert sessao.scalar(
@@ -496,7 +537,8 @@ def test_a_rota_RECUSA_o_caminho_inverso(cliente, sessao):
 
     #: A recusa fala de cadastro, e diz o gesto certo.
     assert resposta.status_code == 422, resposta.text
-    assert "perfil de rede" in resposta.text
+    assert "deve sobreviver" in resposta.text
+    assert "quem sai vai na URL" in resposta.text
 
 
 def test_a_rota_guarda_o_par_distinto(cliente, sessao):

@@ -272,19 +272,31 @@ def _esta_do_lado_que_pergunta(
     2. DEPOIS, QUEM TEM MENOS MENÇÕES — a linha com história sobrevive.
     3. DEPOIS O NOME, para a escolha não trocar de lado entre duas aberturas da
        tela.
+    4. E O `id`, QUE FECHA A ORDEM.
 
-    E É ISSO QUE FAZ A PERGUNTA APARECER UMA VEZ: sem uma ordem total, os dois
-    lados se considerariam "quem pergunta" e a fila traria a mesma dúvida duas
-    vezes — 144 linhas para ~100 perguntas, que foi o defeito que esta função
-    nasceu para consertar.
+    O QUARTO DEGRAU NÃO É ZELO, É CONSERTO DE UM DEFEITO MEDIDO (achado ALTA de
+    revisão, 11/10/2026). Sem ele o desempate era `(menções, nome)`, e dois
+    cadastros não-`perfil_rede` com as mesmas menções e o MESMO nome textual
+    calculavam `x < x` = False DOS DOIS LADOS: ninguém perguntava, e o par saía da
+    fila em silêncio.
+
+    E ERA EXATAMENTE O CASO QUE MOTIVOU A MUDANÇA: `ALMG`, `ANA`, `BNDES` e `Itaú
+    BBA` — as quatro duplicatas do CRM, cada uma com o mesmo nome nos dois
+    cadastros e zero menções — estavam INVISÍVEIS. A fila dizia 206 perguntas e
+    nenhuma era uma das quatro.
+
+    O `id` É ÚNICO POR CONSTRUÇÃO, então `(menções, nome, id)` é ordem TOTAL: para
+    qualquer par distinto, exatamente um lado pergunta. É o que faz a pergunta
+    aparecer UMA vez — nem zero, nem duas.
     """
     de_rede = perfil.tipo == TIPO_DE_ORIGEM
     outro_de_rede = outro.tipo == TIPO_DE_ORIGEM
     if de_rede != outro_de_rede:
         return de_rede
-    return (mencoes.get(perfil.id, 0), perfil.nome) < (
+    return (mencoes.get(perfil.id, 0), perfil.nome, str(perfil.id)) < (
         mencoes.get(outro.id, 0),
         outro.nome,
+        str(outro.id),
     )
 
 
@@ -306,31 +318,61 @@ def _buscar(sessao: Session, qual: uuid.UUID) -> Instituicao:
 
 
 def fundir(
-    sessao: Session, *, perfil_id: uuid.UUID, sobrevivente_id: uuid.UUID
+    sessao: Session, *, que_sai_id: uuid.UUID, sobrevivente_id: uuid.UUID
 ) -> Instituicao:
-    """O perfil de rede entra no cadastro que fica, com as menções dele.
+    """Um cadastro entra no outro, com as menções dele.
 
-    QUEM SOBREVIVE É ESCOLHA DE QUEM CHAMA, e na tela é o veículo: ele é a
-    linha curada, com categoria, subcategoria, UF e frente, e o nome dele é o
-    escrito por gente ("UOL") contra o handle do fornecedor ("Uol"). Mas quem
-    some é sempre o PERFIL, e é por isso que o parâmetro tem nome: fundir um
-    veículo com 86 menções dentro de um perfil com 2 seria perder a curadoria,
-    e é um gesto que esta função não oferece.
+    QUEM SOBREVIVE É ESCOLHA DE QUEM CHAMA, e a fila propõe: a regra dos três
+    degraus de `_esta_do_lado_que_pergunta` ancora a pergunta em quem deve sair —
+    o perfil de rede antes de um cadastro curado, depois quem tem menos menções.
 
-    O QUE SE PERDE, dito em voz alta: o `cargo` do perfil, porque o CHECK
-    `instituicao_cargo_so_de_perfil` existe de propósito — um jornal não tem
-    cargo, e o tipo `veiculo` já afirma o que "Imprensa" dizia.
+    QUALQUER TIPO SAI, desde 11/10/2026, e isto é conserto de um achado ALTA: a
+    fila passou a mostrar pares `veiculo`+`veiculo` e `entidade`+`orgao`, e esta
+    função exigia que quem saísse fosse `perfil_rede`. A pessoa via a pergunta e só
+    podia responder "são distintos" — a fila fazia uma pergunta cuja resposta certa
+    o servidor recusava. Pior que não perguntar.
+
+    O PARÂMETRO MUDOU DE NOME COM O SIGNIFICADO: era `perfil_id`, porque só perfil
+    saía. Agora é `que_sai_id`, e a assimetria que o nome antigo guardava — "fundir
+    um veículo com 86 menções dentro de um perfil com 2 seria perder a curadoria" —
+    continua garantida, mas pela ORDEM DA FILA e não por um `if` de tipo. Quem
+    chama por fora pode inverter, e é decisão de quem chama.
+
+    O QUE SE PERDE, dito em voz alta: o `cargo` de quem sai, se ele tiver — o CHECK
+    `instituicao_cargo_so_de_perfil` existe de propósito, e um jornal não tem
+    cargo.
     """
-    if perfil_id == sobrevivente_id:
+    if que_sai_id == sobrevivente_id:
         raise RegraViolada("Um cadastro nao funde com ele mesmo.")
 
-    perfil = _buscar(sessao, perfil_id)
+    perfil = _buscar(sessao, que_sai_id)
     sobrevivente = _buscar(sessao, sobrevivente_id)
 
-    if perfil.tipo != TIPO_DE_ORIGEM:
+    #: A DIREÇÃO É CONFERIDA PELA MESMA REGRA DA FILA, e não por um `if` de tipo.
+    #:
+    #: O QUE ESTA GUARDA IMPEDE: fundir a linha curada dentro da linha crua. "O
+    #: veículo é a linha com categoria, subcategoria, UF e frente, e com o nome
+    #: escrito por gente; fundir ele dentro do handle do fornecedor perderia a
+    #: curadoria — e quem clica numa tela de duplicados não está pedindo isso."
+    #:
+    #: ERA `if perfil.tipo != TIPO_DE_ORIGEM`, e eu a troquei por "a ordem da fila
+    #: garante" ao abrir a fusão para todos os tipos. Dois testes caíram e estavam
+    #: certos: a ordem da fila é a TELA, e esconder o botão é conveniência — um
+    #: `curl` basta.
+    #:
+    #: E AGORA ELA VALE PARA QUALQUER TIPO, que é o ganho sobre a versão antiga:
+    #: aquela protegia só o par perfil+veículo e deixava fundir um veículo de 300
+    #: menções dentro de um de 2.
+    #:
+    #: UMA FUNÇÃO DECIDE A ORDENAÇÃO e os dois lugares a consultam — a fila para
+    #: ancorar a pergunta, a fusão para recusar o inverso. Não há como divergirem.
+    if _esta_do_lado_que_pergunta(
+        sobrevivente, perfil, _mencoes_por_instituicao(sessao)
+    ):
         raise RegraViolada(
-            "So o perfil de rede entra em outro cadastro. Para o contrario, "
-            "funda o perfil no cadastro que fica."
+            f"{sobrevivente.nome!r} é a linha que deve sobreviver a "
+            f"{perfil.nome!r} — tem mais menções, ou é o cadastro curado. Funda na "
+            "outra direção: quem sai vai na URL."
         )
     if perfil.interlocutor_id is not None:
         raise RegraViolada(
