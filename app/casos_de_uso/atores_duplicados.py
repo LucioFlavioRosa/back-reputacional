@@ -26,6 +26,7 @@ O QUE ESTE MÓDULO NÃO FAZ: fundir sozinho. Juntar dois dossiês não tem volta
 
 from __future__ import annotations
 
+import difflib
 import re
 import uuid
 from dataclasses import dataclass
@@ -41,10 +42,41 @@ from app.dominio.texto import normalizar
 
 _SO_ALFANUMERICO = re.compile(r"[^a-z0-9]+")
 
-#: O TIPO QUE A FILA OLHA. O par nasce da ingestão de redes sociais: é o perfil
-#: que chega com o handle do fornecedor e vira cadastro novo. Dois veículos de
-#: imprensa com nomes parecidos são outra conversa — essa base é curada à mão.
+#: O TIPO QUE SÓ ENTRA EM OUTRO CADASTRO, e não mais "o tipo que a fila olha".
+#:
+#: A FILA PASSOU A OLHAR TODOS (11/10/2026), pelo princípio do dono do produto:
+#: "qualquer fonte tem acesso à mesma base... o BTG continua sendo um só". Este
+#: tipo ficou por uma razão estreita e real: só um `perfil_rede` pode estar ligado
+#: a uma pessoa do CRM (CHECK `instituicao_pessoa_so_de_perfil`), e é essa ligação
+#: que tira um cadastro da fila.
 TIPO_DE_ORIGEM = "perfil_rede"
+
+#: QUÃO PARECIDAS DUAS CHAVES PRECISAM SER PARA A FILA PERGUNTAR.
+#:
+#: POR QUE A CHAVE IGUAL NÃO BASTA, e é o pedido do dono do produto: "se o 'Valor'
+#: for classificado como financeiro e em outro momento 'o Valor' for registrado
+#: como veículo, devemos apontar essa possível duplicação... ao dar flexibilidade
+#: ao usuário preciso ter mais garantias na comparação, já que o usuário pode mudar
+#: muita coisa que nós não prevemos".
+#:
+#: `achatar_para_comparar("Valor")` dá "valor" e `("o Valor")` dá "ovalor": chaves
+#: DIFERENTES. Sem semelhança, o caso dele passa batido.
+#:
+#: 0,90 É MEDIDO E NÃO ESCOLHIDO, no cadastro de 3.785 nomes ativos:
+#:
+#:     corte 0,95 ....  124 pares
+#:     corte 0,90 ....  231 pares   <- aqui
+#:     corte 0,85 ....  494 pares
+#:     corte 0,80 .... 1512 pares
+#:
+#: Dos 231, 101 são de chave IGUAL e 130 só parecidos. É fila de trabalho finito,
+#: com uma decisão por par. Em 0,80 são 1.512 perguntas — e o argumento da `0078`
+#: vale aqui: "a fila deixa de ser fila e passa a ser ruído, e o ruído é o que faz
+#: ninguém olhar".
+#:
+#: E `ator_distinto` É O QUE FAZ ELA CHEGAR A ZERO: cada "não, são diferentes"
+#: fica guardado, então um corte generoso custa trabalho UMA vez.
+SEMELHANCA_MINIMA = 0.90
 
 
 def achatar_para_comparar(nome: str) -> str:
@@ -88,13 +120,78 @@ def _mencoes_por_instituicao(sessao: Session) -> dict[uuid.UUID, int]:
     return {instituicao: quantas for instituicao, quantas in linhas}
 
 
+def _vizinhos(cadastros: list[Instituicao]) -> dict[uuid.UUID, list[Instituicao]]:
+    """Cada cadastro e os outros que PODEM ser o mesmo ator.
+
+    DUAS CAMADAS, e a segunda é o pedido do dono do produto:
+
+    1. CHAVE ACHATADA IGUAL — `cnnbrasil` e `CNN Brasil`, `Neofeed` e `Neo Feed`.
+       São 101 pares no cadastro de hoje.
+    2. CHAVE PARECIDA, acima de `SEMELHANCA_MINIMA` — o caso "Valor" contra "o
+       Valor", que a camada 1 não vê porque "valor" e "ovalor" são chaves
+       diferentes. São 130 pares a mais.
+
+    O PRÉ-FILTRO POR TAMANHO não é otimização gratuita: são 3.785 nomes, logo 7,2
+    milhões de pares, e `ratio()` é caro. Duas chaves cujo tamanho difere mais de
+    30% não alcançam 0,90 — a razão é limitada por `2*min/(a+b)` —, então descartá-
+    las antes não muda nenhuma resposta. `real_quick_ratio` e `quick_ratio` são os
+    mesmos atalhos que `difflib.get_close_matches` usa por dentro.
+    """
+    chaves = [(c, achatar_para_comparar(c.nome)) for c in cadastros]
+    perto: dict[uuid.UUID, list[Instituicao]] = {c.id: [] for c in cadastros}
+
+    #: `autojunk=False`: o heurístico de "caractere popular" do `difflib` foi feito
+    #: para arquivos de código, e em textos curtos ele descarta letra comum e muda
+    #: a razão sem motivo. Os nomes aqui têm 3 a 40 caracteres.
+    medida = difflib.SequenceMatcher(autojunk=False)
+    for i, (um, chave_um) in enumerate(chaves):
+        if not chave_um:
+            #: Nome que normaliza para vazio — acontece com nome só de emoji. Sem
+            #: chave não há com que comparar, e comparar vazio com vazio casaria
+            #: todos eles entre si.
+            continue
+        medida.set_seq2(chave_um)
+        for outro, chave_outro in chaves[i + 1 :]:
+            if not chave_outro:
+                continue
+            if chave_um == chave_outro:
+                perto[um.id].append(outro)
+                perto[outro.id].append(um)
+                continue
+            maior = max(len(chave_um), len(chave_outro))
+            if abs(len(chave_um) - len(chave_outro)) > maior * 0.3:
+                continue
+            medida.set_seq1(chave_outro)
+            if (
+                medida.real_quick_ratio() < SEMELHANCA_MINIMA
+                or medida.quick_ratio() < SEMELHANCA_MINIMA
+                or medida.ratio() < SEMELHANCA_MINIMA
+            ):
+                continue
+            perto[um.id].append(outro)
+            perto[outro.id].append(um)
+    return perto
+
+
 def listar(sessao: Session) -> list[Duplicado]:
-    """A fila de perguntas: perfis que se parecem com outro cadastro.
+    """A fila de perguntas: cadastros que podem ser o mesmo ator.
+
+    QUALQUER TIPO, desde 11/10/2026. A fila nasceu da ingestão de redes e só olhava
+    `perfil_rede` como origem; o princípio do dono do produto é "uma base só —
+    qualquer fonte tem acesso à mesma base de instituições e interlocutores... o
+    BTG podemos ter acesso em rede social, em reunião de investimento ou imprensa,
+    mas ele continua sendo um só". Medido, os pares de chave igual de hoje: 59
+    `perfil_rede`+`veiculo`, 33 `perfil_rede`, 5 VEÍCULO+VEÍCULO, 3
+    `entidade`+`orgao`, 1 `entidade`+`investidor` — os nove últimos ficavam fora.
+
+    E O HOMÔNIMO EXATO VOLTOU. Ele estava fora porque "a `0077` já fundiu e a
+    ingestão não recria — se aparecer um, é regressão". A premissa caiu duas vezes:
+    a Clipei recriou 22 deles (a `0084` fundiu), e as 4 duplicatas que sobram foram
+    feitas POR GENTE no CRM — ALMG, ANA, BNDES e Itaú BBA. Nenhuma migration vai
+    fundi-las, porque "quem decide como enquadrar é o time".
 
     FORA DA FILA, e cada exclusão por um motivo diferente:
 
-    * o HOMÔNIMO EXATO, que a `0077` já fundiu e que a ingestão não recria —
-      se aparecer um, é regressão, e a `0077` roda de novo;
     * o par que alguém JÁ DECIDIU que é outro ator (`ator_distinto`) — sem
       isso a fila nunca chega a zero;
     * o perfil LIGADO A UMA PESSOA do CRM, porque o sobrevivente não pode
@@ -111,9 +208,7 @@ def listar(sessao: Session) -> list[Duplicado]:
     cadastros = list(
         sessao.scalars(select(Instituicao).where(Instituicao.ativo.is_(True)))
     )
-    por_chave: dict[str, list[Instituicao]] = {}
-    for cadastro in cadastros:
-        por_chave.setdefault(achatar_para_comparar(cadastro.nome), []).append(cadastro)
+    perto = _vizinhos(cadastros)
 
     decididos = {
         (par.esquerda, par.direita) for par in sessao.scalars(select(AtorDistinto))
@@ -121,38 +216,33 @@ def listar(sessao: Session) -> list[Duplicado]:
     mencoes = _mencoes_por_instituicao(sessao)
 
     fila: list[Duplicado] = []
-    for grupo in por_chave.values():
-        if len(grupo) < 2:
+    for perfil in cadastros:
+        #: SÓ O PERFIL LIGADO A UMA PESSOA DO CRM fica fora, e o tipo aparece aqui
+        #: por isso: a ligação só existe em `perfil_rede` (CHECK
+        #: `instituicao_pessoa_so_de_perfil`), e o sobrevivente não pode herdá-la.
+        if perfil.tipo == TIPO_DE_ORIGEM and perfil.interlocutor_id is not None:
             continue
-        for perfil in grupo:
-            if perfil.tipo != TIPO_DE_ORIGEM or perfil.interlocutor_id is not None:
-                continue
-            candidatos = tuple(
-                Candidato(
-                    id=outro.id,
-                    nome=outro.nome,
-                    tipo=outro.tipo,
-                    mencoes=mencoes.get(outro.id, 0),
-                )
-                for outro in grupo
-                if outro.id != perfil.id
-                #: O HOMÔNIMO EXATO não é pergunta: é a `0077`.
-                and outro.nome_normalizado != perfil.nome_normalizado
-                and ordenar_o_par(perfil.id, outro.id) not in decididos
-                and _esta_do_lado_que_pergunta(perfil, outro, mencoes)
+        candidatos = tuple(
+            Candidato(
+                id=outro.id,
+                nome=outro.nome,
+                tipo=outro.tipo,
+                mencoes=mencoes.get(outro.id, 0),
             )
-            if candidatos:
-                fila.append(
-                    Duplicado(
-                        id=perfil.id,
-                        nome=perfil.nome,
-                        cargo=perfil.cargo,
-                        mencoes=mencoes.get(perfil.id, 0),
-                        candidatos=tuple(
-                            sorted(candidatos, key=lambda c: -c.mencoes)
-                        ),
-                    )
+            for outro in perto[perfil.id]
+            if ordenar_o_par(perfil.id, outro.id) not in decididos
+            and _esta_do_lado_que_pergunta(perfil, outro, mencoes)
+        )
+        if candidatos:
+            fila.append(
+                Duplicado(
+                    id=perfil.id,
+                    nome=perfil.nome,
+                    cargo=perfil.cargo,
+                    mencoes=mencoes.get(perfil.id, 0),
+                    candidatos=tuple(sorted(candidatos, key=lambda c: -c.mencoes)),
                 )
+            )
     return sorted(fila, key=lambda d: d.nome.lower())
 
 
@@ -171,11 +261,27 @@ def _esta_do_lado_que_pergunta(
     lado com MENOS menções — a linha com história sobrevive. Empate desempata
     pelo nome, para a escolha não trocar de lado entre duas aberturas da tela.
 
-    Com um cadastro de outro tipo do outro lado não há escolha: só o perfil de
-    rede entra em outro cadastro, e a pergunta nasce dele.
+    TRÊS DEGRAUS, e o primeiro é conhecimento que a `0077` já tinha gravado:
+
+    1. O PERFIL DE REDE SOME ANTES de um cadastro curado. "Quem sobrevive é o
+       veículo, e não o perfil: ele é a linha curada, com categoria, subcategoria,
+       UF e frente... o nome dele também é o escrito por gente", diz a `0077`. Com
+       a fila aberta a todos os tipos (11/10/2026) eu troquei este degrau por
+       "menos menções", e dois testes caíram com razão: num par de zero menções o
+       desempate pelo nome mandava a pergunta para o VEÍCULO.
+    2. DEPOIS, QUEM TEM MENOS MENÇÕES — a linha com história sobrevive.
+    3. DEPOIS O NOME, para a escolha não trocar de lado entre duas aberturas da
+       tela.
+
+    E É ISSO QUE FAZ A PERGUNTA APARECER UMA VEZ: sem uma ordem total, os dois
+    lados se considerariam "quem pergunta" e a fila traria a mesma dúvida duas
+    vezes — 144 linhas para ~100 perguntas, que foi o defeito que esta função
+    nasceu para consertar.
     """
-    if outro.tipo != TIPO_DE_ORIGEM:
-        return True
+    de_rede = perfil.tipo == TIPO_DE_ORIGEM
+    outro_de_rede = outro.tipo == TIPO_DE_ORIGEM
+    if de_rede != outro_de_rede:
+        return de_rede
     return (mencoes.get(perfil.id, 0), perfil.nome) < (
         mencoes.get(outro.id, 0),
         outro.nome,
