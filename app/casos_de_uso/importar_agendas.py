@@ -52,7 +52,7 @@ from app.casos_de_uso.ler_planilha_de_agendas import (
     ler_declarados,
 )
 from app.dominio.erros import Conflito, RegraViolada
-from app.dominio.frentes import TIPO_DA_CATEGORIA_DE_PUBLICO
+from app.dominio.frentes import TIPO_DA_CATEGORIA_DE_PUBLICO, TIPO_SEM_CATEGORIA
 from app.dominio.importacao_de_agendas import (
     ABA_PRINCIPAL,
     CHAVE_DO_CORRIGIDO,
@@ -740,10 +740,54 @@ def _resolver(
             "tela de Administração — cadastre-o lá e aponte para ele aqui."
         )
     else:
-        motivo = (
-            f"{coluna_nome}: {texto!r} não existe no cadastro. Se é novo, "
-            "escreva-o também na aba de cadastro da planilha."
+        # NÃO TRAVA MAIS, e esta é a mudança pedida pelo dono do produto
+        # (11/10/2026): "o ponto principal é não barrar o registro".
+        #
+        # O QUE ERA: a importação já sabia criar os quatro cadastros desta lista,
+        # mas só se a pessoa escrevesse o nome TAMBÉM na aba de cadastro. A trava
+        # não era "falta dado" — era "falta dado em dois lugares". Com várias
+        # reuniões num dia, preencher duas abas para cada nome novo é o que faz o
+        # registro não acontecer.
+        #
+        # É O MODELO DA CLIPEI/BITES, que ele citou: lá a menção entra mesmo
+        # quando o veículo não está no cadastro, com o texto cru preservado, e o
+        # vínculo se faz depois — "o estado normal enquanto o cadastro não cobre
+        # o fornecedor".
+        #
+        # O CADASTRO NASCE COM O QUE HOUVER e fica incompleto até alguém
+        # completá-lo na plataforma. A divergência continua aparecendo na
+        # conferência, agora como AVISO e não como impedimento.
+        divergencias.append(
+            Divergencia(
+                campo=campo,
+                valor=texto,
+                mensagem=(
+                    f"{coluna_nome}: vou cadastrar {texto!r}, que não existe ainda. "
+                    "Ele nasce só com o nome — complete o cadastro na plataforma "
+                    "depois, ou aponte aqui para um que já exista."
+                ),
+                trava=False,
+                coluna=coluna_nome,
+                # SEM `acao`, e esta é a diferença que mantém a oferta de apontar.
+                #
+                # O caso "declarada na aba", logo acima, marca `acao="criar"`
+                # porque ali a pessoa PEDIU o cadastro — a decisão está tomada, e
+                # `linhas_com` ignora divergência decidida justamente para um
+                # segundo clique não sobrescrever o que ela escolheu.
+                #
+                # AQUI ELA SÓ DIGITOU UM NOME na coluna da agenda. Criar é o
+                # PADRÃO, não a escolha dela — então a divergência fica aberta, e
+                # a conferência continua podendo oferecer "aponte para 'Prefeitura
+                # Municipal de Campinas', que já existe". É essa oferta que
+                # impede a duplicata, e medida ela importa: 3.809 instituições
+                # para 3.781 nomes distintos, com 28 duplicatas já no banco.
+                #
+                # E NÃO TRAVA NADA: `a_criar` põe a linha em "esperando criação",
+                # que é trabalho da confirmação, não pendência da pessoa.
+            )
         )
+        return _Resolucao(a_criar=(vocabulario, texto))
+
     divergencias.append(
         Divergencia(
             campo=campo, valor=texto, mensagem=motivo, coluna=coluna_nome, trava=True
@@ -1850,12 +1894,28 @@ def _criar_cadastros(
                 if categoria_nome in indice.get("categorias_publico", {})
                 else None
             )
-            if categoria is None:
-                raise RegraViolada(
-                    f"A instituição {valor!r} foi declarada sem uma categoria de "
-                    "público válida. Escreva a categoria na coluna ao lado, na aba de "
-                    "instituições — é dela que sai o tipo."
-                )
+            # SEM CATEGORIA, NASCE INCOMPLETA — e não recusada. Era um
+            # `RegraViolada` aqui, e isso barrava a linha inteira por uma coluna
+            # da OUTRA aba. Mudança pedida pelo dono do produto (11/10/2026).
+            #
+            # O QUE SE PERDE, e está dito em voz alta porque é real: a categoria
+            # de público é o que torna a instituição visível para a taxonomia de
+            # públicos do Score, e é dela que sai o `tipo`. Sem ela, esta
+            # instituição fica fora dessa taxonomia até alguém completá-la.
+            #
+            # `entidade` É O TIPO HONESTO para "ainda não se sabe": é o único que
+            # não está em `FRENTE_UNICA_DO_TIPO`, então ele não finge decidir a
+            # frente — `derivar_frente` cai no formato da interação e, sem ele,
+            # em `PARCEIROS`. Qualquer outro tipo cravaria uma frente errada em
+            # toda agenda desta instituição, que é pior que uma frente genérica.
+            #
+            # E NÃO É ESTADO NOVO NO BANCO: 205 das 3.809 instituições já estão
+            # sem categoria hoje. O alerta na agenda é o que torna isso visível.
+            tipo = (
+                TIPO_DA_CATEGORIA_DE_PUBLICO[categoria.codigo]
+                if categoria is not None
+                else TIPO_SEM_CATEGORIA
+            )
             # A ABRANGÊNCIA VEM DA PLANILHA e não é a UF da agenda: o dono do
             # produto foi explícito, são coisas diferentes. Uma reunião em Brasília
             # com um órgão de Minas tem UF da agenda `DF` e abrangência do órgão
@@ -1874,10 +1934,14 @@ def _criar_cadastros(
                 Instituicao(
                     nome=valor,
                     nome_normalizado=normalizar(valor),
-                    tipo=TIPO_DA_CATEGORIA_DE_PUBLICO[categoria.codigo],
-                    categoria_publico_id=categoria.id,
-                    subcategoria_publico_id=_subcategoria_da_categoria(
-                        sessao, categoria, do_cadastro.get("subcategoria_publico_id")
+                    tipo=tipo,
+                    categoria_publico_id=categoria.id if categoria is not None else None,
+                    subcategoria_publico_id=(
+                        _subcategoria_da_categoria(
+                            sessao, categoria, do_cadastro.get("subcategoria_publico_id")
+                        )
+                        if categoria is not None
+                        else None
                     ),
                     **_campos_do_cadastro("instituicoes", do_cadastro, indice),
                 ),

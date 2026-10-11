@@ -477,13 +477,25 @@ def test_a_mesma_instituicao_desconhecida_vira_UM_grupo_com_as_linhas(
     (grupo,) = [g for g in corpo["grupos"] if g["campo"] == "instituicao_id"]
     assert grupo["valor"] == "Prefeitura de Campinas"
     assert grupo["linhas"] == [2, 3, 4, 5]
-    assert grupo["trava"] is True
-    # QUATRO pendências e UMA decisão. Este teste dizia `pendencias == 1`, e com
-    # isso codificava o defeito que a revisão do Codex achou: o campo promete
-    # "quantas linhas seguram a confirmação" e contava grupos, fazendo o cabeçalho
-    # mentir sobre o tamanho do trabalho.
-    assert corpo["pendencias"] == 4
-    assert corpo["decisoes_pendentes"] == 1
+
+    # O GRUPO EXISTE E NÃO PRENDE — e é isto que mudou em 11/10/2026.
+    #
+    # Ele travava: um nome fora do cadastro barrava as quatro linhas até a pessoa
+    # decidir. O dono do produto pediu o contrário ("o ponto principal é não
+    # barrar o registro"), e o cadastro passou a nascer com o que a planilha tem.
+    #
+    # O AGRUPAMENTO CONTINUA SENDO O ASSUNTO DESTE TESTE, e continua valendo: uma
+    # decisão, quatro linhas. Ele é o que permite à conferência oferecer "aponte
+    # para 'Prefeitura Municipal de Campinas', que já existe" uma vez em vez de
+    # quatro — e é essa oferta que impede a duplicata. Medido: 3.809 instituições
+    # para 3.781 nomes distintos.
+    assert grupo["trava"] is False
+    # ZERO PENDÊNCIAS: o campo promete "quantas linhas seguram a confirmação", e
+    # nenhuma segura. Ele continua contando LINHAS e não grupos — isso está
+    # provado em `test_pendencias_conta_LINHAS_e_nao_grupos`, com um caso que
+    # trava de verdade.
+    assert corpo["pendencias"] == 0
+    assert corpo["decisoes_pendentes"] == 0
 
 
 def test_o_grupo_oferece_o_nome_parecido_que_JA_existe(cliente_admin, sessao, semente):
@@ -540,13 +552,23 @@ def test_o_que_trava_vem_ANTES_do_que_so_avisa(cliente_admin, sessao, semente):
     pasta = load_workbook(io.BytesIO(modelo))
     folha = pasta["Agendas"]
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
-    # A primeira resolve inteira e é duplicata (avisa); a segunda tem
-    # instituição desconhecida (trava).
-    for instituicao in (semente["instituicao"].nome, "Prefeitura de Campinas"):
+    # A primeira resolve inteira e é duplicata (avisa); a segunda tem unidade de
+    # negócio desconhecida (trava).
+    #
+    # O EXEMPLO DA TRAVA MUDOU em 11/10/2026, e o propósito não: era instituição
+    # desconhecida, que deixou de travar por pedido do dono do produto. Unidade
+    # de negócio continua travando porque é dicionário administrado — "uma
+    # unidade de negócio nova é decisão de estrutura da companhia, não um nome
+    # que se digita no meio de 54 agendas".
+    for instituicao, unidade in (
+        (semente["instituicao"].nome, None),
+        (semente["instituicao"].nome, "Aegea Marte"),
+    ):
         valores = {
             "Data": date(2026, 9, 25),
             "Instituição": instituicao,
             "UF": "SP",
+            "Unidade de negócio": unidade,
         }
         folha.append([valores.get(coluna) for coluna in cabecalho])
     saida = io.BytesIO()
@@ -592,8 +614,13 @@ def test_pendencias_conta_LINHAS_e_nao_grupos(cliente_admin, sessao, semente):
     for i in range(4):
         valores = {
             "Data": date(2026, 9, 21 + i),
-            "Instituição": "Prefeitura de Campinas",
+            "Instituição": semente["instituicao"].nome,
             "UF": "SP",
+            #: O QUE TRAVA, e trocou em 11/10/2026: era a instituição
+            #: desconhecida, que hoje só avisa. Unidade de negócio continua
+            #: travando porque é dicionário administrado — ela não se cria
+            #: digitando na planilha.
+            "Unidade de negócio": "Aegea Marte",
         }
         folha.append([valores.get(coluna) for coluna in cabecalho])
     saida = io.BytesIO()
@@ -603,6 +630,10 @@ def test_pendencias_conta_LINHAS_e_nao_grupos(cliente_admin, sessao, semente):
         "/api/importacoes", files={"arquivo": ("dia.xlsx", saida.getvalue(), TIPO_XLSX)}
     ).json()
 
+    #: QUATRO LINHAS, UMA DECISÃO — e a trava agora vem de um dicionário
+    #: administrado (unidade de negócio), porque instituição desconhecida
+    #: deixou de travar em 11/10/2026. O que este teste prova é o que ele
+    #: sempre provou: o campo conta LINHAS, não grupos.
     assert corpo["pendencias"] == 4
     assert corpo["decisoes_pendentes"] == 1
 
@@ -861,7 +892,11 @@ def test_resolver_nao_mexe_em_linha_de_outro_valor(cliente_admin, sessao, sement
     criada = cliente_admin.post(
         "/api/importacoes", files={"arquivo": ("dia.xlsx", saida.getvalue(), TIPO_XLSX)}
     ).json()
-    assert criada["pendencias"] == 2
+    #: O GRUPO EXISTE, e é nele que a pessoa clica — era o que
+    #: `pendencias == 2` dizia aqui, e `pendencias` passou a valer 0 porque
+    #: a sugestão não trava mais. O assunto deste teste é o RESOLVEDOR, não
+    #: a contagem; o que precisa ser verdade é que há dois valores abertos.
+    assert len([g for g in criada["grupos"] if g["campo"] == "instituicao_id"]) == 2
 
     resposta = cliente_admin.patch(
         f"/api/importacoes/{criada['id']}/resolucoes",
@@ -872,7 +907,15 @@ def test_resolver_nao_mexe_em_linha_de_outro_valor(cliente_admin, sessao, sement
         },
     )
 
-    assert resposta.json()["pendencias"] == 1
+    #: SOBRA UM GRUPO, o do outro valor — e é isto que o teste prova: descartar
+    #: "Prefeitura de Campinas" não encostou nas linhas do outro nome.
+    #:
+    #: Era `pendencias == 1`, e `pendencias` passou a valer 0 porque a sugestão
+    #: não trava mais (11/10/2026). A contagem deixou de servir como proxy; o
+    #: grupo que resta é o fato.
+    sobrou = [g for g in resposta.json()["grupos"] if g["campo"] == "instituicao_id"]
+    assert len(sobrou) == 1
+    assert sobrou[0]["valor"] != "Prefeitura de Campinas"
 
 
 def test_resolver_uma_importacao_que_nao_existe_devolve_404(cliente_admin):
@@ -1044,8 +1087,12 @@ def test_confirmar_com_pendencia_que_trava_recusa(cliente_admin, sessao, semente
     cabecalho = [celula.value for celula in next(folha.iter_rows())]
     valores = {
         "Data": date(2026, 9, 25),
-        "Instituição": "Orgao Que Ninguem Cadastrou",
+        "Instituição": semente["instituicao"].nome,
         "UF": "SP",
+        #: O QUE TRAVA. "Orgao Que Ninguem Cadastrou" travava até 11/10/2026 e
+        #: hoje só avisa — a instituição nasce com o nome e a agenda entra.
+        #: Unidade de negócio é dicionário administrado e continua segurando.
+        "Unidade de negócio": "Aegea Marte",
     }
     folha.append([valores.get(coluna) for coluna in cabecalho])
     saida = io.BytesIO()
@@ -1555,7 +1602,9 @@ def test_cadastro_INATIVO_nao_resolve(cliente_admin, sessao, semente):
         "/api/importacoes", files={"arquivo": ("a.xlsx", saida.getvalue(), TIPO_XLSX)}
     ).json()
 
-    assert criada["pendencias"] == 1, criada["grupos"]
+    #: Mesma troca de proxy: o que importa aqui é existir o grupo em que a
+    #: pessoa vai tentar apontar para um cadastro inativo.
+    assert [g["campo"] for g in criada["grupos"]] == ["instituicao_id"], criada["grupos"]
 
 
 def test_o_modelo_nao_oferece_cadastro_inativo_na_lista(cliente_admin, sessao, semente):
