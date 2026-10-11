@@ -43,6 +43,26 @@ ROTULOS_DE_GRUPO = {
 }
 
 
+#: AS COLUNAS DE CONTROLE, que o dicionário NÃO serve.
+#:
+#: ERA UM `!= "ativo"` SOLTO, repetido nos TRÊS lugares que montam payload aqui
+#: (`dicionarios`, `temas_inativos`, `formatos_interacao_inativos`) — a revisão
+#: apontou dois, e o terceiro apareceu ao consertar. A
+#: coluna `pendente_de_revisao` nasceu em 11/10/2026 e VAZOU na hora — achado de
+#: revisão: ela apareceu em `temas` e em `temas_inativos` antes de existir
+#: qualquer tela para ela.
+#:
+#: E O PROBLEMA NÃO É O BYTE A MAIS. Este payload alimenta filtro e formulário de
+#: toda tela, e um campo que aparece ali sem ninguém ter desenhado o que ele
+#: significa é um campo que alguém vai LER e usar. A fila de revisão não é "um
+#: tema a menos no filtro": é trabalho pendente de outra natureza, e vai ter rota
+#: própria.
+#:
+#: COM NOME E COM TESTE, para a quarta coluna de controle não vazar por
+#: esquecimento — foi assim que esta vazou.
+COLUNAS_DE_CONTROLE: frozenset[str] = frozenset({"ativo", "pendente_de_revisao"})
+
+
 @rotas.get("/dicionarios")
 def listar_dicionarios(sessao: Sessao) -> dict[str, list[dict[str, Any]]]:
     """Todos os vocabulários do painel, só os ativos, na ordem de exibição.
@@ -63,7 +83,7 @@ def listar_dicionarios(sessao: Sessao) -> dict[str, list[dict[str, Any]]]:
             {
                 coluna.name: getattr(linha, coluna.name)
                 for coluna in tabela.__table__.columns
-                if coluna.name != "ativo"
+                if coluna.name not in COLUNAS_DE_CONTROLE
             }
             for linha in sessao.scalars(consulta)
         ]
@@ -92,7 +112,7 @@ def listar_dicionarios(sessao: Sessao) -> dict[str, list[dict[str, Any]]]:
         {
             coluna.name: getattr(linha, coluna.name)
             for coluna in Tema.__table__.columns
-            if coluna.name != "ativo"
+            if coluna.name not in COLUNAS_DE_CONTROLE
         }
         for linha in sessao.scalars(
             select(Tema).where(Tema.ativo.is_(False)).order_by(Tema.nome)
@@ -115,7 +135,7 @@ def listar_dicionarios(sessao: Sessao) -> dict[str, list[dict[str, Any]]]:
         {
             coluna.name: getattr(linha, coluna.name)
             for coluna in FormatoInteracao.__table__.columns
-            if coluna.name != "ativo"
+            if coluna.name not in COLUNAS_DE_CONTROLE
         }
         for linha in sessao.scalars(
             select(FormatoInteracao)

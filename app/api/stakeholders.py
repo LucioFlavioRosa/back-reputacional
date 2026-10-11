@@ -788,8 +788,17 @@ class TemaEntrada(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     nome: str = Field(min_length=1)
-    #: `estrategico` ou `livre`. O primeiro e agenda da companhia; o segundo, o
-    #: que aparece sem ter sido planejado. A distincao ja existia no dicionario.
+    #: `sensivel`, `estrategico` ou `gerais` — e quem manda e a constraint
+    #: `tema_nivel_check`, que `NIVEIS_DE_TEMA` espelha.
+    #:
+    #: ESTA LINHA DIZIA "`estrategico` ou `livre`", E `livre` NAO E UM NIVEL. Aqui
+    #: a frase nao quebrava nada, porque o codigo valida contra `NIVEIS_DE_TEMA` —
+    #: mas e a MESMA frase que, repetida no modelo do banco, me fez escrever
+    #: `Tema(nivel="livre")` na importacao de agendas e estourar o banco com
+    #: CheckViolation. Terceira copia da crenca errada, corrigida junto.
+    #:
+    #: `estrategico` e agenda da companhia; `gerais` e o neutro, e e o padrao aqui;
+    #: `sensivel` e uma afirmacao sobre o tema que so gente faz.
     nivel: str = "gerais"
     ativo: bool = True
     #: A hierarquia da taxonomia v1.3 (Peers/Comms), ainda em validacao por
