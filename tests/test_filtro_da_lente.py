@@ -464,6 +464,125 @@ def test_o_mercado_tem_os_quatro_blocos_de_veiculo_como_a_imprensa(sessao):
     assert not dossie.top_veiculos.ficha.lacunas
 
 
+def test_a_evolucao_do_mercado_e_a_serie_de_barras_como_na_imprensa(sessao):
+    """O gráfico Evolução do Mercado passou a ser o mesmo da Imprensa.
+
+    ELE ERA O EVENTOGRAMA, e por uma premissa falsa: acreditava-se que a lente
+    não tinha série mensal medida — a própria lacuna do bloco dizia isso. Tem.
+    Medido na base:
+
+        MERCADO    2026-08   144 pos / 61 neu / 11 neg  = 216
+                   2026-09    63 pos / 35 neu / 13 neg  = 111
+        IMPRENSA   os MESMOS dois meses (12.226 e 13.231)
+
+    Então não há desvantagem de cobertura: as duas lentes cobrem o mesmo
+    período.
+
+    E NENHUM TESTE QUEBROU quando eu troquei — é o achado que este arquivo
+    fecha. Ninguém afirmava qual gráfico a Evolução do Mercado desenhava, então
+    trocá-lo passou pelos 2031 testes sem ser visto. Trocá-lo DE VOLTA também
+    passaria.
+    """
+    clipei_investidores = sessao.scalars(
+        select(ScoreFonte).where(ScoreFonte.codigo == "clipei_investidores")
+    ).one()
+    for sentimento in ("pos", "pos", "neg"):
+        sessao.add(
+            Mencao(
+                fonte_id=clipei_investidores.id, mes=MES, sentimento=sentimento,
+                tier="muito_relevante", veiculo="Valor Econômico",
+            )
+        )
+    sessao.flush()
+
+    dossie = obter_dossie(sessao=sessao, usuario=_QuemOlha(), codigo="mercado", mes="2026-06")
+
+    #: O MESMO TIPO DA IMPRENSA, e é o que dá à tela as funções do gráfico: a
+    #: coluna clicável que abre o mês, a legenda de sentimento e as cores.
+    imprensa = obter_dossie(
+        sessao=sessao, usuario=_QuemOlha(), codigo="imprensa", mes="2026-06"
+    )
+    assert dossie.evolucao.tipo == imprensa.evolucao.tipo == "barras_empilhadas"
+    assert dossie.evolucao.titulo == imprensa.evolucao.titulo
+    assert dossie.evolucao.legenda == imprensa.evolucao.legenda
+    assert dossie.evolucao.cores == imprensa.evolucao.cores
+
+    #: E DESENHA A SÉRIE PLANTADA, não uma lista de eventos.
+    do_mes = next(
+        linha for linha in dossie.evolucao.dados if linha["mes"] == f"{MES:%Y-%m}"
+    )
+    assert (do_mes["positivo"], do_mes["negativo"]) == (2, 1), do_mes
+
+
+def test_a_conclusao_da_evolucao_do_mercado_fala_de_materia_e_nao_de_nota(sessao):
+    """A FRASE TEM DE SER DA MESMA UNIDADE DO GRÁFICO, e esta é a parte da
+    mudança que mais fácil passaria batido.
+
+    O Mercado herdava `titulo_da_evolucao` — a frase do sinal mais forte do
+    período, que fala da NOTA ("a nota subiu 21 pontos"). Isso era inofensivo
+    enquanto ele desenhava o eventograma, onde não havia contagem com que a
+    frase pudesse se confundir.
+
+    Agora ele desenha contagem de matéria. Deixá-lo herdando a frase da nota
+    traria de volta, exatamente nele, o defeito que a lista de exceções existe
+    para evitar: duas unidades diferentes sem nada dizendo que são diferentes.
+    """
+    clipei_investidores = sessao.scalars(
+        select(ScoreFonte).where(ScoreFonte.codigo == "clipei_investidores")
+    ).one()
+    sessao.add(
+        Mencao(
+            fonte_id=clipei_investidores.id, mes=MES, sentimento="pos",
+            tier="muito_relevante", veiculo="Valor Econômico",
+        )
+    )
+    sessao.flush()
+
+    dossie = obter_dossie(sessao=sessao, usuario=_QuemOlha(), codigo="mercado", mes="2026-06")
+
+    conclusao = dossie.evolucao.conclusao or ""
+    assert "matéria" in conclusao, f"a frase não fala do que o gráfico desenha: {conclusao!r}"
+    #: e NÃO fala de nota nem de ponto, que é a unidade do outro cartão
+    for termo in ("nota", "ponto"):
+        assert termo not in conclusao.lower(), (
+            f"a frase mistura unidade com o gráfico de contagem: {conclusao!r}"
+        )
+
+
+def test_o_eventograma_fica_num_bloco_proprio_e_so_no_mercado(sessao):
+    """O EVENTOGRAMA NÃO FOI SUBSTITUÍDO — e não poderia ser, pela medida.
+
+    Ele tem 15 eventos, dos quais só 5 são de rating; esses 5 já aparecem no
+    painel B ("Trajetória de rating", a mesma consulta filtrada por tipo). Os
+    outros 10 não estão em lugar nenhum além dele: "Vazamento do Termo de
+    Acordo", "Aumento de capital de até R$ 2,1 bi", "Edital e proposta da
+    Copasa", os resultados trimestrais.
+
+    E O PERÍODO É OUTRO: os eventos vão de fevereiro a agosto, a série de
+    menções tem agosto e setembro. Eles se complementam no tempo, e trocar um
+    pelo outro custaria dez eventos e meio ano de cobertura.
+    """
+    dossie = obter_dossie(sessao=sessao, usuario=_QuemOlha(), codigo="mercado", mes="2026-06")
+
+    assert dossie.eventograma is not None, "o eventograma do Mercado desapareceu"
+    assert dossie.eventograma.tipo == "linha_do_tempo"
+    assert "Eventograma" in dossie.eventograma.titulo
+
+    #: A LACUNA ANTIGA ERA A PREMISSA FALSA: "a lente Mercado ainda não tem
+    #: série mensal medida". Ela está logo acima agora, e a frase não pode
+    #: sobrar negando o gráfico que a tela desenha.
+    for lacuna in dossie.eventograma.ficha.lacunas:
+        assert "não tem série mensal" not in lacuna, lacuna
+
+    #: E É SÓ DO MERCADO: nas outras o campo é nulo, e um bloco nulo é o que faz
+    #: a tela não desenhar a moldura.
+    for codigo in ("imprensa", "sociedade", "clientes", "institucional"):
+        outra = obter_dossie(
+            sessao=sessao, usuario=_QuemOlha(), codigo=codigo, mes="2026-06"
+        )
+        assert outra.eventograma is None, codigo
+
+
 def test_o_mercado_tem_onde_esta_a_causa_menos_a_aba_de_jornalista(sessao):
     """O último elemento que era só da Imprensa — e a premissa que o barrava era
     FALSA.
