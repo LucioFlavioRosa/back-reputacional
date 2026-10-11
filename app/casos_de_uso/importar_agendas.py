@@ -2313,6 +2313,30 @@ def _subcategoria_da_categoria(sessao: Session, categoria, nome: object) -> int 
     return _subcategoria_da_categoria_por_id(sessao, categoria.id, str(nome))
 
 
+#: POR QUE ESTA INSTITUIÇÃO ESPERA REVISÃO: ela entrou sem categoria de público.
+#:
+#: DECISÃO DO DONO DO PRODUTO (11/10/2026), depois de ver a fila real: "pode
+#: registrar como entidade e marcar para revisar". O comportamento era esse; o que
+#: faltava era a marca DIZER o que há para fazer.
+#:
+#: E A DIFERENÇA É O QUE SE VÊ NA ABA. Medido com a planilha real de RI: 499 das
+#: 502 pendências são instituições, e TODAS nasceram assim — `3R Investimentos`,
+#: `AF Invest`, `ARX`, numa planilha de Relações com Investidores, todas como
+#: "Entidade". Sem este texto, a aba mostra 499 linhas repetindo a frase genérica
+#: "entrou por planilha e ninguém conferiu", que não diz O QUE conferir. Com ele,
+#: cada linha nomeia o campo que falta e o efeito de ele faltar.
+#:
+#: `entidade` CONTINUA SENDO O TIPO CERTO, e o motivo explica por quê em vez de
+#: pedir desculpa: é o único tipo fora de `FRENTE_UNICA_DO_TIPO`, então ele não
+#: finge decidir a frente da agenda. Qualquer outro cravaria uma frente errada em
+#: toda agenda desta instituição.
+MOTIVO_SEM_CATEGORIA = (
+    "Entrou pela planilha sem categoria de público, então o tipo ficou "
+    "'Entidade' — o único que não crava uma frente. Diga a categoria para a "
+    "instituição entrar na taxonomia de públicos do Score."
+)
+
+
 def _criar_cadastros(
     sessao: Session,
     a_criar,
@@ -2429,6 +2453,9 @@ def _criar_cadastros(
                     #: consegue subir a planilha sem problemas e pode revisar
                     #: depois, e inclusive pode ser trabalho de outra pessoa".
                     pendente_de_revisao=True,
+                    motivo_da_revisao=(
+                        MOTIVO_SEM_CATEGORIA if categoria is None else None
+                    ),
                 ),
                 novo=True,
                 ao_colidir=(

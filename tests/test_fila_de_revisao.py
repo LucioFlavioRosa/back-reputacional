@@ -38,10 +38,15 @@ from openpyxl import load_workbook
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
-from app.banco.tabelas_catalogo import Tema
+from app.banco.tabelas_catalogo import CategoriaPublico, Tema
 from app.banco.tabelas_stakeholders import Instituicao, Interlocutor, PessoaAegea
 from app.casos_de_uso import importar_agendas, modelo_de_importacao
 from app.casos_de_uso.veiculos_da_imprensa import criar, reconhecer
+from app.dominio.importacao_de_agendas import (
+    COLUNA_DA_CATEGORIA_DE_INSTITUICAO,
+    ROTULO_DO_VOCABULARIO,
+    colunas_do_cadastro,
+)
 from app.dominio.texto import normalizar
 
 #: O AJUDANTE DE ONDE ELE JÁ EXISTE, e não uma cópia: `_cliente` monta o
@@ -483,3 +488,137 @@ def test_toda_tabela_da_fila_SAI_pela_rota():
     from app.casos_de_uso.fila_de_revisao import POR_TIPO
 
     assert set(POR_TIPO) == {tabela.__tablename__ for tabela, _ in DA_FILA}
+
+
+# -- o motivo de quem nasce sem categoria de público ---------------------------
+
+
+def test_a_instituicao_SEM_categoria_diz_na_fila_por_que_ficou_entidade(
+    cliente_admin, sessao
+):
+    """Decisão do dono do produto depois de ver a fila real (11/10/2026).
+
+      "pode registrar como entidade e marcar para revisar"
+
+    O COMPORTAMENTO JÁ ERA ESSE; o que faltava era a marca DIZER o que há para
+    fazer. Medido com a planilha de RI: 499 das 502 pendências são instituições e
+    TODAS nasceram assim — `3R Investimentos`, `AF Invest`, `ARX`, numa planilha
+    de Relações com Investidores, todas como "Entidade".
+
+    SEM ESTE TEXTO a aba mostra 499 linhas repetindo "entrou por planilha e
+    ninguém conferiu", que não diz O QUE conferir. Uma fila de 499 linhas
+    idênticas não é fila: é parede.
+    """
+    conteudo = _agenda_com(
+        sessao,
+        **{
+            "Data": date(2026, 9, 25),
+            "Instituição": "Gestora Sem Categoria Zz81",
+            "UF": "SP",
+        },
+    )
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("ri.xlsx", conteudo, TIPO_XLSX)}
+    ).json()
+    assert criada["pendencias"] == 0, criada["grupos"]
+    assert (
+        cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao").status_code
+        == 201
+    )
+
+    nascida = sessao.scalar(
+        select(Instituicao).where(
+            Instituicao.nome_normalizado == normalizar("Gestora Sem Categoria Zz81")
+        )
+    )
+    #: `entidade` CONTINUA SENDO O TIPO, e é o certo: o único fora de
+    #: `FRENTE_UNICA_DO_TIPO`, então ele não crava uma frente errada.
+    assert nascida.tipo == "entidade"
+    assert nascida.categoria_publico_id is None
+    assert nascida.pendente_de_revisao is True
+    #: E A MARCA DIZ O QUE FAZER: nomeia o campo que falta e o efeito de faltar.
+    assert nascida.motivo_da_revisao is not None
+    assert "categoria de público" in nascida.motivo_da_revisao
+    assert "Entidade" in nascida.motivo_da_revisao
+
+
+def test_a_instituicao_COM_categoria_nao_ganha_esse_motivo(cliente_admin, sessao):
+    """O outro lado, e é ele que mantém o motivo informativo.
+
+    Se toda instituição nova carregasse a frase, ela deixaria de distinguir
+    coisa alguma — e quem lê a aba aprenderia a pular a linha do motivo, que é o
+    único lugar onde a fila diz o que fazer.
+
+    ELA SEGUE PENDENTE, porque nasceu de planilha: o `motivo` nulo é "entrou por
+    planilha, sem mais nada a dizer", e a tela escreve a frase genérica.
+    """
+    categoria = sessao.scalar(
+        select(CategoriaPublico).where(CategoriaPublico.nome == "Poder Executivo")
+    )
+    #: A CATEGORIA NÃO É COLUNA DA AGENDA, e esta foi a minha confusão ao escrever
+    #: o teste: ela vive na ABA DE CADASTRO da instituição — a aba onde se DECLARA
+    #: o que a planilha vai criar. Escrita na linha da agenda, ela é uma coluna que
+    #: não existe, e a instituição nasce sem categoria: o teste falhava
+    #: `assert None == 1` afirmando o contrário do que queria.
+    conteudo = _agenda_declarando(
+        sessao,
+        agenda={
+            "Data": date(2026, 9, 25),
+            "Instituição": "Orgao Com Categoria Zz82",
+            "UF": "SP",
+        },
+        instituicao={"Nome": "Orgao Com Categoria Zz82", "categoria": categoria.nome},
+    )
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("ri.xlsx", conteudo, TIPO_XLSX)}
+    ).json()
+    assert criada["pendencias"] == 0, criada["grupos"]
+    assert (
+        cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao").status_code
+        == 201
+    )
+
+    nascida = sessao.scalar(
+        select(Instituicao).where(
+            Instituicao.nome_normalizado == normalizar("Orgao Com Categoria Zz82")
+        )
+    )
+    assert nascida.categoria_publico_id == categoria.id
+    assert nascida.pendente_de_revisao is True
+    assert nascida.motivo_da_revisao is None
+
+
+def _agenda_declarando(sessao, *, agenda: dict, instituicao: dict) -> bytes:
+    """Uma agenda com a instituição DECLARADA na aba de cadastro dela.
+
+    `_agenda_com` só escreve a aba Agendas, e é o bastante para quase tudo: a
+    importação cria o que encontra nas células. Mas a categoria de público, o
+    tier e os outros campos do formulário vêm da aba de CADASTRO — é lá que a
+    planilha diz "crie esta instituição ASSIM", em vez de só mencioná-la.
+
+    POR NOME DE COLUNA e não por posição, como o helper de
+    `test_importar_agendas.py`: as abas de cadastro ganharam os campos do
+    formulário, então a categoria deixou de ser a segunda coluna — e escrever por
+    posição gravaria a categoria no "Nome completo" sem reclamar de nada.
+    """
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    desconhecidas = set(agenda) - set(cabecalho)
+    assert not desconhecidas, f"coluna que a aba Agendas não tem: {desconhecidas}"
+    folha.append([agenda.get(coluna) for coluna in cabecalho])
+
+    colunas = [coluna.nome for coluna in colunas_do_cadastro("instituicoes")]
+    valores = {
+        colunas[0]: instituicao["Nome"],
+        COLUNA_DA_CATEGORIA_DE_INSTITUICAO: instituicao["categoria"],
+    }
+    pasta[ROTULO_DO_VOCABULARIO["instituicoes"]].append(
+        [valores.get(coluna) for coluna in colunas]
+    )
+
+    saida = io.BytesIO()
+    pasta.save(saida)
+    return saida.getvalue()
