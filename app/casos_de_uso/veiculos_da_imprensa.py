@@ -405,8 +405,13 @@ def criar(
         #: em Formadores de Opinião. Cargo desconhecido ou ausente deixa o
         #: perfil SEM categoria — "ainda não classificado", que é a verdade.
         publico, subpublico = categoria, None
+        #: O FATO, e não o efeito dele no banco: "a fonte mandou um cargo que
+        #: sabemos traduzir". Ver `_motivo_da_revisao` — a frase que vai para a
+        #: fila depende disto, e NÃO de `publico is None`.
+        cargo_reconhecido = False
         if tipo == "perfil_rede":
             par = CATEGORIA_POR_CARGO.get(veiculo.cargo or "")
+            cargo_reconhecido = par is not None
             if par is None:
                 publico = None
             else:
@@ -448,7 +453,7 @@ def criar(
             #: E A MARCA DIZ QUAL ENQUADRAMENTO FALTA. Achado de revisão com
             #: severidade MÉDIA: este é o produtor de MAIOR VOLUME da fila — 2.631
             #: veículos de uma subida só —, e era o que a deixava genérica.
-            motivo_da_revisao=_motivo_da_revisao(tipo, publico),
+            motivo_da_revisao=_motivo_da_revisao(tipo, cargo_reconhecido),
         )
         sessao.add(registro)
         criados[normalizar(nome)] = registro
@@ -470,7 +475,7 @@ def criar(
 #: preenchido.
 
 
-def _motivo_da_revisao(tipo: str, publico: int | None) -> str:
+def _motivo_da_revisao(tipo: str, cargo_reconhecido: bool) -> str:
     """Três casos, três frases.
 
     VEÍCULO: a categoria é Imprensa e a SUBCATEGORIA falta. Ela é lógica
@@ -487,6 +492,17 @@ def _motivo_da_revisao(tipo: str, publico: int | None) -> str:
     PERFIL SEM CARGO RECONHECIDO: não há categoria nenhuma, porque o cargo não
     estava em `CATEGORIA_POR_CARGO`. É o estado dos 1.108 perfis que a primeira
     carga da Bites criou, e é o caso em que a fila tem mais a ganhar.
+
+    `cargo_reconhecido` E NÃO O `id` DA CATEGORIA, e a diferença é um achado de
+    revisão. Decidir por `publico is None` decide pelo EFEITO no banco, e o fato
+    que gera a frase é outro: "a fonte mandou um cargo que sabemos traduzir". Os
+    dois coincidem hoje e podem descolar — uma categoria da taxonomia desativada,
+    ou um cargo reconhecido apontando para categoria ausente, fariam um perfil COM
+    cargo receber "sem cargo reconhecido".
+
+    E O ESTRAGO SERIA PERMANENTE: esta frase é GRAVADA na linha. Um `id` nulo
+    passageiro vira uma instrução errada que fica no banco pedindo à pessoa um
+    campo que ela já preencheu — e a fila que mente é a fila que ninguém usa.
     """
     if tipo == "veiculo":
         return (
@@ -494,7 +510,7 @@ def _motivo_da_revisao(tipo: str, publico: int | None) -> str:
             "subcategoria — ela é lógica editorial que a fonte não informa, e é "
             "dela que a lente Mercado depende."
         )
-    if publico is None:
+    if not cargo_reconhecido:
         return (
             "Entrou pela ingestão de menções sem cargo reconhecido, então ficou "
             "sem categoria de público. Diga o cargo para o perfil entrar na "

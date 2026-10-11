@@ -687,3 +687,40 @@ def test_o_PERFIL_sem_cargo_reconhecido_diz_que_falta_o_cargo(sessao):
     assert novo.tipo == "perfil_rede"
     assert novo.categoria_publico_id is None
     assert "cargo" in novo.motivo_da_revisao
+
+
+def test_o_perfil_COM_cargo_nao_e_chamado_de_SEM_cargo_quando_a_categoria_falta(
+    sessao,
+):
+    """O descolamento que um achado de revisão nomeou, e o estrago é permanente.
+
+    A FRASE DA FILA DECIDIA POR `publico is None` — o EFEITO no banco. O fato que
+    a gera é outro: "a fonte mandou um cargo que sabemos traduzir". Os dois
+    coincidem no caminho normal e descolam quando a categoria que o cargo aponta
+    não está disponível — uma categoria desativada na taxonomia, por exemplo.
+
+    E A FRASE É GRAVADA NA LINHA. Um `id` nulo passageiro viraria uma instrução
+    errada que fica no banco pedindo à pessoa um campo que ela já preencheu —
+    "diga o cargo" para um perfil que TEM cargo. A fila que mente é a fila que
+    ninguém usa.
+
+    O TESTE CHAMA A FUNÇÃO DIRETO, de propósito: reproduzir o descolamento pelo
+    caminho de fora exigiria desativar uma categoria da taxonomia no meio do
+    teste — mexer no vocabulário fechado do modelo para provar uma frase. A
+    função é a unidade onde a decisão mora.
+    """
+    from app.casos_de_uso.veiculos_da_imprensa import _motivo_da_revisao
+
+    #: CARGO RECONHECIDO: a frase é a de conferência, mesmo que a categoria não
+    #: tenha resolvido.
+    com_cargo = _motivo_da_revisao("perfil_rede", True)
+    assert "confira" in com_cargo
+    assert "sem cargo" not in com_cargo
+
+    #: SEM CARGO RECONHECIDO: aí sim a frase pede o cargo.
+    sem_cargo = _motivo_da_revisao("perfil_rede", False)
+    assert "sem cargo reconhecido" in sem_cargo
+
+    #: E O VEÍCULO NÃO DEPENDE DISSO: a pergunta dele é a subcategoria, sempre.
+    assert "subcategoria" in _motivo_da_revisao("veiculo", False)
+    assert "subcategoria" in _motivo_da_revisao("veiculo", True)
