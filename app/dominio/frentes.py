@@ -196,6 +196,35 @@ TIPOS_DE_INSTITUICAO: frozenset[str] = (
     frozenset(TIPO_DE_INSTITUICAO.values()) | TIPOS_SEM_FRENTE
 )
 
+#: O NOME QUE UMA PESSOA LÊ para cada tipo.
+#:
+#: POR QUE O BACK PRECISA DELE. Quando um nome da planilha casa com DOIS
+#: cadastros, a conferência tem de oferecer os dois — e dois botões com o mesmo
+#: rótulo não são escolha. O tipo é o que os distingue: medido no banco, 22 dos
+#: 28 nomes duplicados são o par `perfil_rede` + `veiculo`.
+#:
+#: E O CÓDIGO CRU NÃO SERVE DE RÓTULO: `perfil_rede` num botão é vazamento de
+#: banco para a tela.
+#:
+#: O FRONT TEM DOIS MAPAS PRÓPRIOS E DIVERGENTES — `CadastroDeInstituicoes.tsx`
+#: diz "Veículo" e "Órgão", `FilaDeDuplicados.tsx` diz "Veículo de imprensa" e
+#: "Órgão público". Este é um terceiro, e isso é dívida: o certo é a API servir o
+#: rótulo e as duas telas o consumirem. Fica aqui porque o servidor não pode
+#: mandar `perfil_rede` para dentro de um botão enquanto isso não acontece.
+#:
+#: UM TESTE PRENDE "TODO TIPO TEM RÓTULO": sem ele, um tipo novo entraria na
+#: taxonomia e apareceria cru na tela, e quem o adicionasse não teria como saber.
+ROTULO_DO_TIPO_DE_INSTITUICAO: dict[str, str] = {
+    "orgao": "Órgão",
+    "veiculo": "Veículo",
+    "entidade": "Entidade",
+    "investidor": "Investidor",
+    "proposicao": "Proposição",
+    "area_interna": "Área interna",
+    "credor": "Banco/credor",
+    "perfil_rede": "Perfil de rede",
+}
+
 #: O TIPO QUE UMA CATEGORIA DE PÚBLICO IMPLICA — o que faz a tela de cadastro
 #: não precisar perguntar o tipo: quem cadastra escolhe o público (Poder
 #: Executivo, Imprensa, Mercado Financeiro...) e o tipo — e, por ele, a frente —

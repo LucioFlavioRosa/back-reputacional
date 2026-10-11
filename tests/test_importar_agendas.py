@@ -1092,3 +1092,18 @@ def test_o_erro_GENERICO_de_um_grupo_nao_aponta_uma_coluna_qualquer(
     doGrupo = [d for d in proposta.divergencias if d.campo == "outra_parte"]
     assert doGrupo, [d.mensagem for d in proposta.divergencias]
     assert all(d.coluna == "" for d in doGrupo), [(d.coluna, d.mensagem) for d in doGrupo]
+
+
+def test_todo_tipo_de_instituicao_TEM_ROTULO():
+    """Um tipo sem rótulo apareceria cru num botão da conferência.
+
+    É O ÚNICO JEITO DE DISTINGUIR dois cadastros com o mesmo nome, e o rótulo é o
+    que a pessoa lê: `perfil_rede` dentro de `É "Jornal do Comércio
+    (perfil_rede)"` é vazamento de banco para a tela. Sem esta âncora, quem
+    acrescentasse um tipo à taxonomia não teria como saber que precisa do rótulo —
+    e a falta dele não quebra nada, só fica feia na tela de quem confere.
+    """
+    from app.dominio.frentes import ROTULO_DO_TIPO_DE_INSTITUICAO, TIPOS_DE_INSTITUICAO
+
+    sem_rotulo = sorted(TIPOS_DE_INSTITUICAO - set(ROTULO_DO_TIPO_DE_INSTITUICAO))
+    assert not sem_rotulo, f"sem rótulo: {sem_rotulo}"

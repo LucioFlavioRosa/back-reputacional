@@ -3558,3 +3558,146 @@ def test_a_linha_SEM_DATA_NEM_UF_da_para_consertar_na_tela(cliente_admin, sessao
     ]
     confirmacao = cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao")
     assert confirmacao.status_code == 201, confirmacao.text
+
+
+def test_o_nome_que_casa_com_DOIS_cadastros_oferece_OS_DOIS(cliente_admin, sessao, semente):
+    """A divergência manda "escolha qual na conferência", e a escolha tem de existir.
+
+    O DEFEITO QUE ISTO FECHA, medido em 11/10/2026: o grupo de um nome ambíguo
+    vinha com UM atalho só, rotulado com o nome dos dois cadastros e com
+    `"<object object at 0x...>"` no lugar do id — o repr da sentinela `AMBIGUO`.
+    A guarda "sugestão sem alvo não entra" não pegava, porque o repr é uma string
+    válida. Clicar mandava lixo para `apontar`, e a única saída real da pessoa era
+    descartar a linha ou renomear na planilha.
+
+    O CASO É O REAL: medido no banco, 28 nomes de instituição estão duplicados, e
+    22 deles são o par `perfil_rede` + `veiculo`.
+
+    E NÃO DÁ PARA ESCOLHER SOZINHO. Eu ia preferir "os tipos que uma agenda pode
+    ter", excluindo veículo — e a medida matou o plano: veículo é a instituição de
+    148 das 544 agendas. Excluir veículo escolheria o cadastro errado, e nos 22
+    pares não sobraria candidato nenhum, o que faria o nome virar inexistente e
+    nascer uma TERCEIRA duplicata.
+    """
+    import uuid as _uuid
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    from app.banco.tabelas_stakeholders import Instituicao as Inst
+
+    for tipo in ("veiculo", "perfil_rede"):
+        sessao.add(
+            Inst(
+                nome="Jornal do Comércio",
+                nome_normalizado=normalizar("Jornal do Comércio"),
+                tipo=tipo,
+                uf="PE",
+            )
+        )
+    sessao.flush()
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    valores = {"Data": date(2026, 9, 25), "Instituição": "Jornal do Comércio", "UF": "PE"}
+    folha.append([valores.get(coluna) for coluna in cabecalho])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    corpo = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("dia.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+
+    (grupo,) = [g for g in corpo["grupos"] if g["campo"] == "instituicao_id"]
+    #: DOIS ATALHOS, um por cadastro.
+    assert len(grupo["sugestoes"]) == 2, grupo["sugestoes"]
+    #: CADA UM COM O SEU ID DE VERDADE, e não com o repr da sentinela. A conversão
+    #: para UUID é o que prende isto: `uuid.UUID("<object object at 0x...>")`
+    #: estoura, e foi exatamente esse texto que a API mandava.
+    alvos = {sugestao["alvo"] for sugestao in grupo["sugestoes"]}
+    assert len(alvos) == 2, grupo["sugestoes"]
+    for alvo in alvos:
+        _uuid.UUID(alvo)
+    #: E COM RÓTULOS QUE SE DISTINGUEM: dois botões com o mesmo texto não são
+    #: escolha — é o que a pessoa vê, e é a metade da correção que o id não cobre.
+    rotulos = {sugestao["nome"] for sugestao in grupo["sugestoes"]}
+    assert rotulos == {"Jornal do Comércio (Veículo)", "Jornal do Comércio (Perfil de rede)"}, (
+        rotulos
+    )
+
+    #: E "CADASTRAR COMO NOVO" NÃO APARECE. O nome já existe duas vezes: criar
+    #: ali seria a TERCEIRA duplicata, pela porta que a conferência abre — e a
+    #: conferência existe para evitar exatamente isso. Achado de revisão.
+    assert grupo["pode_criar"] is False, grupo
+
+    #: E O SERVIDOR RECUSA, que é o controle. Esconder o botão é conveniência:
+    #: um `curl` basta, e é o que o cabeçalho deste arquivo diz.
+    recusa = cliente_admin.patch(
+        f"/api/importacoes/{corpo['id']}/resolucoes",
+        json={"campo": grupo["campo"], "valor": grupo["valor"], "decisao": "criar"},
+    )
+    assert recusa.status_code == 422, recusa.text
+    assert "mais de um cadastro" in recusa.text, recusa.text
+
+
+def test_a_escolha_do_nome_ambiguo_RESOLVE_de_verdade(cliente_admin, sessao, semente):
+    """Apontar para um dos dois destrava a linha e deixa confirmar.
+
+    POR QUE O TESTE NÃO PARA NO BOTÃO. O atalho antes existia e parecia certo na
+    resposta; o que não funcionava era usá-lo. Afirmar só a presença da sugestão
+    deixaria passar um alvo que o servidor recusa — que é precisamente o defeito
+    que o docstring de `SugestaoSaida` registra da primeira vez.
+    """
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    from app.banco.tabelas_stakeholders import Instituicao as Inst
+
+    for tipo in ("veiculo", "perfil_rede"):
+        sessao.add(
+            Inst(
+                nome="Jornal do Comércio",
+                nome_normalizado=normalizar("Jornal do Comércio"),
+                tipo=tipo,
+                uf="PE",
+            )
+        )
+    sessao.flush()
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    valores = {"Data": date(2026, 9, 25), "Instituição": "Jornal do Comércio", "UF": "PE"}
+    folha.append([valores.get(coluna) for coluna in cabecalho])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    criada = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("dia.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+    assert criada["pendencias"] == 1, criada["grupos"]
+    (grupo,) = [g for g in criada["grupos"] if g["campo"] == "instituicao_id"]
+    escolhida = next(
+        s for s in grupo["sugestoes"] if s["nome"] == "Jornal do Comércio (Veículo)"
+    )
+
+    depois = cliente_admin.patch(
+        f"/api/importacoes/{criada['id']}/resolucoes",
+        json={
+            "campo": grupo["campo"],
+            "valor": grupo["valor"],
+            "decisao": "apontar",
+            "alvo": escolhida["alvo"],
+        },
+    )
+    assert depois.status_code == 200, depois.text
+    assert depois.json()["pendencias"] == 0, [
+        d["mensagem"] for linha in depois.json()["linhas"] for d in linha["divergencias"]
+    ]
+
+    confirmacao = cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao")
+    assert confirmacao.status_code == 201, confirmacao.text

@@ -205,7 +205,45 @@ def _alvo_de(sessao, campo: str, nome: str) -> str | None:
     if vocabulario is None:
         return None
     valor = importar_agendas.indice_do_vocabulario(sessao, vocabulario).get(normalizar(nome))
-    return None if valor is None else str(valor)
+    #: `AMBIGUO` NÃO É ALVO, e sem esta linha ele viajava como `str(AMBIGUO)` —
+    #: "<object object at 0x...>" — para dentro do botão da conferência. A guarda
+    #: "sugestão sem alvo não entra" não pegava, porque o repr da sentinela é uma
+    #: string perfeitamente válida. Quem oferece a escolha do nome ambíguo é
+    #: `candidatos_do_nome`, com os ids de verdade.
+    if valor is None or valor is importar_agendas.AMBIGUO:
+        return None
+    return str(valor)
+
+
+def _sugestoes_de(sessao, grupo) -> list[SugestaoSaida]:
+    """Os atalhos de um grupo: um por cadastro que a pessoa pode apontar.
+
+    UM NOME, UM ATALHO — menos quando o nome casa com DOIS cadastros. Aí ele vira
+    dois atalhos, cada um com o seu id e com um rótulo que os distingue, porque é
+    a divergência que diz "escolha qual na conferência" e a escolha tem de ser
+    possível. Antes de 11/10/2026 ela não era: o grupo trazia um botão só, com o
+    rótulo dos dois e com o repr da sentinela `AMBIGUO` no lugar do id.
+
+    A SUGESTÃO SEM ALVO NÃO ENTRA: oferecer um atalho que o servidor recusa é pior
+    que não oferecer atalho — é o que o docstring de `SugestaoSaida` registra da
+    primeira vez que esta classe de defeito apareceu.
+    """
+    saida: list[SugestaoSaida] = []
+    for nome in grupo.sugestoes:
+        alvo = _alvo_de(sessao, grupo.campo, nome)
+        if alvo is not None:
+            saida.append(SugestaoSaida(nome=nome, alvo=alvo))
+            continue
+        #: Sem alvo por AMBIGUIDADE: os candidatos de verdade. Para um nome que
+        #: simplesmente não existe, `candidatos_do_nome` devolve vazio e o grupo
+        #: segue sem atalho, como antes.
+        saida.extend(
+            SugestaoSaida(nome=rotulo, alvo=candidato)
+            for candidato, rotulo in importar_agendas.candidatos_do_nome(
+                sessao, grupo.campo, nome
+            )
+        )
+    return saida
 
 
 def _decididas(linhas) -> list[ACriarSaida]:
@@ -290,14 +328,15 @@ def _grupos(sessao, linhas) -> list[GrupoSaida]:
                     valor=grupo.valor,
                     linhas=list(grupo.linhas),
                     trava=grupo.trava,
-                    pode_criar=importar_agendas.pode_criar(grupo.campo),
-                    sugestoes=[
-                        SugestaoSaida(nome=nome, alvo=alvo)
-                        for nome in grupo.sugestoes
-                        # A sugestão sem alvo não entra: oferecer um atalho que o
-                        # servidor recusa é pior que não oferecer atalho.
-                        if (alvo := _alvo_de(sessao, grupo.campo, nome)) is not None
-                    ],
+                    #: E NÃO SÓ PELO CAMPO. Um nome AMBÍGUO já existe duas
+                    #: vezes: oferecer "Cadastrar como novo" ali é oferecer a
+                    #: terceira duplicata, e o que a pessoa tem de fazer é
+                    #: escolher um dos dois. Achado de revisão, 11/10/2026.
+                    pode_criar=(
+                        importar_agendas.pode_criar(grupo.campo)
+                        and not importar_agendas.e_ambiguo(sessao, grupo.campo, grupo.valor)
+                    ),
+                    sugestoes=_sugestoes_de(sessao, grupo),
                 )
             )
     return sorted(saida, key=lambda grupo: (not grupo.trava, -len(grupo.linhas), grupo.valor))

@@ -52,7 +52,11 @@ from app.casos_de_uso.ler_planilha_de_agendas import (
     ler_declarados,
 )
 from app.dominio.erros import Conflito, RegraViolada
-from app.dominio.frentes import TIPO_DA_CATEGORIA_DE_PUBLICO, TIPO_SEM_CATEGORIA
+from app.dominio.frentes import (
+    ROTULO_DO_TIPO_DE_INSTITUICAO,
+    TIPO_DA_CATEGORIA_DE_PUBLICO,
+    TIPO_SEM_CATEGORIA,
+)
 from app.dominio.importacao_de_agendas import (
     ABA_PRINCIPAL,
     CHAVE_DO_CORRIGIDO,
@@ -1542,6 +1546,16 @@ def resolver(
                 f"{valor!r} não pode ser cadastrado por aqui: {motivo}. Aponte para "
                 "um valor existente ou descarte as linhas."
             )
+        # E NEM O NOME QUE JÁ EXISTE DUAS VEZES. Criar aqui seria a TERCEIRA
+        # duplicata do mesmo nome, pela porta que a conferência abre — e a
+        # conferência existe para evitar exatamente isso. A tela já não oferece o
+        # botão (`pode_criar`), e isto é o controle: esconder o botão é
+        # conveniência, e um `curl` basta.
+        if e_ambiguo(sessao, campo, valor):
+            raise RegraViolada(
+                f"{valor!r} já existe em mais de um cadastro: criar faria um terceiro "
+                "com o mesmo nome. Escolha qual deles é, ou descarte as linhas."
+            )
     elif decisao == "apontar":
         if not alvo:
             raise RegraViolada("Para apontar é preciso dizer para qual cadastro.")
@@ -2440,6 +2454,98 @@ def pode_criar(campo: str) -> bool:
     """
     vocabulario = vocabulario_do_campo(campo)
     return vocabulario in VOCABULARIOS_QUE_A_IMPORTACAO_CRIA
+
+
+def candidatos_do_nome(sessao: Session, campo: str, nome: str) -> list[tuple[str, str]]:
+    """`(alvo, rótulo)` de cada cadastro ATIVO com este nome — para o nome ambíguo.
+
+    O QUE ISTO CONSERTA. `AMBIGUO` marca o nome que casa com mais de um cadastro,
+    e a divergência dele manda "escolha qual na conferência". A conferência não
+    tinha como oferecer a escolha: `agrupar` compara TEXTO e achata os dois
+    cadastros num item só, e `_alvo_de` devolvia `str(AMBIGUO)` — o repr da
+    sentinela — como se fosse id. O botão existia e mandava lixo.
+
+    ENTÃO A ESCOLHA VEM DAQUI, de quem conhece a tabela: um item por cadastro, com
+    o id de verdade e um rótulo que os distingue. Sem isto a única saída da pessoa
+    era descartar a linha ou renomear na planilha.
+
+    SÓ OS ATIVOS, pela mesma razão que `_indice` filtra: oferecer um cadastro
+    aposentado é convidar a apontar para o que a confirmação recusa.
+
+    DOIS VOCABULÁRIOS, e não todos, porque rótulo que não distingue é pior que
+    nenhum — devolveria dois botões idênticos outra vez:
+
+    * `instituicoes` se distingue pelo TIPO. Medido: 28 nomes duplicados, sendo
+      22 do par `perfil_rede` + `veiculo`.
+    * `interlocutores` se distingue pela INSTITUIÇÃO, que é a unicidade da tabela
+      (`nome_normalizado`, `instituicao_id`). Medido: hoje não existe nenhum
+      homônimo — 129 interlocutores, nenhum nome repetido. O caminho fica porque
+      o banco o permite, e `_orgaos_de_cada_interlocutor` já existe para a
+      mensagem desse mesmo caso.
+
+    Para os outros vocabulários, devolve vazio: dois temas ativos com o mesmo nome
+    são defeito de base, e não há atributo que a pessoa reconheça para escolher
+    entre eles.
+    """
+    vocabulario = vocabulario_do_campo(campo)
+    chave = normalizar(nome)
+    if vocabulario == "instituicoes":
+        linhas = sessao.execute(
+            _so_ativos(
+                select(Instituicao.id, Instituicao.nome, Instituicao.tipo).where(
+                    Instituicao.nome_normalizado == chave
+                ),
+                Instituicao,
+            )
+        ).all()
+        return [
+            (str(ident), f"{nome_do_cadastro} ({_rotulo_do_tipo(tipo)})")
+            for ident, nome_do_cadastro, tipo in linhas
+        ]
+    if vocabulario == "interlocutores":
+        linhas = sessao.execute(
+            _so_ativos(
+                select(Interlocutor.id, Interlocutor.nome, Instituicao.nome)
+                .join(Instituicao, Interlocutor.instituicao_id == Instituicao.id)
+                .where(Interlocutor.nome_normalizado == chave),
+                Interlocutor,
+            ).where(Instituicao.ativo.is_(True))
+        ).all()
+        return [
+            (str(ident), f"{pessoa} ({orgao})") for ident, pessoa, orgao in linhas
+        ]
+    return []
+
+
+def e_ambiguo(sessao: Session, campo: str, valor: str) -> bool:
+    """Este valor casa com MAIS DE UM cadastro?
+
+    QUEM PERGUNTA, E POR QUÊ. A conferência oferece "Cadastrar como novo" em todo
+    grupo de campo que a importação sabe criar. Num nome AMBÍGUO isso é um atalho
+    explícito para a TERCEIRA duplicata do mesmo nome — achado de revisão
+    (11/10/2026) —, e é o contrário do que o dono do produto pediu: "caso tenha
+    suspeita de duplicação em qualquer campo, mostrar para o usuário decidir". A
+    decisão coerente ali é escolher um dos dois que já existem.
+
+    SÓ A AMBIGUIDADE, e não "o nome existe no índice". A diferença importa: o
+    interlocutor que existe sob OUTRA instituição também está no índice, e ali
+    criar é legítimo — duas "Ana Prado" em instituições diferentes são dois
+    cadastros legítimos, e a `0002` diz isso com todas as letras.
+    """
+    vocabulario = vocabulario_do_campo(campo)
+    if vocabulario is None:
+        return False
+    return indice_do_vocabulario(sessao, vocabulario).get(normalizar(valor)) is AMBIGUO
+
+
+def _rotulo_do_tipo(tipo: str) -> str:
+    """O nome que a pessoa lê, ou o código cru se alguém criou um tipo sem rótulo.
+
+    NÃO ESTOURA por falta de rótulo: a escolha entre dois cadastros é mais
+    importante que a beleza do rótulo, e um 500 aqui tiraria da pessoa a única
+    saída da ambiguidade. O teste que prende "todo tipo tem rótulo" é quem avisa.
+    """
+    return ROTULO_DO_TIPO_DE_INSTITUICAO.get(tipo, tipo)
 
 
 def vocabulario_do_campo(campo: str) -> str | None:
