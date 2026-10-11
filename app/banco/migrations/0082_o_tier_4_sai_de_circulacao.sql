@@ -1,0 +1,31 @@
+--: O TIER 4 SAI DE CIRCULAÇÃO.
+--:
+--: DECISÃO DO DONO DO PRODUTO (11/10/2026): "T4 pode sumir". Ele veio junto do
+--: pedido de preencher a relevância do veículo criado automaticamente, e os dois
+--: são a mesma conversa: a escala da Clipei tem TRÊS níveis — "muito relevante",
+--: "relevante", "menos relevante" — e a do cadastro tem quatro. O quarto não
+--: corresponde a nada que o fornecedor diga.
+--:
+--: MEDIDO ANTES, e é o que torna isto seguro:
+--:   * `instituicao.tier` = 4: ZERO linhas (33 em T1, 39 em T2, 27 em T3, 3.710 nulas)
+--:   * `interacao.tier`  = 4: ZERO linhas
+--: Ninguém escolheu Tier 4 em lugar nenhum. Não há dado a migrar, só uma opção a
+--: tirar de uma lista suspensa.
+--:
+--: DESATIVA, E NÃO APAGA. `relevancia` é tabela de CATÁLOGO e tem a coluna
+--: `ativo` justamente para isto — é o mesmo gesto que a `0058` usou para
+--: aposentar 45 temas da taxonomia antiga. Apagar a linha quebraria a chave
+--: estrangeira de qualquer registro futuro que alguém tivesse gravado entre a
+--: medida e esta migration, e perderia a informação de que o nível existiu.
+--:
+--: O EFEITO É COMPLETO porque tudo lê `ativo`:
+--:   * `GET /api/dicionarios` serve só os ativos, então a suspensa da tela de
+--:     cadastro e a do formulário de agenda perdem a opção;
+--:   * `api/stakeholders.py` valida o tier contra `Relevancia.ativo`, então o
+--:     servidor passa a RECUSAR 4 — esconder a opção é conveniência, e um `curl`
+--:     basta;
+--:   * `vocabularios()` da importação filtra ativos, então a lista suspensa da
+--:     coluna "Relevância" do modelo `.xlsx` também perde o Tier 4.
+--:
+--: VOLTAR É UM `update`, se o dono do produto mudar de ideia.
+update relevancia set ativo = false where id = 4;

@@ -44,8 +44,10 @@ def sessao():
         conexao.close()
 
 
-def _da_planilha(nome, uf="Santa Catarina", abrangencia="Local", mencoes=1):
-    return {nome: {"uf": uf, "abrangencia": abrangencia, "mencoes": mencoes}}
+def _da_planilha(nome, uf="Santa Catarina", abrangencia="Local", mencoes=1, tier=""):
+    return {
+        nome: {"uf": uf, "abrangencia": abrangencia, "mencoes": mencoes, "tier": tier}
+    }
 
 
 # ============================================ reconhecer: separa, e NÃO escreve
@@ -255,3 +257,108 @@ def test_a_categoria_da_imprensa_existe_e_esta_ativa(sessao):
 
 def test_criar_sem_nada_a_criar_nao_toca_no_banco(sessao):
     assert criar(sessao, ()) == {}
+
+
+# ============================================ a relevância que a planilha informa
+@pytest.mark.parametrize(
+    ("da_clipei", "relevancia"),
+    [
+        ("Muito Relevante", 1),
+        ("muito relevante", 1),
+        ("MUITO RELEVANTE ", 1),
+        ("Relevante", 2),
+        ("Menos Relevante", 3),
+    ],
+)
+def test_criar_grava_a_RELEVANCIA_que_a_planilha_informa(sessao, da_clipei, relevancia):
+    """A escala da Clipei tem três nomes; o cadastro tem três números.
+
+    PEDIDO DO DONO DO PRODUTO (11/10/2026): "na tabela da clipei tem uma coluna de
+    tier, e no cadastro de instituições que são cadastradas automaticamente a
+    informação de tier falta — esse campo se chama relevância". Ele faltava mesmo:
+    medido, 39 dos 2.670 veículos cadastrados tinham relevância. A ingestão criava
+    os outros 2.631 jogando fora uma coluna que estava no arquivo.
+
+    A MEDIDA QUE AUTORIZA COPIAR. A coluna é por MATÉRIA, não por veículo — nada
+    garantiria que o mesmo veículo viesse sempre com o mesmo tier. Medido: 2.640
+    dos 2.641 veículos com menção têm UM único tier distinto em todas as suas
+    matérias. Só um divergiu. Na prática o tier da Clipei é propriedade do
+    veículo, e é isso que faz disto uma leitura e não um chute.
+
+    AS VARIAÇÕES DE CAIXA E ESPAÇO ESTÃO AQUI porque a tradução usa as MESMAS
+    duas funções da gravação da menção (`achatar` e `TIERS`). Se alguém trocar por
+    uma comparação direta, o cadastro e a menção passam a discordar sobre o mesmo
+    texto — e a discordância aparece numa tela, não aqui.
+    """
+    reco = reconhecer(sessao, _da_planilha(f"Veículo Com Tier {relevancia} 42", tier=da_clipei))
+    criar(sessao, reco.novos)
+
+    novo = sessao.scalar(
+        select(Instituicao).where(Instituicao.nome == f"Veículo Com Tier {relevancia} 42")
+    )
+    assert novo.tier == relevancia
+
+
+def test_criar_deixa_a_relevancia_NULA_quando_a_fonte_nao_tem_tier(sessao):
+    """Rede social e canal próprio não têm tier, e inventar um seria afirmar.
+
+    As fontes da Bites e da Approach não mapeiam coluna de tier nenhuma — só as
+    duas da Clipei mapeiam, para "Aegea Tier". O perfil nasce sem relevância, que
+    é a verdade sobre ele.
+    """
+    reco = reconhecer(sessao, _da_planilha("Veículo Sem Tier 42"))
+    criar(sessao, reco.novos)
+
+    novo = sessao.scalar(select(Instituicao).where(Instituicao.nome == "Veículo Sem Tier 42"))
+    assert novo.tier is None
+
+
+def test_criar_deixa_a_relevancia_NULA_quando_o_tier_nao_e_da_escala(sessao):
+    """Texto fora da escala não vira palpite.
+
+    "Tier 1" escrito na coluna, ou um valor novo que o fornecedor inventar, não
+    está em `TIERS` — e cair no nível errado é pior que não ter nível, porque a
+    régua de peso do Score usa o tier.
+    """
+    reco = reconhecer(sessao, _da_planilha("Veículo Com Tier Estranho 42", tier="prioritário"))
+    criar(sessao, reco.novos)
+
+    novo = sessao.scalar(
+        select(Instituicao).where(Instituicao.nome == "Veículo Com Tier Estranho 42")
+    )
+    assert novo.tier is None
+
+
+def test_a_relevancia_de_cada_tier_da_clipei_EXISTE_no_cadastro(sessao):
+    """O mapa aponta para `relevancia.id`, e os três têm de estar lá e ativos.
+
+    POR QUE ISTO É TESTE: o número do mapa vai direto para uma chave estrangeira.
+    Se alguém desativar o Tier 2 — como a `0082` desativou o Tier 4 —, a criação
+    passaria a gravar um tier que a tela de cadastro não oferece mais, e a tela de
+    stakeholders recusaria ao editar. O T4 saiu de circulação justamente porque a
+    escala da Clipei não o tem; os três que ela tem precisam continuar.
+    """
+    from app.banco.tabelas_catalogo import Relevancia
+    from app.dominio.score import RELEVANCIA_DO_TIER
+
+    ativos = set(
+        sessao.scalars(select(Relevancia.id).where(Relevancia.ativo.is_(True))).all()
+    )
+    faltando = sorted(set(RELEVANCIA_DO_TIER.values()) - ativos)
+    assert not faltando, f"a Clipei mapeia para relevância inativa ou inexistente: {faltando}"
+
+
+def test_o_mapa_cobre_TODA_a_escala_da_clipei():
+    """Os três valores que a planilha pode trazer têm correspondência.
+
+    `TIERS` é o vocabulário que a gravação da menção aceita; `RELEVANCIA_DO_TIER`
+    é a tradução para o cadastro. Um valor em `TIERS` sem número aqui faria o
+    veículo nascer sem relevância em silêncio — a coluna preenchida, o cadastro
+    vazio, e nada reclamando. É a mesma forma do defeito que a área declarada e
+    não gravada produziu na importação de agendas.
+    """
+    from app.dominio.ingestao_score import TIERS
+    from app.dominio.score import RELEVANCIA_DO_TIER
+
+    sem_numero = sorted(set(TIERS.values()) - set(RELEVANCIA_DO_TIER))
+    assert not sem_numero, f"a escala da Clipei tem valor sem relevância: {sem_numero}"

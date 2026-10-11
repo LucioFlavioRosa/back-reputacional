@@ -834,6 +834,15 @@ def veiculos_da_planilha(
     #: opinião. Sem isto, o cargo alimentava a régua e o gráfico, e o cadastro
     #: nascia sem ele.
     coluna_do_cargo = mapeamento.colunas.get("cargo")
+    #: O TIER VEM JUNTO, porque é a relevância com que o veículo nasce no
+    #: cadastro — e a planilha a traz. Sem isto, dos 2.670 veículos cadastrados
+    #: só 39 tinham relevância: a ingestão criava os outros jogando fora uma
+    #: coluna que estava no arquivo.
+    #:
+    #: PELO MAPEAMENTO, como o resto: na Clipei a coluna se chama "Aegea Tier", e
+    #: as fontes de rede social não mapeiam `tier` nenhum — o perfil nasce sem
+    #: relevância, que é a verdade.
+    coluna_do_tier = mapeamento.colunas.get("tier")
     achados: dict[str, dict[str, object]] = {}
     for linha in _linhas_da_aba(conteudo, mapeamento):
         #: PELA MESMA FUNÇÃO DA GRAVAÇÃO. A célula crua traria `@casadevovodede`
@@ -855,6 +864,17 @@ def veiculos_da_planilha(
                 #: conferência mostra o que vai ser usado.
                 "cargo": str(linha.get(coluna_do_cargo) or "").strip()
                 if coluna_do_cargo
+                else "",
+                #: O PRIMEIRO TIER NÃO VAZIO, pela mesma regra do cargo e da
+                #: praça: o `setdefault` guarda o primeiro que aparece.
+                #:
+                #: E AQUI ISSO QUASE NUNCA DECIDE NADA, medido: 2.640 dos 2.641
+                #: veículos com menção têm UM único tier em todas as suas
+                #: matérias. A coluna é por matéria, mas na prática o tier é
+                #: propriedade do veículo — e é essa medida que torna copiá-lo
+                #: para o cadastro uma leitura, e não um chute.
+                "tier": str(linha.get(coluna_do_tier) or "").strip()
+                if coluna_do_tier
                 else "",
                 "mencoes": 0,
             },

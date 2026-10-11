@@ -84,12 +84,28 @@ def test_os_grupos_de_status_do_python_sao_os_do_banco(sessao):
 
 
 def test_relevancia_e_tabela_e_nao_lista_no_codigo(sessao):
-    """O que motivou a mudança: acrescentar um nível tem de ser um `insert`."""
+    """O que motivou a mudança: acrescentar um nível tem de ser um `insert`.
+
+    TRÊS, E NÃO QUATRO, desde a `0082`: o dono do produto decidiu que "T4 pode
+    sumir", e a decisão veio junto do pedido de preencher a relevância do veículo
+    criado pela Clipei — a escala do fornecedor tem três nomes ("muito
+    relevante", "relevante", "menos relevante") e o quarto nível não
+    correspondia a nada que ele diga. Medido antes de desativar: ZERO linhas com
+    tier 4, em `instituicao` e em `interacao`.
+
+    A LINHA CONTINUA LÁ, inativa. É tabela de catálogo, e aposentar é `ativo =
+    false` — o mesmo gesto da `0058` com os 45 temas da taxonomia antiga.
+    """
     niveis = sessao.execute(
         text("select id, nome from relevancia where ativo order by ordem")
     ).all()
-    assert [n.id for n in niveis] == [1, 2, 3, 4]
-    assert [n.nome for n in niveis] == ["Tier 1", "Tier 2", "Tier 3", "Tier 4"]
+    assert [n.id for n in niveis] == [1, 2, 3]
+    assert [n.nome for n in niveis] == ["Tier 1", "Tier 2", "Tier 3"]
+    #: E O QUARTO NÃO FOI APAGADO, só saiu de circulação.
+    (inativo,) = sessao.execute(
+        text("select nome from relevancia where not ativo")
+    ).all()
+    assert inativo.nome == "Tier 4"
 
 
 def test_um_nivel_novo_aparece_no_dicionario_sem_tocar_em_codigo(sessao):
@@ -101,11 +117,13 @@ def test_um_nivel_novo_aparece_no_dicionario_sem_tocar_em_codigo(sessao):
 
     relevancias = listar_dicionarios(sessao)["relevancias"]
 
+    #: O NÍVEL NOVO ENTRA, E O APOSENTADO NÃO VOLTA — as duas metades numa
+    #: asserção. "Tier 4" existe na tabela e está fora desta lista porque a
+    #: `0082` o desativou, e é `listar_dicionarios` que filtra por `ativo`.
     assert [r["nome"] for r in relevancias] == [
         "Tier 1",
         "Tier 2",
         "Tier 3",
-        "Tier 4",
         "Regional",
     ]
 

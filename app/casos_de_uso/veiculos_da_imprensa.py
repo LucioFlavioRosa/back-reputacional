@@ -40,10 +40,13 @@ from app.banco.tabelas_catalogo import CategoriaPublico, Esfera, SubcategoriaPub
 from app.banco.tabelas_stakeholders import Instituicao
 from app.dominio.erros import RegraViolada
 from app.dominio.ingestao_score import (
+    TIERS,
+    achatar,
     normalizar_cargo,
     para_sigla,
     rotulo_do_cargo,
 )
+from app.dominio.score import RELEVANCIA_DO_TIER
 from app.dominio.texto import normalizar
 
 #: A categoria de público com que um veículo da imprensa nasce.
@@ -155,6 +158,13 @@ class VeiculoNovo:
     #: `CATEGORIA_POR_CARGO`) e o que a conferência mostra, para quem autoriza
     #: a criação ver "Iriel Sachet — Vereador" em vez de só o nome.
     cargo: str | None = None
+    #: A RELEVÂNCIA com que ele nasce — 1, 2 ou 3, o `relevancia.id`.
+    #:
+    #: JÁ TRADUZIDO da escala do fornecedor ("muito relevante") para a do
+    #: cadastro ("Tier 1"), por `RELEVANCIA_DO_TIER`. Nulo quando a fonte não
+    #: tem tier: rede social e canal próprio não têm, e inventar um afirmaria
+    #: sobre o veículo o que o fornecedor não disse.
+    tier: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,6 +256,13 @@ def reconhecer(
             ),
             mencoes=int(veiculos[bruto].get("mencoes") or 0),
             cargo=normalizar_cargo(veiculos[bruto].get("cargo")),
+            #: PELAS MESMAS DUAS FUNÇÕES DA GRAVAÇÃO DA MENÇÃO — `achatar` e
+            #: `TIERS`. É o que faz "Muito Relevante", "muito relevante " e
+            #: "MUITO RELEVANTE" caírem na mesma chave, e o que garante que o
+            #: cadastro e a menção não discordem sobre o mesmo texto.
+            tier=RELEVANCIA_DO_TIER.get(
+                TIERS.get(achatar(veiculos[bruto].get("tier")), "") or ""
+            ),
         )
         for normalizado, bruto in nomes.items()
         if normalizado not in existentes
@@ -337,6 +354,10 @@ def criar(
             #: dizer "Stela Farias — Deputado estadual" em vez de só o público.
             #: Nulo em veículo, onde a coluna não existe.
             cargo=rotulo_do_cargo(veiculo.cargo) if tipo == "perfil_rede" else None,
+            #: A RELEVÂNCIA QUE A PLANILHA DISSE. Era o campo que o dono do
+            #: produto apontou como faltando no cadastro automático — e ele
+            #: faltava mesmo: 39 dos 2.670 veículos tinham relevância.
+            tier=veiculo.tier,
         )
         sessao.add(registro)
         criados[normalizar(nome)] = registro
