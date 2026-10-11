@@ -3701,3 +3701,78 @@ def test_a_escolha_do_nome_ambiguo_RESOLVE_de_verdade(cliente_admin, sessao, sem
 
     confirmacao = cliente_admin.post(f"/api/importacoes/{criada['id']}/confirmacao")
     assert confirmacao.status_code == 201, confirmacao.text
+
+
+def test_o_custo_da_conferencia_nao_cresce_com_o_numero_de_grupos(
+    cliente_admin, sessao, semente
+):
+    """Trinta pendências distintas não podem custar trinta leituras do diretório.
+
+    NASCEU DE UMA REGRESSÃO MINHA, medida em 11/10/2026. A resposta custava 19
+    consultas, iguais para 3 e para 30 grupos. Eu acrescentei uma pergunta por
+    grupo — "este valor é ambíguo?" — e cada pergunta reconstruía o índice INTEIRO:
+    67 consultas para 3 grupos, 499 para 30. Com 500 valores distintos pendentes
+    seriam milhares de consultas numa leitura de tela, e a tela de conferência é
+    justamente a que se abre e reabre enquanto alguém decide 54 agendas.
+
+    A GARANTIA É POR INVARIÂNCIA, e não por um teto: um teto é escolhido para
+    caber no que o código faz hoje e sobe calado quando alguém acrescenta uma
+    consulta. É o mesmo argumento e o mesmo formato de
+    `test_o_custo_nao_cresce_com_o_numero_de_agendas`.
+
+    E OS VALORES SÃO DISTINTOS de propósito: com o mesmo nome repetido, trinta
+    linhas viram UM grupo e o teste não mediria nada.
+    """
+    from datetime import date
+
+    from openpyxl import load_workbook
+    from sqlalchemy import event
+
+    def arquivo(quantas: int) -> bytes:
+        modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+        pasta = load_workbook(io.BytesIO(modelo))
+        folha = pasta["Agendas"]
+        cabecalho = [celula.value for celula in next(folha.iter_rows())]
+        for numero in range(quantas):
+            valores = {
+                "Data": date(2026, 9, 25),
+                "Instituição": f"Prefeitura Inexistente {numero}",
+                "UF": "SP",
+            }
+            folha.append([valores.get(coluna) for coluna in cabecalho])
+        destino = io.BytesIO()
+        pasta.save(destino)
+        return destino.getvalue()
+
+    def consultas(quantas: int) -> int:
+        criada = cliente_admin.post(
+            "/api/importacoes",
+            files={"arquivo": ("dia.xlsx", arquivo(quantas), TIPO_XLSX)},
+        ).json()
+        conexao = sessao.connection()
+        contagem = 0
+
+        def contar(*_args, **_kwargs):
+            nonlocal contagem
+            contagem += 1
+
+        event.listen(conexao, "before_cursor_execute", contar)
+        try:
+            resposta = cliente_admin.get(f"/api/importacoes/{criada['id']}")
+            assert resposta.status_code == 200, resposta.text
+            #: O ARQUIVO PRODUZIU OS GRUPOS QUE SE ESPERAVA. Sem isto, um dia em
+            #: que a importação parasse de divergir faria o teste comparar zero
+            #: com zero e passar sem medir nada.
+            assert len(resposta.json()["grupos"]) == quantas, resposta.json()["grupos"]
+        finally:
+            event.remove(conexao, "before_cursor_execute", contar)
+        return contagem
+
+    com_tres = consultas(3)
+    assert com_tres > 0, "o contador não está escutando a conexão da sessão"
+    com_trinta = consultas(30)
+
+    assert com_trinta == com_tres, (
+        f"a conferência com 30 grupos custou {com_trinta} consultas e com 3 custou "
+        f"{com_tres}: alguma coisa voltou a consultar por grupo"
+    )

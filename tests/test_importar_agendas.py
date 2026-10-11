@@ -1105,5 +1105,10 @@ def test_todo_tipo_de_instituicao_TEM_ROTULO():
     """
     from app.dominio.frentes import ROTULO_DO_TIPO_DE_INSTITUICAO, TIPOS_DE_INSTITUICAO
 
-    sem_rotulo = sorted(TIPOS_DE_INSTITUICAO - set(ROTULO_DO_TIPO_DE_INSTITUICAO))
-    assert not sem_rotulo, f"sem rótulo: {sem_rotulo}"
+    #: OS DOIS LADOS, e o segundo é achado de revisão: só "todo tipo tem rótulo"
+    #: deixa uma chave MORTA passar quando um tipo sai da taxonomia — e é a chave
+    #: morta que faz alguém acreditar que este mapa está em dia.
+    assert set(ROTULO_DO_TIPO_DE_INSTITUICAO) == set(TIPOS_DE_INSTITUICAO), {
+        "sem rótulo": sorted(TIPOS_DE_INSTITUICAO - set(ROTULO_DO_TIPO_DE_INSTITUICAO)),
+        "rótulo sobrando": sorted(set(ROTULO_DO_TIPO_DE_INSTITUICAO) - TIPOS_DE_INSTITUICAO),
+    }

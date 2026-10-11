@@ -358,6 +358,22 @@ def _orgaos_de_cada_interlocutor(sessao: Session) -> dict[str, tuple[str, ...]]:
     return {nome: tuple(sorted(orgaos)) for nome, orgaos in de_quem.items()}
 
 
+def indice_completo(sessao: Session) -> dict[str, dict[str, object]]:
+    """O índice de TODOS os vocabulários, numa leitura só.
+
+    PARA QUEM PRECISA DELE VÁRIAS VEZES NA MESMA RESPOSTA. `_indice` custa uma
+    consulta por vocabulário, e `indice_do_vocabulario` o reconstrói INTEIRO a
+    cada chamada. A resposta da conferência pergunta duas coisas por grupo — qual
+    é o alvo deste nome, e este valor é ambíguo —, então perguntá-las pelo atalho
+    de um vocabulário custa o índice inteiro por grupo.
+
+    MEDIDO (11/10/2026): a resposta custava 19 consultas, iguais para 3 e para 30
+    grupos. Uma pergunta a mais por grupo a levou para 67 e 499. Com 500 valores
+    distintos pendentes seriam milhares de consultas numa leitura de tela.
+    """
+    return _indice(sessao)
+
+
 def indice_do_vocabulario(sessao: Session, vocabulario: str) -> dict[str, object]:
     """Nome normalizado → valor que entra na interação, para UM vocabulário.
 
@@ -2517,7 +2533,12 @@ def candidatos_do_nome(sessao: Session, campo: str, nome: str) -> list[tuple[str
     return []
 
 
-def e_ambiguo(sessao: Session, campo: str, valor: str) -> bool:
+def e_ambiguo(
+    sessao: Session,
+    campo: str,
+    valor: str,
+    indice: dict[str, dict[str, object]] | None = None,
+) -> bool:
     """Este valor casa com MAIS DE UM cadastro?
 
     QUEM PERGUNTA, E POR QUÊ. A conferência oferece "Cadastrar como novo" em todo
@@ -2535,7 +2556,16 @@ def e_ambiguo(sessao: Session, campo: str, valor: str) -> bool:
     vocabulario = vocabulario_do_campo(campo)
     if vocabulario is None:
         return False
-    return indice_do_vocabulario(sessao, vocabulario).get(normalizar(valor)) is AMBIGUO
+    #: O ÍNDICE DE QUEM CHAMA, QUANDO ELE TEM UM. Quem pergunta uma vez só —
+    #: `resolver`, numa decisão da pessoa — não precisa calculá-lo antes; quem
+    #: pergunta por grupo precisa, e medido: reconstruí-lo por grupo levou a
+    #: resposta da conferência de 19 consultas fixas para 499 em 30 grupos.
+    conhecidos = (
+        indice_do_vocabulario(sessao, vocabulario)
+        if indice is None
+        else indice.get(vocabulario, {})
+    )
+    return conhecidos.get(normalizar(valor)) is AMBIGUO
 
 
 def _rotulo_do_tipo(tipo: str) -> str:

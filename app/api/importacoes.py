@@ -194,17 +194,20 @@ def _nomes_conhecidos(sessao, campo: str) -> list[str]:
     return importar_agendas.vocabularios(sessao).get(vocabulario, [])
 
 
-def _alvo_de(sessao, campo: str, nome: str) -> str | None:
+def _alvo_de(sessao, campo: str, nome: str, indice) -> str | None:
     """O id (ou código) do cadastro com este nome — o que `apontar` aceita.
 
     RESOLVE AQUI e não no domínio: `agrupar` compara TEXTO para achar o parecido,
     e não deve saber de tabela nenhuma. Quem conhece a ponte nome→id é este
     módulo, que já a usa para propor.
+
+    O ÍNDICE VEM DE FORA, e é obrigatório: calculá-lo aqui custaria o índice
+    inteiro por sugestão, e esta função é chamada dentro de dois laços.
     """
     vocabulario = importar_agendas.vocabulario_do_campo(campo)
     if vocabulario is None:
         return None
-    valor = importar_agendas.indice_do_vocabulario(sessao, vocabulario).get(normalizar(nome))
+    valor = indice.get(vocabulario, {}).get(normalizar(nome))
     #: `AMBIGUO` NÃO É ALVO, e sem esta linha ele viajava como `str(AMBIGUO)` —
     #: "<object object at 0x...>" — para dentro do botão da conferência. A guarda
     #: "sugestão sem alvo não entra" não pegava, porque o repr da sentinela é uma
@@ -215,7 +218,7 @@ def _alvo_de(sessao, campo: str, nome: str) -> str | None:
     return str(valor)
 
 
-def _sugestoes_de(sessao, grupo) -> list[SugestaoSaida]:
+def _sugestoes_de(sessao, grupo, indice) -> list[SugestaoSaida]:
     """Os atalhos de um grupo: um por cadastro que a pessoa pode apontar.
 
     UM NOME, UM ATALHO — menos quando o nome casa com DOIS cadastros. Aí ele vira
@@ -230,7 +233,7 @@ def _sugestoes_de(sessao, grupo) -> list[SugestaoSaida]:
     """
     saida: list[SugestaoSaida] = []
     for nome in grupo.sugestoes:
-        alvo = _alvo_de(sessao, grupo.campo, nome)
+        alvo = _alvo_de(sessao, grupo.campo, nome, indice)
         if alvo is not None:
             saida.append(SugestaoSaida(nome=nome, alvo=alvo))
             continue
@@ -315,6 +318,10 @@ def _grupos(sessao, linhas) -> list[GrupoSaida]:
     }
     conhecidos_por_campo = {campo: _nomes_conhecidos(sessao, campo) for campo in campos}
 
+    #: UMA VEZ PARA A RESPOSTA INTEIRA, e não uma por grupo. `indice_completo`
+    #: diz o que isso custava: 19 consultas fixas viraram 499 em 30 grupos quando
+    #: cada grupo passou a reconstruí-lo. Achado de revisão, 11/10/2026.
+    indice = importar_agendas.indice_completo(sessao)
     saida: list[GrupoSaida] = []
     for campo in sorted(campos):
         so_deste_campo = [
@@ -334,9 +341,11 @@ def _grupos(sessao, linhas) -> list[GrupoSaida]:
                     #: escolher um dos dois. Achado de revisão, 11/10/2026.
                     pode_criar=(
                         importar_agendas.pode_criar(grupo.campo)
-                        and not importar_agendas.e_ambiguo(sessao, grupo.campo, grupo.valor)
+                        and not importar_agendas.e_ambiguo(
+                            sessao, grupo.campo, grupo.valor, indice
+                        )
                     ),
-                    sugestoes=_sugestoes_de(sessao, grupo),
+                    sugestoes=_sugestoes_de(sessao, grupo, indice),
                 )
             )
     return sorted(saida, key=lambda grupo: (not grupo.trava, -len(grupo.linhas), grupo.valor))
