@@ -24,6 +24,59 @@ from enum import StrEnum
 
 from app.dominio.score import Sentimento, Tier, peso_do_cargo, peso_do_engajamento
 
+#: OS NÍVEIS DE TEMA, E POR QUE SÓ UM DELES ENTRA.
+#:
+#: Cada fornecedor numera a árvore dele, e os números NÃO são os do painel:
+#:
+#:     Clipei      N1 = `Atributo`   N2 = `Categoria`   N3 = `Subcategoria`
+#:     Bites       —                 —                  N3 = `N3`
+#:     Approach    —                 —                  N3 = `TAG (assunto 1)`
+#:                                                           `Tags (tema)`
+#:
+#:     painel      N1 = `bloco_tema`  N2 = `macro_tema`  N3 = `tema`
+#:
+#: Essa correspondência vinha escrita numa faixa de rótulos acima do cabeçalho
+#: da planilha da Clipei (`N2`, `N3`, `N1` sobre as colunas 16, 17 e 18), que
+#: não está em toda entrega. Fica aqui porque é convenção do fornecedor, e
+#: convenção que mora só no arquivo se perde quando o arquivo muda.
+#:
+#: SÓ O N3 ENTRA COMO TAXONOMIA, e é regra de negócio, não economia de código:
+#: quem cadastra um tema (N3) cadastra em seguida o N2 e o N1 dele, então **o
+#: tema já nasce com os três níveis**. O N2 e o N1 da menção são DERIVADOS pela
+#: árvore `tema -> macro_tema -> bloco_tema` (ver `app/api/base_das_lentes.py`),
+#: e é por isso que a planilha vir sem N1 e sem N2 não é perda de informação.
+#:
+#: POR ISSO NÃO HÁ CAMPO PARA O N2 DO FORNECEDOR, e a divergência que isso evita
+#: não é hipótese: está MEDIDA na migration 0079. Na planilha consolidada da
+#: Bites a coluna `Atributo` CONTRADIZ a coluna `N1` em 1.418 das 2.842 linhas —
+#: metade —, com casos como `Atributo = Eficiência Operacional e Qualidade`
+#: sobre `N1 = Governança`. Guardar os três níveis é guardar a mesma afirmação
+#: três vezes, com três chances de divergir.
+#:
+#: A `Categoria` tem um segundo defeito, também medido ali: 52 dos valores dela
+#: trazem VÁRIOS assuntos numa célula ("Abastecimento, Agência de Regulação,
+#: Proteção ambiental"). Como chave de tema isso não casa com nada no cadastro.
+#:
+#: As duas migrations, porque são duas decisões diferentes: a **0069** tirou
+#: `atributo` do mapeamento da Bites (o N1 do fornecedor deixou de ser lido), e
+#: a **0079** passou o `tema` da Bites de `Categoria` para `N3` — e foi ela que
+#: levou a ligação de quase nada para 2.384 das 2.842 linhas. Ver também
+#: `tests/test_mapeamento_da_bites.py`.
+#:
+#: A EXCEÇÃO QUE SOBROU, e está pendente de decisão: a Clipei ainda mapeia
+#: `atributo` para a coluna `Atributo`, que é o N1 DELA. Não vira taxonomia —
+#: fica texto em `mencao.atributo`, exibido como coluna própria da base —, mas é
+#: a mesma redundância que a Bites removeu, e a mesma chance de contradizer o N1
+#: derivado. Medir a Clipei como a 0079 mediu a Bites é o passo que falta.
+#:
+#: OS DOIS CAMPOS QUE CARREGAM TAXONOMIA são `tema` e `subtema` — os dois passam
+#: por `_rotulo` e os dois são procurados no cadastro. Apontar qualquer um deles
+#: para uma coluna de outro nível (`Categoria`, `Atributo`, `N1`, `N2`) não
+#: quebra a subida: as menções passam a ser agrupadas no nível errado, os
+#: números do índice mudam e nada acusa. É o que o teste abaixo impede.
+#:
+#: `tests/test_niveis_do_fornecedor.py` prende o que está acima.
+
 #: Os campos de `mencao` que uma planilha pode alimentar. Um mapeamento que
 #: cite outro nome é erro de cadastro, e não coluna ignorada em silêncio.
 #:
