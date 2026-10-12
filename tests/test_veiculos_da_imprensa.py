@@ -44,8 +44,10 @@ def sessao():
         conexao.close()
 
 
-def _da_planilha(nome, uf="Santa Catarina", abrangencia="Local", mencoes=1):
-    return {nome: {"uf": uf, "abrangencia": abrangencia, "mencoes": mencoes}}
+def _da_planilha(nome, uf="Santa Catarina", abrangencia="Local", mencoes=1, tier=""):
+    return {
+        nome: {"uf": uf, "abrangencia": abrangencia, "mencoes": mencoes, "tier": tier}
+    }
 
 
 # ============================================ reconhecer: separa, e NÃO escreve
@@ -127,21 +129,36 @@ def test_reconhecer_casa_por_nome_NORMALIZADO(sessao):
     assert reco.novos == (), "acento e caixa não podem criar veículo novo"
 
 
-def test_reconhecer_ignora_instituicao_que_nao_e_veiculo(sessao):
-    """Um ÓRGÃO com o mesmo nome não serve: o índice único é por
-    `(nome_normalizado, tipo)`, e a menção aponta para veículo."""
-    sessao.add(
-        Instituicao(
-            nome="Homônimo 42",
-            nome_normalizado=normalizar("Homônimo 42"),
-            tipo="orgao",
-        )
+def test_reconhecer_ACHA_qualquer_tipo_porque_a_base_e_UMA_SO(sessao):
+    """Um ÓRGÃO com o mesmo nome É o mesmo ator, e a regra mudou em 11/10/2026.
+
+    ESTE TESTE AFIRMAVA O CONTRÁRIO, e estava certo pela regra de então: "um órgão
+    com o mesmo nome não serve: o índice único é por `(nome_normalizado, tipo)`, e
+    a menção aponta para veículo". O dono do produto trocou a regra:
+
+        "qualquer fonte de dados tem acesso à mesma base de instituições e
+        interlocutores, não interessa se é no CRM, redes sociais ou imprensa. O
+        BTG por exemplo podemos ter acesso em rede social, em reunião de
+        investimento ou imprensa, mas ele continua sendo um só, se comunicando e
+        relacionando em diferentes níveis."
+
+    E O CUSTO DA REGRA ANTIGA ESTÁ MEDIDO: 24 atores ficaram partidos em dois
+    cadastros. BTG Pactual e Fitch Ratings como `investidor` + `veiculo` — 23
+    agendas num registro, 6 menções no outro —, e 22 pares `perfil_rede` +
+    `veiculo`, com 310 menções de um lado e 37 do outro.
+    """
+    ja = Instituicao(
+        nome="Homônimo 42",
+        nome_normalizado=normalizar("Homônimo 42"),
+        tipo="orgao",
     )
+    sessao.add(ja)
     sessao.flush()
 
     reco = reconhecer(sessao, _da_planilha("Homônimo 42"))
 
-    assert [v.nome for v in reco.novos] == ["Homônimo 42"]
+    assert reco.novos == (), [v.nome for v in reco.novos]
+    assert reco.cadastrados[normalizar("Homônimo 42")] == str(ja.id)
 
 
 def test_reconhecer_com_planilha_sem_veiculo_nenhum(sessao):
@@ -255,3 +272,366 @@ def test_a_categoria_da_imprensa_existe_e_esta_ativa(sessao):
 
 def test_criar_sem_nada_a_criar_nao_toca_no_banco(sessao):
     assert criar(sessao, ()) == {}
+
+
+# ============================================ a relevância que a planilha informa
+@pytest.mark.parametrize(
+    ("da_clipei", "relevancia"),
+    [
+        ("Muito Relevante", 1),
+        ("muito relevante", 1),
+        ("MUITO RELEVANTE ", 1),
+        ("Relevante", 2),
+        ("Menos Relevante", 3),
+    ],
+)
+def test_criar_grava_a_RELEVANCIA_que_a_planilha_informa(sessao, da_clipei, relevancia):
+    """A escala da Clipei tem três nomes; o cadastro tem três números.
+
+    PEDIDO DO DONO DO PRODUTO (11/10/2026): "na tabela da clipei tem uma coluna de
+    tier, e no cadastro de instituições que são cadastradas automaticamente a
+    informação de tier falta — esse campo se chama relevância". Ele faltava mesmo:
+    medido, 39 dos 2.670 veículos cadastrados tinham relevância. A ingestão criava
+    os outros 2.631 jogando fora uma coluna que estava no arquivo.
+
+    A MEDIDA QUE AUTORIZA COPIAR. A coluna é por MATÉRIA, não por veículo — nada
+    garantiria que o mesmo veículo viesse sempre com o mesmo tier. Medido: 2.640
+    dos 2.641 veículos com menção têm UM único tier distinto em todas as suas
+    matérias. Só um divergiu. Na prática o tier da Clipei é propriedade do
+    veículo, e é isso que faz disto uma leitura e não um chute.
+
+    AS VARIAÇÕES DE CAIXA E ESPAÇO ESTÃO AQUI porque a tradução usa as MESMAS
+    duas funções da gravação da menção (`achatar` e `TIERS`). Se alguém trocar por
+    uma comparação direta, o cadastro e a menção passam a discordar sobre o mesmo
+    texto — e a discordância aparece numa tela, não aqui.
+    """
+    reco = reconhecer(sessao, _da_planilha(f"Veículo Com Tier {relevancia} 42", tier=da_clipei))
+    criar(sessao, reco.novos)
+
+    novo = sessao.scalar(
+        select(Instituicao).where(Instituicao.nome == f"Veículo Com Tier {relevancia} 42")
+    )
+    assert novo.tier == relevancia
+
+
+def test_criar_deixa_a_relevancia_NULA_quando_a_fonte_nao_tem_tier(sessao):
+    """Rede social e canal próprio não têm tier, e inventar um seria afirmar.
+
+    As fontes da Bites e da Approach não mapeiam coluna de tier nenhuma — só as
+    duas da Clipei mapeiam, para "Aegea Tier". O perfil nasce sem relevância, que
+    é a verdade sobre ele.
+    """
+    reco = reconhecer(sessao, _da_planilha("Veículo Sem Tier 42"))
+    criar(sessao, reco.novos)
+
+    novo = sessao.scalar(select(Instituicao).where(Instituicao.nome == "Veículo Sem Tier 42"))
+    assert novo.tier is None
+
+
+def test_criar_deixa_a_relevancia_NULA_quando_o_tier_nao_e_da_escala(sessao):
+    """Texto fora da escala não vira palpite.
+
+    "Tier 1" escrito na coluna, ou um valor novo que o fornecedor inventar, não
+    está em `TIERS` — e cair no nível errado é pior que não ter nível, porque a
+    régua de peso do Score usa o tier.
+    """
+    reco = reconhecer(sessao, _da_planilha("Veículo Com Tier Estranho 42", tier="prioritário"))
+    criar(sessao, reco.novos)
+
+    novo = sessao.scalar(
+        select(Instituicao).where(Instituicao.nome == "Veículo Com Tier Estranho 42")
+    )
+    assert novo.tier is None
+
+
+def test_a_relevancia_de_cada_tier_da_clipei_EXISTE_no_cadastro(sessao):
+    """O mapa aponta para `relevancia.id`, e os três têm de estar lá e ativos.
+
+    POR QUE ISTO É TESTE: o número do mapa vai direto para uma chave estrangeira.
+    Se alguém desativar o Tier 2 — como a `0082` desativou o Tier 4 —, a criação
+    passaria a gravar um tier que a tela de cadastro não oferece mais, e a tela de
+    stakeholders recusaria ao editar. O T4 saiu de circulação justamente porque a
+    escala da Clipei não o tem; os três que ela tem precisam continuar.
+    """
+    from app.banco.tabelas_catalogo import Relevancia
+    from app.dominio.score import RELEVANCIA_DO_TIER
+
+    ativos = set(
+        sessao.scalars(select(Relevancia.id).where(Relevancia.ativo.is_(True))).all()
+    )
+    faltando = sorted(set(RELEVANCIA_DO_TIER.values()) - ativos)
+    assert not faltando, f"a Clipei mapeia para relevância inativa ou inexistente: {faltando}"
+
+
+def test_o_mapa_cobre_TODA_a_escala_da_clipei():
+    """Os três valores que a planilha pode trazer têm correspondência.
+
+    `TIERS` é o vocabulário que a gravação da menção aceita; `RELEVANCIA_DO_TIER`
+    é a tradução para o cadastro. Um valor em `TIERS` sem número aqui faria o
+    veículo nascer sem relevância em silêncio — a coluna preenchida, o cadastro
+    vazio, e nada reclamando. É a mesma forma do defeito que a área declarada e
+    não gravada produziu na importação de agendas.
+    """
+    from app.dominio.ingestao_score import TIERS
+    from app.dominio.score import RELEVANCIA_DO_TIER
+
+    sem_numero = sorted(set(TIERS.values()) - set(RELEVANCIA_DO_TIER))
+    assert not sem_numero, f"a escala da Clipei tem valor sem relevância: {sem_numero}"
+
+
+# ======================================= o mesmo ator, cadastrado de outro tipo
+def test_reconhecer_ACHA_o_investidor_de_mesmo_nome_em_vez_de_duplicar(sessao):
+    """O banco que publica relatório é o banco com quem a companhia se reúne.
+
+    O DEFEITO QUE ISTO FECHA, medido em 11/10/2026: a busca filtrava pelo tipo da
+    fonte, então um cadastro `investidor` era invisível para a Clipei. O nome
+    virava novo e a ingestão criava um SEGUNDO cadastro como `veiculo` — e a
+    companhia ficava partida em dois registros:
+
+        BTG Pactual   investidor  12 agendas,  0 menções
+        BTG Pactual   veiculo      0 agendas,  4 menções
+
+    Nenhuma tela junta os dois. Quem abre o BTG vê as reuniões sem as menções, ou
+    as menções sem as reuniões, dependendo de qual dos dois abriu. O mesmo com
+    Fitch Ratings: 11 agendas de um lado, 2 menções do outro.
+    """
+    ja = Instituicao(
+        nome="Banco Que Fala 42",
+        nome_normalizado=normalizar("Banco Que Fala 42"),
+        tipo="investidor",
+    )
+    sessao.add(ja)
+    sessao.flush()
+
+    reco = reconhecer(sessao, _da_planilha("Banco Que Fala 42"))
+
+    assert reco.novos == (), [v.nome for v in reco.novos]
+    assert reco.cadastrados[normalizar("Banco Que Fala 42")] == str(ja.id)
+
+
+def test_reconhecer_acha_o_credor_de_mesmo_nome(sessao):
+    """`credor` entra pela mesma razão do investidor: é o mesmo ator.
+
+    Dois tipos e não um porque a taxonomia os separa — "duas coisas a taxonomia
+    não distingue: um banco credor de um investidor (os dois moram em Mercado
+    Financeiro e de Capitais)", diz `TIPO_DA_CATEGORIA_DE_PUBLICO`. Quem fala na
+    imprensa pode estar cadastrado em qualquer um dos dois.
+    """
+    ja = Instituicao(
+        nome="Credor Que Fala 42",
+        nome_normalizado=normalizar("Credor Que Fala 42"),
+        tipo="credor",
+    )
+    sessao.add(ja)
+    sessao.flush()
+
+    reco = reconhecer(sessao, _da_planilha("Credor Que Fala 42"))
+
+    assert reco.novos == ()
+    assert reco.cadastrados[normalizar("Credor Que Fala 42")] == str(ja.id)
+
+
+def test_o_VEICULO_ainda_ganha_quando_os_dois_existem(sessao):
+    """A preferência pelo tipo da fonte não mudou, e é ela que mantém o passado.
+
+    POR QUE ISTO IMPORTA: enquanto BTG Pactual existir como `investidor` E como
+    `veiculo`, a Clipei tem de continuar achando o veículo dela — senão as menções
+    novas iriam para um cadastro e as antigas ficariam no outro, e a lente passaria
+    a contar o mesmo ator duas vezes. Alargar a busca sem esta preferência
+    trocaria uma divisão por outra, pior.
+    """
+    investidor = Instituicao(
+        nome="Dois Cadastros 42",
+        nome_normalizado=normalizar("Dois Cadastros 42"),
+        tipo="investidor",
+    )
+    veiculo = Instituicao(
+        nome="Dois Cadastros 42",
+        nome_normalizado=normalizar("Dois Cadastros 42"),
+        tipo="veiculo",
+    )
+    sessao.add_all([investidor, veiculo])
+    sessao.flush()
+
+    reco = reconhecer(sessao, _da_planilha("Dois Cadastros 42"))
+
+    assert reco.cadastrados[normalizar("Dois Cadastros 42")] == str(veiculo.id)
+
+
+def test_a_ingestao_NAO_MUDA_o_enquadramento_de_quem_ja_existe(sessao):
+    """"Quem decide como enquadrar é o time que está registrando a primeira vez ou
+    editando posteriormente."
+
+    É A OUTRA METADE DA REGRA NOVA, e sem ela a primeira é perigosa: a busca
+    passou a achar o cadastro em QUALQUER tipo, então ela agora encontra o órgão, a
+    entidade, o investidor. Se a ingestão aproveitasse para "corrigir" o tipo ou a
+    categoria do que achou, uma subida de clipping reclassificaria o cadastro que
+    alguém montou à mão — e a frente de toda agenda daquela instituição mudaria
+    junto, porque `derivar_frente` sai do tipo.
+
+    POR ISSO ESTE TESTE PERCORRE OS TIPOS: ele afirma, para cada um, que o cadastro
+    sai da ingestão exatamente como entrou.
+    """
+    from app.banco.tabelas_catalogo import CategoriaPublico
+
+    imprensa = sessao.scalar(
+        select(CategoriaPublico.id).where(CategoriaPublico.nome == CATEGORIA_DA_IMPRENSA)
+    )
+    for tipo in ("orgao", "proposicao", "entidade", "area_interna", "investidor"):
+        nome = f"Enquadrado Como {tipo} 42"
+        ja = Instituicao(
+            nome=nome,
+            nome_normalizado=normalizar(nome),
+            tipo=tipo,
+            #: Uma categoria PROPOSITALMENTE diferente da que a ingestão daria a um
+            #: veículo: se ela sobrescrevesse, o teste veria.
+            categoria_publico_id=None,
+        )
+        sessao.add(ja)
+        sessao.flush()
+
+        reco = reconhecer(sessao, _da_planilha(nome))
+        criar(sessao, reco.novos)
+        sessao.flush()
+        sessao.refresh(ja)
+
+        assert ja.tipo == tipo, f"a ingestão mudou o tipo de {nome}"
+        assert ja.categoria_publico_id != imprensa, (
+            f"a ingestão classificou {nome} como imprensa"
+        )
+        #: E NÃO NASCEU UM SEGUNDO: é a regra nova agindo, e a razão de ela existir.
+        quantos = sessao.scalar(
+            select(func.count(Instituicao.id)).where(
+                Instituicao.nome_normalizado == normalizar(nome)
+            )
+        )
+        assert quantos == 1, f"{nome} ficou com {quantos} cadastros"
+
+
+def test_o_perfil_de_rede_continua_achando_em_QUALQUER_tipo(sessao):
+    """A Bites não mudou, e a medida diz que ela já cruzava os tipos.
+
+    Medido: das menções da Bites, 2.529 estão em `perfil_rede` e 53 em cadastros
+    `veiculo` — o vínculo entre tipos sempre funcionou ali, porque o Instagram do
+    Valor Econômico É o Valor. `TIPOS_DO_MESMO_ATOR` não entra nesse caminho.
+    """
+    ja = Instituicao(
+        nome="Orgão Com Perfil 42",
+        nome_normalizado=normalizar("Orgão Com Perfil 42"),
+        tipo="orgao",
+    )
+    sessao.add(ja)
+    sessao.flush()
+
+    reco = reconhecer(sessao, _da_planilha("Orgão Com Perfil 42"), "perfil_rede")
+
+    assert reco.novos == ()
+    assert reco.cadastrados[normalizar("Orgão Com Perfil 42")] == str(ja.id)
+
+
+# ============================ o parecido: quem autoriza vê antes de autorizar
+def test_reconhecer_APONTA_o_parecido_que_difere_SO_NO_ESPACO(sessao):
+    """`Neofeed` e `Neo Feed` — o caso que o dono do produto deu.
+
+    MEDIDO ANTES DE EXISTIR: com `NeofeedZZ` no cadastro e `Neo feed ZZ` na
+    planilha, `reconhecer` devolvia `novos=['Neo feed ZZ']` e `criar` gravava o
+    SEGUNDO cadastro. A causa é a assimetria entre as duas chaves: a busca usa
+    `normalizar`, que PRESERVA o espaço, e a fila de duplicados compara por
+    `achatar_para_comparar`, que o tira. A ingestão fabricava exatamente os pares
+    que a fila depois perguntava — 5 `veiculo`+`veiculo` e 59
+    `perfil_rede`+`veiculo` na base.
+
+    O NOME CONTINUA NOVO, e isto é deliberado: a semelhança não prova identidade,
+    e quem decide é gente. O que muda é que a conferência agora DIZ de quem ele se
+    parece, para a autorização não ser tomada sobre um nome e um número.
+    """
+    ja = Instituicao(
+        nome="NeofeedZz81",
+        nome_normalizado=normalizar("NeofeedZz81"),
+        tipo="veiculo",
+    )
+    sessao.add(ja)
+    sessao.flush()
+
+    reco = reconhecer(sessao, _da_planilha("Neo feed Zz81"))
+
+    (novo,) = reco.novos
+    assert novo.nome == "Neo feed Zz81"
+    assert [(p.nome, p.tipo) for p in novo.parecidos] == [("NeofeedZz81", "veiculo")]
+
+
+def test_reconhecer_APONTA_o_parecido_de_OUTRO_TIPO(sessao):
+    """O handle da rede contra o nome do clipping, que é o caso dos 59 pares.
+
+    `cnnbrasil` (perfil de rede) e `CNN Brasil` (veículo) são o mesmo ator, e a
+    chave achatada os une. Sem o aviso, a Clipei cria o veículo ao lado do perfil
+    que a Bites já tinha criado — foi assim que os 22 pares que a `0084` fundiu
+    nasceram depois de a `0077` já tê-los fundido uma vez.
+
+    E O NOME CONTINUA NOVO, de propósito. Uma primeira versão deste teste afirmava
+    que ele seria RECONHECIDO — ou seja, ligado ao perfil automaticamente pela
+    chave achatada. Isso é precisamente o que esta mudança NÃO faz: a semelhança
+    não prova identidade, `bmc.news` coincide com DOIS veículos, e ligar sozinho
+    faria a máquina decidir o que o próprio módulo da fila diz que só gente decide.
+
+    O QUE MUDA É A INFORMAÇÃO na hora de autorizar. Quem olha a conferência vê
+    "CNN Brasil Zz82 — parece com cnnbrasilzz82 (perfil de rede)" e decide: ou
+    desmarca e vai fundir pela fila, ou autoriza porque sabe que são dois atores.
+    """
+    ja = Instituicao(
+        nome="cnnbrasilzz82",
+        nome_normalizado=normalizar("cnnbrasilzz82"),
+        tipo="perfil_rede",
+    )
+    sessao.add(ja)
+    sessao.flush()
+
+    reco = reconhecer(sessao, _da_planilha("CNN Brasil Zz82"))
+
+    (novo,) = reco.novos
+    assert novo.nome == "CNN Brasil Zz82"
+    #: O PARECIDO ATRAVESSA O TIPO: é o caso dos 59 pares `perfil_rede`+`veiculo`.
+    assert [(p.nome, p.tipo) for p in novo.parecidos] == [
+        ("cnnbrasilzz82", "perfil_rede")
+    ]
+
+
+def test_reconhecer_NAO_aponta_parecido_quando_nao_ha(sessao):
+    """Vazio é resposta, e não lista com o menos-ruim.
+
+    Oferecer o menos parecido de uma lista sem nada parecido é pior que não
+    oferecer, porque quem autoriza confia na sugestão — é o mesmo argumento que
+    `GrupoDeDivergencia.sugestoes` já carrega na importação de agendas.
+    """
+    reco = reconhecer(sessao, _da_planilha("Veículo Sem Parecido Zz83"))
+
+    (novo,) = reco.novos
+    assert novo.parecidos == ()
+
+
+def test_o_parecido_NAO_impede_a_criacao(sessao):
+    """Ele informa; a decisão continua sendo de quem autoriza.
+
+    A SEMELHANÇA NÃO PROVA IDENTIDADE, e o módulo da fila registra o
+    contraexemplo: `Diário SM` e `Diários M` coincidem na chave achatada e podem
+    ser dois veículos. Bloquear a criação faria a máquina decidir o que o próprio
+    código diz que só gente decide.
+    """
+    ja = Instituicao(
+        nome="DiarioSmZz84",
+        nome_normalizado=normalizar("DiarioSmZz84"),
+        tipo="veiculo",
+    )
+    sessao.add(ja)
+    sessao.flush()
+
+    reco = reconhecer(sessao, _da_planilha("Diario Sm Zz84"))
+    criar(sessao, reco.novos)
+    sessao.flush()
+
+    quantos = sessao.scalar(
+        select(func.count()).select_from(Instituicao).where(
+            Instituicao.nome.in_(("DiarioSmZz84", "Diario Sm Zz84"))
+        )
+    )
+    assert quantos == 2, "a criação autorizada tem de acontecer"

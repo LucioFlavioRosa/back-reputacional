@@ -834,6 +834,15 @@ def veiculos_da_planilha(
     #: opinião. Sem isto, o cargo alimentava a régua e o gráfico, e o cadastro
     #: nascia sem ele.
     coluna_do_cargo = mapeamento.colunas.get("cargo")
+    #: O TIER VEM JUNTO, porque é a relevância com que o veículo nasce no
+    #: cadastro — e a planilha a traz. Sem isto, dos 2.670 veículos cadastrados
+    #: só 39 tinham relevância: a ingestão criava os outros jogando fora uma
+    #: coluna que estava no arquivo.
+    #:
+    #: PELO MAPEAMENTO, como o resto: na Clipei a coluna se chama "Aegea Tier", e
+    #: as fontes de rede social não mapeiam `tier` nenhum — o perfil nasce sem
+    #: relevância, que é a verdade.
+    coluna_do_tier = mapeamento.colunas.get("tier")
     achados: dict[str, dict[str, object]] = {}
     for linha in _linhas_da_aba(conteudo, mapeamento):
         #: PELA MESMA FUNÇÃO DA GRAVAÇÃO. A célula crua traria `@casadevovodede`
@@ -843,22 +852,36 @@ def veiculos_da_planilha(
         if not nome:
             continue
         registro = achados.setdefault(
-            nome,
-            {
-                "uf": str(linha.get(coluna_do_estado) or "").strip()
-                if coluna_do_estado
-                else "",
-                "abrangencia": str(linha.get(COLUNA_DA_ABRANGENCIA) or "").strip(),
-                #: O PRIMEIRO CARGO NÃO VAZIO, como a praça e a abrangência: o
-                #: `setdefault` guarda o primeiro que aparece. Um perfil com
-                #: dois cargos na mesma planilha é dado a corrigir, e a
-                #: conferência mostra o que vai ser usado.
-                "cargo": str(linha.get(coluna_do_cargo) or "").strip()
-                if coluna_do_cargo
-                else "",
-                "mencoes": 0,
-            },
+            nome, {"uf": "", "abrangencia": "", "cargo": "", "tier": "", "mencoes": 0}
         )
+        #: O PRIMEIRO NÃO VAZIO, DE VERDADE — e era aqui o defeito (achado MÉDIA
+        #: de revisão, 11/10/2026). O comentário antigo prometia "o primeiro não
+        #: vazio" e o código fazia outra coisa: `setdefault` só age quando a CHAVE
+        #: falta, ou seja na PRIMEIRA LINHA daquele veículo. O que ele guardava
+        #: era o valor daquela linha, VAZIO INCLUÍDO, e um valor preenchido numa
+        #: linha seguinte ia para o lixo.
+        #:
+        #: O CARGO É O MAIS CARO DOS QUATRO, porque é ele que decide o PÚBLICO do
+        #: perfil (`CATEGORIA_POR_CARGO`): primeira linha sem cargo fazia o
+        #: vereador nascer sem público — o mesmo defeito que
+        #: `CATEGORIA_DE_QUEM_FALA` registra como já consertado uma vez.
+        #:
+        #: E O RISCO É MEDIDO, não teórico: 2.851 das 28.626 menções têm tier
+        #: nulo, 10% — a chance de a primeira linha de um veículo ser uma dessas
+        #: não é remota.
+        #:
+        #: O CONFLITO ENTRE DOIS VALORES PREENCHIDOS continua resolvido pelo
+        #: primeiro, como antes. Um perfil com dois cargos na mesma planilha é
+        #: dado a corrigir; o que falta é a conferência MOSTRAR o que vai ser
+        #: usado, e para o tier ela ainda não mostra.
+        for chave, valor in (
+            ("uf", linha.get(coluna_do_estado) if coluna_do_estado else None),
+            ("abrangencia", linha.get(COLUNA_DA_ABRANGENCIA)),
+            ("cargo", linha.get(coluna_do_cargo) if coluna_do_cargo else None),
+            ("tier", linha.get(coluna_do_tier) if coluna_do_tier else None),
+        ):
+            if not registro[chave]:
+                registro[chave] = str(valor or "").strip()
         registro["mencoes"] = int(registro["mencoes"]) + 1
     return achados
 

@@ -285,29 +285,42 @@ def test_a_conferencia_nao_oferece_criar_quem_JA_EXISTE_em_outro_tipo(sessao, bi
     assert _n("InfoMoney zz21") in veiculos.cadastrados
 
 
-def test_o_CLIPPING_nao_reaproveita_outro_tipo(sessao):
-    """A direção em que a unificação NÃO vale.
+def test_o_CLIPPING_reaproveita_outro_tipo_NAS_DUAS_DIRECOES(sessao):
+    """A unificação passou a valer nos dois sentidos (11/10/2026).
 
-    O `Veículo` do clipping é SEMPRE um meio de imprensa. Um nome igual ao de
-    um órgão ali é HOMÔNIMO, não o mesmo ator — apontar a matéria do jornal
-    para a prefeitura seria atribuição errada. A reutilização entre tipos vale
-    na direção do perfil de rede, onde o Instagram do Valor É o Valor.
+    ESTE TESTE DIZIA "a direção em que a unificação NÃO vale", e o enunciado dele
+    era a regra: "o `Veículo` do clipping é SEMPRE um meio de imprensa; um nome
+    igual ao de um órgão ali é HOMÔNIMO". O dono do produto inverteu:
+
+        "qualquer fonte de dados tem acesso à mesma base de instituições e
+        interlocutores, não interessa se é no CRM, redes sociais ou imprensa... o
+        BTG continua sendo um só, se comunicando e relacionando em diferentes
+        níveis."
+
+    E A REGRA ANTIGA SAIU CARO, medido: 24 atores partidos em dois cadastros, com
+    as agendas num e as menções no outro. A assimetria era o defeito — a Bites
+    sempre buscou em qualquer tipo, e foi a Clipei, que não buscava, quem recriou
+    os 22 pares que a `0077` tinha fundido.
+
+    QUEM ENQUADRA É O TIME, e é isso que torna a inversão segura: a ingestão acha
+    o ator e nunca mexe no tipo nem na categoria de quem já existe — tem teste
+    próprio em `test_veiculos_da_imprensa.py`.
     """
     from app.casos_de_uso.veiculos_da_imprensa import reconhecer
     from app.dominio.texto import normalizar as _n
 
-    sessao.add(
-        Instituicao(
-            nome="Homônimo zz22",
-            nome_normalizado=_n("Homônimo zz22"),
-            tipo="orgao",
-        )
+    ja = Instituicao(
+        nome="Homônimo zz22",
+        nome_normalizado=_n("Homônimo zz22"),
+        tipo="orgao",
     )
+    sessao.add(ja)
     sessao.flush()
 
     reco = reconhecer(sessao, {"Homônimo zz22": {"mencoes": 1}}, "veiculo")
 
-    assert [v.nome for v in reco.novos] == ["Homônimo zz22"]
+    assert reco.novos == (), [v.nome for v in reco.novos]
+    assert reco.cadastrados[_n("Homônimo zz22")] == str(ja.id)
 
 
 def test_a_mencao_aponta_para_o_perfil(sessao, bites):

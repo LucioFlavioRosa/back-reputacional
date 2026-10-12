@@ -54,13 +54,22 @@ class CandidatoSaida(BaseModel):
 class DuplicadoSaida(BaseModel):
     id: UUID
     nome: str
+    #: O TIPO DE QUEM VAI SAIR. A tela escrevia "Perfil de rede" fixo, e com a fila
+    #: aberta a todos os tipos isso passou a ser mentira para os pares do CRM.
+    tipo: str
     cargo: str | None
     mencoes: int
     candidatos: list[CandidatoSaida]
 
 
 class FusaoEntrada(BaseModel):
-    #: QUEM FICA. O perfil vem na URL e é sempre quem sai: ver `fundir`.
+    #: QUEM FICA. Quem SAI vem na URL — ver `fundir`.
+    #:
+    #: ERA "o perfil vem na URL e é sempre quem sai", e deixou de ser verdade em
+    #: 11/10/2026: a fila passou a perguntar sobre qualquer tipo, então qualquer
+    #: cadastro pode sair. A assimetria que protegia a curadoria continua, mas pela
+    #: ORDEM DA FILA — `_esta_do_lado_que_pergunta` ancora a pergunta em quem deve
+    #: sair — e não por um `if` de tipo no servidor.
     sobrevivente_id: UUID
 
 
@@ -74,7 +83,12 @@ class DistintosEntrada(BaseModel):
 def listar_duplicados(
     sessao: SessaoDoPedido, usuario: UsuarioQueVeDiretorio
 ) -> list[atores_duplicados.Duplicado]:
-    """Os perfis de rede que se parecem com outro cadastro.
+    """Os cadastros que podem ser o mesmo ator.
+
+    ERA "os perfis de rede que se parecem com outro cadastro". A fila passou a
+    olhar qualquer tipo em 11/10/2026, pelo princípio do dono do produto — "o BTG
+    podemos ter acesso em rede social, em reunião de investimento ou imprensa, mas
+    ele continua sendo um só".
 
     LEITURA COM A PERMISSÃO DO DIRETÓRIO, como as outras listagens de cadastro:
     a resposta nomeia atores do mapa de relacionamento da Aegea.
@@ -82,15 +96,22 @@ def listar_duplicados(
     return atores_duplicados.listar(sessao)
 
 
-@rotas.post("/instituicoes/{perfil_id}/fundir", status_code=200)
+@rotas.post("/instituicoes/{que_sai_id}/fundir", status_code=200)
 def fundir_cadastro(
     sessao: SessaoDoPedido,
     usuario: UsuarioQueAdministraCadastros,
-    perfil_id: UUID,
+    que_sai_id: UUID,
     entrada: FusaoEntrada,
 ) -> dict[str, str]:
+    """Quem vem na URL SAI; quem vem no corpo fica.
+
+    O NOME DO PARÂMETRO DE ROTA NÃO É PARTE DA URL, então renomeá-lo de `perfil_id`
+    para `que_sai_id` não muda o endereço — `/api/instituicoes/<uuid>/fundir`
+    continua igual, e o front não precisa de mudança. O que muda é o que o nome
+    promete a quem lê.
+    """
     sobrevivente = atores_duplicados.fundir(
-        sessao, perfil_id=perfil_id, sobrevivente_id=entrada.sobrevivente_id
+        sessao, que_sai_id=que_sai_id, sobrevivente_id=entrada.sobrevivente_id
     )
     return {"id": str(sobrevivente.id), "nome": sobrevivente.nome}
 

@@ -1110,6 +1110,14 @@ class ImportacaoSaida(BaseModel):
     mencoes_ligadas: int = 0
 
 
+class ParecidoSaida(BaseModel):
+    """Um cadastro que já existe e que este nome novo pode ser."""
+
+    id: str
+    nome: str
+    tipo: str
+
+
 class VeiculoNovoSaida(BaseModel):
     """Um veículo que a planilha traz e o cadastro não tem.
 
@@ -1130,6 +1138,20 @@ class VeiculoNovoSaida(BaseModel):
     #: autoriza a criação de 1.108 perfis precisa ver "Iriel Sachet —
     #: Vereador": sem o cargo, a decisão é tomada sobre um nome e um número.
     cargo: str | None = None
+    #: OS CADASTROS QUE ESTE NOME PODE SER, pela chave achatada — espaço e
+    #: pontuação fora.
+    #:
+    #: PARA QUEM AUTORIZA LER ANTES DE AUTORIZAR, e é a razão de existir: a tela
+    #: marca todos e deixa desmarcar, e sem isto quem desmarca um rádio de bairro
+    #: não tem como ver que "Neo Feed" é o "Neofeed" que já está no cadastro.
+    #: Medido: a ingestão criava o segundo cadastro, porque a busca dela usa
+    #: `normalizar`, que preserva o espaço — e eram 5 pares `veiculo`+`veiculo` e
+    #: 59 `perfil_rede`+`veiculo` fabricados assim.
+    #:
+    #: NÃO IMPEDE A CRIAÇÃO: a semelhança não prova identidade, e quem decide é
+    #: gente. É a regra do dono do produto para suspeita de duplicação — mostrar
+    #: para a pessoa decidir.
+    parecidos: list[ParecidoSaida] = []
 
 
 class AssuntoNaoReconhecidoSaida(BaseModel):
@@ -1383,6 +1405,10 @@ def conferir_planilha(
                 #: PELO RÓTULO, e não pelo código: a tela mostra "Deputado
                 #: estadual", e não `deputado_estadual`.
                 cargo=rotulo_do_cargo(veiculo.cargo),
+                parecidos=[
+                    ParecidoSaida(id=p.id, nome=p.nome, tipo=p.tipo)
+                    for p in veiculo.parecidos
+                ],
             )
             for veiculo in reconhecimento.novos
         ],

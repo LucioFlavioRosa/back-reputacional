@@ -84,12 +84,28 @@ def test_os_grupos_de_status_do_python_sao_os_do_banco(sessao):
 
 
 def test_relevancia_e_tabela_e_nao_lista_no_codigo(sessao):
-    """O que motivou a mudança: acrescentar um nível tem de ser um `insert`."""
+    """O que motivou a mudança: acrescentar um nível tem de ser um `insert`.
+
+    TRÊS, E NÃO QUATRO, desde a `0082`: o dono do produto decidiu que "T4 pode
+    sumir", e a decisão veio junto do pedido de preencher a relevância do veículo
+    criado pela Clipei — a escala do fornecedor tem três nomes ("muito
+    relevante", "relevante", "menos relevante") e o quarto nível não
+    correspondia a nada que ele diga. Medido antes de desativar: ZERO linhas com
+    tier 4, em `instituicao` e em `interacao`.
+
+    A LINHA CONTINUA LÁ, inativa. É tabela de catálogo, e aposentar é `ativo =
+    false` — o mesmo gesto da `0058` com os 45 temas da taxonomia antiga.
+    """
     niveis = sessao.execute(
         text("select id, nome from relevancia where ativo order by ordem")
     ).all()
-    assert [n.id for n in niveis] == [1, 2, 3, 4]
-    assert [n.nome for n in niveis] == ["Tier 1", "Tier 2", "Tier 3", "Tier 4"]
+    assert [n.id for n in niveis] == [1, 2, 3]
+    assert [n.nome for n in niveis] == ["Tier 1", "Tier 2", "Tier 3"]
+    #: E O QUARTO NÃO FOI APAGADO, só saiu de circulação.
+    (inativo,) = sessao.execute(
+        text("select nome from relevancia where not ativo")
+    ).all()
+    assert inativo.nome == "Tier 4"
 
 
 def test_um_nivel_novo_aparece_no_dicionario_sem_tocar_em_codigo(sessao):
@@ -101,11 +117,13 @@ def test_um_nivel_novo_aparece_no_dicionario_sem_tocar_em_codigo(sessao):
 
     relevancias = listar_dicionarios(sessao)["relevancias"]
 
+    #: O NÍVEL NOVO ENTRA, E O APOSENTADO NÃO VOLTA — as duas metades numa
+    #: asserção. "Tier 4" existe na tabela e está fora desta lista porque a
+    #: `0082` o desativou, e é `listar_dicionarios` que filtra por `ativo`.
     assert [r["nome"] for r in relevancias] == [
         "Tier 1",
         "Tier 2",
         "Tier 3",
-        "Tier 4",
         "Regional",
     ]
 
@@ -268,3 +286,68 @@ def _UM_TEMA_ATIVO(sessao) -> str:
     ).scalar_one_or_none()
     assert nome is not None, "o banco de teste está sem tema ativo semeado"
     return nome
+
+
+def test_o_dicionario_NAO_serve_as_colunas_de_CONTROLE(sessao):
+    """`ativo` e `pendente_de_revisao` não saem no payload de catálogo.
+
+    O VAZAMENTO QUE ISTO FECHA, achado de revisão em 11/10/2026: a serialização
+    monta o dicionário a partir de `tabela.__table__.columns` e excluía só
+    `ativo`. A coluna `pendente_de_revisao` nasceu naquele dia e VAZOU na hora,
+    em `temas` e em `temas_inativos`, antes de existir qualquer tela para ela.
+
+    E O PROBLEMA NÃO É O BYTE A MAIS. Este payload alimenta filtro e formulário de
+    toda tela — "o front NÃO deve ter lista fixa de nenhum deles", diz o docstring
+    da rota. Um campo que aparece ali sem ninguém ter desenhado o que ele significa
+    é um campo que alguém vai ler e usar; e a fila de revisão não é "um tema a
+    menos no filtro", é trabalho pendente de outra natureza.
+
+    OS NOMES ESTÃO ESCRITOS AQUI, e não lidos de `COLUNAS_DE_CONTROLE`. A primeira
+    versão deste teste comparava o payload com a própria constante que controla o
+    payload — e era circular: tirando `pendente_de_revisao` da constante, a
+    interseção fica vazia e o teste passa. A medição mostrou isso, porque só o
+    outro teste caiu. Um teste que lê a mesma constante que o código lê não testa
+    a constante.
+    """
+    #: A TERCEIRA ENTROU EM 11/10/2026, e por achado de revisão: `COLUNAS_DE_CONTROLE`
+    #: já excluía `motivo_da_revisao`, mas esta lista não a cobrava — então tirá-la
+    #: da constante faria a frase do motivo ("confirme se são a mesma pessoa, se ela
+    #: mudou de casa, ou se são homônimas") aparecer em todo filtro e formulário da
+    #: plataforma, sem nenhum teste cair. É a MESMA lacuna por onde
+    #: `pendente_de_revisao` vazou, deixada aberta para a coluna seguinte.
+    NUNCA_NO_PAYLOAD = ("ativo", "pendente_de_revisao", "motivo_da_revisao")
+
+    payload = listar_dicionarios(sessao)
+    assert payload, "o dicionário veio vazio, e o teste mediria o nada"
+
+    for chave, linhas in payload.items():
+        for linha in linhas[:5]:
+            vazou = sorted(c for c in NUNCA_NO_PAYLOAD if c in linha)
+            assert not vazou, f"{chave} serve {vazou}"
+
+
+def test_toda_coluna_de_CONTROLE_esta_na_lista(sessao):
+    """O outro lado: uma coluna de controle fora da lista vaza em silêncio.
+
+    SEM ISTO, a quarta coluna de controle nasce e aparece no payload — foi
+    exactamente assim que `pendente_de_revisao` vazou. O teste olha as quatro
+    tabelas da fila de revisão e cobra que tudo que parece controle esteja
+    declarado.
+    """
+    from app.api.catalogo import COLUNAS_DE_CONTROLE
+    from app.banco.tabelas_catalogo import Tema
+    from app.banco.tabelas_stakeholders import Instituicao, Interlocutor, PessoaAegea
+
+    #: O QUE CONTA COMO CONTROLE: coluna que não descreve o registro, e sim o
+    #: estado dele no fluxo de trabalho. `e_risco` é booleana e DESCREVE o tema,
+    #: então não entra — por isso a lista é por nome e não por tipo.
+    #:
+    #: E `motivo_da_revisao` MOSTRA QUE NEM É SÓ BOOLEANA: ela é texto, e é
+    #: controle porque o que ela guarda é uma pergunta da plataforma para quem
+    #: revisa, não um fato sobre o ator. "Controle" é o papel do dado, não o tipo
+    #: da coluna — e foi por supor o tipo que esta lista nasceu incompleta.
+    DE_CONTROLE = {"ativo", "pendente_de_revisao", "motivo_da_revisao"}
+    for tabela in (Instituicao, Interlocutor, Tema, PessoaAegea):
+        nomes = {c.name for c in tabela.__table__.columns}
+        faltando = sorted((nomes & DE_CONTROLE) - COLUNAS_DE_CONTROLE)
+        assert not faltando, f"{tabela.__tablename__}: {faltando} fora da lista"

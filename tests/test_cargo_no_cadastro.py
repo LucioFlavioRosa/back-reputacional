@@ -99,6 +99,28 @@ def _planilha(autor: str, cargo: str) -> bytes:
     return memoria.getvalue()
 
 
+def _planilha_de_duas_linhas(autor: str, cargo_da_segunda: str) -> bytes:
+    """O mesmo autor em duas linhas: a PRIMEIRA sem cargo, a segunda com.
+
+    É a forma exata do defeito que `veiculos_da_planilha` tinha: `setdefault` só
+    age quando a chave falta, ou seja na primeira linha daquele autor — e o que
+    ele guardava era o valor DAQUELA linha, vazio incluído. O cargo da segunda ia
+    para o lixo, e o perfil nascia sem público.
+    """
+    from openpyxl import Workbook
+
+    livro = Workbook()
+    aba = livro.active
+    aba.title = "Planilha1"
+    aba.append(["Relatório mensal", None])
+    aba.append(CABECALHO)
+    aba.append([date(2026, 8, 3), autor, None, "Negativo", "Corsan", 1])
+    aba.append([date(2026, 8, 4), autor, cargo_da_segunda, "Negativo", "Corsan", 1])
+    memoria = io.BytesIO()
+    livro.save(memoria)
+    return memoria.getvalue()
+
+
 def _bites(sessao):
     from app.banco.tabelas_score import ScoreFonte
 
@@ -264,3 +286,50 @@ def test_a_categoria_da_migration_bate_com_o_dominio():
         canonico = CARGO_CANONICO.get(cargo)
         assert canonico is not None, cargo
         assert CATEGORIA_POR_CARGO.get(canonico) == par, cargo
+
+
+def test_o_cargo_da_SEGUNDA_linha_vale_quando_a_primeira_vem_vazia(sessao):
+    """O "primeiro não vazio" passou a ser verdade. Achado MÉDIA de revisão.
+
+    O COMENTÁRIO JÁ PROMETIA O CERTO e o código fazia outra coisa: "o primeiro
+    cargo NÃO VAZIO, como a praça e a abrangência". `setdefault` só age quando a
+    CHAVE falta — na primeira linha daquele autor —, e o que ele guardava era o
+    valor daquela linha, VAZIO INCLUÍDO.
+
+    O CARGO É O MAIS CARO DOS QUATRO CAMPOS que sofriam disso (praça, abrangência,
+    cargo, tier), porque é ele que decide o PÚBLICO do perfil
+    (`CATEGORIA_POR_CARGO`): primeira linha sem cargo fazia o vereador nascer sem
+    público — o mesmo defeito que `CATEGORIA_DE_QUEM_FALA` registra como já
+    consertado uma vez, voltando por outro caminho.
+
+    E O RISCO É MEDIDO: 2.851 das 28.626 menções têm tier nulo, 10%. Coluna vazia
+    na primeira linha de um ator não é caso raro.
+    """
+    from app.banco.tabelas_catalogo import CategoriaPublico
+
+    ingerir_mencoes.ingerir(
+        sessao,
+        _bites(sessao),
+        _planilha_de_duas_linhas("Iriel Sachet zz9", "Vereador"),
+        veiculos_a_criar=("Iriel Sachet zz9",),
+    )
+
+    criado = sessao.scalar(
+        select(Instituicao).where(
+            Instituicao.nome_normalizado == normalizar("Iriel Sachet zz9")
+        )
+    )
+    assert criado is not None, "o perfil não foi criado"
+    #: O CARGO VEIO DA SEGUNDA LINHA.
+    assert criado.cargo == "Vereador"
+    #: E COM ELE O PÚBLICO, que é a consequência que importa: sem o cargo o perfil
+    #: nasce em "Formadores de Opinião" ou sem categoria nenhuma, e um vereador
+    #: classificado como formador de opinião foi exatamente a queixa que
+    #: `CATEGORIA_POR_CARGO` existe para resolver.
+    categoria, subcategoria = CATEGORIA_POR_CARGO["vereador"]
+    esperada = sessao.scalar(
+        select(CategoriaPublico.id).where(CategoriaPublico.nome == categoria)
+    )
+    assert criado.categoria_publico_id == esperada, (
+        f"esperava o público de vereador ({categoria} / {subcategoria})"
+    )

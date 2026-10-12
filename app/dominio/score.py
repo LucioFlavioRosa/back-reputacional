@@ -46,6 +46,26 @@ class Tier(StrEnum):
     SEM = ""
 
 
+#: A ESCALA DA CLIPEI → A RELEVÂNCIA DO CADASTRO.
+#:
+#: SÃO AS DUAS PONTAS DA MESMA COISA, com nomes diferentes: o fornecedor diz
+#: "muito relevante" e o cadastro da plataforma diz "Tier 1". A correspondência
+#: já estava escrita em dois lugares, mas só como RÓTULO para a tela
+#: (`api/lentes.py` e `ler_sinais_da_lente.py`, os dois com
+#: `"muito_relevante": "Tier 1"`). Esta é a numérica, que é a que o banco aceita.
+#:
+#: O VALOR É O `relevancia.id`, e isso é seguro por construção: a tabela não tem
+#: sequência própria de propósito — "1, 2 e 3 já são os códigos estáveis", como
+#: `NO_BANCO` documenta. Então o número aqui não é um id de ambiente: é o tier.
+#:
+#: `Tier.SEM` NÃO ENTRA. Rede social e canal próprio não têm tier, e inventar um
+#: para eles afirmaria sobre o veículo o que o fornecedor não disse.
+RELEVANCIA_DO_TIER: dict[str, int] = {
+    Tier.MUITO_RELEVANTE: 1,
+    Tier.RELEVANTE: 2,
+    Tier.MENOS_RELEVANTE: 3,
+}
+
 #: As réguas de tier do §3. A `aegea` é o rascunho de score da companhia: uma
 #: negativa no Valor pesa dez vezes uma de blog local.
 REGUAS_DE_TIER: dict[str, dict[str, float]] = {

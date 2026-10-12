@@ -40,11 +40,14 @@ from app.banco.tabelas_catalogo import CategoriaPublico, Esfera, SubcategoriaPub
 from app.banco.tabelas_stakeholders import Instituicao
 from app.dominio.erros import RegraViolada
 from app.dominio.ingestao_score import (
+    TIERS,
+    achatar,
     normalizar_cargo,
     para_sigla,
     rotulo_do_cargo,
 )
-from app.dominio.texto import normalizar
+from app.dominio.score import RELEVANCIA_DO_TIER
+from app.dominio.texto import achatar_para_comparar, normalizar
 
 #: A categoria de público com que um veículo da imprensa nasce.
 #:
@@ -137,6 +140,25 @@ ESFERA_POR_ABRANGENCIA = {
 
 
 @dataclass(frozen=True, slots=True)
+class Parecido:
+    """Um cadastro que JÁ EXISTE e que este nome novo pode ser.
+
+    PELA CHAVE ACHATADA — espaço e pontuação fora —, que é a mesma comparação da
+    fila de duplicados. `Neofeed` e `Neo Feed` coincidem; `cnnbrasil` e `CNN
+    Brasil` também.
+
+    PARA QUEM AUTORIZA A CRIAÇÃO LER ANTES DE AUTORIZAR. A conferência da ingestão
+    marca todos e deixa desmarcar; sem isto, quem desmarca um rádio de bairro não
+    tem como ver que "Neo Feed" é o "Neofeed" que já está no cadastro — e a
+    autorização cria a duplicata que a fila depois pergunta.
+    """
+
+    id: str
+    nome: str
+    tipo: str
+
+
+@dataclass(frozen=True, slots=True)
 class VeiculoNovo:
     """Um veículo que a planilha traz e o cadastro não tem.
 
@@ -155,6 +177,19 @@ class VeiculoNovo:
     #: `CATEGORIA_POR_CARGO`) e o que a conferência mostra, para quem autoriza
     #: a criação ver "Iriel Sachet — Vereador" em vez de só o nome.
     cargo: str | None = None
+    #: OS CADASTROS QUE ESTE NOME PODE SER — vazio quando não parece com nenhum.
+    #:
+    #: NÃO IMPEDE A CRIAÇÃO, informa quem a autoriza. A decisão é de gente: a
+    #: semelhança não prova identidade, e `Diário SM` contra `Diários M` é o
+    #: contraexemplo que o módulo da fila já registra.
+    parecidos: tuple[Parecido, ...] = ()
+    #: A RELEVÂNCIA com que ele nasce — 1, 2 ou 3, o `relevancia.id`.
+    #:
+    #: JÁ TRADUZIDO da escala do fornecedor ("muito relevante") para a do
+    #: cadastro ("Tier 1"), por `RELEVANCIA_DO_TIER`. Nulo quando a fonte não
+    #: tem tier: rede social e canal próprio não têm, e inventar um afirmaria
+    #: sobre o veículo o que o fornecedor não disse.
+    tier: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,12 +255,39 @@ def reconhecer(
             (Instituicao.tipo != tipo).label("de_outro_tipo"),
         ).where(
             Instituicao.nome_normalizado.in_(list(nomes)),
-            #: EM QUALQUER TIPO SÓ QUANDO QUEM FALA É UM PERFIL. O `Veículo` do
-            #: clipping é SEMPRE um meio de imprensa: um nome igual ao de um
-            #: órgão ali é HOMÔNIMO, e não o mesmo ator — apontar a matéria do
-            #: jornal para a prefeitura seria atribuição errada. O perfil de
-            #: rede é o contrário: o Instagram do Valor Econômico É o Valor.
-            *([] if tipo == "perfil_rede" else [Instituicao.tipo == tipo]),
+            #: EM QUALQUER TIPO, PARA QUALQUER FONTE — e esta é a regra que o
+            #: dono do produto deu em 11/10/2026: "qualquer fonte de dados tem
+            #: acesso à mesma base de instituições e interlocutores, não interessa
+            #: se é no CRM, redes sociais ou imprensa. O BTG podemos ter acesso em
+            #: rede social, em reunião de investimento ou imprensa, mas ele
+            #: continua sendo um só, se comunicando e relacionando em diferentes
+            #: níveis".
+            #:
+            #: ANTES SE FILTRAVA PELO TIPO DA FONTE, e o custo está medido: 24
+            #: atores ficaram partidos em dois cadastros. "BTG Pactual" e "Fitch
+            #: Ratings" existiam como `investidor` — invisíveis para a Clipei —, e
+            #: a ingestão criou um `veiculo` de cada: 23 agendas num registro, 6
+            #: menções no outro, e nenhuma tela juntando. Os outros 22 são
+            #: `perfil_rede` + `veiculo`, com 310 menções de um lado e 37 do
+            #: outro.
+            #:
+            #: E A `0077` TINHA ESCRITO QUE ISSO ESTAVA RESOLVIDO: "a ingestão já
+            #: foi corrigida, então a próxima subida não cria o par de novo". Era
+            #: verdade para a Bites, que sempre buscou em qualquer tipo. Falso
+            #: para a Clipei, que não buscava — e foi ela que recriou os 22.
+            #:
+            #: QUEM ENQUADRA É O TIME, não esta busca: "quem decide como enquadrar
+            #: é o time que está registrando a primeira vez ou editando
+            #: posteriormente". A busca acha o ator; o tipo, a categoria e a
+            #: subcategoria são de quem cadastra, e esta função nunca os muda num
+            #: cadastro que já existe.
+            #:
+            #: O HOMÔNIMO NÃO DESAPARECEU, MUDOU DE DONO. A regra antiga decidia
+            #: sozinha que nome igual com tipo diferente é outro ator, e essa
+            #: decisão produziu os 24. O que falta, e está registrado como
+            #: próximo passo, é a conferência MOSTRAR "este nome já existe como
+            #: perfil de rede; é o mesmo ator?" — a regra do dono do produto para
+            #: suspeita de duplicação é mostrar para a pessoa decidir.
         )
     ).all():
         #: O DO TIPO DA FONTE VENCE quando o nome existe nos dois: enquanto os
@@ -237,15 +299,47 @@ def reconhecer(
             achados[normalizado] = (str(ident), bool(de_outro_tipo))
     existentes = {chave: ident for chave, (ident, _) in achados.items()}
 
+    #: O CADASTRO ATIVO INTEIRO, PELA CHAVE ACHATADA — uma consulta, e um
+    #: dicionário consultado em O(1) por nome novo.
+    #:
+    #: SÓ SE HOUVER NOME NOVO: num arquivo em que tudo já está cadastrado, esta
+    #: consulta não responderia nada. São 3.785 linhas de três colunas.
+    faltando = [bruto for normalizado, bruto in nomes.items() if normalizado not in existentes]
+    por_achatado: dict[str, list[Parecido]] = {}
+    if faltando:
+        for ident, nome_do_cadastro, tipo_do_cadastro in sessao.execute(
+            select(Instituicao.id, Instituicao.nome, Instituicao.tipo).where(
+                Instituicao.ativo.is_(True)
+            )
+        ).all():
+            chave = achatar_para_comparar(nome_do_cadastro or "")
+            if chave:
+                por_achatado.setdefault(chave, []).append(
+                    Parecido(
+                        id=str(ident), nome=nome_do_cadastro, tipo=str(tipo_do_cadastro)
+                    )
+                )
+
     novos = [
         VeiculoNovo(
             nome=bruto,
+            #: QUEM ESTE NOME PODE SER. Medido antes de existir: com `NeofeedZZ` no
+            #: cadastro e `Neo feed ZZ` na planilha, a ingestão criava o segundo —
+            #: porque a busca acima usa `normalizar`, que preserva o espaço.
+            parecidos=tuple(por_achatado.get(achatar_para_comparar(bruto), ())),
             uf=_texto(veiculos[bruto].get("uf")),
             esfera=ESFERA_POR_ABRANGENCIA.get(
                 str(veiculos[bruto].get("abrangencia") or "").strip().lower()
             ),
             mencoes=int(veiculos[bruto].get("mencoes") or 0),
             cargo=normalizar_cargo(veiculos[bruto].get("cargo")),
+            #: PELAS MESMAS DUAS FUNÇÕES DA GRAVAÇÃO DA MENÇÃO — `achatar` e
+            #: `TIERS`. É o que faz "Muito Relevante", "muito relevante " e
+            #: "MUITO RELEVANTE" caírem na mesma chave, e o que garante que o
+            #: cadastro e a menção não discordem sobre o mesmo texto.
+            tier=RELEVANCIA_DO_TIER.get(
+                TIERS.get(achatar(veiculos[bruto].get("tier")), "") or ""
+            ),
         )
         for normalizado, bruto in nomes.items()
         if normalizado not in existentes
@@ -311,8 +405,13 @@ def criar(
         #: em Formadores de Opinião. Cargo desconhecido ou ausente deixa o
         #: perfil SEM categoria — "ainda não classificado", que é a verdade.
         publico, subpublico = categoria, None
+        #: O FATO, e não o efeito dele no banco: "a fonte mandou um cargo que
+        #: sabemos traduzir". Ver `_motivo_da_revisao` — a frase que vai para a
+        #: fila depende disto, e NÃO de `publico is None`.
+        cargo_reconhecido = False
         if tipo == "perfil_rede":
             par = CATEGORIA_POR_CARGO.get(veiculo.cargo or "")
+            cargo_reconhecido = par is not None
             if par is None:
                 publico = None
             else:
@@ -337,11 +436,90 @@ def criar(
             #: dizer "Stela Farias — Deputado estadual" em vez de só o público.
             #: Nulo em veículo, onde a coluna não existe.
             cargo=rotulo_do_cargo(veiculo.cargo) if tipo == "perfil_rede" else None,
+            #: A RELEVÂNCIA QUE A PLANILHA DISSE. Era o campo que o dono do
+            #: produto apontou como faltando no cadastro automático — e ele
+            #: faltava mesmo: 39 dos 2.670 veículos tinham relevância.
+            tier=veiculo.tier,
+            #: NASCE PENDENTE DE REVISÃO, como todo cadastro que vem de planilha.
+            #:
+            #: MESMO TENDO PASSADO PELA CONFERÊNCIA DA INGESTÃO, e a diferença é o
+            #: que cada uma pergunta: ali a pessoa autoriza a CRIAÇÃO olhando nome,
+            #: praça, alcance e cargo — ela diz "este veículo existe e deve
+            #: entrar". O ENQUADRAMENTO é outra pergunta: a subcategoria é lógica
+            #: editorial que nenhuma coluna da Clipei informa, e é dela que a lente
+            #: Mercado depende. Quem autoriza 2.631 criações numa tela não decide
+            #: 2.631 enquadramentos na mesma tela.
+            pendente_de_revisao=True,
+            #: E A MARCA DIZ QUAL ENQUADRAMENTO FALTA. Achado de revisão com
+            #: severidade MÉDIA: este é o produtor de MAIOR VOLUME da fila — 2.631
+            #: veículos de uma subida só —, e era o que a deixava genérica.
+            motivo_da_revisao=_motivo_da_revisao(tipo, cargo_reconhecido),
         )
         sessao.add(registro)
         criados[normalizar(nome)] = registro
     sessao.flush()
     return {chave: str(registro.id) for chave, registro in criados.items()}
+
+
+#: POR QUE O CADASTRO DA INGESTÃO ESPERA REVISÃO — e são três perguntas
+#: diferentes, não uma.
+#:
+#: ACHADO DE REVISÃO, severidade MÉDIA: o registro nascia pendente SEM motivo, e
+#: o comentário ao lado já explicava por quê em prosa. A fila mostrava a frase
+#: genérica "entrou por planilha e ninguém conferiu" em 2.631 linhas.
+#:
+#: E NÃO É O MESMO MOTIVO DA IMPORTAÇÃO DE AGENDAS. Lá falta a CATEGORIA, e o tipo
+#: cai em `entidade`. Aqui a categoria vem sempre: `CATEGORIA_DE_QUEM_FALA` dá
+#: "Imprensa" ao veículo, e o cargo dá a do perfil. O que falta é outra coisa em
+#: cada caso — usar a mesma frase mandaria a pessoa procurar um campo que já está
+#: preenchido.
+
+
+def _motivo_da_revisao(tipo: str, cargo_reconhecido: bool) -> str:
+    """Três casos, três frases.
+
+    VEÍCULO: a categoria é Imprensa e a SUBCATEGORIA falta. Ela é lógica
+    editorial que nenhuma coluna da Clipei informa — e é dela que a lente Mercado
+    depende: a lista do Mercado é `tipo='veiculo'` com categoria Imprensa e
+    subcategoria "Econômica e de negócios". Sem a subcategoria o veículo fica
+    fora da lente, e são 81 de 2.712 que estão dentro.
+
+    PERFIL COM CARGO RECONHECIDO: o enquadramento saiu do cargo que o fornecedor
+    mandou, e o fornecedor erra — medido: `stelafariasrs` veio sem cargo e com UF
+    TO, sendo a mesma deputada do RS. O cadastro está completo e ainda assim
+    merece um olhar.
+
+    PERFIL SEM CARGO RECONHECIDO: não há categoria nenhuma, porque o cargo não
+    estava em `CATEGORIA_POR_CARGO`. É o estado dos 1.108 perfis que a primeira
+    carga da Bites criou, e é o caso em que a fila tem mais a ganhar.
+
+    `cargo_reconhecido` E NÃO O `id` DA CATEGORIA, e a diferença é um achado de
+    revisão. Decidir por `publico is None` decide pelo EFEITO no banco, e o fato
+    que gera a frase é outro: "a fonte mandou um cargo que sabemos traduzir". Os
+    dois coincidem hoje e podem descolar — uma categoria da taxonomia desativada,
+    ou um cargo reconhecido apontando para categoria ausente, fariam um perfil COM
+    cargo receber "sem cargo reconhecido".
+
+    E O ESTRAGO SERIA PERMANENTE: esta frase é GRAVADA na linha. Um `id` nulo
+    passageiro vira uma instrução errada que fica no banco pedindo à pessoa um
+    campo que ela já preencheu — e a fila que mente é a fila que ninguém usa.
+    """
+    if tipo == "veiculo":
+        return (
+            "Entrou pela ingestão de menções com a categoria Imprensa, mas sem "
+            "subcategoria — ela é lógica editorial que a fonte não informa, e é "
+            "dela que a lente Mercado depende."
+        )
+    if not cargo_reconhecido:
+        return (
+            "Entrou pela ingestão de menções sem cargo reconhecido, então ficou "
+            "sem categoria de público. Diga o cargo para o perfil entrar na "
+            "taxonomia."
+        )
+    return (
+        "Entrou pela ingestão de menções, e o enquadramento saiu do cargo que a "
+        "fonte informou — confira se o cargo e a praça estão certos."
+    )
 
 
 def nomes_da_lista(sessao: Session, lista: str) -> frozenset[str]:

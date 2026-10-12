@@ -26,7 +26,7 @@ O QUE ESTE MÓDULO NÃO FAZ: fundir sozinho. Juntar dois dossiês não tem volta
 
 from __future__ import annotations
 
-import re
+import difflib
 import uuid
 from dataclasses import dataclass
 
@@ -37,25 +37,55 @@ from app.banco.tabelas_interacoes import InteracaoRegistro
 from app.banco.tabelas_score import Mencao
 from app.banco.tabelas_stakeholders import AtorDistinto, Instituicao, Interlocutor
 from app.dominio.erros import NaoEncontrado, RegraViolada
-from app.dominio.texto import normalizar
+from app.dominio.texto import (
+    SEMELHANCA_MINIMA,
+    achatar_para_comparar,
+)
 
-_SO_ALFANUMERICO = re.compile(r"[^a-z0-9]+")
-
-#: O TIPO QUE A FILA OLHA. O par nasce da ingestão de redes sociais: é o perfil
-#: que chega com o handle do fornecedor e vira cadastro novo. Dois veículos de
-#: imprensa com nomes parecidos são outra conversa — essa base é curada à mão.
+#: O TIPO QUE SÓ ENTRA EM OUTRO CADASTRO, e não mais "o tipo que a fila olha".
+#:
+#: A FILA PASSOU A OLHAR TODOS (11/10/2026), pelo princípio do dono do produto:
+#: "qualquer fonte tem acesso à mesma base... o BTG continua sendo um só". Este
+#: tipo ficou por uma razão estreita e real: só um `perfil_rede` pode estar ligado
+#: a uma pessoa do CRM (CHECK `instituicao_pessoa_so_de_perfil`), e é essa ligação
+#: que tira um cadastro da fila.
 TIPO_DE_ORIGEM = "perfil_rede"
 
+#: A CHAVE DE SEMELHANÇA E O CORTE VÊM DO DOMÍNIO (`dominio/texto.py`), e não
+#: moram aqui: a INGESTÃO precisa deles para não CRIAR o par, e esta fila para
+#: PERGUNTAR sobre ele. Eram duas cópias, e o comentário deste módulo já avisava
+#: contra "a terceira cópia da mesma regra" — medido: a ingestão buscava por
+#: `normalizar`, que preserva o espaço, e criava `Neo Feed` ao lado de `Neofeed`.
+#:
+#: `achatar_para_comparar` e `SEMELHANCA_MINIMA` seguem alcançáveis por este módulo
+#: (`atores_duplicados.achatar_para_comparar`), porque o import os põe no espaço de
+#: nomes dele — os testes e a API continuam lendo daqui.
 
-def achatar_para_comparar(nome: str) -> str:
-    """A chave de SEMELHANÇA: `Valor Econômico` e `valoreconomico` coincidem.
 
-    Não é `normalizar`, e a diferença é o ponto: `normalizar` é a chave de
-    GRAVAÇÃO, que carrega a unicidade do cadastro, e nela `valoreconomico` e
-    `valor economico` são dois cadastros legítimos. Aqui o espaço e a pontuação
-    saem para a pergunta ser feita, e a resposta é de gente.
-    """
-    return _SO_ALFANUMERICO.sub("", normalizar(nome))
+#: O QUE O SOBREVIVENTE HERDA de quem sai, quando ele não tem.
+#:
+#: POR QUE ISTO EXISTE (achado ALTA de revisão, 11/10/2026): `fundir` movia as
+#: chaves estrangeiras e apagava a linha. Tolerável enquanto quem saía era o perfil
+#: cru do social listening; com a fusão aberta a qualquer tipo, sai um `investidor`
+#: com `tier` e categoria de público, e esses campos sumiam.
+#:
+#: E NOS PARES DO CRM A PERDA SERIA POR SORTEIO: `ALMG` (entidade) e `ALMG` (orgao)
+#: têm zero menções e o mesmo nome, então quem sai é decidido pelo UUID.
+#:
+#: `cargo` NÃO ESTÁ AQUI, e é o único de fora: o CHECK
+#: `instituicao_cargo_so_de_perfil` não deixa um veículo ter cargo, então herdá-lo
+#: estouraria o banco. A perda dele continua dita em voz alta no docstring.
+#:
+#: `nome` E `tipo` TAMBÉM NÃO: são a identidade do sobrevivente, e trocá-los faria
+#: a fusão virar renomeação — outro gesto, com outras consequências.
+CAMPOS_QUE_O_SOBREVIVENTE_HERDA = (
+    "nome_completo",
+    "esfera_id",
+    "uf",
+    "tier",
+    "categoria_publico_id",
+    "subcategoria_publico_id",
+)
 
 
 @dataclass(frozen=True)
@@ -70,10 +100,19 @@ class Candidato:
 
 @dataclass(frozen=True)
 class Duplicado:
-    """Um perfil de rede e os cadastros com que ele se parece."""
+    """Um cadastro que vai SAIR, e os cadastros com que ele se parece."""
 
     id: uuid.UUID
     nome: str
+    #: O TIPO DE QUEM VAI SAIR, e sem ele a tela mentia (achado de revisão,
+    #: 11/10/2026).
+    #:
+    #: Enquanto a fila só olhava `perfil_rede`, o tipo do lado ancorado era
+    #: conhecido por construção e a tela escrevia "Perfil de rede" fixo. Com a fila
+    #: aberta a todos, `ALMG` (entidade) + `ALMG` (orgao) fazia a tela dizer que ia
+    #: apagar um perfil de rede — e quem decide lia o tipo errado do registro que
+    #: desaparece.
+    tipo: str
     cargo: str | None
     mencoes: int
     candidatos: tuple[Candidato, ...]
@@ -88,13 +127,78 @@ def _mencoes_por_instituicao(sessao: Session) -> dict[uuid.UUID, int]:
     return {instituicao: quantas for instituicao, quantas in linhas}
 
 
+def _vizinhos(cadastros: list[Instituicao]) -> dict[uuid.UUID, list[Instituicao]]:
+    """Cada cadastro e os outros que PODEM ser o mesmo ator.
+
+    DUAS CAMADAS, e a segunda é o pedido do dono do produto:
+
+    1. CHAVE ACHATADA IGUAL — `cnnbrasil` e `CNN Brasil`, `Neofeed` e `Neo Feed`.
+       São 101 pares no cadastro de hoje.
+    2. CHAVE PARECIDA, acima de `SEMELHANCA_MINIMA` — o caso "Valor" contra "o
+       Valor", que a camada 1 não vê porque "valor" e "ovalor" são chaves
+       diferentes. São 130 pares a mais.
+
+    O PRÉ-FILTRO POR TAMANHO não é otimização gratuita: são 3.785 nomes, logo 7,2
+    milhões de pares, e `ratio()` é caro. Duas chaves cujo tamanho difere mais de
+    30% não alcançam 0,90 — a razão é limitada por `2*min/(a+b)` —, então descartá-
+    las antes não muda nenhuma resposta. `real_quick_ratio` e `quick_ratio` são os
+    mesmos atalhos que `difflib.get_close_matches` usa por dentro.
+    """
+    chaves = [(c, achatar_para_comparar(c.nome)) for c in cadastros]
+    perto: dict[uuid.UUID, list[Instituicao]] = {c.id: [] for c in cadastros}
+
+    #: `autojunk=False`: o heurístico de "caractere popular" do `difflib` foi feito
+    #: para arquivos de código, e em textos curtos ele descarta letra comum e muda
+    #: a razão sem motivo. Os nomes aqui têm 3 a 40 caracteres.
+    medida = difflib.SequenceMatcher(autojunk=False)
+    for i, (um, chave_um) in enumerate(chaves):
+        if not chave_um:
+            #: Nome que normaliza para vazio — acontece com nome só de emoji. Sem
+            #: chave não há com que comparar, e comparar vazio com vazio casaria
+            #: todos eles entre si.
+            continue
+        medida.set_seq2(chave_um)
+        for outro, chave_outro in chaves[i + 1 :]:
+            if not chave_outro:
+                continue
+            if chave_um == chave_outro:
+                perto[um.id].append(outro)
+                perto[outro.id].append(um)
+                continue
+            maior = max(len(chave_um), len(chave_outro))
+            if abs(len(chave_um) - len(chave_outro)) > maior * 0.3:
+                continue
+            medida.set_seq1(chave_outro)
+            if (
+                medida.real_quick_ratio() < SEMELHANCA_MINIMA
+                or medida.quick_ratio() < SEMELHANCA_MINIMA
+                or medida.ratio() < SEMELHANCA_MINIMA
+            ):
+                continue
+            perto[um.id].append(outro)
+            perto[outro.id].append(um)
+    return perto
+
+
 def listar(sessao: Session) -> list[Duplicado]:
-    """A fila de perguntas: perfis que se parecem com outro cadastro.
+    """A fila de perguntas: cadastros que podem ser o mesmo ator.
+
+    QUALQUER TIPO, desde 11/10/2026. A fila nasceu da ingestão de redes e só olhava
+    `perfil_rede` como origem; o princípio do dono do produto é "uma base só —
+    qualquer fonte tem acesso à mesma base de instituições e interlocutores... o
+    BTG podemos ter acesso em rede social, em reunião de investimento ou imprensa,
+    mas ele continua sendo um só". Medido, os pares de chave igual de hoje: 59
+    `perfil_rede`+`veiculo`, 33 `perfil_rede`, 5 VEÍCULO+VEÍCULO, 3
+    `entidade`+`orgao`, 1 `entidade`+`investidor` — os nove últimos ficavam fora.
+
+    E O HOMÔNIMO EXATO VOLTOU. Ele estava fora porque "a `0077` já fundiu e a
+    ingestão não recria — se aparecer um, é regressão". A premissa caiu duas vezes:
+    a Clipei recriou 22 deles (a `0084` fundiu), e as 4 duplicatas que sobram foram
+    feitas POR GENTE no CRM — ALMG, ANA, BNDES e Itaú BBA. Nenhuma migration vai
+    fundi-las, porque "quem decide como enquadrar é o time".
 
     FORA DA FILA, e cada exclusão por um motivo diferente:
 
-    * o HOMÔNIMO EXATO, que a `0077` já fundiu e que a ingestão não recria —
-      se aparecer um, é regressão, e a `0077` roda de novo;
     * o par que alguém JÁ DECIDIU que é outro ator (`ator_distinto`) — sem
       isso a fila nunca chega a zero;
     * o perfil LIGADO A UMA PESSOA do CRM, porque o sobrevivente não pode
@@ -111,9 +215,7 @@ def listar(sessao: Session) -> list[Duplicado]:
     cadastros = list(
         sessao.scalars(select(Instituicao).where(Instituicao.ativo.is_(True)))
     )
-    por_chave: dict[str, list[Instituicao]] = {}
-    for cadastro in cadastros:
-        por_chave.setdefault(achatar_para_comparar(cadastro.nome), []).append(cadastro)
+    perto = _vizinhos(cadastros)
 
     decididos = {
         (par.esquerda, par.direita) for par in sessao.scalars(select(AtorDistinto))
@@ -121,38 +223,34 @@ def listar(sessao: Session) -> list[Duplicado]:
     mencoes = _mencoes_por_instituicao(sessao)
 
     fila: list[Duplicado] = []
-    for grupo in por_chave.values():
-        if len(grupo) < 2:
+    for perfil in cadastros:
+        #: SÓ O PERFIL LIGADO A UMA PESSOA DO CRM fica fora, e o tipo aparece aqui
+        #: por isso: a ligação só existe em `perfil_rede` (CHECK
+        #: `instituicao_pessoa_so_de_perfil`), e o sobrevivente não pode herdá-la.
+        if perfil.tipo == TIPO_DE_ORIGEM and perfil.interlocutor_id is not None:
             continue
-        for perfil in grupo:
-            if perfil.tipo != TIPO_DE_ORIGEM or perfil.interlocutor_id is not None:
-                continue
-            candidatos = tuple(
-                Candidato(
-                    id=outro.id,
-                    nome=outro.nome,
-                    tipo=outro.tipo,
-                    mencoes=mencoes.get(outro.id, 0),
-                )
-                for outro in grupo
-                if outro.id != perfil.id
-                #: O HOMÔNIMO EXATO não é pergunta: é a `0077`.
-                and outro.nome_normalizado != perfil.nome_normalizado
-                and ordenar_o_par(perfil.id, outro.id) not in decididos
-                and _esta_do_lado_que_pergunta(perfil, outro, mencoes)
+        candidatos = tuple(
+            Candidato(
+                id=outro.id,
+                nome=outro.nome,
+                tipo=outro.tipo,
+                mencoes=mencoes.get(outro.id, 0),
             )
-            if candidatos:
-                fila.append(
-                    Duplicado(
-                        id=perfil.id,
-                        nome=perfil.nome,
-                        cargo=perfil.cargo,
-                        mencoes=mencoes.get(perfil.id, 0),
-                        candidatos=tuple(
-                            sorted(candidatos, key=lambda c: -c.mencoes)
-                        ),
-                    )
+            for outro in perto[perfil.id]
+            if ordenar_o_par(perfil.id, outro.id) not in decididos
+            and _esta_do_lado_que_pergunta(perfil, outro, mencoes)
+        )
+        if candidatos:
+            fila.append(
+                Duplicado(
+                    id=perfil.id,
+                    nome=perfil.nome,
+                    tipo=perfil.tipo,
+                    cargo=perfil.cargo,
+                    mencoes=mencoes.get(perfil.id, 0),
+                    candidatos=tuple(sorted(candidatos, key=lambda c: -c.mencoes)),
                 )
+            )
     return sorted(fila, key=lambda d: d.nome.lower())
 
 
@@ -171,14 +269,42 @@ def _esta_do_lado_que_pergunta(
     lado com MENOS menções — a linha com história sobrevive. Empate desempata
     pelo nome, para a escolha não trocar de lado entre duas aberturas da tela.
 
-    Com um cadastro de outro tipo do outro lado não há escolha: só o perfil de
-    rede entra em outro cadastro, e a pergunta nasce dele.
+    TRÊS DEGRAUS, e o primeiro é conhecimento que a `0077` já tinha gravado:
+
+    1. O PERFIL DE REDE SOME ANTES de um cadastro curado. "Quem sobrevive é o
+       veículo, e não o perfil: ele é a linha curada, com categoria, subcategoria,
+       UF e frente... o nome dele também é o escrito por gente", diz a `0077`. Com
+       a fila aberta a todos os tipos (11/10/2026) eu troquei este degrau por
+       "menos menções", e dois testes caíram com razão: num par de zero menções o
+       desempate pelo nome mandava a pergunta para o VEÍCULO.
+    2. DEPOIS, QUEM TEM MENOS MENÇÕES — a linha com história sobrevive.
+    3. DEPOIS O NOME, para a escolha não trocar de lado entre duas aberturas da
+       tela.
+    4. E O `id`, QUE FECHA A ORDEM.
+
+    O QUARTO DEGRAU NÃO É ZELO, É CONSERTO DE UM DEFEITO MEDIDO (achado ALTA de
+    revisão, 11/10/2026). Sem ele o desempate era `(menções, nome)`, e dois
+    cadastros não-`perfil_rede` com as mesmas menções e o MESMO nome textual
+    calculavam `x < x` = False DOS DOIS LADOS: ninguém perguntava, e o par saía da
+    fila em silêncio.
+
+    E ERA EXATAMENTE O CASO QUE MOTIVOU A MUDANÇA: `ALMG`, `ANA`, `BNDES` e `Itaú
+    BBA` — as quatro duplicatas do CRM, cada uma com o mesmo nome nos dois
+    cadastros e zero menções — estavam INVISÍVEIS. A fila dizia 206 perguntas e
+    nenhuma era uma das quatro.
+
+    O `id` É ÚNICO POR CONSTRUÇÃO, então `(menções, nome, id)` é ordem TOTAL: para
+    qualquer par distinto, exatamente um lado pergunta. É o que faz a pergunta
+    aparecer UMA vez — nem zero, nem duas.
     """
-    if outro.tipo != TIPO_DE_ORIGEM:
-        return True
-    return (mencoes.get(perfil.id, 0), perfil.nome) < (
+    de_rede = perfil.tipo == TIPO_DE_ORIGEM
+    outro_de_rede = outro.tipo == TIPO_DE_ORIGEM
+    if de_rede != outro_de_rede:
+        return de_rede
+    return (mencoes.get(perfil.id, 0), perfil.nome, str(perfil.id)) < (
         mencoes.get(outro.id, 0),
         outro.nome,
+        str(outro.id),
     )
 
 
@@ -200,37 +326,100 @@ def _buscar(sessao: Session, qual: uuid.UUID) -> Instituicao:
 
 
 def fundir(
-    sessao: Session, *, perfil_id: uuid.UUID, sobrevivente_id: uuid.UUID
+    sessao: Session, *, que_sai_id: uuid.UUID, sobrevivente_id: uuid.UUID
 ) -> Instituicao:
-    """O perfil de rede entra no cadastro que fica, com as menções dele.
+    """Um cadastro entra no outro, com as menções dele.
 
-    QUEM SOBREVIVE É ESCOLHA DE QUEM CHAMA, e na tela é o veículo: ele é a
-    linha curada, com categoria, subcategoria, UF e frente, e o nome dele é o
-    escrito por gente ("UOL") contra o handle do fornecedor ("Uol"). Mas quem
-    some é sempre o PERFIL, e é por isso que o parâmetro tem nome: fundir um
-    veículo com 86 menções dentro de um perfil com 2 seria perder a curadoria,
-    e é um gesto que esta função não oferece.
+    QUEM SOBREVIVE É ESCOLHA DE QUEM CHAMA, e a fila propõe: a regra dos três
+    degraus de `_esta_do_lado_que_pergunta` ancora a pergunta em quem deve sair —
+    o perfil de rede antes de um cadastro curado, depois quem tem menos menções.
 
-    O QUE SE PERDE, dito em voz alta: o `cargo` do perfil, porque o CHECK
-    `instituicao_cargo_so_de_perfil` existe de propósito — um jornal não tem
-    cargo, e o tipo `veiculo` já afirma o que "Imprensa" dizia.
+    QUALQUER TIPO SAI, desde 11/10/2026, e isto é conserto de um achado ALTA: a
+    fila passou a mostrar pares `veiculo`+`veiculo` e `entidade`+`orgao`, e esta
+    função exigia que quem saísse fosse `perfil_rede`. A pessoa via a pergunta e só
+    podia responder "são distintos" — a fila fazia uma pergunta cuja resposta certa
+    o servidor recusava. Pior que não perguntar.
+
+    O PARÂMETRO MUDOU DE NOME COM O SIGNIFICADO: era `perfil_id`, porque só perfil
+    saía. Agora é `que_sai_id`, e a assimetria que o nome antigo guardava — "fundir
+    um veículo com 86 menções dentro de um perfil com 2 seria perder a curadoria" —
+    continua garantida, mas pela ORDEM DA FILA e não por um `if` de tipo. Quem
+    chama por fora pode inverter, e é decisão de quem chama.
+
+    O SOBREVIVENTE HERDA O QUE ELE NÃO TEM — `CAMPOS_QUE_O_SOBREVIVENTE_HERDA` —, e
+    o CONFLITO RECUSA com 422 dizendo quais campos divergem. Era perda silenciosa
+    até 11/10/2026: as chaves estrangeiras passavam e a linha era apagada, com a
+    categoria de público e o tier dela dentro.
+
+    O QUE SE PERDE, dito em voz alta: o `cargo` de quem sai, se ele tiver — o CHECK
+    `instituicao_cargo_so_de_perfil` existe de propósito, e um jornal não tem
+    cargo. É o único campo que não viaja.
     """
-    if perfil_id == sobrevivente_id:
+    if que_sai_id == sobrevivente_id:
         raise RegraViolada("Um cadastro nao funde com ele mesmo.")
 
-    perfil = _buscar(sessao, perfil_id)
+    perfil = _buscar(sessao, que_sai_id)
     sobrevivente = _buscar(sessao, sobrevivente_id)
 
-    if perfil.tipo != TIPO_DE_ORIGEM:
+    #: A DIREÇÃO É CONFERIDA PELA MESMA REGRA DA FILA, e não por um `if` de tipo.
+    #:
+    #: O QUE ESTA GUARDA IMPEDE: fundir a linha curada dentro da linha crua. "O
+    #: veículo é a linha com categoria, subcategoria, UF e frente, e com o nome
+    #: escrito por gente; fundir ele dentro do handle do fornecedor perderia a
+    #: curadoria — e quem clica numa tela de duplicados não está pedindo isso."
+    #:
+    #: ERA `if perfil.tipo != TIPO_DE_ORIGEM`, e eu a troquei por "a ordem da fila
+    #: garante" ao abrir a fusão para todos os tipos. Dois testes caíram e estavam
+    #: certos: a ordem da fila é a TELA, e esconder o botão é conveniência — um
+    #: `curl` basta.
+    #:
+    #: E AGORA ELA VALE PARA QUALQUER TIPO, que é o ganho sobre a versão antiga:
+    #: aquela protegia só o par perfil+veículo e deixava fundir um veículo de 300
+    #: menções dentro de um de 2.
+    #:
+    #: UMA FUNÇÃO DECIDE A ORDENAÇÃO e os dois lugares a consultam — a fila para
+    #: ancorar a pergunta, a fusão para recusar o inverso. Não há como divergirem.
+    if _esta_do_lado_que_pergunta(
+        sobrevivente, perfil, _mencoes_por_instituicao(sessao)
+    ):
         raise RegraViolada(
-            "So o perfil de rede entra em outro cadastro. Para o contrario, "
-            "funda o perfil no cadastro que fica."
+            f"{sobrevivente.nome!r} é a linha que deve sobreviver a "
+            f"{perfil.nome!r} — tem mais menções, ou é o cadastro curado. Funda na "
+            "outra direção: quem sai vai na URL."
         )
     if perfil.interlocutor_id is not None:
         raise RegraViolada(
             "Este perfil esta ligado a uma pessoa do CRM. Desfaca a ligacao "
             "antes de fundir, ou funda no cadastro da pessoa."
         )
+
+    #: O CONFLITO RECUSA ANTES DE QUALQUER ESCRITA, e com os nomes dos campos.
+    #:
+    #: Dois valores diferentes preenchidos são duas afirmações de GENTE sobre o
+    #: mesmo ator — uma diz que é Tier 1, a outra que é Tier 3. Escolher uma em
+    #: silêncio é o chute calado que esta semana cobrou três vezes; e escolher a do
+    #: sobrevivente só porque ele é o sobrevivente seria escolher por sorteio nos
+    #: pares de zero menções, onde quem sai é decidido pelo UUID.
+    divergentes = [
+        campo
+        for campo in CAMPOS_QUE_O_SOBREVIVENTE_HERDA
+        if getattr(perfil, campo) is not None
+        and getattr(sobrevivente, campo) is not None
+        and getattr(perfil, campo) != getattr(sobrevivente, campo)
+    ]
+    if divergentes:
+        raise RegraViolada(
+            f"{perfil.nome!r} e {sobrevivente.nome!r} discordam em "
+            f"{', '.join(divergentes)}. Alguém preencheu os dois, e fundir "
+            "escolheria um sem dizer: acerte o cadastro que fica e funda depois."
+        )
+
+    #: E O SOBREVIVENTE HERDA O QUE ELE NÃO TEM. Sem conflito não há escolha a
+    #: fazer, e deixar o campo cair junto com a linha seria perder trabalho de
+    #: alguém por nada.
+    for campo in CAMPOS_QUE_O_SOBREVIVENTE_HERDA:
+        if getattr(sobrevivente, campo) is None:
+            setattr(sobrevivente, campo, getattr(perfil, campo))
 
     #: AS MENÇÕES PASSAM: o dossiê do ator fica num só lugar.
     sessao.execute(

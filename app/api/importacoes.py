@@ -37,6 +37,7 @@ from app.dominio.importacao_de_agendas import (
     CHAVES_RESERVADAS,
     Divergencia,
     aba_de,
+    acao_efetiva,
     agrupar,
     coluna_do_campo,
     tipo_da_coluna,
@@ -193,18 +194,59 @@ def _nomes_conhecidos(sessao, campo: str) -> list[str]:
     return importar_agendas.vocabularios(sessao).get(vocabulario, [])
 
 
-def _alvo_de(sessao, campo: str, nome: str) -> str | None:
+def _alvo_de(sessao, campo: str, nome: str, indice) -> str | None:
     """O id (ou código) do cadastro com este nome — o que `apontar` aceita.
 
     RESOLVE AQUI e não no domínio: `agrupar` compara TEXTO para achar o parecido,
     e não deve saber de tabela nenhuma. Quem conhece a ponte nome→id é este
     módulo, que já a usa para propor.
+
+    O ÍNDICE VEM DE FORA, e é obrigatório: calculá-lo aqui custaria o índice
+    inteiro por sugestão, e esta função é chamada dentro de dois laços.
     """
     vocabulario = importar_agendas.vocabulario_do_campo(campo)
     if vocabulario is None:
         return None
-    valor = importar_agendas.indice_do_vocabulario(sessao, vocabulario).get(normalizar(nome))
-    return None if valor is None else str(valor)
+    valor = indice.get(vocabulario, {}).get(normalizar(nome))
+    #: `AMBIGUO` NÃO É ALVO, e sem esta linha ele viajava como `str(AMBIGUO)` —
+    #: "<object object at 0x...>" — para dentro do botão da conferência. A guarda
+    #: "sugestão sem alvo não entra" não pegava, porque o repr da sentinela é uma
+    #: string perfeitamente válida. Quem oferece a escolha do nome ambíguo é
+    #: `candidatos_do_nome`, com os ids de verdade.
+    if valor is None or valor is importar_agendas.AMBIGUO:
+        return None
+    return str(valor)
+
+
+def _sugestoes_de(sessao, grupo, indice) -> list[SugestaoSaida]:
+    """Os atalhos de um grupo: um por cadastro que a pessoa pode apontar.
+
+    UM NOME, UM ATALHO — menos quando o nome casa com DOIS cadastros. Aí ele vira
+    dois atalhos, cada um com o seu id e com um rótulo que os distingue, porque é
+    a divergência que diz "escolha qual na conferência" e a escolha tem de ser
+    possível. Antes de 11/10/2026 ela não era: o grupo trazia um botão só, com o
+    rótulo dos dois e com o repr da sentinela `AMBIGUO` no lugar do id.
+
+    A SUGESTÃO SEM ALVO NÃO ENTRA: oferecer um atalho que o servidor recusa é pior
+    que não oferecer atalho — é o que o docstring de `SugestaoSaida` registra da
+    primeira vez que esta classe de defeito apareceu.
+    """
+    saida: list[SugestaoSaida] = []
+    for nome in grupo.sugestoes:
+        alvo = _alvo_de(sessao, grupo.campo, nome, indice)
+        if alvo is not None:
+            saida.append(SugestaoSaida(nome=nome, alvo=alvo))
+            continue
+        #: Sem alvo por AMBIGUIDADE: os candidatos de verdade. Para um nome que
+        #: simplesmente não existe, `candidatos_do_nome` devolve vazio e o grupo
+        #: segue sem atalho, como antes.
+        saida.extend(
+            SugestaoSaida(nome=rotulo, alvo=candidato)
+            for candidato, rotulo in importar_agendas.candidatos_do_nome(
+                sessao, grupo.campo, nome
+            )
+        )
+    return saida
 
 
 def _decididas(linhas) -> list[ACriarSaida]:
@@ -214,12 +256,15 @@ def _decididas(linhas) -> list[ACriarSaida]:
         if linha.aba != "Agendas" or linha.decisao == "descartada":
             continue
         for bruta in linha.divergencias or []:
-            if not bruta.get("acao"):
+            #: PELA AÇÃO EFETIVA: o bloco "vou criar" da resposta tem de
+            #: mostrar também o que a confirmação criará por PADRÃO, senão a tela
+            #: promete menos do que o servidor vai fazer. Achado de revisão.
+            if not acao_efetiva(bruta):
                 continue
             chave = (
                 bruta["campo"],
                 bruta["valor"],
-                bruta["acao"],
+                acao_efetiva(bruta),
                 bruta.get("alvo"),
             )
             por_chave.setdefault(chave, []).append(linha.linha_origem)
@@ -252,6 +297,10 @@ def _grupos(sessao, linhas) -> list[GrupoSaida]:
                 )
                 for bruta in (linha.divergencias or [])
                 # A DECIDIDA NÃO É PENDÊNCIA. Ela vai para `a_criar`.
+                #: ABERTA É O QUE A PESSOA AINDA PODE DECIDIR, e aqui `acao`
+                #: cru é o certo: uma divergência com padrão continua aberta
+                #: para ela apontar. `acao_efetiva` responderia "criar" e
+                #: esconderia a oferta.
                 if not bruta.get("acao")
             ],
         )
@@ -269,6 +318,10 @@ def _grupos(sessao, linhas) -> list[GrupoSaida]:
     }
     conhecidos_por_campo = {campo: _nomes_conhecidos(sessao, campo) for campo in campos}
 
+    #: UMA VEZ PARA A RESPOSTA INTEIRA, e não uma por grupo. `indice_completo`
+    #: diz o que isso custava: 19 consultas fixas viraram 499 em 30 grupos quando
+    #: cada grupo passou a reconstruí-lo. Achado de revisão, 11/10/2026.
+    indice = importar_agendas.indice_completo(sessao)
     saida: list[GrupoSaida] = []
     for campo in sorted(campos):
         so_deste_campo = [
@@ -282,14 +335,17 @@ def _grupos(sessao, linhas) -> list[GrupoSaida]:
                     valor=grupo.valor,
                     linhas=list(grupo.linhas),
                     trava=grupo.trava,
-                    pode_criar=importar_agendas.pode_criar(grupo.campo),
-                    sugestoes=[
-                        SugestaoSaida(nome=nome, alvo=alvo)
-                        for nome in grupo.sugestoes
-                        # A sugestão sem alvo não entra: oferecer um atalho que o
-                        # servidor recusa é pior que não oferecer atalho.
-                        if (alvo := _alvo_de(sessao, grupo.campo, nome)) is not None
-                    ],
+                    #: E NÃO SÓ PELO CAMPO. Um nome AMBÍGUO já existe duas
+                    #: vezes: oferecer "Cadastrar como novo" ali é oferecer a
+                    #: terceira duplicata, e o que a pessoa tem de fazer é
+                    #: escolher um dos dois. Achado de revisão, 11/10/2026.
+                    pode_criar=(
+                        importar_agendas.pode_criar(grupo.campo)
+                        and not importar_agendas.e_ambiguo(
+                            sessao, grupo.campo, grupo.valor, indice
+                        )
+                    ),
+                    sugestoes=_sugestoes_de(sessao, grupo, indice),
                 )
             )
     return sorted(saida, key=lambda grupo: (not grupo.trava, -len(grupo.linhas), grupo.valor))
