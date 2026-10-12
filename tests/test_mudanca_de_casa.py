@@ -462,27 +462,29 @@ def test_a_mutacao_acontece_DENTRO_do_savepoint():
     ]
     assert len(blocos) == 1, f"esperava um savepoint, achei {len(blocos)}"
 
-    #: AS TRÊS ATRIBUIÇÕES QUE GRAVAM, todas dentro dele.
-    dentro = {
-        alvo.attr
-        for no in ast.walk(blocos[0])
-        if isinstance(no, ast.Assign)
-        for alvo in no.targets
-        if isinstance(alvo, ast.Attribute)
-    }
-    assert {"instituicao_id", "pendente_de_revisao", "motivo_da_revisao"} <= dentro, (
+    def atributos_de_contato(raiz: ast.AST) -> set[str]:
+        return {
+            alvo.attr
+            for no in ast.walk(raiz)
+            if isinstance(no, ast.Assign)
+            for alvo in no.targets
+            if isinstance(alvo, ast.Attribute)
+            and isinstance(alvo.value, ast.Name)
+            and alvo.value.id == "contato"
+        }
+
+    esperados = {"instituicao_id", "pendente_de_revisao", "motivo_da_revisao"}
+
+    #: AS TRÊS ATRIBUIÇÕES QUE GRAVAM `contato`, todas dentro dele.
+    dentro = atributos_de_contato(blocos[0])
+    assert esperados <= dentro, (
         "a mutação precisa estar DENTRO do savepoint: fora dele, o "
-        f"`begin_nested` a descarrega antes de o SAVEPOINT existir. Achei {dentro}"
+        "`begin_nested` a descarrega antes de o SAVEPOINT existir. "
+        f"Fora do savepoint: {esperados - dentro}"
     )
 
     #: E NENHUMA DELAS FORA. `ast.walk` da função inteira menos as de dentro.
-    todas = {
-        alvo.attr
-        for no in ast.walk(arvore)
-        if isinstance(no, ast.Assign)
-        for alvo in no.targets
-        if isinstance(alvo, ast.Attribute)
-    }
+    todas = atributos_de_contato(arvore)
     assert todas == dentro, f"gravação fora do savepoint: {todas - dentro}"
 
 
