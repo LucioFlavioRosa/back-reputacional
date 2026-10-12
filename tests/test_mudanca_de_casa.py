@@ -278,3 +278,189 @@ def test_a_mudanca_TRAVA_a_linha_que_vai_mexer():
         "a leitura do contato precisa travar a linha: sem isso, duas mudanças "
         "simultâneas se sobrescrevem"
     )
+
+
+# -- os quatro achados da revisão ---------------------------------------------
+
+
+def test_a_contagem_e_SO_das_agendas_da_CASA_ANTIGA(cliente_admin, sessao):
+    """ACHADO DE REVISÃO COM SEVERIDADE MÉDIA: o nome não entregava o que promete.
+
+    `agendas_que_ficam` contava TODAS as agendas do contato — inclusive as de uma
+    terceira instituição e as da própria casa de DESTINO. O número inflava a
+    frase da confirmação, que é a única razão de ele existir.
+
+    E UMA TELA QUE CONTA ERRADO NUMA CONFIRMAÇÃO é pior que uma que não conta:
+    "7 agendas continuam registradas em XP Asset" é o que distingue "mudou de
+    casa" de "errei a instituição", e quem lê decide com base nela.
+
+    O ARRANJO DESTE TESTE: uma agenda na casa antiga, uma na de destino, e uma
+    numa terceira. Só a primeira conta.
+    """
+    from datetime import date
+
+    jgp = _casa(sessao, "JGP Gestao Zz10")
+    leto = _casa(sessao, "Leto Capital Zz10")
+    terceira = _casa(sessao, "Outra Casa Zz10")
+    nikolau = _contato(sessao, "Nikolau Muller Zz10", jgp)
+
+    for casa in (jgp, leto, terceira):
+        criada = cliente_admin.post(
+            "/api/interacoes",
+            json={
+                "data_interacao": str(date(2026, 9, 25)),
+                "instituicao_id": str(casa.id),
+                "interlocutor_id": str(nikolau.id),
+                "uf": "SP",
+            },
+        )
+        assert criada.status_code == 201, criada.text
+
+    corpo = cliente_admin.post(
+        f"/api/interlocutores/{nikolau.id}/mudanca-de-casa",
+        json={"instituicao_id": str(leto.id)},
+    ).json()
+
+    #: UMA, e não três: só a da JGP fica atrás.
+    assert corpo["agendas_que_ficam"] == 1, corpo
+
+
+def test_a_contagem_pega_quem_participou_como_ACOMPANHANTE(cliente_admin, sessao):
+    """Os DOIS lugares onde um contato participa.
+
+    `interacao.interlocutor_id` guarda o principal — 67 usos em filtros e
+    relatórios dependem dele — e `interacao_interlocutor` guarda os demais.
+    Contar só o primeiro diria "zero agendas" para quem participou de trinta como
+    acompanhante, e a frase da confirmação mandaria a pessoa concluir que foi
+    erro de cadastro.
+    """
+    from datetime import date
+
+    jgp = _casa(sessao, "JGP Gestao Zz11")
+    leto = _casa(sessao, "Leto Capital Zz11")
+    principal = _contato(sessao, "Quem Conduz Zz11", jgp)
+    acompanhante = _contato(sessao, "Quem Acompanha Zz11", jgp)
+
+    criada = cliente_admin.post(
+        "/api/interacoes",
+        json={
+            "data_interacao": str(date(2026, 9, 25)),
+            "instituicao_id": str(jgp.id),
+            "interlocutor_id": str(principal.id),
+            #: `outra_parte`, e não uma lista de ids: cada participante leva a
+            #: `presenca` e a marca de `principal` — o esquema é
+            #: `ParticipanteDaOutraParteEntrada`.
+            "outra_parte": [{"interlocutor_id": str(acompanhante.id)}],
+            "uf": "SP",
+        },
+    )
+    assert criada.status_code == 201, criada.text
+
+    corpo = cliente_admin.post(
+        f"/api/interlocutores/{acompanhante.id}/mudanca-de-casa",
+        json={"instituicao_id": str(leto.id)},
+    ).json()
+
+    assert corpo["agendas_que_ficam"] == 1, corpo
+
+
+def test_mover_ENCERRA_a_pendencia_da_fila(cliente_admin, sessao):
+    """ACHADO DE REVISÃO, e é um erro de raciocínio meu.
+
+    Eu havia decidido não mexer na pendência porque "uma mudança deliberada é uma
+    decisão, não uma dúvida". O outro lado é o que importa: "não precisa marcar
+    dúvida nova; precisa ENCERRAR a dúvida antiga".
+
+    O motivo que a fila mostrava diz literalmente "confirme se são a mesma
+    pessoa, SE ELA MUDOU DE CASA, ou se são homônimas". Mover É a resposta — e
+    deixar na fila faria a pergunta voltar amanhã, com a resposta já dada no
+    dado.
+    """
+    jgp = _casa(sessao, "JGP Gestao Zz12")
+    leto = _casa(sessao, "Leto Capital Zz12")
+    nikolau = _contato(sessao, "Nikolau Muller Zz12", jgp)
+    nikolau.pendente_de_revisao = True
+    nikolau.motivo_da_revisao = (
+        "Apareceu em 2 instituições na mesma planilha — confirme se são a mesma "
+        "pessoa, se ela mudou de casa, ou se são homônimas."
+    )
+    sessao.flush()
+
+    corpo = cliente_admin.post(
+        f"/api/interlocutores/{nikolau.id}/mudanca-de-casa",
+        json={"instituicao_id": str(leto.id)},
+    ).json()
+
+    assert corpo["consolidou"] is True
+    sessao.refresh(nikolau)
+    assert nikolau.pendente_de_revisao is False
+    #: O MOTIVO SAI COM A PENDÊNCIA: ele era a pergunta, e ela foi respondida.
+    assert nikolau.motivo_da_revisao is None
+
+
+def test_mover_quem_NAO_estava_na_fila_diz_que_nao_consolidou(cliente_admin, sessao):
+    """O outro lado do booleano: a tela não deve anunciar o que não houve."""
+    jgp = _casa(sessao, "JGP Gestao Zz13")
+    leto = _casa(sessao, "Leto Capital Zz13")
+    nikolau = _contato(sessao, "Nikolau Muller Zz13", jgp)
+    assert nikolau.pendente_de_revisao is False
+
+    corpo = cliente_admin.post(
+        f"/api/interlocutores/{nikolau.id}/mudanca-de-casa",
+        json={"instituicao_id": str(leto.id)},
+    ).json()
+
+    assert corpo["consolidou"] is False
+
+
+def test_a_mudanca_passa_pelo_SAVEPOINT_do_gravar():
+    """ACHADO DE REVISÃO COM SEVERIDADE MÉDIA, e o TERCEIRO caso hoje.
+
+    A conferência de nome duplicado acontece ANTES do flush. Duas sessões movendo
+    contatos de MESMO `nome_normalizado` para a MESMA casa passam as duas por
+    ela, antes de qualquer commit, e uma perde no índice único da `0002`.
+
+    Sem savepoint isso é 500. Com ele é a recusa de domínio, com a mensagem que
+    diz o que fazer — e `app/banco/gravar.py` existe exatamente para essa
+    tradução, com a lição da ORDEM escrita em voz alta no docstring dele.
+
+    A ÂNCORA É A FONTE porque provar a corrida exigiria duas conexões e um commit
+    no meio, e a fixture roda tudo numa transação que termina em rollback.
+    """
+    import inspect
+
+    from app.casos_de_uso import mudar_a_casa
+
+    fonte = inspect.getsource(mudar_a_casa.mudar)
+    assert "gravar(" in fonte, (
+        "a gravação precisa passar pelo `gravar`: sem o savepoint, a corrida no "
+        "índice único vira 500 em vez de recusa"
+    )
+    assert "sessao.flush()" not in fonte, (
+        "um `flush` pelado aqui é a corrida sem rede — `gravar` é quem traduz"
+    )
+
+
+def test_o_destino_e_TRAVADO_junto_com_o_contato():
+    """ACHADO DE REVISÃO (BAIXA): o destino era validado ativo SEM lock.
+
+    Uma edição concorrente podia DESATIVAR a casa depois da conferência e antes
+    do commit, deixando o contato numa instituição inativa — exatamente o que a
+    recusa por casa desativada existe para impedir.
+
+    E A ORDEM É FIXA: contato primeiro, casa depois, em todo caminho deste caso
+    de uso. Duas chamadas simultâneas esperam uma à outra, nunca se cruzam.
+    """
+    import inspect
+
+    from app.casos_de_uso import mudar_a_casa
+
+    fonte = inspect.getsource(mudar_a_casa.mudar)
+    assert fonte.count("with_for_update()") == 2, (
+        "o contato E o destino precisam ser travados: "
+        f"achei {fonte.count('with_for_update()')} travas"
+    )
+    #: E O CONTATO VEM PRIMEIRO, que é a ordem que evita deadlock.
+    assert fonte.index("Interlocutor.id == interlocutor_id") < fonte.index(
+        "Instituicao.id == instituicao_id"
+    )

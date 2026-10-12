@@ -36,9 +36,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from app.banco.gravar import gravar
 from app.banco.tabelas_interacoes import InteracaoInterlocutor, InteracaoRegistro
 from app.banco.tabelas_stakeholders import Instituicao, Interlocutor
 from app.dominio.erros import NaoEncontrado, RegraViolada
@@ -57,7 +58,24 @@ class Mudanca:
     #: QUANTAS AGENDAS FICAM NA CASA ANTIGA. É a frase que distingue "mudou de
     #: casa" de "eu errei a instituição no cadastro": com zero agendas, a
     #: segunda leitura é a provável.
+    #:
+    #: NA CASA ANTIGA, E NÃO "do contato" — achado de revisão com severidade
+    #: MÉDIA. A primeira versão contava TODAS as agendas da pessoa, inclusive as
+    #: de uma terceira instituição e as da própria casa de destino: o número
+    #: inflava a frase da confirmação, que é a única razão de ele existir. Uma
+    #: tela que conta errado numa confirmação é pior que uma que não conta.
+    #:
+    #: SEM CASA ANTIGA É ZERO, por definição: não há casa de onde ficar nada.
     agendas_que_ficam: int
+    #: SE O CONTATO SAIU DA FILA DE REVISÃO com esta mudança.
+    #:
+    #: Achado de revisão, e é um erro de raciocínio meu: eu havia decidido não
+    #: mexer na pendência porque "uma mudança deliberada é uma decisão, não uma
+    #: dúvida". O outro lado é o que importa — "não precisa marcar dúvida nova;
+    #: precisa ENCERRAR a dúvida antiga". O motivo da fila diz literalmente
+    #: "confirme se são a mesma pessoa, se ela mudou de casa, ou se são
+    #: homônimas": mover É a resposta, e deixar na fila faz a pergunta voltar.
+    consolidou: bool
 
 
 def mudar(
@@ -74,7 +92,19 @@ def mudar(
     if contato is None:
         raise NaoEncontrado("Contato não encontrado.")
 
-    destino = sessao.get(Instituicao, instituicao_id)
+    #: O DESTINO TAMBÉM É TRAVADO, e nesta ordem — contato, depois instituição.
+    #:
+    #: Achado de revisão (BAIXA): sem o lock, uma edição concorrente podia
+    #: DESATIVAR a casa depois da conferência e antes do commit, deixando o
+    #: contato numa instituição inativa — exatamente o que a recusa abaixo
+    #: existe para impedir.
+    #:
+    #: A ORDEM FIXA é o que evita deadlock: todo caminho deste caso de uso trava
+    #: o contato primeiro e a casa depois, então duas chamadas simultâneas
+    #: esperam, nunca se cruzam.
+    destino = sessao.scalars(
+        select(Instituicao).where(Instituicao.id == instituicao_id).with_for_update()
+    ).first()
     if destino is None:
         raise NaoEncontrado("Instituição de destino não encontrada.")
     if not destino.ativo:
@@ -120,31 +150,70 @@ def mudar(
         else None
     )
 
-    #: AS AGENDAS QUE FICAM, contadas nos DOIS lugares onde um contato participa:
+    #: AS AGENDAS QUE FICAM NA CASA ANTIGA.
+    #:
+    #: SEM `outerjoin`, e isto também veio da revisão: a primeira versão juntava
+    #: `interacao_interlocutor` e precisava de `count(distinct)` porque o join
+    #: MULTIPLICA — uma agenda de três participantes virava três linhas. Com a
+    #: participação como subconsulta, cada agenda é uma linha e o `count(*)` é o
+    #: número; e o filtro da casa antiga cabe sem acrobacia.
+    #:
+    #: OS DOIS LUGARES ONDE UM CONTATO PARTICIPA continuam cobertos:
     #: `interacao.interlocutor_id` guarda o principal (67 usos em filtros e
     #: relatórios dependem dele) e `interacao_interlocutor` guarda os demais.
     #: Contar só o primeiro diria "zero agendas" para quem participou de trinta
     #: como acompanhante.
-    agendas = (
-        sessao.scalar(
-            select(InteracaoRegistro.id.distinct().label("id"))
-            .outerjoin(
-                InteracaoInterlocutor,
-                InteracaoInterlocutor.interacao_id == InteracaoRegistro.id,
-            )
-            .where(
-                or_(
-                    InteracaoRegistro.interlocutor_id == contato.id,
-                    InteracaoInterlocutor.interlocutor_id == contato.id,
+    agendas = 0
+    if de_onde is not None:
+        agendas = (
+            sessao.scalar(
+                select(func.count())
+                .select_from(InteracaoRegistro)
+                .where(
+                    InteracaoRegistro.instituicao_id == de_onde.id,
+                    or_(
+                        InteracaoRegistro.interlocutor_id == contato.id,
+                        InteracaoRegistro.id.in_(
+                            select(InteracaoInterlocutor.interacao_id).where(
+                                InteracaoInterlocutor.interlocutor_id == contato.id
+                            )
+                        ),
+                    ),
                 )
             )
-            .with_only_columns(_contar_distintas())
+            or 0
         )
-        or 0
-    )
 
+    #: A PENDÊNCIA SE ENCERRA AQUI, e não vira dúvida nova.
+    #:
+    #: O motivo que a fila mostrava — "apareceu em N instituições na mesma
+    #: planilha, confirme se são a mesma pessoa, se ela mudou de casa, ou se são
+    #: homônimas" — foi RESPONDIDO por este gesto. Deixá-lo na fila faria a
+    #: pergunta voltar amanhã, com a resposta já dada no dado.
+    consolidou = contato.pendente_de_revisao
     contato.instituicao_id = destino.id
-    sessao.flush()
+    contato.pendente_de_revisao = False
+    contato.motivo_da_revisao = None
+
+    #: PELO `gravar`, e não por um `flush` pelado — achado de revisão com
+    #: severidade MÉDIA, e o TERCEIRO caso hoje em que eu conferi antes do flush
+    #: sem a rede que traduz o que escapa.
+    #:
+    #: A CORRIDA QUE SOBRAVA: duas sessões movendo contatos de MESMO
+    #: `nome_normalizado` para a MESMA casa passam as duas pela conferência de
+    #: duplicado acima, antes de qualquer commit, e uma perde no índice único da
+    #: `0002`. Sem savepoint isso é 500; com ele é a recusa de domínio, com a
+    #: mensagem que diz o que fazer.
+    gravar(
+        sessao,
+        contato,
+        ao_colidir=(
+            f"Já existe um contato chamado {contato.nome!r} em "
+            f"{destino.nome!r} — alguém pode ter movido ou cadastrado outro "
+            "agora mesmo. Se for a mesma pessoa, a resposta é fundir os dois em "
+            "'Possíveis duplicados'."
+        ),
+    )
 
     return Mudanca(
         id=str(contato.id),
@@ -152,15 +221,5 @@ def mudar(
         de=de_onde.nome if de_onde else None,
         para=destino.nome,
         agendas_que_ficam=int(agendas),
+        consolidou=consolidou,
     )
-
-
-def _contar_distintas():
-    """`count(distinct interacao.id)`, isolado porque o `outerjoin` multiplica.
-
-    Uma agenda com três participantes vira três linhas no join, e um `count(*)`
-    diria três agendas onde há uma.
-    """
-    from sqlalchemy import distinct, func
-
-    return func.count(distinct(InteracaoRegistro.id))

@@ -49,8 +49,15 @@ class MudancaSaida(BaseModel):
     de: str | None
     para: str
     #: QUANTAS AGENDAS FICAM NA CASA ANTIGA — a frase que distingue "mudou de
-    #: casa" de "eu errei a instituição no cadastro".
+    #: casa" de "eu errei a instituição no cadastro". Zero quando não havia casa
+    #: de origem: não há de onde ficar nada.
     agendas_que_ficam: int
+    #: SE O CONTATO SAIU DA FILA DE REVISÃO com esta mudança.
+    #:
+    #: Mover É a resposta à pergunta que a fila fazia — "confirme se são a mesma
+    #: pessoa, se ela mudou de casa, ou se são homônimas" —, então ela se
+    #: encerra aqui em vez de voltar amanhã com a resposta já dada no dado.
+    consolidou: bool
 
 
 @rotas.post("/interlocutores/{id}/mudanca-de-casa", response_model=MudancaSaida)
