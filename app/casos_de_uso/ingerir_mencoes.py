@@ -68,8 +68,20 @@ from app.dominio.ingestao_score import (
 from app.dominio.texto import normalizar
 
 #: Abrir uma planilha de 10 mil linhas é barato; abrir um arquivo de 200 MB
-#: enviado por engano não é. O maior dos quatro exports de hoje tem 1,4 MB.
-TAMANHO_MAXIMO = 40 * 1024 * 1024
+#: enviado por engano não é. O maior export real de hoje tem 3,8 MB (o clipping
+#: da Clipei), e o teto é pedido do dono do produto: planilhas de até 80 MB.
+#:
+#: O `client_max_body_size` DO NGINX DO FRONT FICA ACIMA DISTO (81m), e a ordem
+#: é o que importa: o nginx vem primeiro, então cortar lá primeiro troca esta
+#: mensagem — que diz o tamanho aceito — por um 413 seco do proxy. Já esteve
+#: desalinhado: 26m de nginx contra 40 MB aqui deixava um vão de 14 MB em que o
+#: arquivo era recusado sem explicação. Quem mudar um muda o outro.
+#:
+#: E O TETO DE BYTES NÃO É O LIMITE REAL destas planilhas: o tempo é. O ingress
+#: do Container Apps corta a requisição por volta de 240 s, e o clipping de
+#: 3,8 MB já levou 22,9 s de processamento. 80 MB passam por aqui e podem não
+#: terminar lá. Arquivo dessa ordem pede importação em segundo plano.
+TAMANHO_MAXIMO = 80 * 1024 * 1024
 
 #: A assinatura de um ZIP — e um `.xlsx` é um ZIP. Conferir os quatro primeiros
 #: bytes recusa o `.xls` antigo, o CSV renomeado e o PDF trocado por engano
@@ -150,9 +162,13 @@ def _como_o_openpyxl(celula: object) -> object:
 #:
 #: Guardar as células derruba a releitura (ver `ArquivoLido`), e o preço é
 #: memória: medido com 25.000 linhas, 20 MB — cerca de 0,8 KB por linha. O
-#: limite de upload é 40 MB de `.xlsx` COMPRIMIDO, e um arquivo desses pode
-#: trazer centenas de milhares de linhas: guardar tudo chegaria a centenas de
-#: MB, e o servidor é compartilhado.
+#: limite de upload é 80 MB de `.xlsx` COMPRIMIDO, e um arquivo desses pode
+#: trazer centenas de milhares de linhas: guardar tudo chegaria a vários GB, e o
+#: servidor é compartilhado.
+#:
+#: ESTE TETO É O QUE TORNA OS 80 MB VIÁVEIS DE MEMÓRIA. Sem ele, subir o limite
+#: de upload subiria o pico de memória na mesma proporção; com ele, o que cresce
+#: é o TEMPO, que é o limite de verdade (o ingress corta por volta de 240 s).
 #:
 #: 8 MB porque os arquivos reais de hoje têm 2 a 5 MB — o ganho fica onde ele
 #: existe, com folga. Acima do teto, cada etapa volta a decodificar em

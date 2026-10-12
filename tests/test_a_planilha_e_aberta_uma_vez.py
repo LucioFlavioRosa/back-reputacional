@@ -273,9 +273,13 @@ def test_o_CABECALHO_e_procurado_POR_FONTE_e_nao_herdado():
 def test_ARQUIVO_GRANDE_nao_fica_guardado(sessao, clipei, contador, monkeypatch):
     """O teto de memória, e o preço que ele cobra.
 
-    Guardar as células de um arquivo de 40 MB comprimido — o limite de upload —
-    chegaria a centenas de MB. Acima do teto a subida volta a decodificar por
+    Guardar as células de um arquivo de 80 MB comprimido — o limite de upload —
+    chegaria a vários GB. Acima do teto a subida volta a decodificar por
     etapa: fica lenta como era antes, em vez de arriscar a memória do servidor.
+
+    E É ESTA DECISÃO QUE TORNOU OS 80 MB POSSÍVEIS. O teto de upload subiu de 40
+    para 80 MB sem subir o pico de memória, porque acima de 8 MB de arquivo nada
+    fica retido. O que cresce é o tempo.
 
     O TETO É BAIXADO no teste em vez de se gerar um arquivo de 8 MB: o que se
     afirma é a DECISÃO, e gerar oito megabytes de planilha para prová-la custaria
