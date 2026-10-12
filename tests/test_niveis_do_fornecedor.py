@@ -16,7 +16,13 @@ O QUE ESTES TESTES PROTEGEM:
   nível acima, sem erro nenhum na subida: os números do índice mudam e nada
   acusa;
 * a ausência de campo para o N2 do fornecedor, que é deliberada. Importá-lo
-  criaria um segundo N2, capaz de DISCORDAR do derivado;
+  criaria um segundo N2, capaz de DISCORDAR do derivado — e isso está medido: na
+  consolidada da Bites o `Atributo` contradizia o `N1` em 1.418 das 2.842 linhas
+  (migration 0079). Quem tirou o `atributo` do mapeamento da Bites foi a
+  migration **0069**; a 0079 trocou o `tema` de `Categoria` para `N3`;
+* os dois campos que carregam taxonomia, `tema` e `subtema`. O segundo está em
+  `CAMPOS` e é lido, mas nenhum fornecedor o mapeia hoje — é caminho aberto, e
+  prendê-lo agora custa um teste;
 * o vocabulário fechado: um nome de campo fora de `CAMPOS` faz a subida ser
   recusada por "campo desconhecido", e o lugar de descobrir isso é aqui, não no
   upload do dono do produto.
@@ -52,7 +58,22 @@ O_N3_DE_CADA_FONTE = {
 
 #: O N2 DO FORNECEDOR, que nenhum campo deve receber. Nome exato: `Subcategoria`
 #: contém `Categoria` como pedaço, e comparar por `in` daria falso positivo.
-COLUNAS_DE_OUTRO_NIVEL = {"Categoria"}
+O_N2_DO_FORNECEDOR = {"Categoria", "N2"}
+
+#: TODA COLUNA QUE É OUTRO NÍVEL, pelos nomes que os fornecedores usam hoje.
+#:
+#: Achado de revisão (MÉDIA): a primeira versão deste arquivo barrava só
+#: `Categoria`, e `subtema` — que ESTÁ em `CAMPOS` e É lido por `ler_linha`
+#: (`app/dominio/ingestao_score.py`, `subtema=_rotulo(opcional("subtema"), …)`)
+#: — podia receber `Atributo` ou `N1` sem nada acusar.
+COLUNAS_DE_OUTRO_NIVEL = {"Categoria", "Atributo", "N1", "N2"}
+
+#: OS CAMPOS QUE LIGAM A MENÇÃO À ÁRVORE. São os dois que passam por `_rotulo` e
+#: são procurados no cadastro de assuntos; é neles que o nível importa.
+#:
+#: `atributo` NÃO está aqui de propósito: ele guarda texto solto, e a Clipei
+#: aponta-o para `Atributo` — a pendência registrada no fim deste arquivo.
+CAMPOS_DE_TAXONOMIA = {"tema", "subtema"}
 
 
 @pytest.fixture
@@ -93,12 +114,35 @@ def test_nenhuma_fonte_le_o_N2_do_fornecedor(mapeamentos: dict[str, dict]) -> No
     for codigo, mapeamento in mapeamentos.items():
         colunas = mapeamento.get("colunas") or {}
         lidas = set(colunas.values())
-        intrusas = lidas & COLUNAS_DE_OUTRO_NIVEL
+        intrusas = lidas & O_N2_DO_FORNECEDOR
         assert not intrusas, (
             f"a fonte {codigo} passou a ler {sorted(intrusas)}, que é o N2 do "
             "fornecedor. O N2 da menção é derivado de `macro_tema`; um segundo "
-            "N2 pode discordar dele, e a menção fica com dois."
+            "N2 pode discordar dele — na consolidada da Bites o `Atributo` "
+            "contradizia o `N1` em 1.418 de 2.842 linhas (migration 0079)."
         )
+
+
+def test_campo_de_taxonomia_nao_recebe_coluna_de_outro_nivel(
+    mapeamentos: dict[str, dict],
+) -> None:
+    """`tema` e `subtema` só podem vir do nível mais fundo.
+
+    Achado de revisão (MÉDIA): barrar só `Categoria` deixava passar
+    `subtema -> "Atributo"` e `subtema -> "N1"`. `subtema` está em `CAMPOS` e é
+    lido, então é caminho aberto — e nenhum fornecedor o mapeia hoje, o que faz
+    deste o momento certo de prendê-lo.
+    """
+    for codigo, mapeamento in mapeamentos.items():
+        colunas = mapeamento.get("colunas") or {}
+        for campo in CAMPOS_DE_TAXONOMIA:
+            coluna = colunas.get(campo)
+            assert coluna not in COLUNAS_DE_OUTRO_NIVEL, (
+                f"a fonte {codigo} aponta `{campo}` para a coluna {coluna!r}, "
+                "que é outro nível da árvore do fornecedor. A subida não quebra: "
+                "as menções passam a ser agrupadas no nível errado, os números "
+                "do índice mudam e nada acusa."
+            )
 
 
 def test_o_painel_nao_tem_campo_para_o_N2_do_fornecedor() -> None:
@@ -124,10 +168,15 @@ def test_todo_campo_mapeado_existe_no_vocabulario(mapeamentos: dict[str, dict]) 
 def test_o_N1_do_fornecedor_so_sobrevive_na_clipei(mapeamentos: dict[str, dict]) -> None:
     """O estado de hoje, registrado — não um estado desejado.
 
-    A Bites parou de informar o N1 (migration 0079) porque ele pode discordar do
-    derivado. A Clipei ainda mapeia `atributo` para a coluna `Atributo`, que é o
-    N1 dela. Este teste existe para que, no dia em que essa pendência for
-    decidida, a decisão passe por aqui — em vez de a divergência seguir invisível.
+    A Bites parou de informar o N1 na migration **0069**, e a 0079 mediu por quê:
+    naquela planilha o `Atributo` contradizia o `N1` em 1.418 das 2.842 linhas. A
+    Clipei ainda mapeia `atributo` para a coluna `Atributo`, que é o N1 dela, e
+    ninguém mediu a divergência lá.
+
+    SE ESTE TESTE QUEBRAR, há uma decisão a tomar, não um número a atualizar:
+    ou o novo fornecedor para de informar o N1 (como a Bites), ou alguém assume
+    que aquele N1 vale e aceita conviver com dois. Trocar a lista esperada sem
+    decidir é perder a pergunta.
     """
     com_atributo = sorted(
         codigo
