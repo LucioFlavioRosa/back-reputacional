@@ -413,32 +413,77 @@ def test_mover_quem_NAO_estava_na_fila_diz_que_nao_consolidou(cliente_admin, ses
     assert corpo["consolidou"] is False
 
 
-def test_a_mudanca_passa_pelo_SAVEPOINT_do_gravar():
-    """ACHADO DE REVISÃO COM SEVERIDADE MÉDIA, e o TERCEIRO caso hoje.
+def test_a_mutacao_acontece_DENTRO_do_savepoint():
+    """ACHADO DE REVISÃO COM SEVERIDADE MÉDIA, sobre o meu conserto anterior.
 
-    A conferência de nome duplicado acontece ANTES do flush. Duas sessões movendo
-    contatos de MESMO `nome_normalizado` para a MESMA casa passam as duas por
-    ela, antes de qualquer commit, e uma perde no índice único da `0002`.
+    Eu havia posto as três atribuições ANTES de chamar `gravar`, e
+    `Session.begin_nested()` FAZ FLUSH DO QUE ESTÁ PENDENTE AO ENTRAR no bloco: o
+    `UPDATE` saía antes de o SAVEPOINT existir. A colisão continuava virando
+    `RegraViolada` — o `try` do `gravar` envolve a entrada —, mas a sessão ficava
+    marcada para rollback, e qualquer leitura depois dali estouraria
+    `PendingRollbackError`. O savepoint não isolava nada; só parecia.
 
-    Sem savepoint isso é 500. Com ele é a recusa de domínio, com a mensagem que
-    diz o que fazer — e `app/banco/gravar.py` existe exatamente para essa
-    tradução, com a lição da ORDEM escrita em voz alta no docstring dele.
+    E EU HAVIA LIDO A LIÇÃO: `app/banco/gravar.py` diz em voz alta que "o `add`
+    precisa ficar DENTRO do savepoint". Citei a frase no comentário e não a
+    apliquei — `gravar` só cumpre a promessa para objeto NOVO, porque aí o `add`
+    é dele; num `UPDATE` de objeto já sujo ele não tem como pegar a mutação.
 
-    A ÂNCORA É A FONTE porque provar a corrida exigiria duas conexões e um commit
-    no meio, e a fixture roda tudo numa transação que termina em rollback.
+    == POR QUE ESTA ÂNCORA É POR `ast`, E NÃO POR TEXTO ==
+
+    A primeira versão cobrava a string `gravar(` e a AUSÊNCIA de
+    `sessao.flush()`. A revisão apontou que ela "prova menos do que diz": não
+    enxerga o flush IMPLÍCITO do `begin_nested`, e barraria um flush legítimo
+    acrescentado depois por outra razão.
+
+    A propriedade que importa é ESTRUTURAL — "as atribuições a `contato` estão
+    dentro do `with begin_nested`" —, e `ast` afirma exatamente isso. Provar pelo
+    comportamento exigiria a corrida: duas conexões e um commit no meio, e a
+    fixture roda tudo numa transação que termina em rollback.
     """
+    import ast
     import inspect
+    import textwrap
 
     from app.casos_de_uso import mudar_a_casa
 
-    fonte = inspect.getsource(mudar_a_casa.mudar)
-    assert "gravar(" in fonte, (
-        "a gravação precisa passar pelo `gravar`: sem o savepoint, a corrida no "
-        "índice único vira 500 em vez de recusa"
+    arvore = ast.parse(textwrap.dedent(inspect.getsource(mudar_a_casa.mudar)))
+
+    #: O `with` cujo contexto é `sessao.begin_nested()`.
+    blocos = [
+        no
+        for no in ast.walk(arvore)
+        if isinstance(no, ast.With)
+        and any(
+            isinstance(item.context_expr, ast.Call)
+            and isinstance(item.context_expr.func, ast.Attribute)
+            and item.context_expr.func.attr == "begin_nested"
+            for item in no.items
+        )
+    ]
+    assert len(blocos) == 1, f"esperava um savepoint, achei {len(blocos)}"
+
+    #: AS TRÊS ATRIBUIÇÕES QUE GRAVAM, todas dentro dele.
+    dentro = {
+        alvo.attr
+        for no in ast.walk(blocos[0])
+        if isinstance(no, ast.Assign)
+        for alvo in no.targets
+        if isinstance(alvo, ast.Attribute)
+    }
+    assert {"instituicao_id", "pendente_de_revisao", "motivo_da_revisao"} <= dentro, (
+        "a mutação precisa estar DENTRO do savepoint: fora dele, o "
+        f"`begin_nested` a descarrega antes de o SAVEPOINT existir. Achei {dentro}"
     )
-    assert "sessao.flush()" not in fonte, (
-        "um `flush` pelado aqui é a corrida sem rede — `gravar` é quem traduz"
-    )
+
+    #: E NENHUMA DELAS FORA. `ast.walk` da função inteira menos as de dentro.
+    todas = {
+        alvo.attr
+        for no in ast.walk(arvore)
+        if isinstance(no, ast.Assign)
+        for alvo in no.targets
+        if isinstance(alvo, ast.Attribute)
+    }
+    assert todas == dentro, f"gravação fora do savepoint: {todas - dentro}"
 
 
 def test_o_destino_e_TRAVADO_junto_com_o_contato():

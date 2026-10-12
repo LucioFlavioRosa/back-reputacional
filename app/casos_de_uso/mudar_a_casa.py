@@ -37,9 +37,9 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.banco.gravar import gravar
 from app.banco.tabelas_interacoes import InteracaoInterlocutor, InteracaoRegistro
 from app.banco.tabelas_stakeholders import Instituicao, Interlocutor
 from app.dominio.erros import NaoEncontrado, RegraViolada
@@ -191,29 +191,44 @@ def mudar(
     #: homônimas" — foi RESPONDIDO por este gesto. Deixá-lo na fila faria a
     #: pergunta voltar amanhã, com a resposta já dada no dado.
     consolidou = contato.pendente_de_revisao
-    contato.instituicao_id = destino.id
-    contato.pendente_de_revisao = False
-    contato.motivo_da_revisao = None
 
-    #: PELO `gravar`, e não por um `flush` pelado — achado de revisão com
-    #: severidade MÉDIA, e o TERCEIRO caso hoje em que eu conferi antes do flush
-    #: sem a rede que traduz o que escapa.
+    #: A MUTAÇÃO FICA DENTRO DO SAVEPOINT, e não antes dele.
     #:
-    #: A CORRIDA QUE SOBRAVA: duas sessões movendo contatos de MESMO
-    #: `nome_normalizado` para a MESMA casa passam as duas pela conferência de
-    #: duplicado acima, antes de qualquer commit, e uma perde no índice único da
-    #: `0002`. Sem savepoint isso é 500; com ele é a recusa de domínio, com a
-    #: mensagem que diz o que fazer.
-    gravar(
-        sessao,
-        contato,
-        ao_colidir=(
+    #: ACHADO DE REVISÃO COM SEVERIDADE MÉDIA, e é sobre o meu conserto anterior:
+    #: eu havia posto as três atribuições ANTES de chamar `gravar`, e
+    #: `Session.begin_nested()` FAZ FLUSH DO QUE ESTÁ PENDENTE AO ENTRAR no
+    #: bloco. O `UPDATE` saía, portanto, antes de o SAVEPOINT existir.
+    #:
+    #: O QUE ISSO CUSTAVA: a colisão continuava virando `RegraViolada`, porque o
+    #: `try` do `gravar` envolve a entrada no bloco — mas a sessão ficava marcada
+    #: para rollback, e qualquer leitura depois dali estouraria
+    #: `PendingRollbackError`. O savepoint não estava isolando nada; só parecia.
+    #:
+    #: É EXATAMENTE A LIÇÃO QUE `app/banco/gravar.py` REGISTRA em voz alta — "o
+    #: `add` precisa ficar DENTRO do savepoint" — e eu a li, citei no comentário,
+    #: e não a apliquei: `gravar` só consegue cumprir a promessa para quem lhe
+    #: entrega um objeto NOVO, porque aí o `add` é dele. Num `UPDATE` de objeto já
+    #: sujo, ele não tem como pegar a mutação.
+    #:
+    #: ENTÃO É O SAVEPOINT EXPLÍCITO, a mesma forma de `enquadrar_em_lote`.
+    try:
+        with sessao.begin_nested():
+            contato.instituicao_id = destino.id
+            contato.pendente_de_revisao = False
+            contato.motivo_da_revisao = None
+            sessao.flush()
+    except IntegrityError as erro:
+        #: A CORRIDA QUE ISTO PEGA: duas sessões movendo contatos de MESMO
+        #: `nome_normalizado` para a MESMA casa passam as duas pela conferência
+        #: acima, antes de qualquer commit, e uma perde no índice único da `0002`.
+        #: A conferência continua valendo — é dela que sai a mensagem que diz o
+        #: que fazer —, mas a última palavra é do índice.
+        raise RegraViolada(
             f"Já existe um contato chamado {contato.nome!r} em "
             f"{destino.nome!r} — alguém pode ter movido ou cadastrado outro "
             "agora mesmo. Se for a mesma pessoa, a resposta é fundir os dois em "
             "'Possíveis duplicados'."
-        ),
-    )
+        ) from erro
 
     return Mudanca(
         id=str(contato.id),
