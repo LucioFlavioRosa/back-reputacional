@@ -24,6 +24,41 @@ from enum import StrEnum
 
 from app.dominio.score import Sentimento, Tier, peso_do_cargo, peso_do_engajamento
 
+#: OS NÍVEIS DE TEMA, E POR QUE SÓ UM DELES ENTRA.
+#:
+#: Cada fornecedor numera a árvore dele, e os números NÃO são os do painel:
+#:
+#:     Clipei      N1 = `Atributo`   N2 = `Categoria`   N3 = `Subcategoria`
+#:     Bites       —                 —                  N3 = `N3`
+#:     Approach    —                 —                  N3 = `TAG (assunto 1)`
+#:                                                           `Tags (tema)`
+#:
+#:     painel      N1 = `bloco_tema`  N2 = `macro_tema`  N3 = `tema`
+#:
+#: Essa correspondência vinha escrita numa faixa de rótulos acima do cabeçalho
+#: da planilha da Clipei (`N2`, `N3`, `N1` sobre as colunas 16, 17 e 18), que
+#: não está em toda entrega. Fica aqui porque é convenção do fornecedor, e
+#: convenção que mora só no arquivo se perde quando o arquivo muda.
+#:
+#: SÓ O N3 É LIDO, e é regra de negócio, não economia de código: quem cadastra
+#: um tema (N3) cadastra em seguida o N2 e o N1 dele, então **o tema já nasce
+#: com os três níveis**. O N2 e o N1 da menção são DERIVADOS pela árvore
+#: `tema -> macro_tema -> bloco_tema` (ver `app/api/base_das_lentes.py`), e é
+#: por isso que a planilha vir sem N1 e sem N2 não é perda de informação.
+#:
+#: POR ISSO NÃO HÁ CAMPO PARA O N2 DO FORNECEDOR. A `Categoria` da Clipei não é
+#: descartada por esquecimento: importá-la criaria um segundo N2, que pode
+#: DISCORDAR do derivado, e aí a mesma menção passa a ter dois. É o mesmo
+#: argumento que fez a Bites parar de informar o N1 — ver
+#: `tests/test_mapeamento_da_bites.py` e a migration 0079.
+#:
+#: A EXCEÇÃO QUE SOBROU, e está pendente de decisão: a Clipei ainda mapeia
+#: `atributo` para a coluna `Atributo`, que é o N1 DELA. Não vira taxonomia —
+#: fica texto em `mencao.atributo`, exibido como coluna própria da base —, mas é
+#: a mesma redundância que a Bites removeu.
+#:
+#: `tests/test_niveis_do_fornecedor.py` prende o que está acima.
+
 #: Os campos de `mencao` que uma planilha pode alimentar. Um mapeamento que
 #: cite outro nome é erro de cadastro, e não coluna ignorada em silêncio.
 #:
