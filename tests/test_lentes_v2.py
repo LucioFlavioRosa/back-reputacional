@@ -1196,6 +1196,11 @@ class TestMencoesDaSociedade:
         ORDENAR POR DATA DEIXARIA A LISTA TODA SEM TEXTO: cinco linhas de
         metadado, sem nada a ler. Quem tem texto vem primeiro, e dentro deles o
         maior engajamento — que é a ordem que o pacote pede para esta lente.
+
+        A ORDEM É O QUE SEGURA A LEITURA NO TOPO, e passou a ser a ÚNICA coisa
+        que faz isso: a lista não exclui mais quem não tem texto (ver o teste
+        abaixo), então sem esta ordenação o metadado disputaria as primeiras
+        linhas com o conteúdo.
         """
         from datetime import date as _date
 
@@ -1208,15 +1213,36 @@ class TestMencoesDaSociedade:
 
         assert textos[0] == "o mais engajado"
         assert textos[1] == "o que se lê"
+        #: E A SEM TEXTO ENTRA, ABAIXO DAS DUAS — não é excluída.
+        assert textos[2] is None
 
-    def test_sem_nenhuma_mencao_com_texto_a_ficha_DIZ_isso(self, sessao):
-        """Lista vazia sem explicação faz quem olha concluir que não houve
-        menção no mês — e houve: 6.932 em junho, nenhuma com texto ainda."""
-        _social(sessao, titulo_texto=None)
+    def test_a_mencao_SEM_TEXTO_entra_na_lista(self, sessao):
+        """A informação está lá mesmo sem texto e sem link — pedido do dono do
+        produto, 13/10/2026: "embora não tenha link, só não vamos conseguir
+        acessar a página, mas a informação deve estar lá".
+
+        ESTE TESTE INVERTEU, e o motivo da inversão importa. Ele exigia
+        `dados == []` quando nenhuma menção tinha texto, e a regra de então era
+        defensável: 86% chegavam sem texto, e a lista seria cinco linhas de
+        metadado. A PREMISSA MUDOU — na consolidada da Bites de jan-set/2026,
+        2.833 das 2.842 linhas têm texto —, e aí a regra antiga passou a
+        esconder a menção INTEIRA: data, autor, perfil, sentimento e
+        engajamento, tudo fora da tela por falta de uma coluna.
+
+        A FICHA CONTINUA EXPLICANDO, porque "aparece sem texto" também precisa
+        ser dito: sem isso, uma linha com célula vazia parece defeito.
+        """
+        _social(sessao, titulo_texto=None, link=None)
 
         dossie = _dossie(sessao, "sociedade")
 
-        assert dossie.materias_recentes.dados == []
+        assert len(dossie.materias_recentes.dados) == 1
+        linha = dossie.materias_recentes.dados[0]
+        assert linha["texto"] is None
+        assert linha["link"] is None
+        #: O QUE SOBROU É O QUE JUSTIFICA MOSTRAR A LINHA: sem estes campos, a
+        #: linha seria mesmo vazia, e a regra antiga estaria certa.
+        assert linha["sentimento"]
         assert any(
             "texto" in lacuna for lacuna in dossie.materias_recentes.ficha.lacunas
         )
