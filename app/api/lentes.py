@@ -1410,7 +1410,14 @@ def _mencoes_da_sociedade(
             ),
             "autor": linha["autor"],
             "perfil": linha["perfil_autor"],
-            "engajamento": _num(linha["engajamento"]) if linha["engajamento"] else None,
+            #: ZERO É UM NÚMERO, e era virado em nulo pelo `if` truthy —
+            #: achado da mesma revisão, na linha de baixo do que ela apontou.
+            #: Numa menção de rede, engajamento zero diz "ninguém reagiu";
+            #: célula vazia diz "não se sabe". São coisas diferentes, e a
+            #: segunda é a que a planilha significa quando não traz a coluna.
+            "engajamento": _num(linha["engajamento"])
+            if linha["engajamento"] is not None
+            else None,
             "link": linha["link"],
         }
         for linha in repositorio_lentes.materias_recentes(
@@ -1434,12 +1441,17 @@ def _mencoes_da_sociedade(
                 #
                 # A FRASE MUDOU COM A REGRA: dizia que as demais "não têm o que
                 # mostrar aqui", e isso deixou de ser verdade quando elas
-                # passaram a entrar na lista. Elas aparecem — sem texto e sem
-                # link, com o que a planilha trouxe.
+                # passaram a entrar na lista.
+                #
+                # E NÃO PROMETE CAMPO, achado de revisão contra a primeira
+                # versão desta frase: ela dizia "com data, autor e engajamento",
+                # e os três são nulos possíveis no modelo. Prometer o que o dado
+                # pode não ter é o mesmo erro, do outro lado.
                 "O texto e o link vêm numa amostra das menções (as negativas, "
                 "as de maior alcance e as mais engajadas). As demais aparecem "
-                "nesta lista sem texto e sem link, com data, autor e "
-                "engajamento — e não abrem a página de origem.",
+                "nesta lista com os metadados que vieram — classificação, "
+                "perfil, autor e engajamento quando houver — e não abrem a "
+                "página de origem.",
             ),
         ),
         None,

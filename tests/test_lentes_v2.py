@@ -1243,6 +1243,23 @@ class TestMencoesDaSociedade:
         #: O QUE SOBROU É O QUE JUSTIFICA MOSTRAR A LINHA: sem estes campos, a
         #: linha seria mesmo vazia, e a regra antiga estaria certa.
         assert linha["sentimento"]
+
+    def test_engajamento_ZERO_nao_vira_celula_vazia(self, sessao):
+        """Zero é um número, e vazio é outra coisa.
+
+        Achado de revisão: `if linha["engajamento"]` transformava 0 em nulo, e a
+        tela mostrava célula vazia. Numa menção de rede isso inverte o sentido —
+        "ninguém reagiu" passa a se ler como "não se sabe", que é o que a
+        planilha significa quando NÃO traz a coluna.
+        """
+        _social(sessao, titulo_texto="post sem reação", engajamento=0)
+
+        dossie = _dossie(sessao, "sociedade")
+        linha = next(
+            item for item in dossie.materias_recentes.dados if item["texto"] == "post sem reação"
+        )
+
+        assert linha["engajamento"] is not None
         assert any(
             "texto" in lacuna for lacuna in dossie.materias_recentes.ficha.lacunas
         )
