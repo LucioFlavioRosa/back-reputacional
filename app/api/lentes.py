@@ -1380,9 +1380,24 @@ def _mencoes_da_sociedade(
 ) -> BlocoSaida:
     """As menções de rede do mês — o nível do item, nesta lente.
 
-    SÓ AS QUE TÊM TEXTO. Uma linha sem texto nesta tabela é um endereço sem
-    conteúdo: nem se lê, nem se clica. Elas continuam na nota, nos cortes e no
-    engajamento — o que não fazem é ocupar a lista de leitura.
+    TODAS ENTRAM NA LISTA, inclusive as sem texto e as sem link. Decisão do dono
+    do produto, 13/10/2026, com estas palavras: *"embora não tenha link, só não
+    vamos conseguir acessar a página, mas a informação deve estar lá"*.
+
+    ANTES ERAM SÓ AS QUE TINHAM TEXTO, e o motivo de então era real: 86% dos
+    itens chegavam sem texto, e cinco linhas de metadado seriam uma lista sem
+    nada a ler. A PREMISSA MUDOU — na consolidada da Bites de jan-set/2026,
+    2.833 das 2.842 linhas têm texto (99,7%) —, e o que antes era uma lista
+    vazia de conteúdo virou a lista vazia de tudo: filtrar por texto escondia a
+    menção inteira, com data, autor, perfil, sentimento e engajamento.
+
+    O QUE SEGURA A LEITURA NO TOPO é a ordenação, não a exclusão:
+    `repositorio_lentes.materias_recentes` já põe quem tem texto primeiro e, entre
+    eles, o maior engajamento. As de metadado ficam abaixo.
+
+    E A LINHA SEM LINK FICA INERTE, não quebrada: o front só dá `onClick` e cursor
+    quando o endereço é `http`/`https` (`PecasDoDossie.tsx`) — a mesma conferência
+    de esquema que o conserto do `urlSegura` fixou.
     """
     quantas = TETO_DE_MATERIAS_FILTRADO if filtro and filtro.ativo else TETO_DE_MATERIAS
     linhas = [
@@ -1395,13 +1410,19 @@ def _mencoes_da_sociedade(
             ),
             "autor": linha["autor"],
             "perfil": linha["perfil_autor"],
-            "engajamento": _num(linha["engajamento"]) if linha["engajamento"] else None,
+            #: ZERO É UM NÚMERO, e era virado em nulo pelo `if` truthy —
+            #: achado da mesma revisão, na linha de baixo do que ela apontou.
+            #: Numa menção de rede, engajamento zero diz "ninguém reagiu";
+            #: célula vazia diz "não se sabe". São coisas diferentes, e a
+            #: segunda é a que a planilha significa quando não traz a coluna.
+            "engajamento": _num(linha["engajamento"])
+            if linha["engajamento"] is not None
+            else None,
             "link": linha["link"],
         }
         for linha in repositorio_lentes.materias_recentes(
             sessao, lente.id, mes, calibracao, filtro, quantas=quantas
         )
-        if linha["titulo_texto"]
     ]
     return _bloco(
         "tabela",
@@ -1417,9 +1438,20 @@ def _mencoes_da_sociedade(
                 # fornecedor manda o conteúdo de uma amostra — as negativas,
                 # as de tier alto e as mais engajadas — e o resto vem na
                 # primeira carga mensal completa.
+                #
+                # A FRASE MUDOU COM A REGRA: dizia que as demais "não têm o que
+                # mostrar aqui", e isso deixou de ser verdade quando elas
+                # passaram a entrar na lista.
+                #
+                # E NÃO PROMETE CAMPO, achado de revisão contra a primeira
+                # versão desta frase: ela dizia "com data, autor e engajamento",
+                # e os três são nulos possíveis no modelo. Prometer o que o dado
+                # pode não ter é o mesmo erro, do outro lado.
                 "O texto e o link vêm numa amostra das menções (as negativas, "
-                "as de maior alcance e as mais engajadas). As demais entram na "
-                "nota e nos cortes, mas não têm o que mostrar aqui.",
+                "as de maior alcance e as mais engajadas). As demais aparecem "
+                "nesta lista com os metadados que vieram — classificação, "
+                "perfil, autor e engajamento quando houver — e não abrem a "
+                "página de origem.",
             ),
         ),
         None,
