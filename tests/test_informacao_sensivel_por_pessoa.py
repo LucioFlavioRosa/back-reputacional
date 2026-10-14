@@ -30,15 +30,14 @@ a limpeza na revogação, a trilha — vive em `test_e2e_postgres`.
 from __future__ import annotations
 
 import re
+from datetime import date
 from pathlib import Path
 from uuid import uuid4
 
+from app.dominio.frentes import Frente
 from app.dominio.identidade import Escopo, Papel, UsuarioAtual
 from app.dominio.interacao import Interacao
-from app.dominio.frentes import Frente
 from app.esquemas.interacoes import InteracaoSaida
-
-from datetime import date
 
 #: Um papel que ALCANÇA o sensível — o teto aberto. É o caso dos oito semeados.
 COM_TETO = Papel(

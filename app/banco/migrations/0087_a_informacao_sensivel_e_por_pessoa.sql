@@ -313,9 +313,28 @@ begin
 end;
 $$;
 
+-- O DONO PRECISA DE `create` NO SCHEMA PARA POSSUIR OBJETO NELE, e é exigência
+-- conferida no momento da transferência.
+--
+-- 0006 concedeu e REVOGOU esse direito no mesmo arquivo — a posse permanece, a
+-- role volta a não poder criar nada. Então aqui ele não existe mais, e a
+-- transferência falha com `permission denied for schema public`.
+--
+-- SUPERUSUÁRIO PASSA SEM ISSO, porque ignora a checagem. Conta comum não — e é
+-- conta comum que aplica as migrations no Postgres gerenciado. Esta migration
+-- passou localmente (superusuário) e quebrou nos quatro jobs
+-- `Migrations · conta-comum` do CI, nas quatro versões do Postgres. É
+-- exatamente o cenário que aquela matriz existe para pegar, e a razão de ela
+-- existir.
+--
+-- Concedido só para a transferência e revogado logo depois, como em 0006.
+grant create on schema public to painel_concessao;
+
 alter function conceder_acesso(
   uuid, uuid, text, boolean, boolean, date, text[], text[], timestamptz, boolean
 ) owner to painel_concessao;
+
+revoke create on schema public from painel_concessao;
 
 -- O `drop` acima levou embora os `grant` da assinatura antiga. Sem estas duas
 -- linhas a função nasce chamável por `public` e NÃO chamável pela aplicação —
@@ -386,7 +405,17 @@ begin
 end;
 $$;
 
--- `create or replace` PRESERVA o dono, então esta linha é redundante hoje. Fica
--- porque o dia em que não for — uma função recriada por outra conta — o gatilho
--- perde o direito de inserir na trilha e para de gravar em silêncio.
+-- `create or replace` PRESERVA o dono, então esta transferência é redundante
+-- hoje. Fica porque o dia em que não for — uma função recriada por outra conta —
+-- o gatilho perde o direito de inserir na trilha e para de gravar em silêncio.
+--
+-- O `grant create` em volta é pela mesma razão do bloco de `conceder_acesso`
+-- acima: 0005 concedeu e revogou esse direito a `painel_auditoria` no próprio
+-- arquivo, e sem reconceder a transferência falharia em conta comum. Aqui ela
+-- passaria por ser no-op (o dono já é esse), mas depender disso é depender de
+-- um detalhe do Postgres que não está escrito em lugar nenhum.
+grant create on schema public to painel_auditoria;
+
 alter function registrar_mudanca_de_acesso() owner to painel_auditoria;
+
+revoke create on schema public from painel_auditoria;
