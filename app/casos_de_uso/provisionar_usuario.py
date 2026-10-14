@@ -151,6 +151,7 @@ def _montar(sessao: Session, registro: Usuario) -> UsuarioAtual:
         email=registro.email,
         papel=_papel_de(sessao, registro.papel_id),
         escopo=_escopo_de(sessao, registro),
+        acesso_sensivel=registro.acesso_sensivel,
         externo=registro.externo,
         acesso_expira_em=registro.acesso_expira_em,
         ativo=registro.ativo,

@@ -110,6 +110,17 @@ class Usuario(Tabela):
     #: Verdadeiro dispensa o filtro de escopo. Falso *sem* linha em
     #: `usuario_escopo` significa não ver nada — falha fechada.
     acesso_irrestrito: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: A terceira camada de acesso: se ESTA pessoa alcança os campos sensíveis.
+    #:
+    #: Combina com `papel.ve_campos_sensiveis` por E lógico — o papel é o TETO
+    #: que o cargo permite, esta coluna é a concessão à pessoa. A conta mora num
+    #: lugar só, `UsuarioAtual.ve_campos_sensiveis`.
+    #:
+    #: `default=True` espelha a migration 0087 e tem o mesmo motivo: é o
+    #: comportamento que já existia, e aplicar a mudança não devia tirar o relato
+    #: de ninguém em silêncio. Não concede nada por si — sem papel, a conjunção
+    #: já é falsa.
+    acesso_sensivel: Mapped[bool] = mapped_column(Boolean, default=True)
     externo: Mapped[bool] = mapped_column(Boolean, default=False)
     #: Obrigatório para externo, por `check` no banco. O esquecimento de
     #: revogar vira expiração.

@@ -40,6 +40,26 @@ class Configuracao(BaseSettings):
     #: e de sondagem, porque o rastro conta como o sistema é montado por dentro.
     sso_ligado: bool = False
 
+    #: O "Painel de Inteligência de Mercado" responde?
+    #:
+    #: É O PORTAL `sintese`. O rótulo da capa mudou e o nome interno não — ver
+    #: `dominio/identidade.Portal` e `front/src/paginas/Inicio.tsx`. Não existe
+    #: um portal "mercado", e procurar um foi o que fez a primeira versão da
+    #: migration 0088 criar um quarto portal para um painel que já tinha o seu.
+    #:
+    #: DESLIGADO por padrão: o painel está em construção. Quem PODE entrar
+    #: quando ele abrir é pergunta do banco (`papel.acessa_sintese`); se ele
+    #: está aberto é esta bandeira.
+    #:
+    #: As duas não moram no mesmo lugar de propósito. Com a decisão só no banco,
+    #: fechar o painel por uma tarde exigiria revogar o acesso de dezenas de
+    #: pessoas — e, na tela de acessos, isso é indistinguível de alguém ter
+    #: perdido o acesso. Com a bandeira, o alcance fica intacto e a porta fecha.
+    #:
+    #: Precisa existir no BACKEND, e não só na navegação da tela: esconder o
+    #: cartão não fecha a rota.
+    mercado_lancado: bool = False
+
     entra_tenant_id: str | None = None
     entra_client_id: str | None = None
     #: VAZIO em produção, e não é esquecimento: lá quem prova a identidade do

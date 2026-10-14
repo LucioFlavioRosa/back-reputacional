@@ -1,8 +1,10 @@
 """Conceder e revogar acesso.
 
-A escrita não acontece aqui: acontece na função `conceder_acesso` do banco
-(migration 0009). A aplicação não tem `grant` para alterar `papel_id`,
-`acesso_irrestrito` ou `usuario_escopo` — tem `execute` na função.
+A escrita não acontece aqui: acontece na função `conceder_acesso` do banco —
+criada em 0006, com o cadeado do último administrador em 0010 e a camada
+sensível em 0087, que é a definição vigente. A aplicação não tem `grant` para
+alterar `papel_id`, `acesso_irrestrito`, `acesso_sensivel` ou `usuario_escopo`
+— tem `execute` na função.
 
 O QUE ISSO PROTEGE, E O QUE NÃO PROTEGE
 
@@ -52,6 +54,18 @@ class Concessao:
 
     papel: str | None
     acesso_irrestrito: bool = False
+    #: A terceira camada: se esta pessoa alcança os campos sensíveis do CRM.
+    #:
+    #: FECHA POR PADRÃO, como as bandeiras de `Papel` — "papel novo que não
+    #: decida nada não abre porta nenhuma". Uma concessão montada por dentro
+    #: (rotina de importação, comando de manutenção, caso de uso novo) que não
+    #: tome essa decisão não deve conceder o relato por omissão.
+    #:
+    #: Não é obrigatório como `versao_vista`, e a diferença importa: aquele é
+    #: token de concorrência, onde NÃO existe padrão seguro — qualquer valor
+    #: afirma algo sobre o estado do banco. Este é bandeira de permissão, e para
+    #: bandeira de permissão o padrão seguro existe e é `False`.
+    sensivel: bool = False
     externo: bool = False
     expira_em: date | None = None
     frentes: tuple[str, ...] = ()
@@ -85,6 +99,10 @@ class LinhaDeAcesso:
     ativo: bool
     papel: str | None
     acesso_irrestrito: bool
+    #: O que está gravado na pessoa. NÃO é o acesso efetivo: o efetivo é este
+    #: valor E `papel.ve_campos_sensiveis`. A tela mostra os dois, porque
+    #: "marcado e sem efeito" é um estado que quem administra precisa ver.
+    sensivel: bool
     externo: bool
     expira_em: date | None
     frentes: tuple[str, ...]
@@ -124,6 +142,7 @@ def listar(sessao: Session, *, solicitante: UsuarioAtual) -> list[LinhaDeAcesso]
             ativo=pessoa.ativo,
             papel=papeis.get(pessoa.papel_id),
             acesso_irrestrito=pessoa.acesso_irrestrito,
+            sensivel=pessoa.acesso_sensivel,
             externo=pessoa.externo,
             expira_em=pessoa.acesso_expira_em,
             frentes=tuple(sorted(escopos.get(pessoa.id, {}).get("frente", []))),
@@ -164,7 +183,7 @@ def conceder(
             text(
                 "select conceder_acesso("
                 ":alvo, :quem, :papel, :irrestrito, :externo, :expira, "
-                ":frentes, :unidades, :versao)"
+                ":frentes, :unidades, :versao, :sensivel)"
             ),
             {
                 "alvo": alvo,
@@ -176,6 +195,7 @@ def conceder(
                 "frentes": list(concessao.frentes),
                 "unidades": list(concessao.unidades),
                 "versao": concessao.versao_vista,
+                "sensivel": concessao.sensivel,
             },
         )
     except DBAPIError as erro:

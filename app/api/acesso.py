@@ -574,6 +574,32 @@ class EuSaida(BaseModel):
     papel: PapelSaida | None
     externo: bool
     acesso_expira_em: str | None
+    #: O acesso sensível EFETIVO — `papel.ve_campos_sensiveis` E
+    #: `usuario.acesso_sensivel`.
+    #:
+    #: Vem calculado, e não como os dois valores crus, porque a tela faz uma
+    #: pergunta só: mostro o aviso "N campos restritos ao seu perfil"? Deixar o
+    #: front compor a conjunção seria pedir que ele repetisse uma regra de
+    #: autorização — e repetir regra é como as duas pontas passam a discordar.
+    #:
+    #: NÃO CONFUNDIR com `papel.ve_campos_sensiveis`, que continua no payload e
+    #: significa outra coisa: o TETO do cargo. Os dois divergem exatamente no
+    #: caso novo — quem tem papel que alcança o sensível e não recebeu a camada.
+    ve_campos_sensiveis: bool
+    #: O "Painel de Inteligência de Mercado" está no ar?
+    #:
+    #: É O PORTAL `sintese`, e não um quarto portal: o rótulo da capa mudou e o
+    #: nome interno não. Ver `Portal`, no domínio, e `Inicio.tsx`, no front.
+    #:
+    #: Não é sobre "eu", e vem aqui mesmo: é a rota que a capa carrega para
+    #: montar a navegação, e sem o valor junto haveria um instante em que a
+    #: pessoa está identificada e a tela ainda não sabe se oferece o cartão.
+    #: Mesma razão de `acessa_*` virem no papel em vez de numa rota própria.
+    #:
+    #: ALCANCE E PORTA SÃO COISAS DIFERENTES: alguém pode ter
+    #: `papel.acessa_sintese` e ver o cartão como "em construção". É o que a
+    #: tela de perfis usa para não prometer uma tela que não abre.
+    mercado_lancado: bool
     #: O front guarda e devolve em `X-CSRF-Token` a cada escrita.
     csrf_token: str
 
@@ -608,6 +634,12 @@ def eu(
         acesso_expira_em=(
             usuario.acesso_expira_em.isoformat() if usuario.acesso_expira_em else None
         ),
+        # A PROPRIEDADE, e não `usuario.acesso_sensivel`: é ela que faz a
+        # conjunção com o teto do papel, e é o mesmo valor que as rotas usam para
+        # decidir o payload. Mandar o campo cru faria a tela prometer um campo
+        # que o servidor não entrega.
+        ve_campos_sensiveis=usuario.ve_campos_sensiveis,
+        mercado_lancado=configuracao.mercado_lancado,
         csrf_token=token,
     )
 
@@ -713,6 +745,14 @@ class AcessoSaida(BaseModel):
     ativo: bool
     papel: str | None
     acesso_irrestrito: bool
+    #: O que está GRAVADO na pessoa, não o acesso efetivo.
+    #:
+    #: Cru de propósito, ao contrário de `EuSaida.ve_campos_sensiveis`: esta é a
+    #: tela de administração, e aqui o valor gravado é o que se edita. O efetivo
+    #: ela compõe com o teto do papel, que `GET /acessos/papeis` já lhe dá — e
+    #: precisa compor, porque "marcado e sem efeito" é justamente o estado que
+    #: quem administra tem de conseguir ver para corrigir.
+    sensivel: bool
     externo: bool
     expira_em: str | None
     frentes: list[str]
@@ -726,6 +766,14 @@ class ConcessaoEntrada(BaseModel):
     #: É o oposto de apagar — o histórico dela permanece atribuído.
     papel: str | None = None
     acesso_irrestrito: bool = False
+    #: A terceira camada. FECHA POR PADRÃO: um cliente que não conheça o campo
+    #: — um `curl` de manutenção, um script, uma integração futura — não concede
+    #: o relato por omissão. Mesma razão das bandeiras de `Papel`.
+    #:
+    #: Tem padrão, ao contrário de `versao_vista`: aquele não tem padrão seguro
+    #: porque qualquer valor AFIRMA algo sobre o estado do banco; este é
+    #: permissão, e permissão tem padrão seguro.
+    sensivel: bool = False
     externo: bool = False
     expira_em: date | None = None
     frentes: list[str] = []
@@ -750,11 +798,33 @@ class ConcessaoEntrada(BaseModel):
 
 
 class PapelDisponivel(BaseModel):
+    """Um papel concedível, com as bandeiras que a tela usa para se montar.
+
+    AS BANDEIRAS INTEIRAS, e não só três, porque a tela de perfis apresenta o
+    acesso em três camadas — onde a pessoa entra, o que faz lá, e se alcança o
+    sensível — e precisa DERIVAR cada papel nessas camadas.
+
+    Derivar das bandeiras, e não do código: `papel` é tabela, um papel novo é um
+    `insert`, e uma tela que reconhecesse `crm_edicao` por nome passaria a
+    ignorar o papel seguinte em silêncio. É a mesma advertência que o front já
+    carrega em `tipos.ts`.
+    """
+
     codigo: str
     nome: str
     administra_acessos: bool
+    administra_dicionarios: bool
     ve_campos_sensiveis: bool
     ve_diretorio: bool
+    #: O que a pessoa FAZ lá dentro — é daqui que sai Editor × Usuário.
+    pode_criar: bool
+    pode_editar_proprio: bool
+    pode_editar_tudo: bool
+    pode_exportar: bool
+    #: ONDE ela entra — é daqui que sai o nível.
+    acessa_crm: bool
+    acessa_sintese: bool
+    acessa_score: bool
 
 
 @rotas.get("/acessos")
@@ -768,6 +838,7 @@ def listar_acessos(sessao: Sessao, usuario: UsuarioLogado) -> list[AcessoSaida]:
             ativo=linha.ativo,
             papel=linha.papel,
             acesso_irrestrito=linha.acesso_irrestrito,
+            sensivel=linha.sensivel,
             externo=linha.externo,
             expira_em=linha.expira_em.isoformat() if linha.expira_em else None,
             frentes=list(linha.frentes),
@@ -799,8 +870,16 @@ def listar_papeis(sessao: Sessao, usuario: UsuarioLogado) -> list[PapelDisponive
             codigo=p.codigo,
             nome=p.nome,
             administra_acessos=p.administra_acessos,
+            administra_dicionarios=p.administra_dicionarios,
             ve_campos_sensiveis=p.ve_campos_sensiveis,
             ve_diretorio=p.ve_diretorio,
+            pode_criar=p.pode_criar,
+            pode_editar_proprio=p.pode_editar_proprio,
+            pode_editar_tudo=p.pode_editar_tudo,
+            pode_exportar=p.pode_exportar,
+            acessa_crm=p.acessa_crm,
+            acessa_sintese=p.acessa_sintese,
+            acessa_score=p.acessa_score,
         )
         for p in papeis
     ]
@@ -822,6 +901,7 @@ def conceder(
         concessao=administrar_acessos.Concessao(
             papel=entrada.papel,
             acesso_irrestrito=entrada.acesso_irrestrito,
+            sensivel=entrada.sensivel,
             externo=entrada.externo,
             expira_em=entrada.expira_em,
             frentes=tuple(entrada.frentes),

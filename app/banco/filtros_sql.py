@@ -243,9 +243,14 @@ def _bate_com_a_busca(
     a importação usa para deduplicar: assim "Radames" encontra "Radamés", e
     quem digita sem acento não fica sem resultado.
 
-    `em_campos_sensiveis` decide se `relato` entra. Esconder o campo do payload
-    e mantê-lo pesquisável seria um oráculo: sem receber o texto, a pessoa
-    descobriria o conteúdo por tentativa e erro, uma palavra por vez.
+    `em_campos_sensiveis` decide se os campos sensíveis entram. Esconder o campo
+    do payload e mantê-lo pesquisável seria um oráculo: sem receber o texto, a
+    pessoa descobriria o conteúdo por tentativa e erro, uma palavra por vez.
+
+    A REGRA VALE PARA A LISTA INTEIRA, e não só para `relato`. Todo campo de
+    `InteracaoSaida.CAMPOS_SENSIVEIS` que for pesquisável tem de estar atrás da
+    bandeira — foi assim que `encaminhamentos` virou um vazamento ao entrar
+    naquela lista e ficar nesta.
     """
     termo = f"%{termo_pedido.strip()}%"
     termo_normalizado = f"%{normalizar(termo_pedido)}%"
@@ -266,10 +271,24 @@ def _bate_com_a_busca(
     colunas = [
         InteracaoRegistro.pauta.ilike(termo),
         InteracaoRegistro.expectativa.ilike(termo),
-        InteracaoRegistro.encaminhamentos.ilike(termo),
     ]
     if em_campos_sensiveis:
         colunas.append(InteracaoRegistro.relato.ilike(termo))
+        #: `encaminhamentos` MUDOU DE LADO em 0087, e o motivo é a regra do
+        #: parágrafo acima aplicada a ele.
+        #:
+        #: Ele entrou em `InteracaoSaida.CAMPOS_SENSIVEIS` junto com
+        #: `posicionamento` e `observacoes`, e continuou nesta lista de cima —
+        #: pesquisável por quem não o recebe. Era o oráculo exato que o
+        #: comentário de `relato` descreve: sem ler o campo, a pessoa
+        #: descobriria o conteúdo por tentativa e erro, uma palavra por vez, e
+        #: ainda saberia QUAIS registros casam.
+        #:
+        #: Achado de revisão. `posicionamento`, `pendencias` e `observacoes`
+        #: nunca estiveram na busca, então não precisaram mudar — e
+        #: `test_a_busca_nao_varre_campo_sensivel_nenhum` é o que impede que
+        #: qualquer um deles entre aqui sem a bandeira.
+        colunas.append(InteracaoRegistro.encaminhamentos.ilike(termo))
 
     return or_(
             *colunas,

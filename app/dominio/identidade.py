@@ -23,7 +23,24 @@ from uuid import UUID
 
 
 class Portal(StrEnum):
-    """As três divisões da plataforma, como a capa as oferece."""
+    """As três divisões da plataforma, como a capa as oferece.
+
+    O NOME INTERNO E O RÓTULO NÃO SE CORRESPONDEM, e vale saber antes de mexer:
+
+        CRM      "CRM dos Stakeholders"
+        SCORE    "KPIs Reputacionais"
+        SINTESE  "Painel de Inteligência de Mercado" — EM CONSTRUÇÃO
+
+    `SINTESE` é o portal do painel que a capa chama de Inteligência de Mercado;
+    o rótulo mudou e o nome interno não (ver `front/src/paginas/Inicio.tsx`).
+    Quem ler o descritivo de perfis e procurar um portal "mercado" não vai achar
+    — e já aconteceu: a primeira versão de 0088 criou um quarto portal para um
+    painel que já tinha o seu. Se ele RESPONDE é outra pergunta, da bandeira
+    `mercado_lancado` na configuração.
+
+    A "Síntese Executiva" que aparece DENTRO do Painel do CRM é outra coisa
+    ainda, e não tem portal: é um bloco que lê a base do CRM.
+    """
 
     CRM = "crm"
     SINTESE = "sintese"
@@ -80,6 +97,7 @@ class Papel:
     #: Fecham por padrão, como todas as outras bandeiras. Papel novo que não
     #: decida nada não abre porta nenhuma.
     acessa_crm: bool = False
+    #: O portal do "Painel de Inteligência de Mercado" — ver `Portal`.
     acessa_sintese: bool = False
     acessa_score: bool = False
 
@@ -154,6 +172,20 @@ class UsuarioAtual:
     #: pelo Entra ID e autorizado a nada, até alguém conceder.
     papel: Papel | None
     escopo: Escopo = Escopo()
+    #: A TERCEIRA CAMADA: se esta pessoa, especificamente, alcança os campos
+    #: sensíveis. Espelha `usuario.acesso_sensivel`.
+    #:
+    #: Está separada de `papel.ve_campos_sensiveis` porque são perguntas
+    #: diferentes: o papel diz o que o CARGO permite, isto diz o que a PESSOA
+    #: recebeu. Juntá-las exigiria um papel por combinação — `crm_leitura` e
+    #: `crm_leitura_sem_sensivel`, e o mesmo para os outros sete —, que é o
+    #: produto cartesiano que a separação entre `acessa_*` e as bandeiras de ação
+    #: já evitou uma vez.
+    #:
+    #: `True` por padrão, como a coluna: era o comportamento de todos os oito
+    #: papéis semeados, e o padrão não concede nada sozinho — sem papel a
+    #: conjunção é falsa de qualquer jeito.
+    acesso_sensivel: bool = True
     externo: bool = False
     acesso_expira_em: date | None = None
     #: Conta ligada. `false` é a remoção — não existe apagar pessoa, porque
@@ -192,8 +224,33 @@ class UsuarioAtual:
 
     @property
     def ve_campos_sensiveis(self) -> bool:
-        """`relato` e `pendencias` saem do payload quando falso."""
-        return self.papel is not None and self.papel.ve_campos_sensiveis
+        """`relato` e `pendencias` saem do payload quando falso.
+
+        AQUI É ONDE AS DUAS CAMADAS SE ENCONTRAM, e é o único lugar:
+
+            efetivo = papel.ve_campos_sensiveis AND acesso_sensivel
+
+        O papel é o teto que o cargo permite; `acesso_sensivel` é se esta pessoa
+        recebeu. Conjunção, e não substituição — um papel que não alcança o
+        sensível continua não alcançando, por mais que alguém marque a pessoa.
+
+        ESTA PROPRIEDADE É A BARREIRA, e por isso ela é uma só. Toda rota que
+        decide payload sensível lê `usuario.ve_campos_sensiveis`: `interacoes`,
+        `materiais`, `metricas`, `registrar_exportacao`. Nenhuma lê
+        `papel.ve_campos_sensiveis` para essa decisão — os três usos diretos que
+        existem são esta linha, a montagem do `Papel` a partir da tabela e a
+        listagem de papéis disponíveis na tela de administração, que fala SOBRE
+        o papel, não sobre uma pessoa.
+
+        Quem acrescentar um consumidor deve chamar esta propriedade. Ler a
+        bandeira do papel direto reintroduziria o vazamento numa rota só, que é
+        o modo de falha mais difícil de achar: as outras continuariam certas.
+        """
+        return (
+            self.papel is not None
+            and self.papel.ve_campos_sensiveis
+            and self.acesso_sensivel
+        )
 
     @property
     def ve_diretorio(self) -> bool:
