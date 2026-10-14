@@ -2913,6 +2913,33 @@ def confirmar(sessao: Session, importacao_id, usuario) -> Resumo:
         sessao, _linhas_para_reler(linhas), {}, escolhidos
     )
 
+    # QUEM CONFIRMA AGENDA MARCADA PRECISA DA CAMADA SENSÍVEL (migration 0089).
+    #
+    # A rota de cadastro e o `PATCH` já barram a marcação de quem não alcança o
+    # sensível — e sem esta conferência a planilha seria a porta de trás: a
+    # pessoa escreveria "sim" na coluna, confirmaria, e criaria agendas que
+    # desapareceriam da vista dela no mesmo instante. Nem desmarcar daria:
+    # precisaria pedir a outra pessoa.
+    #
+    # ANTES DO LAÇO, E SOBRE O CONJUNTO. Recusar dentro do laço criaria parte
+    # das agendas e abortaria no meio — e esta função existe para ser tudo ou
+    # nada. Recusar aqui também dá uma mensagem melhor: diz QUANTAS linhas e
+    # ONDE, em vez de parar na primeira.
+    marcadas = [
+        proposta.linha.numero
+        for proposta in propostas
+        if proposta.entrada is not None and getattr(proposta.entrada, "sensivel", False)
+    ]
+    if marcadas and not usuario.ve_campos_sensiveis:
+        raise RegraViolada(
+            f"{len(marcadas)} linha(s) estão marcadas como informação sensível "
+            f"(linha(s) {', '.join(str(n) for n in marcadas[:10])}"
+            f"{'…' if len(marcadas) > 10 else ''}), e seu perfil não tem acesso a "
+            "informação sensível — você deixaria de enxergar essas agendas. "
+            "Peça a confirmação a quem tem a camada, ou limpe a coluna "
+            "'Informação sensível?' dessas linhas."
+        )
+
     por_linha_de_origem = {
         linha.linha_origem: linha for linha in linhas if linha.aba == ABA_PRINCIPAL
     }
