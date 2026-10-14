@@ -39,7 +39,7 @@ from app.banco.gravar import gravar
 from app.banco.sessao import SessaoDoPedido
 from app.banco.tabelas_alegacoes import Alegacao, AlegacaoTema
 from app.banco.tabelas_catalogo import Apuracao
-from app.banco.tabelas_interacoes import InteracaoAlegacao
+from app.banco.tabelas_interacoes import InteracaoAlegacao, InteracaoRegistro
 from app.dominio.erros import NaoAutorizado, NaoEncontrado, RegraViolada
 from app.dominio.texto import normalizar
 
@@ -127,11 +127,36 @@ def _temas_por_alegacao(sessao: Session) -> dict[UUID, list[int]]:
     return por_alegacao
 
 
-def _consultas_por_alegacao(sessao: Session) -> dict[UUID, int]:
+def _consultas_por_alegacao(
+    sessao: Session, *, alcanca_sensivel: bool
+) -> dict[UUID, int]:
+    """Quantas consultas recebidas citam cada alegação.
+
+    A AGENDA RESTRITA NÃO ENTRA NA CONTA de quem não a alcança, e é por isso que
+    esta função ganhou um `join` que não precisava ter.
+
+    Ela contava `interacao_alegacao` direto, sem tocar em `interacao` — e por
+    isso escapou da varredura que eu fiz por `InteracaoRegistro`. Uma alegação
+    citada SOMENTE por agendas sensíveis aparecia com `consultas: 1` para quem
+    não alcança nenhuma delas: a contagem afirma que a consulta existe, que é o
+    que a marca protege. Achado de revisão.
+
+    `alcanca_sensivel` é OBRIGATÓRIO e sem padrão: esta função serve resposta de
+    API, e um padrão aqui seria a escolha que ninguém revisa.
+    """
+    condicoes_da_conta = [InteracaoRegistro.arquivado_em.is_(None)]
+    if not alcanca_sensivel:
+        condicoes_da_conta.append(InteracaoRegistro.sensivel.is_(False))
+
     return {
         alegacao_id: total
         for alegacao_id, total in sessao.execute(
             select(InteracaoAlegacao.alegacao_id, func.count())
+            .join(
+                InteracaoRegistro,
+                InteracaoRegistro.id == InteracaoAlegacao.interacao_id,
+            )
+            .where(*condicoes_da_conta)
             .group_by(InteracaoAlegacao.alegacao_id)
         )
     }
@@ -192,7 +217,7 @@ def listar(
         consulta = consulta.where(Alegacao.ativo.is_(True))
 
     temas = _temas_por_alegacao(sessao)
-    consultas = _consultas_por_alegacao(sessao)
+    consultas = _consultas_por_alegacao(sessao, alcanca_sensivel=usuario.ve_campos_sensiveis)
     return [
         _saida(registro, temas, consultas, com_nota=administra)
         for registro in sessao.scalars(consulta)
@@ -229,7 +254,9 @@ def criar(
     _casar_temas(sessao, registro, entrada.temas)
     sessao.flush()
     return _saida(
-        registro, {registro.id: entrada.temas}, _consultas_por_alegacao(sessao)
+        registro,
+        {registro.id: entrada.temas},
+        _consultas_por_alegacao(sessao, alcanca_sensivel=usuario.ve_campos_sensiveis),
     )
 
 
@@ -260,5 +287,7 @@ def editar(
     _casar_temas(sessao, registro, entrada.temas)
     sessao.flush()
     return _saida(
-        registro, {registro.id: entrada.temas}, _consultas_por_alegacao(sessao)
+        registro,
+        {registro.id: entrada.temas},
+        _consultas_por_alegacao(sessao, alcanca_sensivel=usuario.ve_campos_sensiveis),
     )

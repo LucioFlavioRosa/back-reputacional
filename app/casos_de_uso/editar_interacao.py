@@ -56,7 +56,16 @@ def editar(
     # `para_edicao=True` trava a linha: duas edições simultâneas da mesma
     # agenda liam o estado antigo e as duas gravavam, e a segunda estourava no
     # índice do participante principal. Agora a segunda espera e lê o novo.
-    interacao = repositorio.obter(id, escopo=usuario.escopo, para_edicao=True)
+    # `alcanca_sensivel` do usuário: só se edita o que se alcança. Quem não tem
+    # a camada recebe "não encontrada" para uma agenda sensível — a mesma
+    # resposta da listagem e da ficha, porque confirmar a existência já seria
+    # contar o que a marca existe para esconder.
+    interacao = repositorio.obter(
+        id,
+        escopo=usuario.escopo,
+        alcanca_sensivel=usuario.ve_campos_sensiveis,
+        para_edicao=True,
+    )
     if interacao is None or interacao.arquivada:
         raise NaoEncontrado(f"Interação {id} não encontrada.")
 
@@ -139,7 +148,9 @@ def arquivar(
     O gatilho registra isto como qualquer outra alteração: `arquivado_em` mudou
     de nulo para uma data. Não é preciso caso especial.
     """
-    interacao = repositorio.obter(id, escopo=usuario.escopo)
+    interacao = repositorio.obter(
+        id, escopo=usuario.escopo, alcanca_sensivel=usuario.ve_campos_sensiveis
+    )
     if interacao is None or interacao.arquivada:
         raise NaoEncontrado(f"Interação {id} não encontrada.")
 

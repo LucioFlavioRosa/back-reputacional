@@ -63,7 +63,7 @@ INTERNACIONAL = "IN"
 GRUPO_DECLINADO = "declinado"
 
 
-def _base(recorte: Recorte, escopo: Escopo, busca_em_campos_sensiveis: bool):
+def _base(recorte: Recorte, escopo: Escopo, alcanca_sensivel: bool):
     """O `from` + `where` compartilhado por todas as agregações."""
     return (
         select(InteracaoRegistro)
@@ -73,7 +73,7 @@ def _base(recorte: Recorte, escopo: Escopo, busca_em_campos_sensiveis: bool):
             *condicoes(
                 recorte,
                 escopo=escopo,
-                busca_em_campos_sensiveis=busca_em_campos_sensiveis,
+                alcanca_sensivel=alcanca_sensivel,
             )
         )
     )
@@ -91,7 +91,7 @@ def kpis(
     recorte: Recorte,
     *,
     escopo: Escopo,
-    busca_em_campos_sensiveis: bool,
+    alcanca_sensivel: bool,
 ) -> Kpis:
     """Os números do cabeçalho, em UMA consulta.
 
@@ -101,7 +101,7 @@ def kpis(
     coerente por construção.
     """
     linha = sessao.execute(
-        _base(recorte, escopo, busca_em_campos_sensiveis).with_only_columns(
+        _base(recorte, escopo, alcanca_sensivel).with_only_columns(
             _quantos().label("total"),
             _quantos(Frente.codigo.in_(FRENTES_INSTITUCIONAIS)).label("institucionais"),
             _quantos(Frente.codigo == "imprensa").label("imprensa_total"),
@@ -145,11 +145,11 @@ def resolutividade(
     recorte: Recorte,
     *,
     escopo: Escopo,
-    busca_em_campos_sensiveis: bool,
+    alcanca_sensivel: bool,
 ) -> Resolutividade:
     """Taxa de resolução, por grupo de status e por frente."""
     por_status = sessao.execute(
-        _base(recorte, escopo, busca_em_campos_sensiveis)
+        _base(recorte, escopo, alcanca_sensivel)
         .with_only_columns(
             Status.grupo, Status.codigo, Status.nome, _quantos().label("total")
         )
@@ -185,7 +185,7 @@ def resolutividade(
     declinados = next((g.total for g in montados if g.grupo == GRUPO_DECLINADO), 0)
 
     por_frente = sessao.execute(
-        _base(recorte, escopo, busca_em_campos_sensiveis)
+        _base(recorte, escopo, alcanca_sensivel)
         .with_only_columns(
             Frente.codigo,
             _quantos().label("total"),
@@ -228,7 +228,7 @@ def serie_mensal(
     recorte: Recorte,
     *,
     escopo: Escopo,
-    busca_em_campos_sensiveis: bool,
+    alcanca_sensivel: bool,
     segmento: str = "frente",
 ) -> list[ColunaMensal]:
     """Contagem por mês, empilhada pela dimensão pedida.
@@ -253,7 +253,7 @@ def serie_mensal(
         )
 
     mes = func.to_char(InteracaoRegistro.data_interacao, "YYYY-MM").label("mes")
-    consulta = _base(recorte, escopo, busca_em_campos_sensiveis)
+    consulta = _base(recorte, escopo, alcanca_sensivel)
 
     if segmento == "frente":
         rotulo = Frente.codigo
@@ -291,7 +291,7 @@ def distribuicao_por_uf(
     recorte: Recorte,
     *,
     escopo: Escopo,
-    busca_em_campos_sensiveis: bool,
+    alcanca_sensivel: bool,
 ) -> list[PontoNoMapa]:
     """Contagem por abrangência, INCLUINDO `NA` e `IN`.
 
@@ -300,7 +300,7 @@ def distribuicao_por_uf(
     ranking ao lado, na mesma tela e sobre o mesmo recorte, precisa deles.
     """
     linhas = sessao.execute(
-        _base(recorte, escopo, busca_em_campos_sensiveis)
+        _base(recorte, escopo, alcanca_sensivel)
         .with_only_columns(InteracaoRegistro.uf, _quantos().label("total"))
         .group_by(InteracaoRegistro.uf)
         .order_by(_quantos().desc())

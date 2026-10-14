@@ -1066,6 +1066,97 @@ def com_cadastro_novo(cliente_admin, sessao, semente):
     return corpo
 
 
+def test_a_planilha_nao_e_a_porta_de_tras_da_marca_de_sensivel(
+    cliente_admin, sessao, semente
+):
+    """A COLUNA "Informação sensível?" NÃO contorna a guarda da marcação.
+
+    A rota de cadastro e o `PATCH` barram quem não tem a camada de marcar uma
+    agenda como sensível — o motivo está em `api/interacoes`: quem marcasse
+    perderia o próprio registro de vista no mesmo instante e não conseguiria nem
+    desmarcar.
+
+    Sem esta conferência a planilha seria o caminho de volta: escrever "sim" na
+    coluna, confirmar, e criar em lote agendas que desaparecem. Pior que pela
+    tela, porque em lote e sem a pessoa perceber.
+
+    A RECUSA É SOBRE O CONJUNTO, antes de criar qualquer uma — esta importação é
+    tudo ou nada, e recusar no meio deixaria parte das agendas criadas.
+    """
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    from app.api.dependencias import obter_usuario_atual
+    from app.dominio.identidade import Escopo, Papel, UsuarioAtual
+    from main import app
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    assert "Informação sensível?" in cabecalho, "a coluna saiu do modelo"
+
+    valores = {
+        "Data": date(2026, 9, 25),
+        "Instituição": semente["instituicao"].nome,
+        "UF": "SP",
+        "Informação sensível?": "sim",
+    }
+    folha.append([valores.get(coluna) for coluna in cabecalho])
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    corpo = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("dia.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+    assert corpo["pendencias"] == 0, corpo["grupos"]
+
+    #: Troca quem confirma por alguém SEM a camada.
+    #:
+    #: USUÁRIO DE VERDADE NO BANCO: `interacao.criado_por` tem chave
+    #: estrangeira, e um `uuid4()` inventado faria a recusa acontecer por FK em
+    #: vez de pela camada — o teste passaria contando a história errada.
+    from uuid import uuid4 as _uuid4
+
+    from app.banco.tabelas_acesso import Usuario
+
+    sufixo = _uuid4().hex[:8]
+    quem_confirma = Usuario(
+        entra_object_id=f"import-sem-camada-{sufixo}",
+        email=f"{sufixo}@aegea.com.br",
+        nome="Analista sem camada",
+        acesso_irrestrito=True,
+    )
+    sessao.add(quem_confirma)
+    sessao.flush()
+
+    app.dependency_overrides[obter_usuario_atual] = lambda: UsuarioAtual(
+        id=quem_confirma.id,
+        nome=quem_confirma.nome,
+        email=str(quem_confirma.email),
+        papel=Papel(
+            codigo="crm_edicao",
+            nome="Analista",
+            pode_criar=True,
+            pode_editar_proprio=True,
+            administra_dicionarios=True,
+            ve_diretorio=True,
+            ve_campos_sensiveis=False,
+            acessa_crm=True,
+        ),
+        escopo=Escopo.total(),
+    )
+
+    recusa = cliente_admin.post(f"/api/importacoes/{corpo['id']}/confirmacao")
+    assert recusa.status_code == 422, recusa.json()
+    detalhe = recusa.json()["detalhe"].lower()
+    assert "sensível" in detalhe
+    #: A MENSAGEM DIZ ONDE, e não só que houve: numa planilha de 500 linhas,
+    #: "alguma linha está marcada" não é acionável.
+    assert "linha" in detalhe
+
+
 def test_confirmar_cria_as_agendas(cliente_admin, sessao, limpa):
     from app.banco.tabelas_interacoes import InteracaoRegistro
 

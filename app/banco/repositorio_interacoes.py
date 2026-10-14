@@ -223,6 +223,11 @@ class RepositorioSQL:
 
         registro.fonte = interacao.fonte
         registro.visivel = interacao.visivel
+        #: QUEM BARRA A MARCAÇÃO SEM PERMISSÃO É A ROTA, e não esta linha: o
+        #: repositório grava o agregado como ele chegou. Ver
+        #: `api/interacoes.exigir_direito_de_marcar_sensivel` — a decisão é de
+        #: autorização, e autorização mora na borda, com a identidade em mão.
+        registro.sensivel = interacao.sensivel
         registro.arquivado_em = interacao.arquivado_em
 
         if interacao.origem_aba is not None:
@@ -671,9 +676,27 @@ class RepositorioSQL:
     # -- leitura -------------------------------------------------------------
 
     def obter(
-        self, id: UUID, *, escopo: Escopo, para_edicao: bool = False
+        self,
+        id: UUID,
+        *,
+        escopo: Escopo,
+        alcanca_sensivel: bool,
+        para_edicao: bool = False,
     ) -> Interacao | None:
         """Lê uma interação. `para_edicao` TRAVA a linha até o fim da transação.
+
+        `alcanca_sensivel` É OBRIGATÓRIO, e é o que fecha a porta de trás.
+
+        Esta é a leitura por chave primária — a que serve a ficha e a edição —,
+        e sem o filtro de linha ela seria o caminho pelo qual uma agenda
+        restrita se abre por URL direta. Obrigatório e sem padrão: esquecer é
+        `TypeError` na hora, e não um vazamento numa rota só.
+
+        Era `busca_em_campos_sensiveis=False` FIXO aqui, com o comentário de que
+        a bandeira era inerte porque `Recorte()` não tem busca. Era verdade
+        naquele desenho. Em 0089 o mesmo argumento passou a filtrar a LINHA, e o
+        `False` fixo trancaria a ficha de uma agenda sensível para TODO mundo —
+        inclusive para quem a marcou.
 
         Por que travar, e por que só na edição:
 
@@ -698,9 +721,7 @@ class RepositorioSQL:
         # arquivado, invisível ou fora do escopo simplesmente não volta.
         consulta = select(InteracaoRegistro).where(
             InteracaoRegistro.id == id,
-            # `Recorte()` não tem `busca`, então a bandeira é inerte aqui;
-            # passar `False` mantém o padrão de negar por omissão.
-            *condicoes(Recorte(), escopo=escopo, busca_em_campos_sensiveis=False),
+            *condicoes(Recorte(), escopo=escopo, alcanca_sensivel=alcanca_sensivel),
         )
         if para_edicao:
             # `of` limita a trava à linha de `interacao`: sem isso o Postgres
@@ -716,7 +737,7 @@ class RepositorioSQL:
         recorte: Recorte,
         *,
         escopo: Escopo,
-        busca_em_campos_sensiveis: bool,
+        alcanca_sensivel: bool,
         pagina: int = 1,
         tamanho: int = 50,
         ordenacao: str = "-data_interacao",
@@ -724,7 +745,7 @@ class RepositorioSQL:
         onde = condicoes(
             recorte,
             escopo=escopo,
-            busca_em_campos_sensiveis=busca_em_campos_sensiveis,
+            alcanca_sensivel=alcanca_sensivel,
         )
 
         total = self.sessao.scalar(
@@ -755,7 +776,7 @@ class RepositorioSQL:
         )
 
     def contar(
-        self, recorte: Recorte, *, escopo: Escopo, busca_em_campos_sensiveis: bool
+        self, recorte: Recorte, *, escopo: Escopo, alcanca_sensivel: bool
     ) -> int:
         return (
             self.sessao.scalar(
@@ -765,7 +786,7 @@ class RepositorioSQL:
                     *condicoes(
                         recorte,
                         escopo=escopo,
-                        busca_em_campos_sensiveis=busca_em_campos_sensiveis,
+                        alcanca_sensivel=alcanca_sensivel,
                     )
                 )
             )
@@ -935,6 +956,7 @@ class RepositorioSQL:
             ),
             fonte=registro.fonte,
             visivel=registro.visivel,
+            sensivel=registro.sensivel,
             origem_aba=registro.origem_aba,
             origem_linha=registro.origem_linha,
             criado_por=registro.criado_por,

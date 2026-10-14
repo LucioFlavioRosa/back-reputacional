@@ -8,7 +8,7 @@ API não mexa nas regras de negócio.
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any, ClassVar
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -280,6 +280,12 @@ class InteracaoEntrada(BaseModel):
     registro_url: str | None = None
     modalidade: str | None = None
     local: str | None = None
+    #: A agenda inteira é restrita a quem tem a camada sensível (0089).
+    #:
+    #: `False` por padrão: uma agenda nasce comum, e classificar é um ato. O
+    #: contrário faria quem esquecesse o campo trancar o registro sem querer.
+    #: Marcar exige a camada — a recusa está em `api/interacoes`.
+    sensivel: bool = False
 
     extensao: ExtensaoEntrada | None = None
     temas: list[int] = Field(default_factory=list)
@@ -324,6 +330,7 @@ class InteracaoEntrada(BaseModel):
             registro_url=self.registro_url,
             modalidade=self.modalidade,
             local=self.local,
+            sensivel=self.sensivel,
             extensao=self.extensao.para_dominio(frente) if self.extensao else None,
             temas=tuple(self.temas),
             areas=tuple(self.areas),
@@ -400,6 +407,13 @@ class InteracaoEdicao(BaseModel):
     modalidade: str | None = None
     local: str | None = None
     visivel: bool | None = None
+    #: A agenda inteira é restrita a quem tem a camada sensível (0089).
+    #:
+    #: `None` significa "não mexi nisto", como nos outros campos desta classe —
+    #: e por isso quem edita uma agenda sem tocar na classificação não a perde.
+    #: Marcar exige a camada: a recusa está em `api/interacoes`, não aqui,
+    #: porque é decisão de autorização e precisa da identidade de quem pede.
+    sensivel: bool | None = None
     temas: list[int] | None = None
     areas: list[int] | None = None
     participacoes: list[ParticipacaoEntrada] | None = None
@@ -567,70 +581,34 @@ class InteracaoSaida(BaseModel):
 
     fonte: str
     visivel: bool
+    #: A AGENDA INTEIRA É RESTRITA a quem tem `usuario.acesso_sensivel`.
+    #:
+    #: Sai no payload de propósito, e é informação para quem ALCANÇA: a tela
+    #: marca a linha, e quem registra precisa ver que a classificação pegou.
+    #: Para quem não alcança, a questão não se põe — a linha não chega, porque
+    #: `filtros_sql.condicoes()` a tirou do conjunto.
+    #:
+    #: NÃO HÁ MAIS `CAMPOS_SENSIVEIS`, e a remoção é o ponto da migration 0089.
+    #: Antes a informação sensível era uma lista fixa de campos, o registro
+    #: aparecia para todos e alguns campos vinham nulos. A lista não respondia à
+    #: pergunta de quem usa — "esta reunião é delicada" é propriedade do
+    #: ENCONTRO, não do campo —, e ninguém entendia por que um campo vinha vazio
+    #: num registro comum. Agora é a linha que se restringe, e a agenda que
+    #: chega chega inteira.
+    sensivel: bool
     criado_por: UUID | None
     criado_em: datetime | None
     atualizado_em: datetime | None
 
-    #: Campos que só saem no payload para quem alcança o sensível — hoje a
-    #: conjunção `papel.ve_campos_sensiveis` E `usuario.acesso_sensivel`, lida
-    #: pela propriedade `UsuarioAtual.ve_campos_sensiveis`.
-    #:
-    #: `relato` é a transcrição do que foi conversado; `pendencias` costuma
-    #: carregar posicionamento ainda não público. Os dois são exatamente o que
-    #: um terceiro não deveria levar embora — e a busca livre continua varrendo
-    #: `relato`, então esconder o campo não esconde a existência do registro.
-    #:
-    #: OS TRÊS ÚLTIMOS ENTRARAM COM A CAMADA POR PESSOA (0087), e sem eles ela
-    #: seria quase inútil: quem ficasse "sem sensível" perderia o relato e
-    #: continuaria lendo `posicionamento` — a posição interna da companhia sobre
-    #: o assunto — e `observacoes`, que é campo livre e por isso recebe
-    #: justamente o que não cabia nos outros. `encaminhamentos` é o que a Aegea
-    #: se comprometeu a fazer, ainda não público.
-    #:
-    #: Acrescentá-los não mudou o acesso de ninguém no dia em que entraram: os
-    #: oito papéis semeados têm `ve_campos_sensiveis` verdadeiro, então a lista
-    #: só passa a valer para quem alguém marcar explicitamente como sem a
-    #: camada. É o que torna a mudança segura de fazer de uma vez.
-    #:
-    #: `pauta` FICA DE FORA, e é o limite da ideia: sem ela o registro perde a
-    #: identidade e a tela não tem o que listar. Quem não alcança o sensível
-    #: continua vendo data, contraparte, pauta, situação, temas e indicadores —
-    #: o suficiente para ler o conjunto como reputação, que é o que o painel faz.
-    CAMPOS_SENSIVEIS: ClassVar[tuple[str, ...]] = (
-        "relato",
-        "pendencias",
-        "posicionamento",
-        "encaminhamentos",
-        "observacoes",
-    )
-
-    #: O mesmo, DENTRO do bloco da consulta recebida.
-    #:
-    #: `teor` é texto colado de um e-mail — carrega a pergunta e, com ela, o
-    #: dado pessoal de quem escreveu; `remetente` é o nome ou o endereço de
-    #: uma pessoa que nem precisa estar no cadastro. Os dois são exatamente o
-    #: que um terceiro não deveria levar embora, pela mesma razão de `relato`.
-    #:
-    #: Canal, prazo e data da resposta FICAM: são operacionais, dizem o que a
-    #: área deve fazer, e sem eles a fila de "prazo vencido" sumiria para quem
-    #: justamente precisa respondê-la.
-    CAMPOS_SENSIVEIS_DA_CONSULTA: ClassVar[tuple[str, ...]] = (
-        "remetente",
-        "teor",
-        #: `motivo` é a HIPÓTESE de quem recebeu sobre a intenção de quem
-        #: perguntou — "quer justificar revisão de spread". Escrita para uso
-        #: interno, e a última coisa que deveria sair da companhia.
-        "motivo",
-    )
-
     @classmethod
-    def de_dominio(
-        cls, interacao: Interacao, *, ve_campos_sensiveis: bool = True
-    ) -> InteracaoSaida:
-        """Serializa o agregado, omitindo o que o papel não alcança.
+    def de_dominio(cls, interacao: Interacao) -> InteracaoSaida:
+        """Serializa o agregado.
 
-        O padrão é `True` para não quebrar chamadas internas; toda rota passa o
-        valor explicitamente a partir do papel de quem pediu.
+        JÁ NÃO OMITE NADA, e a assinatura perdeu `ve_campos_sensiveis` por
+        isso. Quem decide o que a pessoa alcança é o filtro de LINHA em
+        `filtros_sql.condicoes()`: a agenda que chega até aqui é uma que ela
+        alcança, e alcança inteira. Mascarar campos aqui esconderia dela o que
+        a tela tem direito de mostrar.
         """
         from dataclasses import asdict
 
@@ -734,33 +712,22 @@ class InteracaoSaida(BaseModel):
             ],
             fonte=interacao.fonte,
             visivel=interacao.visivel,
+            sensivel=interacao.sensivel,
             criado_por=interacao.criado_por,
             criado_em=interacao.criado_em,
             atualizado_em=interacao.atualizado_em,
         )
 
-        if not ve_campos_sensiveis:
-            # `model_copy` em vez de omitir o campo do modelo: o contrato da
-            # API continua o mesmo para todo perfil, e o front não precisa
-            # saber quem está olhando — só recebe nulo onde não tem direito.
-            saida = saida.model_copy(
-                update={campo: None for campo in cls.CAMPOS_SENSIVEIS}
-            )
-            if saida.consulta is not None:
-                # O bloco INTEIRO não vai a `None`: canal e prazos continuam
-                # valendo para quem opera. Só o que identifica a pessoa e o
-                # que ela escreveu é que some.
-                saida = saida.model_copy(
-                    update={
-                        "consulta": saida.consulta.model_copy(
-                            update={
-                                campo: None
-                                for campo in cls.CAMPOS_SENSIVEIS_DA_CONSULTA
-                            }
-                        )
-                    }
-                )
-
+        #: AQUI HAVIA O MASCARAMENTO, e a ausência dele é a mudança de 0089.
+        #:
+        #: `model_copy` punha nulo em `relato`, `pendencias`, `posicionamento`,
+        #: `encaminhamentos` e `observacoes` — e, dentro da consulta recebida,
+        #: em `remetente`, `teor` e `motivo`. O registro aparecia para todos com
+        #: buracos.
+        #:
+        #: Agora quem não alcança a agenda não recebe a agenda: o filtro é de
+        #: LINHA, em `filtros_sql.condicoes()`. Mascarar aqui, além de
+        #: redundante, esconderia da pessoa certa o que ela tem direito de ler.
         return saida
 
 

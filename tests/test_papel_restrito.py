@@ -502,7 +502,12 @@ def test_subir_importacao_funciona_com_o_papel_restrito(sessao_restrita, semente
     saida = io.BytesIO()
     pasta.save(saida)
 
-    usuario = SimpleNamespace(id=semente.id)
+    #: `ve_campos_sensiveis` ENTROU AQUI porque a rota passou a lê-lo: ela
+    #: decide se o aviso de duplicata da conferência pode citar uma agenda
+    #: restrita (ver `importar_agendas._ja_existem`). `True` porque o que este
+    #: teste exercita é a CONTA DO BANCO, não a camada — e um `False` faria o
+    #: teste cobrir um caminho a menos sem dizer por quê.
+    usuario = SimpleNamespace(id=semente.id, ve_campos_sensiveis=True)
     arquivo = SimpleNamespace(file=io.BytesIO(saida.getvalue()), filename="teste.xlsx")
 
     saida_da_rota = importacoes.subir(sessao_restrita, usuario, arquivo)

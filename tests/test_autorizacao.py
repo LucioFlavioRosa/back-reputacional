@@ -74,15 +74,17 @@ def test_condicoes_sem_escopo_nao_compila():
     with pytest.raises(TypeError):
         condicoes(Recorte())
 
-    # O mesmo vale para a bandeira da busca: sem ela, `q=` voltaria a varrer
-    # `relato` por omissão, que é justamente o oráculo que ela fecha.
+    # O MESMO VALE PARA `alcanca_sensivel`, e desde 0089 vale mais: ele deixou
+    # de decidir só quais colunas a busca varre e passou a decidir quais LINHAS
+    # existem. Sem ele obrigatório, uma consulta nova nasceria enxergando as
+    # agendas sensíveis de todo mundo — e nada quebraria para avisar.
     with pytest.raises(TypeError):
         condicoes(Recorte(), escopo=Escopo.total())
 
 
 def test_escopo_irrestrito_nao_acrescenta_condicao():
     apenas_estado = condicoes(
-        Recorte(), escopo=Escopo.total(), busca_em_campos_sensiveis=True
+        Recorte(), escopo=Escopo.total(), alcanca_sensivel=True
     )
     # `arquivado_em is null` e `visivel is true` — o filtro por estado, que
     # nunca dependeu de quem pede.
@@ -99,7 +101,7 @@ def test_escopo_restrito_sem_concessao_nao_alcanca_nada():
     escopo = Escopo(irrestrito=False)
     assert escopo.nao_alcanca_nada
 
-    onde = condicoes(Recorte(), escopo=escopo, busca_em_campos_sensiveis=False)
+    onde = condicoes(Recorte(), escopo=escopo, alcanca_sensivel=False)
     assert str(onde[0]) == "false"
 
 
@@ -107,7 +109,7 @@ def test_escopo_por_frente_entra_como_condicao():
     onde = condicoes(
         Recorte(),
         escopo=Escopo(frentes=frozenset({"imprensa"})),
-        busca_em_campos_sensiveis=True,
+        alcanca_sensivel=True,
     )
     sql = " ".join(str(c) for c in onde)
     assert "frente_id IN" in sql
@@ -124,35 +126,52 @@ def test_escopo_nao_e_afrouxado_pelo_recorte():
     onde = condicoes(
         Recorte(frente="governo"),
         escopo=Escopo(frentes=frozenset({"imprensa"})),
-        busca_em_campos_sensiveis=True,
+        alcanca_sensivel=True,
     )
     do_recorte = [c for c in onde if "frente_id =" in str(c)]
     do_escopo = [c for c in onde if "frente_id IN" in str(c)]
     assert do_recorte and do_escopo, "uma das duas condições sumiu"
 
 
-def test_busca_nao_varre_relato_sem_permissao():
-    """Mascarar o campo e mantê-lo pesquisável é devolvê-lo por dedução.
+def test_a_agenda_sensivel_sai_do_conjunto_de_quem_nao_a_alcanca():
+    """O filtro é de LINHA, e é por isso que ele vale para tudo.
 
-    Sem esta bandeira, quem recebe `relato: null` ainda descobriria o conteúdo
-    palavra por palavra, observando se o registro aparece no resultado.
+    ESTE TESTE MUDOU DE SENTIDO em 0089, e o anterior está citado aqui porque
+    a troca é a parte que importa. Ele se chamava
+    `test_busca_nao_varre_relato_sem_permissao` e provava o contrário desta
+    asserção: que `relato` saía da busca para quem não tinha a camada. Fazia
+    sentido quando a informação sensível era uma lista de CAMPOS — o registro
+    aparecia para todos, alguns campos vinham nulos, e deixá-los pesquisáveis
+    seria um oráculo.
+
+    Agora quem classifica é quem registra, uma agenda por vez, e o efeito é
+    sobre a linha: a agenda marcada não está no conjunto. Sem campo escondido
+    não há o que deduzir, e condicionar colunas da busca só esconderia da pessoa
+    certa o texto que ela lê na tela ao lado.
     """
     com_direito = condicoes(
         Recorte(busca="off the record"),
         escopo=Escopo.total(),
-        busca_em_campos_sensiveis=True,
+        alcanca_sensivel=True,
     )
-    assert "interacao.relato" in " ".join(str(c) for c in com_direito)
+    sql_com = " ".join(str(c) for c in com_direito)
+    #: Quem alcança não leva filtro de linha nenhum...
+    assert "interacao.sensivel" not in sql_com
+    #: ...e busca nos mesmos campos de sempre.
+    assert "interacao.relato" in sql_com
 
     sem_direito = condicoes(
         Recorte(busca="off the record"),
         escopo=Escopo.total(),
-        busca_em_campos_sensiveis=False,
+        alcanca_sensivel=False,
     )
-    sql = " ".join(str(c) for c in sem_direito)
-    assert "interacao.relato" not in sql
-    # A busca continua funcionando no que a pessoa pode ver.
-    assert "interacao.pauta" in sql
+    sql_sem = " ".join(str(c) for c in sem_direito)
+    #: A LINHA É QUE SAI. É esta condição que tira a agenda da Base, da ficha,
+    #: do KPI e da busca de uma vez — e por isso ela basta.
+    assert "interacao.sensivel" in sql_sem
+    #: A busca varre os MESMOS campos: o que a pessoa alcança, alcança inteiro.
+    assert "interacao.relato" in sql_sem
+    assert "interacao.pauta" in sql_sem
 
 
 # -- prazo de concessão --------------------------------------------------------
@@ -186,39 +205,29 @@ def test_externo_e_somente_leitura():
         exigir_permissao_de_edicao(externo, nova())
 
 
-def test_papel_sem_campos_sensiveis_recebe_nulo():
-    """`relato` e `pendencias` saem do payload, e o contrato da API não muda.
+def test_a_agenda_que_chega_chega_inteira():
+    """A SERIALIZAÇÃO JÁ NÃO MASCARA NADA, e isso é a mudança de 0089.
 
-    O front recebe os mesmos campos para todo perfil — nulos onde não há
-    direito — e não precisa saber quem está olhando.
+    Aqui havia dois testes — `test_papel_sem_campos_sensiveis_recebe_nulo` e
+    `test_a_consulta_recebida_perde_o_que_identifica_e_guarda_o_que_opera` — que
+    provavam o mascaramento: `relato`, `pendencias`, `remetente`, `teor` e
+    `motivo` voltando nulos para quem não tinha a camada.
+
+    O mascaramento saiu porque a restrição mudou de lugar: quem não alcança a
+    agenda não recebe a agenda (`filtros_sql.condicoes`, filtro de LINHA). A
+    que chega até a serialização é uma que a pessoa alcança, e mascarar campos
+    nela esconderia dela o que tem direito de ler.
+
+    Este teste é o inverso dos dois antigos, e existe para que a volta do
+    mascaramento seja uma escolha e não um acidente: `de_dominio` nem aceita
+    mais a bandeira.
     """
-    # `id` explícito: o agregado só ganha o dele ao ser persistido, e o
-    # esquema de saída exige um.
     interacao = nova(
+        # `id` explícito: o agregado só ganha o dele ao ser persistido, e o
+        # esquema de saída exige um.
         id=uuid4(),
         relato="Off the record com o repórter",
         pendencias="Aguarda jurídico",
-    )
-
-    completa = InteracaoSaida.de_dominio(interacao, ve_campos_sensiveis=True)
-    assert completa.relato == "Off the record com o repórter"
-    assert completa.pendencias == "Aguarda jurídico"
-
-    reduzida = InteracaoSaida.de_dominio(interacao, ve_campos_sensiveis=False)
-    assert reduzida.relato is None
-    assert reduzida.pendencias is None
-    # O resto continua vindo: esconder campo não é esconder o registro.
-    assert reduzida.pauta == interacao.pauta
-
-
-def test_a_consulta_recebida_perde_o_que_identifica_e_guarda_o_que_opera():
-    """`remetente` e `teor` carregam a pessoa que escreveu e o que ela
-    escreveu; `motivo` é a hipótese interna sobre a intenção dela. Canal e
-    prazos FICAM — sem eles, a fila de "prazo vencido" sumiria justamente
-    para quem precisa respondê-la.
-    """
-    interacao = nova(
-        id=uuid4(),
         consulta=Consulta(
             canal_id=1,
             remetente="analista@banco.com",
@@ -228,17 +237,33 @@ def test_a_consulta_recebida_perde_o_que_identifica_e_guarda_o_que_opera():
         ),
     )
 
-    completa = InteracaoSaida.de_dominio(interacao, ve_campos_sensiveis=True)
-    assert completa.consulta is not None
-    assert completa.consulta.remetente == "analista@banco.com"
+    saida = InteracaoSaida.de_dominio(interacao)
+    assert saida.relato == "Off the record com o repórter"
+    assert saida.pendencias == "Aguarda jurídico"
+    assert saida.consulta is not None
+    assert saida.consulta.remetente == "analista@banco.com"
+    assert saida.consulta.teor is not None
+    assert saida.consulta.motivo is not None
 
-    reduzida = InteracaoSaida.de_dominio(interacao, ve_campos_sensiveis=False)
-    assert reduzida.consulta is not None, "o bloco inteiro não some"
-    assert reduzida.consulta.remetente is None
-    assert reduzida.consulta.teor is None
-    assert reduzida.consulta.motivo is None
-    assert reduzida.consulta.canal_id == 1
-    assert reduzida.consulta.prazo_resposta == date(2026, 6, 30)
+    #: E A ASSINATURA NÃO ACEITA MAIS A BANDEIRA. É o que impede uma rota de
+    #: continuar passando a bandeira antiga e mascarar em silêncio.
+    #:
+    #: O nome do argumento vai por `**` de propósito: escrito por extenso, ele
+    #: seria apanhado pelo mesmo tipo de troca em massa que me apagou esta
+    #: asserção uma vez — o script procurava `, <nome>=False)` para limpar as
+    #: chamadas reais e limpou também a que existe para provar que elas doem.
+    with pytest.raises(TypeError):
+        InteracaoSaida.de_dominio(interacao, **{"ve_campos_sensiveis": False})
+
+
+def test_a_classificacao_da_agenda_sai_no_payload():
+    """Quem alcança precisa VER que a agenda está marcada.
+
+    Sem isto, quem classificou não tem como conferir que a marca pegou — e a
+    tela não tem como distinguir a linha restrita na lista.
+    """
+    assert InteracaoSaida.de_dominio(nova(id=uuid4())).sensivel is False
+    assert InteracaoSaida.de_dominio(nova(id=uuid4(), sensivel=True)).sensivel is True
 
 
 def test_limite_vem_antes_da_autorizacao():

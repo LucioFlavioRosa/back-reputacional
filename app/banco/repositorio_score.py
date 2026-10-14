@@ -1291,10 +1291,33 @@ def so_interacoes_visiveis() -> list:
     são "não leia": o arquivado saiu do ciclo de vida, o não visível continua nele
     e foi retirado da vista. Uma leitura que aplica um e não o outro está errada
     das duas formas.
+    A AGENDA SENSÍVEL ENTRA NA MESMA REGRA (migration 0089), e esta é a decisão
+    mais pesada do conjunto — está escrita aqui porque é aqui que ela acontece.
+
+    O QUE ELA FECHA: `orgaos_do_crm` devolve NOME DE INSTITUIÇÃO com contagem
+    por mês, e `temas_do_crm` devolve nome de tema. Uma agenda restrita
+    apareceria ali; com contagem 1 num mês, o par instituição-mês revela que o
+    encontro existiu — que é exatamente o que a marca protege. É a mesma classe
+    de vazamento que o parágrafo de `visivel` acima descreve, e o mesmo lugar o
+    conserta.
+
+    SEM A BANDEIRA DE QUEM PEDE, de propósito, e aqui está a diferença de
+    `filtros_sql.condicoes`: o Score é um índice DA COMPANHIA, não do leitor.
+    Passá-lo por pessoa faria duas pessoas lerem notas diferentes para o mesmo
+    mês e discutirem qual é a verdadeira — num número que existe para ser
+    citado em reunião, isso é pior do que o custo abaixo.
+
+    O CUSTO, E ELE É REAL: agenda restrita não move o índice nem aparece nos
+    dossiês, para NINGUÉM — inclusive para quem a marcou. Uma reunião delicada é
+    justamente o tipo de encontro que pesaria na reputação, e ela deixa de
+    pesar. A alternativa era entregar o nome da instituição a quem não alcança a
+    agenda. Se o dono do produto preferir o contrário, o lugar de mudar é este,
+    e a mudança é por pessoa — com as duas notas que ela implica.
     """
     return [
         InteracaoRegistro.arquivado_em.is_(None),
         InteracaoRegistro.visivel.is_(True),
+        InteracaoRegistro.sensivel.is_(False),
     ]
 
 

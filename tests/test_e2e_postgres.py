@@ -979,20 +979,129 @@ def test_convidado_sem_concessao_nao_ve_nada(cliente, semente, sessao):
     assert recem_chegado.get("/api/interacoes").json()["total"] == 0
 
 
-def test_externo_nao_recebe_campos_sensiveis(cliente, semente, sessao):
+def test_a_agenda_sensivel_nao_existe_para_quem_nao_a_alcanca(cliente, semente, sessao):
+    """A classificação é por AGENDA, e o efeito é sobre a linha inteira.
+
+    ESTE TESTE MUDOU DE SENTIDO em 0089. Chamava-se
+    `test_externo_nao_recebe_campos_sensiveis` e provava o contrário: que a
+    ficha vinha com `relato: null` e `pauta` preenchida — o registro aparecia
+    para todos, com buracos.
+
+    Agora quem marca é quem registra, e para quem não tem a camada a agenda não
+    existe: 404 na ficha, fora da listagem. "Não encontrada" e não "não
+    autorizada", de propósito — numa agenda restrita a própria existência do
+    encontro costuma ser o que se protege.
+    """
     from app.dominio.identidade import Escopo
 
-    id_ = cliente.post(
+    marcada = cliente.post(
         "/api/interacoes",
-        json=corpo(semente, relato="Off the record", pendencias="Aguarda jurídico"),
+        json=corpo(
+            semente,
+            relato="Off the record",
+            pendencias="Aguarda jurídico",
+            sensivel=True,
+        ),
     ).json()["id"]
+    comum = cliente.post("/api/interacoes", json=corpo(semente)).json()["id"]
     sessao.flush()
 
-    externo = como(cliente, papel_externo(), Escopo(frentes=frozenset({"imprensa"})))
-    ficha = externo.get(f"/api/interacoes/{id_}").json()
-    assert ficha["relato"] is None
-    assert ficha["pendencias"] is None
-    assert ficha["pauta"]  # o registro continua visível
+    #: QUEM TEM A CAMADA PRIMEIRO, e a ordem não é estilo.
+    #:
+    #: `como()` substitui o usuário da APLICAÇÃO (`dependency_overrides`) e
+    #: devolve o mesmo cliente — depois de chamá-lo, `cliente` também é o
+    #: convidado. Conferir o lado de quem alcança depois da troca daria 404
+    #: para os dois, e o teste passaria a provar só metade.
+    resposta = cliente.get(f"/api/interacoes/{marcada}")
+    assert resposta.status_code == 200, resposta.json()
+    ficha = resposta.json()
+    assert ficha["sensivel"] is True
+    #: A AGENDA INTEIRA, sem campo mascarado.
+    assert ficha["relato"] == "Off the record"
+    assert ficha["pendencias"] == "Aguarda jurídico"
+
+    escopo_valido = Escopo(frentes=frozenset({"imprensa"}))
+    sem_camada = como(cliente, papel_externo(), escopo_valido)
+
+    #: A FICHA NÃO ABRE, nem conhecendo o id.
+    assert sem_camada.get(f"/api/interacoes/{marcada}").status_code == 404
+
+    #: E A LINHA NÃO ESTÁ NA LISTAGEM — só a comum.
+    listagem = sem_camada.get("/api/interacoes").json()
+    ids = {item["id"] for item in listagem["itens"]}
+    assert marcada not in ids
+    assert comum in ids
+    #: O TOTAL ACOMPANHA. Se contasse a restrita, o cabeçalho diria 2 e a
+    #: tabela mostraria 1 — e é esse tipo de divergência que faz alguém abrir
+    #: chamado dizendo que o sistema está errado.
+    assert listagem["total"] == 1
+
+
+def test_quem_nao_tem_a_camada_nao_marca_agenda_como_sensivel(cliente, semente, sessao):
+    """Não se classifica algo dentro de um cofre que não se abre.
+
+    Quem marcasse sem a camada perderia o próprio registro de vista no mesmo
+    instante, e não conseguiria nem desmarcar: precisaria pedir a outra pessoa.
+    A tela esconde o campo; esta é a barreira.
+
+    USUÁRIO DE VERDADE NO BANCO, e não o de `como()`. Aquele inventa um
+    `uuid4()` que não existe em `usuario`, e `interacao.criado_por` tem chave
+    estrangeira — por isso os outros testes só o usam para LEITURA. Este
+    ESCREVE, então precisa de uma linha.
+    """
+    import uuid as _uuid
+
+    from app.banco.tabelas_acesso import Usuario
+    from app.dominio.identidade import Escopo, Papel, UsuarioAtual
+
+    sufixo = _uuid.uuid4().hex[:8]
+    autor = Usuario(
+        entra_object_id=f"sem-camada-{sufixo}",
+        email=f"{sufixo}@aegea.com.br",
+        nome="Analista sem camada",
+        acesso_irrestrito=True,
+    )
+    sessao.add(autor)
+    sessao.flush()
+
+    from app.api.dependencias import obter_usuario_atual
+
+    app.dependency_overrides[obter_usuario_atual] = lambda: UsuarioAtual(
+        id=autor.id,
+        nome=autor.nome,
+        email=str(autor.email),
+        papel=Papel(
+            codigo="crm_edicao",
+            nome="Analista",
+            pode_criar=True,
+            pode_editar_proprio=True,
+            ve_campos_sensiveis=False,
+            acessa_crm=True,
+        ),
+        escopo=Escopo(frentes=frozenset({"imprensa"})),
+    )
+    editor_sem_camada = cliente
+
+    #: A AGENDA COMUM PRIMEIRO, e a ordem é necessária.
+    #:
+    #: A recusa é `RegraViolada`, e `obter_sessao` desfaz a transação em
+    #: qualquer exceção — o POST seguinte na MESMA sessão morre com 500 sobre
+    #: uma transação abortada. Testar o sucesso antes da recusa evita o
+    #: `begin_nested` e diz a mesma coisa.
+    #:
+    #: Sem este par, a barreira poderia estar barrando todo cadastro de quem
+    #: não tem a camada, e o teste da recusa passaria igual.
+    assert (
+        editor_sem_camada.post("/api/interacoes", json=corpo(semente)).status_code == 201
+    )
+
+    recusa = editor_sem_camada.post(
+        "/api/interacoes", json=corpo(semente, sensivel=True)
+    )
+    assert recusa.status_code == 422
+    #: `detalhe`, e não `detail`: o envelope de erro é o de `api/erros.py`, em
+    #: português, e leva também uma `referencia` para a pessoa citar ao suporte.
+    assert "sensível" in recusa.json()["detalhe"].lower()
 
 
 def test_diretorio_exige_papel(cliente, semente):
@@ -1029,33 +1138,90 @@ def test_recorte_nao_amplia_o_escopo(cliente, semente, sessao):
     assert resposta.json()["total"] == 0
 
 
-def test_busca_livre_nao_delata_relato_escondido(cliente, semente, sessao):
-    """O oráculo: sem o campo no payload, mas com ele no `where`.
+def test_sensivel_nulo_no_patch_e_entrada_invalida_e_nao_500(cliente, semente, sessao):
+    """`null` não é "não mexi nisto" — isso é o campo AUSENTE.
 
-    O externo recebe `relato: null` e mesmo assim descobriria o conteúdo por
-    tentativa — bastaria observar se o registro aparece no resultado da busca.
+    `alteracoes()` usa `exclude_unset`, então `None` só chega se o cliente
+    mandou `null`. A coluna é `not null`: sem a recusa o valor seguia até o
+    banco e voltava 500 — erro de servidor para uma entrada corrigível.
     """
-    from app.dominio.identidade import Escopo, Papel
+    id_ = cliente.post("/api/interacoes", json=corpo(semente)).json()["id"]
+    sessao.flush()
 
+    recusa = cliente.patch(f"/api/interacoes/{id_}", json={"sensivel": None})
+    assert recusa.status_code == 422, recusa.json()
+    assert "omita" in recusa.json()["detalhe"].lower()
+
+
+def test_omitir_sensivel_no_patch_preserva_a_classificacao(cliente, semente, sessao):
+    """O par do teste acima: ausente é "não mexi nisto", e tem de preservar.
+
+    Sem isto, quem editasse o relato de uma agenda restrita a desclassificaria
+    sem pedir — e o registro abriria para todo mundo em silêncio.
+    """
+    id_ = cliente.post(
+        "/api/interacoes", json=corpo(semente, sensivel=True)
+    ).json()["id"]
+    sessao.flush()
+
+    editada = cliente.patch(
+        f"/api/interacoes/{id_}", json={"relato": "texto novo"}
+    )
+    assert editada.status_code == 200, editada.json()
+    assert editada.json()["sensivel"] is True
+    assert editada.json()["relato"] == "texto novo"
+
+
+def test_a_busca_nao_delata_a_agenda_restrita(cliente, semente, sessao):
+    """A busca não acha o que a pessoa não alcança — e acha o que ela alcança.
+
+    ESTE TESTE MUDOU DE SENTIDO em 0089, e a troca é a parte que importa.
+    Chamava-se `test_busca_livre_nao_delata_relato_escondido` e provava que
+    `relato` saía do `where` de quem recebia o campo nulo: o oráculo. Sem o
+    texto, a pessoa descobriria o conteúdo por tentativa e erro, uma palavra
+    por vez.
+
+    Agora não há campo escondido: a LINHA sai. O resultado para quem não
+    alcança é o mesmo — a palavra não revela nada —, mas pelo motivo oposto, e
+    sem o custo de tirar da busca de quem tem direito um campo que ele lê na
+    tela ao lado.
+    """
+    from app.dominio.identidade import Escopo
+
+    #: A palavra existe SOMENTE em `relato`, e numa agenda MARCADA.
     cliente.post(
         "/api/interacoes",
-        json=corpo(semente, relato="conversa sobre desligamento do diretor"),
+        json=corpo(
+            semente,
+            relato="conversa sobre desligamento do diretor",
+            sensivel=True,
+        ),
+    )
+    #: E numa agenda COMUM, outra palavra só no relato — é o que prova que a
+    #: busca varre o campo para todo mundo, e não que ela parou de varrê-lo.
+    #:
+    #: "FRIGORIFICO", e não "reajuste": `corpo()` já põe "Reajuste tarifário em
+    #: concessões" na `pauta` das DUAS agendas, então "reajuste" casaria pela
+    #: pauta e o teste não diria nada sobre o relato.
+    cliente.post(
+        "/api/interacoes",
+        json=corpo(semente, relato="conversa sobre o frigorifico de Itaboraí"),
     )
     sessao.flush()
 
     escopo_valido = Escopo(frentes=frozenset({"imprensa"}))
 
-    # A palavra existe SOMENTE em `relato`.
-    externo = como(cliente, papel_externo(), escopo_valido)
-    assert externo.get("/api/interacoes?q=desligamento").json()["total"] == 0
+    #: QUEM TEM A CAMADA PRIMEIRO: `como()` troca o usuário da aplicação, e
+    #: depois dele `cliente` também é o convidado.
+    assert cliente.get("/api/interacoes?q=desligamento").json()["total"] == 1
+    assert cliente.get("/api/interacoes?q=frigorifico").json()["total"] == 1
 
-    # Quem tem direito ao campo continua encontrando por ele.
-    interno = como(
-        cliente,
-        Papel(codigo="crm_edicao", nome="Analista", ve_campos_sensiveis=True, acessa_crm=True),
-        escopo_valido,
-    )
-    assert interno.get("/api/interacoes?q=desligamento").json()["total"] == 1
+    sem_camada = como(cliente, papel_externo(), escopo_valido)
+
+    #: A agenda restrita não é achada...
+    assert sem_camada.get("/api/interacoes?q=desligamento").json()["total"] == 0
+    #: ...e a comum é achada PELO RELATO, que já não está atrás de bandeira.
+    assert sem_camada.get("/api/interacoes?q=frigorifico").json()["total"] == 1
 
 
 def test_troca_de_porta_voz_e_auditada(cliente, semente, sessao):

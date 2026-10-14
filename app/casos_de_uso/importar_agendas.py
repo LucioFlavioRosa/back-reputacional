@@ -1212,8 +1212,23 @@ def _quem_representa(sessao: Session) -> dict[object, frozenset]:
     return {chave: frozenset(valores) for chave, valores in por_instituicao.items()}
 
 
-def _ja_existem(sessao: Session, pares: set[tuple]) -> set[tuple]:
+def _ja_existem(
+    sessao: Session, pares: set[tuple], *, alcanca_sensivel: bool = False
+) -> set[tuple]:
     """Quais (instituição, data) já têm agenda no sistema.
+
+    `alcanca_sensivel` FALSO TIRA AS RESTRITAS DA CONFERÊNCIA, e isso é um
+    vazamento fechado, não zelo.
+
+    O par (instituição, data) é precisamente o que IDENTIFICA uma reunião — é
+    por isso que ele serve para detectar duplicata. Avisar "já existe agenda
+    deste órgão neste dia" a quem não alcança a agenda restrita conta a ela que
+    o encontro existiu, que é o que a marca protege. Sob a semântica de 0089 a
+    linha "não existe" para essa pessoa, e um aviso sobre ela é uma contradição.
+
+    O PREÇO: quem não tem a camada pode criar uma agenda que duplica uma
+    restrita, e não será avisada. É o preço certo — o contrário é contar o que
+    não se pode contar —, e quem tem a camada vê a duplicata na Base depois.
 
     UMA CONSULTA para o arquivo inteiro, e não uma por agenda. Filtra pelos dois
     conjuntos e cruza em Python: com no máximo 500 linhas, o `in_` de duas
@@ -1227,12 +1242,18 @@ def _ja_existem(sessao: Session, pares: set[tuple]) -> set[tuple]:
         return set()
     instituicoes = {instituicao for instituicao, _ in pares}
     datas = {data for _, data in pares}
+    condicoes_da_busca = [
+        InteracaoRegistro.instituicao_id.in_(instituicoes),
+        InteracaoRegistro.data_interacao.in_(datas),
+        InteracaoRegistro.arquivado_em.is_(None),
+    ]
+    if not alcanca_sensivel:
+        condicoes_da_busca.append(InteracaoRegistro.sensivel.is_(False))
+
     linhas = sessao.execute(
-        select(InteracaoRegistro.instituicao_id, InteracaoRegistro.data_interacao).where(
-            InteracaoRegistro.instituicao_id.in_(instituicoes),
-            InteracaoRegistro.data_interacao.in_(datas),
-            InteracaoRegistro.arquivado_em.is_(None),
-        )
+        select(
+            InteracaoRegistro.instituicao_id, InteracaoRegistro.data_interacao
+        ).where(*condicoes_da_busca)
     ).all()
     return {(instituicao, data) for instituicao, data in linhas} & pares
 
@@ -1290,7 +1311,7 @@ def propor(sessao: Session, conteudo: bytes) -> list[Proposta]:
 
 
 def propor_com_as_declaracoes(
-    sessao: Session, conteudo: bytes
+    sessao: Session, conteudo: bytes, *, alcanca_sensivel: bool = False
 ) -> tuple[list[Proposta], dict[str, frozenset[str]], dict[str, dict[str, dict[str, object]]]]:
     """As propostas E o que a pessoa declarou nas abas de cadastro.
 
@@ -1306,7 +1327,13 @@ def propor_com_as_declaracoes(
     nomes = ler_declarados(conteudo)
     campos = ler_cadastros_declarados(conteudo)
     return (
-        propor_de_linhas(sessao, linhas, nomes, cadastros_declarados=campos),
+        propor_de_linhas(
+            sessao,
+            linhas,
+            nomes,
+            cadastros_declarados=campos,
+            alcanca_sensivel=alcanca_sensivel,
+        ),
         nomes,
         campos,
     )
@@ -1318,6 +1345,10 @@ def propor_de_linhas(
     declarados: Mapping[str, frozenset[str]],
     apontados: Mapping[tuple[str, str], object] = MAPPING_VAZIO,
     cadastros_declarados: Mapping[str, Mapping[str, Mapping[str, object]]] = MAPPING_VAZIO,
+    *,
+    #: Quem sobe/confirma alcança agendas sensíveis? Decide se o aviso de
+    #: duplicata pode citar uma agenda restrita — ver `_ja_existem`.
+    alcanca_sensivel: bool = False,
 ) -> list[Proposta]:
     """O mesmo, a partir de linhas JÁ LIDAS.
 
@@ -1379,7 +1410,7 @@ def propor_de_linhas(
                             coluna=coluna.nome,
                         )
                     )
-            elif coluna.campo == "preve_desdobramento":
+            elif coluna.campo in ("preve_desdobramento", "sensivel"):
                 convertido = _booleano(bruto)
                 if isinstance(convertido, str):
                     divergencias.append(
@@ -1394,6 +1425,15 @@ def propor_de_linhas(
                     valor = None
                 else:
                     valor = convertido
+                #: VAZIO É "NÃO" PARA `sensivel`, e não nulo.
+                #:
+                #: A coluna é `not null` no banco, e o agregado tem `False` por
+                #: padrão — mas aqui o valor segue para um `dict` de alterações,
+                #: e `None` ali afirmaria "sem classificação" num campo que não
+                #: aceita. Planilha de 500 linhas com a coluna em branco tem de
+                #: produzir 500 agendas comuns, não 500 erros.
+                if coluna.campo == "sensivel" and valor is None:
+                    valor = False
             elif coluna.campo == "uf":
                 valor = str(bruto).upper() if bruto is not None else None
                 if valor is not None and valor not in ABRANGENCIAS_VALIDAS:
@@ -1552,7 +1592,9 @@ def propor_de_linhas(
         )
 
     return _avisar_as_duas_grafias(
-        _avisar_a_pessoa_em_duas_instituicoes(_avisar_duplicatas(sessao, propostas))
+        _avisar_a_pessoa_em_duas_instituicoes(
+            _avisar_duplicatas(sessao, propostas, alcanca_sensivel=alcanca_sensivel)
+        )
     )
 
 
@@ -1725,7 +1767,9 @@ def _avisar_a_pessoa_em_duas_instituicoes(
     return propostas
 
 
-def _avisar_duplicatas(sessao: Session, propostas: list[Proposta]) -> list[Proposta]:
+def _avisar_duplicatas(
+    sessao: Session, propostas: list[Proposta], *, alcanca_sensivel: bool = False
+) -> list[Proposta]:
     """Marca as agendas que já parecem existir — AVISO, nunca travamento.
 
     Duas reuniões com o mesmo órgão no mesmo dia acontecem, e travar por isso
@@ -1741,7 +1785,7 @@ def _avisar_duplicatas(sessao: Session, propostas: list[Proposta]) -> list[Propo
         for proposta in propostas
         if proposta.entrada is not None
     }
-    no_banco = _ja_existem(sessao, pares)
+    no_banco = _ja_existem(sessao, pares, alcanca_sensivel=alcanca_sensivel)
 
     vistos: set[tuple] = set()
     for proposta in propostas:
@@ -2833,6 +2877,14 @@ def _repropor_uma(sessao: Session, importacao_id, alvo) -> None:
         declarados,
         escolhidos,
         cadastros_declarados=cadastros,
+        #: SEM A BANDEIRA DE QUEM PEDE, e o padrão aqui é o lado SEGURO.
+        #:
+        #: `_repropor_uma` recalcula UMA linha durante a conferência, e chega
+        #: por dois caminhos internos (`apontar` e `decidir`) que não carregam a
+        #: identidade. Com `False`, quem tem a camada pode deixar de ver o aviso
+        #: de duplicata contra uma agenda restrita naquela linha — perda de
+        #: conveniência. Com `True`, quem NÃO tem a camada passaria a ver o
+        #: aviso — vazamento. Entre os dois, este.
     )
     repositorio_importacao.gravar_proposta(sessao, alvo, proposta)
 
@@ -2901,8 +2953,39 @@ def confirmar(sessao: Session, importacao_id, usuario) -> Resumo:
     # mesma máquina do upload — `propor_de_linhas` —, e não uma segunda
     # implementação que poderia divergir dela.
     propostas = propor_de_linhas(
-        sessao, _linhas_para_reler(linhas), {}, escolhidos
+        sessao,
+        _linhas_para_reler(linhas),
+        {},
+        escolhidos,
+        alcanca_sensivel=usuario.ve_campos_sensiveis,
     )
+
+    # QUEM CONFIRMA AGENDA MARCADA PRECISA DA CAMADA SENSÍVEL (migration 0089).
+    #
+    # A rota de cadastro e o `PATCH` já barram a marcação de quem não alcança o
+    # sensível — e sem esta conferência a planilha seria a porta de trás: a
+    # pessoa escreveria "sim" na coluna, confirmaria, e criaria agendas que
+    # desapareceriam da vista dela no mesmo instante. Nem desmarcar daria:
+    # precisaria pedir a outra pessoa.
+    #
+    # ANTES DO LAÇO, E SOBRE O CONJUNTO. Recusar dentro do laço criaria parte
+    # das agendas e abortaria no meio — e esta função existe para ser tudo ou
+    # nada. Recusar aqui também dá uma mensagem melhor: diz QUANTAS linhas e
+    # ONDE, em vez de parar na primeira.
+    marcadas = [
+        proposta.linha.numero
+        for proposta in propostas
+        if proposta.entrada is not None and getattr(proposta.entrada, "sensivel", False)
+    ]
+    if marcadas and not usuario.ve_campos_sensiveis:
+        raise RegraViolada(
+            f"{len(marcadas)} linha(s) estão marcadas como informação sensível "
+            f"(linha(s) {', '.join(str(n) for n in marcadas[:10])}"
+            f"{'…' if len(marcadas) > 10 else ''}), e seu perfil não tem acesso a "
+            "informação sensível — você deixaria de enxergar essas agendas. "
+            "Peça a confirmação a quem tem a camada, ou limpe a coluna "
+            "'Informação sensível?' dessas linhas."
+        )
 
     por_linha_de_origem = {
         linha.linha_origem: linha for linha in linhas if linha.aba == ABA_PRINCIPAL

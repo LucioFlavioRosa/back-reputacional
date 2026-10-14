@@ -492,8 +492,16 @@ def subir(sessao: Sessao, usuario: UsuarioLogado, arquivo: Arquivo) -> Importaca
     # As recusas estruturais levantam `RegraViolada` ANTES de qualquer escrita —
     # `app/api/erros.py` a traduz para 422. Sem isso, um `.xls` renomeado daria
     # 500 e a pessoa leria "erro interno" para um arquivo que ela pode trocar.
+    # `alcanca_sensivel` DECIDE SE O AVISO DE DUPLICATA PODE CITAR UMA AGENDA
+    # RESTRITA. O par (instituição, data) é precisamente o que identifica uma
+    # reunião — é por isso que ele serve para detectar duplicata —, e avisar
+    # sobre uma agenda que, para esta pessoa, "não existe" conta a ela que o
+    # encontro existiu. Uma planilha de 500 linhas sondaria 500 pares de uma
+    # vez. Ver `importar_agendas._ja_existem`. Achado de revisão.
     propostas, nomes_declarados, campos_declarados = (
-        importar_agendas.propor_com_as_declaracoes(sessao, conteudo)
+        importar_agendas.propor_com_as_declaracoes(
+            sessao, conteudo, alcanca_sensivel=usuario.ve_campos_sensiveis
+        )
     )
 
     importacao = repositorio_importacao.criar(

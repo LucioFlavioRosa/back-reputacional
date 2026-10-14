@@ -211,7 +211,7 @@ isso é invariante do sistema: é o que faz o KPI do painel contar exatamente o
 que a tabela lista. Uma consulta nova que monte `where` por conta própria quebra
 a garantia em silêncio.
 
-Os parâmetros `escopo` e `busca_em_campos_sensiveis` são **obrigatórios e
+Os parâmetros `escopo` e `alcanca_sensivel` são **obrigatórios e
 nomeados** justamente por isso: esquecer é `TypeError` na hora, e não um buraco
 silencioso.
 

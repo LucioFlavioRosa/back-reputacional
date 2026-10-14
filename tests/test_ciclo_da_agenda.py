@@ -147,7 +147,7 @@ def test_o_previsto_e_o_real_voltam_do_banco(sessao, instituicao, autor):
     )
     sessao.flush()
 
-    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     assert lida.expectativa == "Sair com o cronograma do reajuste acordado"
     assert lida.preve_desdobramento is True
 
@@ -164,7 +164,7 @@ def test_nao_informado_continua_nao_informado(sessao, instituicao, autor):
     salva = repositorio.adicionar(_agenda(instituicao, autor))
     sessao.flush()
 
-    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     assert lida.preve_desdobramento is None, "nulo virou decisão"
     assert lida.expectativa is None
     assert lida.declinado_por is None
@@ -186,7 +186,7 @@ def test_agenda_nova_nao_grava_natureza_orgao(sessao, instituicao, autor):
     )
     sessao.flush()
 
-    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     assert lida.extensao.natureza_orgao is None
     # SÓ `natureza_orgao` é ignorado — o resto da extensão grava normalmente.
     assert lida.extensao.cargo_interlocutor == "Secretário"
@@ -202,13 +202,13 @@ def test_editar_agenda_existente_ainda_grava_natureza_orgao(sessao, instituicao,
     salva = repositorio.adicionar(_agenda(instituicao, autor))
     sessao.flush()
 
-    antes = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    antes = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     repositorio.atualizar(
         replace(antes, extensao=Institucional(natureza_orgao="executivo"))
     )
     sessao.flush()
 
-    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     assert lida.extensao.natureza_orgao == "executivo"
 
 
@@ -236,7 +236,7 @@ def test_participantes_da_outra_parte_e_a_presenca(sessao, instituicao, autor):
     )
     sessao.flush()
 
-    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     por_pessoa = {p.interlocutor_id: p.presenca for p in lida.outra_parte}
     assert por_pessoa == {veio.id: "presente", faltou.id: "ausente"}
 
@@ -275,7 +275,7 @@ def test_mudar_a_presenca_nao_derruba_e_recria_o_vinculo(sessao, instituicao, au
 
     repositorio.atualizar(
         replace(
-            repositorio.obter(salva.id, escopo=IRRESTRITO),
+            repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True),
             outra_parte=(
                 ParticipanteDaOutraParte(
                     interlocutor_id=pessoa.id, presenca="presente"
@@ -285,7 +285,7 @@ def test_mudar_a_presenca_nao_derruba_e_recria_o_vinculo(sessao, instituicao, au
     )
     sessao.flush()
 
-    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     assert lida.outra_parte[0].presenca == "presente"
 
     depois = sessao.scalar(
@@ -326,7 +326,7 @@ def test_materiais_dos_tres_momentos(sessao, instituicao, autor):
     )
     sessao.flush()
 
-    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     assert {(m.momento, m.titulo) for m in lida.materiais} == {
         ("apoio", "Nota técnica do reajuste"),
         ("produzido", "Ata da reunião"),
@@ -359,7 +359,9 @@ def test_uma_agenda_desdobra_da_outra(sessao, instituicao, autor):
     )
     sessao.flush()
 
-    assert repositorio.obter(segunda.id, escopo=IRRESTRITO).origens == (primeira.id,)
+    assert repositorio.obter(
+        segunda.id, escopo=IRRESTRITO, alcanca_sensivel=True
+    ).origens == (primeira.id,)
 
 
 def test_declinio_guarda_o_lado_e_o_motivo(sessao, instituicao, autor):
@@ -381,7 +383,7 @@ def test_declinio_guarda_o_lado_e_o_motivo(sessao, instituicao, autor):
     )
     sessao.flush()
 
-    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     assert lida.declinado_por == "outra_parte"
     assert "trimestre" in lida.motivo_declinio
 
@@ -401,10 +403,12 @@ def test_limpar_um_campo_do_ciclo_realmente_limpa(sessao, instituicao, autor):
     )
     sessao.flush()
 
-    repositorio.atualizar(replace(repositorio.obter(salva.id, escopo=IRRESTRITO), expectativa=None))
+    repositorio.atualizar(replace(repositorio.obter(
+        salva.id, escopo=IRRESTRITO, alcanca_sensivel=True
+    ), expectativa=None))
     sessao.flush()
 
-    assert repositorio.obter(salva.id, escopo=IRRESTRITO).expectativa is None
+    assert repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True).expectativa is None
 
 
 def test_so_um_participante_e_o_principal(sessao, instituicao, autor):
@@ -478,7 +482,7 @@ def test_o_principal_tem_presenca_como_qualquer_um(sessao, instituicao, autor):
     )
     sessao.flush()
 
-    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     assert lida.outra_parte[0].principal is True
     assert lida.outra_parte[0].presenca == "ausente"
     # E a coluna continua apontando para ele.
@@ -533,13 +537,13 @@ def test_a_presenca_de_quem_representou_a_aegea_sobrevive(sessao, instituicao, a
     )
     sessao.flush()
 
-    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     assert lida.participacoes[0].presenca == "presente"
 
     # A PORTA QUE O NAVEGADOR USA.
     from app.esquemas.interacoes import InteracaoSaida
 
-    saida = InteracaoSaida.de_dominio(lida, ve_campos_sensiveis=True)
+    saida = InteracaoSaida.de_dominio(lida)
     assert saida.participacoes[0].presenca == "presente"
     assert saida.participacoes[0].papel == "porta_voz"
 
@@ -556,7 +560,7 @@ def test_o_clima_esperado_e_comparavel_com_o_real(sessao, instituicao, autor):
     )
     sessao.flush()
 
-    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     assert lida.clima_esperado == "propositivo"
     assert lida.clima == "tenso"
 
@@ -584,13 +588,13 @@ def test_o_id_do_material_nao_muda_ao_salvar_de_novo(sessao, instituicao, autor)
     )
     sessao.flush()
 
-    antes = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    antes = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     id_original = antes.materiais[0].id
 
     repositorio.atualizar(replace(antes, relato="qualquer outra coisa"))
     sessao.flush()
 
-    depois = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    depois = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     assert depois.materiais[0].id == id_original, (
         "o id do material mudou num PATCH que nem tocou nos materiais"
     )
@@ -613,7 +617,7 @@ def test_material_novo_entra_e_o_que_saiu_some(sessao, instituicao, autor):
     )
     sessao.flush()
 
-    antes = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    antes = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     fica = next(m for m in antes.materiais if m.titulo == "Fica")
 
     repositorio.atualizar(
@@ -629,7 +633,7 @@ def test_material_novo_entra_e_o_que_saiu_some(sessao, instituicao, autor):
     )
     sessao.flush()
 
-    depois = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    depois = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     titulos = {m.titulo for m in depois.materiais}
     assert titulos == {"Fica", "Ata"}
     assert next(m for m in depois.materiais if m.titulo == "Fica").id == fica.id
@@ -706,7 +710,7 @@ def test_remover_o_principal_e_mandar_a_lista_sem_ele(sessao, instituicao, autor
     # gravação incondicional da coluna já teria feito o trabalho.
     repositorio.atualizar(
         replace(
-            repositorio.obter(salva.id, escopo=IRRESTRITO),
+            repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True),
             outra_parte=(
                 ParticipanteDaOutraParte(
                     interlocutor_id=outro.id, presenca="presente"
@@ -716,7 +720,7 @@ def test_remover_o_principal_e_mandar_a_lista_sem_ele(sessao, instituicao, autor
     )
     sessao.flush()
 
-    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     assert lida.interlocutor_id is None, "a coluna não acompanhou a remoção"
     assert not any(p.principal for p in lida.outra_parte)
     assert {p.interlocutor_id for p in lida.outra_parte} == {outro.id}, (
@@ -746,7 +750,7 @@ def test_a_marca_manda_e_a_coluna_segue(sessao, instituicao, autor):
 
     repositorio.atualizar(
         replace(
-            repositorio.obter(salva.id, escopo=IRRESTRITO),
+            repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True),
             interlocutor_id=depois.id,
             outra_parte=(
                 ParticipanteDaOutraParte(interlocutor_id=antes.id),
@@ -758,7 +762,7 @@ def test_a_marca_manda_e_a_coluna_segue(sessao, instituicao, autor):
     )
     sessao.flush()
 
-    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     assert lida.interlocutor_id == depois.id
     marcados = [p.interlocutor_id for p in lida.outra_parte if p.principal]
     assert marcados == [depois.id]
@@ -779,7 +783,7 @@ def test_informar_so_a_coluna_continua_funcionando(sessao, instituicao, autor):
     )
     sessao.flush()
 
-    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     assert lida.interlocutor_id == pessoa.id
     assert [p.interlocutor_id for p in lida.outra_parte] == [pessoa.id], (
         "o interlocutor da agenda ficou de fora da própria lista"
@@ -814,13 +818,15 @@ def test_agenda_sem_interlocutor_nao_guarda_marca_orfa(sessao, instituicao, auto
         )
     )
     sessao.flush()
-    assert repositorio.obter(salva.id, escopo=IRRESTRITO).outra_parte[0].principal
+    assert repositorio.obter(
+        salva.id, escopo=IRRESTRITO, alcanca_sensivel=True
+    ).outra_parte[0].principal
 
     # A pessoa continua na agenda; só deixa de representar a outra parte.
     # Sem limpar a coluna à mão: é a lista que manda.
     repositorio.atualizar(
         replace(
-            repositorio.obter(salva.id, escopo=IRRESTRITO),
+            repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True),
             outra_parte=(
                 ParticipanteDaOutraParte(
                     interlocutor_id=pessoa.id, presenca="previsto"
@@ -830,7 +836,7 @@ def test_agenda_sem_interlocutor_nao_guarda_marca_orfa(sessao, instituicao, auto
     )
     sessao.flush()
 
-    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     assert lida.interlocutor_id is None
     assert not any(p.principal for p in lida.outra_parte), (
         "a marca sobreviveu ao estado anterior"
@@ -895,7 +901,7 @@ def test_patch_com_lista_vazia_remove_todo_mundo(sessao, instituicao, autor):
     _editar(sessao, salva, {"outra_parte": []}, autor)
     sessao.flush()
 
-    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     assert lida.outra_parte == (), "alguem sobrou depois de tirar todos"
     assert lida.interlocutor_id is None, (
         "a coluna sobreviveu a remocao e ressuscitou o principal"
@@ -928,7 +934,7 @@ def test_patch_so_com_interlocutor_move_a_marca(sessao, instituicao, autor):
     _editar(sessao, salva, {"interlocutor_id": str(depois.id)}, autor)
     sessao.flush()
 
-    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     assert lida.interlocutor_id == depois.id, "o PATCH nao mudou nada"
     marcados = [p.interlocutor_id for p in lida.outra_parte if p.principal]
     assert marcados == [depois.id], "a marca nao acompanhou a coluna"
@@ -968,7 +974,7 @@ def test_trocar_o_principal_para_quem_ja_esta_na_lista(sessao, instituicao, auto
     _editar(sessao, salva, {"interlocutor_id": str(b.id)}, autor)
     sessao.flush()
 
-    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     assert lida.interlocutor_id == b.id
     marcados = [p.interlocutor_id for p in lida.outra_parte if p.principal]
     assert marcados == [b.id], "a marca nao trocou de dono"
@@ -1010,7 +1016,7 @@ def test_patch_com_lista_e_coluna_juntas(sessao, instituicao, autor):
     )
     sessao.flush()
 
-    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     assert lida.interlocutor_id == b.id, "a lista tinha de mandar"
     assert [p.interlocutor_id for p in lida.outra_parte if p.principal] == [b.id]
 
@@ -1238,7 +1244,7 @@ def test_agenda_sem_linha_de_participante_ainda_mostra_o_principal(
     sessao.flush()
     sessao.expire_all()
 
-    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     assert [p.interlocutor_id for p in lida.outra_parte] == [pessoa.id], (
         "a agenda ficou sem participante apesar de ter interlocutor"
     )
@@ -1272,7 +1278,7 @@ def test_desdobramento_nao_pode_fechar_ciclo(sessao, instituicao, autor):
     with pytest.raises(RegraViolada) as erro:
         repositorio.atualizar(
             replace(
-                repositorio.obter(primeira.id, escopo=IRRESTRITO),
+                repositorio.obter(primeira.id, escopo=IRRESTRITO, alcanca_sensivel=True),
                 origens=(segunda.id,),
             )
         )
@@ -1298,7 +1304,7 @@ def test_cadeia_longa_de_desdobramento_continua_valendo(sessao, instituicao, aut
     )
     sessao.flush()
 
-    assert repositorio.obter(c.id, escopo=IRRESTRITO).origens == (b.id,)
+    assert repositorio.obter(c.id, escopo=IRRESTRITO, alcanca_sensivel=True).origens == (b.id,)
 
 
 # -- o arquivo do material -----------------------------------------------------
@@ -1370,11 +1376,11 @@ def test_o_arquivo_do_material_chega_ate_a_tela(sessao, instituicao, autor):
     )
     sessao.flush()
 
-    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     assert lida.materiais[0].arquivo is not None
     assert lida.materiais[0].arquivo.nome == "Nota tecnica ANA.pdf"
 
-    saida = InteracaoSaida.de_dominio(lida, ve_campos_sensiveis=True)
+    saida = InteracaoSaida.de_dominio(lida)
     assert saida.materiais[0].arquivo is not None
     assert saida.materiais[0].arquivo.nome == "Nota tecnica ANA.pdf"
     assert saida.materiais[0].arquivo.tamanho == 1234
@@ -1409,7 +1415,7 @@ def test_tirar_o_material_marca_o_byte_para_apagar(sessao, instituicao, autor):
     # O upload nao deixa nada para apagar: ninguem perdeu arquivo ainda.
     assert repositorio.caminhos_orfaos() == []
 
-    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     lida.alterar(materiais=())
     repositorio.atualizar(lida)
     sessao.flush()
@@ -1443,7 +1449,7 @@ def test_trocar_o_arquivo_marca_o_ANTIGO_para_apagar(sessao, instituicao, autor)
     sessao.flush()
     repositorio.caminhos_orfaos()
 
-    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     lida.alterar(
         materiais=(
             MaterialDaAgenda(
@@ -1484,13 +1490,13 @@ def test_o_material_que_fica_nao_perde_o_arquivo(sessao, instituicao, autor):
     sessao.flush()
     repositorio.caminhos_orfaos()
 
-    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     lida.alterar(relato="Reuniao aconteceu")
     repositorio.atualizar(lida)
     sessao.flush()
 
     assert repositorio.caminhos_orfaos() == []
-    lida_de_novo = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida_de_novo = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     assert lida_de_novo.materiais[0].arquivo_id == arquivo.id
 
 
@@ -1516,11 +1522,11 @@ def test_onde_a_agenda_acontece_sobrevive_ate_a_tela(sessao, instituicao, autor)
     )
     sessao.flush()
 
-    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     assert lida.modalidade == "hibrida"
     assert lida.local.startswith("Ministerio")
 
-    saida = InteracaoSaida.de_dominio(lida, ve_campos_sensiveis=True)
+    saida = InteracaoSaida.de_dominio(lida)
     assert saida.modalidade == "hibrida"
     assert saida.local.startswith("Ministerio")
 
@@ -1552,7 +1558,7 @@ def test_nao_informado_continua_nao_informado_tambem_aqui(sessao, instituicao, a
     salva = repositorio.adicionar(_agenda(instituicao, autor))
     sessao.flush()
 
-    lida = repositorio.obter(salva.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(salva.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     assert lida.modalidade is None
     assert lida.local is None
 
@@ -1579,7 +1585,7 @@ def test_duas_agendas_levam_juntas_a_uma_terceira(sessao, instituicao, autor):
     )
     sessao.flush()
 
-    lida = repositorio.obter(terceira.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(terceira.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     assert set(lida.origens) == {agencia.id, bancada.id}
 
 
@@ -1623,7 +1629,7 @@ def test_o_ciclo_e_barrado_por_QUALQUER_ramo(sessao, instituicao, autor):
 
     # `a` passaria a descender de `b`, que descende de `a`. A origem inocente
     # (`solta`) vem PRIMEIRO na lista, para provar que a guarda nao para nela.
-    lida = repositorio.obter(a.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(a.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     lida.alterar(origens=(solta.id, b.id))
 
     with pytest.raises(RegraViolada, match="ciclo"):
@@ -1649,7 +1655,9 @@ def test_losango_nao_e_ciclo(sessao, instituicao, autor):
     )
     sessao.flush()
 
-    assert set(repositorio.obter(c.id, escopo=IRRESTRITO).origens) == {a.id, b.id}
+    assert set(repositorio.obter(
+        c.id, escopo=IRRESTRITO, alcanca_sensivel=True
+    ).origens) == {a.id, b.id}
 
 
 def test_a_mesma_origem_duas_vezes_e_recusada(sessao, instituicao, autor):
@@ -1684,17 +1692,19 @@ def test_agenda_arquivada_some_da_linhagem_dos_dois_lados(sessao, instituicao, a
     )
     sessao.flush()
 
-    assert repositorio.obter(filha.id, escopo=IRRESTRITO).origens == (origem.id,)
-    assert repositorio.obter(origem.id, escopo=IRRESTRITO).derivadas == 1
+    assert repositorio.obter(
+        filha.id, escopo=IRRESTRITO, alcanca_sensivel=True
+    ).origens == (origem.id,)
+    assert repositorio.obter(origem.id, escopo=IRRESTRITO, alcanca_sensivel=True).derivadas == 1
 
-    lida = repositorio.obter(origem.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(origem.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     lida.arquivado_em = datetime.now(UTC)
     repositorio.atualizar(lida)
     sessao.flush()
     sessao.expire_all()
 
     # A filha deixa de apontar para quem ninguem consegue abrir...
-    assert repositorio.obter(filha.id, escopo=IRRESTRITO).origens == ()
+    assert repositorio.obter(filha.id, escopo=IRRESTRITO, alcanca_sensivel=True).origens == ()
     # ...e o ELO continua no banco, porque soft delete nao apaga nada.
     from app.banco.tabelas_interacoes import InteracaoOrigem
 
@@ -1721,13 +1731,13 @@ def test_arquivar_a_descendente_nao_deixa_a_origem_dizendo_que_levou_a_algo(
     )
     sessao.flush()
 
-    lida = repositorio.obter(filha.id, escopo=IRRESTRITO)
+    lida = repositorio.obter(filha.id, escopo=IRRESTRITO, alcanca_sensivel=True)
     lida.arquivado_em = datetime.now(UTC)
     repositorio.atualizar(lida)
     sessao.flush()
     sessao.expire_all()
 
-    assert repositorio.obter(origem.id, escopo=IRRESTRITO).derivadas == 0
+    assert repositorio.obter(origem.id, escopo=IRRESTRITO, alcanca_sensivel=True).derivadas == 0
 
 
 def test_a_linhagem_da_pagina_nao_custa_uma_consulta_por_linha(
@@ -1768,7 +1778,7 @@ def test_a_linhagem_da_pagina_nao_custa_uma_consulta_por_linha(
     event.listen(sessao.get_bind(), "before_cursor_execute", anotar)
     try:
         pagina = repositorio.listar(
-            Recorte(), escopo=IRRESTRITO, busca_em_campos_sensiveis=True, tamanho=50
+            Recorte(), escopo=IRRESTRITO, alcanca_sensivel=True, tamanho=50
         )
     finally:
         event.remove(sessao.get_bind(), "before_cursor_execute", anotar)

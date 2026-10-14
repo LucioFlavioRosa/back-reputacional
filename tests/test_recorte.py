@@ -139,7 +139,7 @@ def test_a_busca_acha_agenda_nova_pelo_tema_e_pela_expectativa():
         for c in condicoes(
             Recorte(busca="reajuste"),
             escopo=Escopo(irrestrito=True),
-            busca_em_campos_sensiveis=False,
+            alcanca_sensivel=False,
         )
     )
 
@@ -169,7 +169,7 @@ def test_o_filtro_por_pessoa_nao_estoura():
     condicoes(
         Recorte(pessoa=uuid4()),
         escopo=Escopo(irrestrito=True),
-        busca_em_campos_sensiveis=False,
+        alcanca_sensivel=False,
     )
 
 

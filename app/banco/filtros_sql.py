@@ -8,7 +8,7 @@ Nenhum filtro usa `join` na consulta principal. Códigos de dicionário viram
 subconsulta escalar e relações N-N viram `exists`, para que o total do recorte
 nunca seja inflado por duplicação de linha.
 
-O `escopo` e o `busca_em_campos_sensiveis` são argumentos **obrigatórios** de
+O `escopo` e o `alcanca_sensivel` são argumentos **obrigatórios** de
 propósito. Nenhum dos dois vem da query string — são o alcance que o usuário
 não controla — e torná-los obrigatórios faz com que esquecê-los seja
 `TypeError` na importação, e não uma leitura sem restrição descoberta em
@@ -230,9 +230,7 @@ def _do_tipo_de_investidor(codigo: str) -> ColumnElement[bool]:
     )
 
 
-def _bate_com_a_busca(
-    termo_pedido: str, *, em_campos_sensiveis: bool
-) -> ColumnElement[bool]:
+def _bate_com_a_busca(termo_pedido: str) -> ColumnElement[bool]:
     """A busca livre, num lugar só.
 
     Os campos de texto usam ILIKE com curinga dos dois lados, servido pelos
@@ -243,21 +241,25 @@ def _bate_com_a_busca(
     a importação usa para deduplicar: assim "Radames" encontra "Radamés", e
     quem digita sem acento não fica sem resultado.
 
-    `em_campos_sensiveis` decide se os campos sensíveis entram. Esconder o campo
-    do payload e mantê-lo pesquisável seria um oráculo: sem receber o texto, a
-    pessoa descobriria o conteúdo por tentativa e erro, uma palavra por vez.
+    NÃO HÁ MAIS CAMPO ATRÁS DE BANDEIRA AQUI, e a razão é a troca de semântica
+    da migration 0089.
 
-    A REGRA VALE PARA A LISTA INTEIRA, e não só para `relato`. Todo campo de
-    `InteracaoSaida.CAMPOS_SENSIVEIS` que for pesquisável tem de estar atrás da
-    bandeira — foi assim que `encaminhamentos` virou um vazamento ao entrar
-    naquela lista e ficar nesta.
+    Enquanto a informação sensível era uma lista de CAMPOS, a linha aparecia
+    para todos e alguns campos vinham nulos — e mantê-los pesquisáveis seria um
+    oráculo: sem receber o texto, a pessoa descobriria o conteúdo por tentativa
+    e erro, uma palavra por vez, e ainda saberia quais registros casam. Foi
+    exatamente o defeito que `encaminhamentos` teve ao entrar naquela lista e
+    ficar nesta.
+
+    Agora o que se restringe é a LINHA (`condicoes`, com `alcanca_sensivel`).
+    Uma agenda que a pessoa alcança, ela alcança por inteiro; uma que não
+    alcança não está no conjunto que a busca varre. Sem campo escondido, não há
+    o que deduzir — e condicionar colunas aqui só esconderia da pessoa o texto
+    que ela pode ler na tela ao lado.
     """
     termo = f"%{termo_pedido.strip()}%"
     termo_normalizado = f"%{normalizar(termo_pedido)}%"
 
-    # `relato` é o campo que `InteracaoSaida` anula para quem não tem
-    # `ve_campos_sensiveis` — deixá-lo aqui devolveria por dedução o que a
-    # serialização acabou de esconder.
     # `expectativa` E OS TEMAS ENTRAM AQUI porque a pauta saiu da tela.
     #
     # A busca procurava o assunto em `pauta`, e agenda criada pelo
@@ -271,24 +273,9 @@ def _bate_com_a_busca(
     colunas = [
         InteracaoRegistro.pauta.ilike(termo),
         InteracaoRegistro.expectativa.ilike(termo),
+        InteracaoRegistro.relato.ilike(termo),
+        InteracaoRegistro.encaminhamentos.ilike(termo),
     ]
-    if em_campos_sensiveis:
-        colunas.append(InteracaoRegistro.relato.ilike(termo))
-        #: `encaminhamentos` MUDOU DE LADO em 0087, e o motivo é a regra do
-        #: parágrafo acima aplicada a ele.
-        #:
-        #: Ele entrou em `InteracaoSaida.CAMPOS_SENSIVEIS` junto com
-        #: `posicionamento` e `observacoes`, e continuou nesta lista de cima —
-        #: pesquisável por quem não o recebe. Era o oráculo exato que o
-        #: comentário de `relato` descreve: sem ler o campo, a pessoa
-        #: descobriria o conteúdo por tentativa e erro, uma palavra por vez, e
-        #: ainda saberia QUAIS registros casam.
-        #:
-        #: Achado de revisão. `posicionamento`, `pendencias` e `observacoes`
-        #: nunca estiveram na busca, então não precisaram mudar — e
-        #: `test_a_busca_nao_varre_campo_sensivel_nenhum` é o que impede que
-        #: qualquer um deles entre aqui sem a bandeira.
-        colunas.append(InteracaoRegistro.encaminhamentos.ilike(termo))
 
     return or_(
             *colunas,
@@ -329,7 +316,7 @@ def condicoes(
     recorte: Recorte,
     *,
     escopo: Escopo,
-    busca_em_campos_sensiveis: bool,
+    alcanca_sensivel: bool,
     incluir_arquivadas: bool = False,
 ) -> list[ColumnElement[bool]]:
     """Traduz o Recorte e o escopo do usuário para uma lista de condições `where`.
@@ -340,11 +327,36 @@ def condicoes(
     O escopo entra **depois** dos filtros pedidos e nunca no lugar deles: o
     usuário refina o que já lhe é permitido, jamais o amplia.
 
-    `busca_em_campos_sensiveis` decide se `q=` varre `relato`. Esconder o campo
-    do payload e mantê-lo pesquisável seria um oráculo: sem receber o texto, o
-    usuário descobriria o conteúdo por tentativa e erro, uma palavra por vez.
+    `alcanca_sensivel` É FILTRO DE LINHA, e aqui está o coração da coisa.
+
+    Quando falso, as agendas marcadas `sensivel` saem do conjunto — e saem de
+    TUDO, porque esta função é o único tradutor de filtro do sistema: a
+    listagem, a ficha, a busca, os materiais, as exportações e todas as
+    agregações de `consultas_metricas` passam por aqui. A pessoa não vê a linha,
+    não a acha pela busca, não a abre pela URL e ela não entra em KPI nenhum.
+
+    ERA `alcanca_sensivel`, e decidia só se `q=` varria `relato`:
+    naquele desenho a linha aparecia para todos e alguns CAMPOS vinham nulos. A
+    migration 0089 trocou a semântica — quem classifica é quem registra, uma
+    agenda por vez, e o efeito é sobre a linha inteira. Com a linha fora, não há
+    mais oráculo a fechar: a busca só pode casar o que a pessoa já alcança por
+    inteiro, então `relato` e `encaminhamentos` voltaram a ser pesquisáveis sem
+    condição (ver `_condicao_de_busca`).
+
+    CONSEQUÊNCIA QUE PRECISA SER SABIDA: quem não alcança o sensível vê KPI
+    MENOR. Duas pessoas na mesma tela veem números diferentes. É inerente a
+    segurança por linha, e é o único arranjo que mantém a invariante "o KPI
+    conta o que a tabela lista" — contar de um lado o que não se lista do outro
+    a quebraria, e a divergência apareceria como defeito sem causa visível.
     """
     onde: list[ColumnElement[bool]] = list(condicoes_de_escopo(escopo))
+
+    #: FORA DO `incluir_arquivadas`, de propósito. Aquele existe para a tela que
+    #: mostra o arquivo — e arquivada ou não, uma agenda sensível continua
+    #: sensível. Pô-lo dentro daquele `if` abriria o acervo restrito a quem
+    #: pedisse o arquivo.
+    if not alcanca_sensivel:
+        onde.append(InteracaoRegistro.sensivel.is_(False))
 
     if not incluir_arquivadas:
         onde.append(InteracaoRegistro.arquivado_em.is_(None))
@@ -439,11 +451,10 @@ def condicoes(
         onde.append(_do_tipo_de_investidor(recorte.subtipo))
 
     if recorte.busca:
-        onde.append(
-            _bate_com_a_busca(
-                recorte.busca, em_campos_sensiveis=busca_em_campos_sensiveis
-            )
-        )
+        #: SEM A BANDEIRA. A busca varre os mesmos campos para todo mundo
+        #: porque o que se restringe é a linha, e uma linha que a pessoa
+        #: alcança ela alcança por inteiro. Ver `_bate_com_a_busca`.
+        onde.append(_bate_com_a_busca(recorte.busca))
 
     return onde
 
