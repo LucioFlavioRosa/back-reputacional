@@ -1,10 +1,20 @@
 """Quais portais cada papel abre.
 
-A plataforma tem três divisões — CRM dos Stakeholders, Síntese Executiva e
-Score Executivo — e a capa oferece as três. QUAL delas um papel abre é dimensão
-separada do que ele pode FAZER lá dentro, e a separação é o ponto: sem ela,
-"lê a Síntese" e "lê a Síntese e o Score" seriam papéis diferentes, e cada
-portal novo dobraria a tabela.
+A plataforma tem três divisões, e os nomes internos não batem com os rótulos:
+
+    CRM      "CRM dos Stakeholders"
+    SCORE    "KPIs Reputacionais"
+    SINTESE  "Painel de Inteligência de Mercado" — em construção
+
+QUAL delas um papel abre é dimensão separada do que ele pode FAZER lá dentro, e
+a separação é o ponto: sem ela, "lê a Síntese" e "lê a Síntese e o Score" seriam
+papéis diferentes, e cada portal novo dobraria a tabela.
+
+AS COLUNAS SAEM DO ENUM, e não de listas escritas à mão em cada teste. Três
+deles enumeravam `acessa_crm`, `acessa_sintese`, `acessa_score` por extenso, e
+uma lista escrita à mão não cobre o portal que ainda não existia quando ela foi
+escrita — comparava os papéis nas três dimensões conhecidas e ignoraria a
+quarta. Derivar do enum faz `Portal` ser a única lista.
 """
 
 from __future__ import annotations
@@ -18,6 +28,14 @@ from app.dominio.identidade import Papel, Portal
 from tests.test_e2e_postgres import URL
 
 _engine = create_engine(URL, pool_pre_ping=True)
+
+#: As colunas de portal de `papel`, derivadas do enum.
+#:
+#: Derivadas, e não escritas: acrescentar um membro a `Portal` passa a alargar
+#: estes testes sozinho. A convenção de nome (`acessa_<valor do enum>`) vem de
+#: 0003, e `test_alcanca_cobre_todo_portal_do_enum` é quem garante que o domínio
+#: não tem portal sem bandeira.
+COLUNAS_DE_PORTAL = tuple(f"acessa_{p.value}" for p in Portal)
 
 
 @pytest.fixture
@@ -76,18 +94,26 @@ def test_alcanca_cobre_todo_portal_do_enum():
         acessa_score=True,
     )
     assert tudo.portais == set(Portal)
+    #: A contagem escrita é de propósito: `portais == set(Portal)` sozinho
+    #: passaria num enum vazio. Três, e não quatro — o "Painel de Inteligência
+    #: de Mercado" é o portal `sintese`, não um quarto.
     assert len(Portal) == 3
 
 
 # -- o que está semeado no banco ----------------------------------------------
 
 
-def test_os_oito_papeis_de_partida(sessao):
-    """Um LEITOR e um EDITOR por portal, mais o par que alcança os três.
+def test_os_papeis_de_partida(sessao):
+    """Um LEITOR e um EDITOR por portal, mais os que alcançam todos.
 
     O sufixo é obrigatório no nome, e não convenção: antes havia só `crm`, e
     ele ESCREVIA. Um papel cujo nome não revela o que concede é um papel que
     alguém atribui por engano.
+
+    ERA "OS OITO" até 0088, que acrescentou o nono. A lista é escrita por
+    extenso, e na ordem de `id`, porque é ela que responde "o que existe para
+    conceder?" — e porque um papel que aparece aqui sem ninguém ter decidido
+    acrescentá-lo é um papel que alguém semeou de passagem.
     """
     papeis = sessao.scalars(select(PapelRegistro).order_by(PapelRegistro.id)).all()
     assert [p.codigo for p in papeis] == [
@@ -99,6 +125,11 @@ def test_os_oito_papeis_de_partida(sessao):
         "sintese_edicao",
         "score_leitura",
         "score_edicao",
+        # -- 0088: o Executivo que edita os painéis e não administra acessos ---
+        #: O nome é feio e o motivo está em 0088: `plataforma_edicao` já é o
+        #: papel de administrador, e tomar-lhe o nome significaria tirar
+        #: `administra_acessos` de quem o tem hoje em produção.
+        "plataforma_edicao_sem_acessos",
     ]
 
 
@@ -124,8 +155,9 @@ def test_o_par_de_cada_portal_alcanca_o_mesmo_e_faz_coisas_diferentes(
         sessao.scalars(select(PapelRegistro).where(PapelRegistro.codigo == c)).one()
         for c in (leitor, editor)
     )
-    portais = ("acessa_crm", "acessa_sintese", "acessa_score")
-    assert [getattr(a, p) for p in portais] == [getattr(b, p) for p in portais]
+    assert [getattr(a, p) for p in COLUNAS_DE_PORTAL] == [
+        getattr(b, p) for p in COLUNAS_DE_PORTAL
+    ]
 
     assert not (a.pode_criar or a.pode_editar_proprio or a.pode_editar_tudo)
 
@@ -136,15 +168,25 @@ def test_o_par_de_cada_portal_alcanca_o_mesmo_e_faz_coisas_diferentes(
     assert b.pode_editar_tudo == (b.codigo == "plataforma_edicao")
 
 
-def test_plataforma_alcanca_os_tres(sessao):
-    plataforma = sessao.scalars(
-        select(PapelRegistro).where(PapelRegistro.codigo == "plataforma_edicao")
+@pytest.mark.parametrize(
+    "codigo",
+    ["plataforma_leitura", "plataforma_edicao", "plataforma_edicao_sem_acessos"],
+)
+def test_a_plataforma_alcanca_todos_os_portais(sessao, codigo):
+    """"Plataforma" no nome é promessa: alcança TODOS os portais.
+
+    Era só `plataforma_edicao`, e comparava os portais por extenso. Derivando de
+    `COLUNAS_DE_PORTAL`, um portal novo entra na conferência sozinho — sem isso,
+    um papel chamado "plataforma" passaria deixando um painel de fora.
+
+    `plataforma_edicao_sem_acessos` entra na lista porque é o Executivo Editor
+    de 0088, e "alcança os painéis" é metade do que ele promete.
+    """
+    papel = sessao.scalars(
+        select(PapelRegistro).where(PapelRegistro.codigo == codigo)
     ).one()
-    assert (plataforma.acessa_crm, plataforma.acessa_sintese, plataforma.acessa_score) == (
-        True,
-        True,
-        True,
-    )
+    fechados = [p for p in COLUNAS_DE_PORTAL if not getattr(papel, p)]
+    assert fechados == [], f"{codigo} não abre: {fechados}"
 
 
 @pytest.mark.parametrize(
@@ -160,11 +202,7 @@ def test_plataforma_alcanca_os_tres(sessao):
 )
 def test_cada_papel_de_portal_abre_so_o_seu(sessao, codigo, portal):
     papel = sessao.scalars(select(PapelRegistro).where(PapelRegistro.codigo == codigo)).one()
-    abertos = [
-        nome
-        for nome in ("acessa_crm", "acessa_sintese", "acessa_score")
-        if getattr(papel, nome)
-    ]
+    abertos = [nome for nome in COLUNAS_DE_PORTAL if getattr(papel, nome)]
     assert abertos == [portal]
 
 

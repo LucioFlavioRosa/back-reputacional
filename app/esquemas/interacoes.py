@@ -571,13 +571,38 @@ class InteracaoSaida(BaseModel):
     criado_em: datetime | None
     atualizado_em: datetime | None
 
-    #: Campos que só saem no payload para quem tem `papel.ve_campos_sensiveis`.
+    #: Campos que só saem no payload para quem alcança o sensível — hoje a
+    #: conjunção `papel.ve_campos_sensiveis` E `usuario.acesso_sensivel`, lida
+    #: pela propriedade `UsuarioAtual.ve_campos_sensiveis`.
     #:
     #: `relato` é a transcrição do que foi conversado; `pendencias` costuma
     #: carregar posicionamento ainda não público. Os dois são exatamente o que
     #: um terceiro não deveria levar embora — e a busca livre continua varrendo
     #: `relato`, então esconder o campo não esconde a existência do registro.
-    CAMPOS_SENSIVEIS: ClassVar[tuple[str, ...]] = ("relato", "pendencias")
+    #:
+    #: OS TRÊS ÚLTIMOS ENTRARAM COM A CAMADA POR PESSOA (0087), e sem eles ela
+    #: seria quase inútil: quem ficasse "sem sensível" perderia o relato e
+    #: continuaria lendo `posicionamento` — a posição interna da companhia sobre
+    #: o assunto — e `observacoes`, que é campo livre e por isso recebe
+    #: justamente o que não cabia nos outros. `encaminhamentos` é o que a Aegea
+    #: se comprometeu a fazer, ainda não público.
+    #:
+    #: Acrescentá-los não mudou o acesso de ninguém no dia em que entraram: os
+    #: oito papéis semeados têm `ve_campos_sensiveis` verdadeiro, então a lista
+    #: só passa a valer para quem alguém marcar explicitamente como sem a
+    #: camada. É o que torna a mudança segura de fazer de uma vez.
+    #:
+    #: `pauta` FICA DE FORA, e é o limite da ideia: sem ela o registro perde a
+    #: identidade e a tela não tem o que listar. Quem não alcança o sensível
+    #: continua vendo data, contraparte, pauta, situação, temas e indicadores —
+    #: o suficiente para ler o conjunto como reputação, que é o que o painel faz.
+    CAMPOS_SENSIVEIS: ClassVar[tuple[str, ...]] = (
+        "relato",
+        "pendencias",
+        "posicionamento",
+        "encaminhamentos",
+        "observacoes",
+    )
 
     #: O mesmo, DENTRO do bloco da consulta recebida.
     #:

@@ -410,6 +410,20 @@ def test_nao_escala_o_proprio_privilegio(sessao_restrita, semente):
     with pytest.raises(ProgrammingError, match="permission denied"), _isolado(sessao_restrita):
         sessao_restrita.execute(text("update usuario set papel_id = 2"))
 
+    # A CAMADA SENSIVEL ENTRA NO MESMO REGIME (migration 0087).
+    #
+    # Nao e automatico, e por isso o teste existe: 0009 revoga `update` em
+    # `usuario` e devolve por COLUNA — `nome`, `email`, `ultimo_acesso_em`,
+    # `ativo`. Coluna de autorizacao nova fica de fora dessa lista e nasce
+    # protegida, mas o dia em que alguem a acrescentar a lista "para o
+    # provisionamento funcionar" a protecao cai sem nada mais quebrar.
+    #
+    # Sem ela, `update usuario set acesso_sensivel = true` devolveria o relato
+    # de toda a base a quem tivesse a connection string — e sem rastro na
+    # aplicacao, porque nao teria passado por `conceder_acesso`.
+    with pytest.raises(ProgrammingError, match="permission denied"), _isolado(sessao_restrita):
+        sessao_restrita.execute(text("update usuario set acesso_sensivel = true"))
+
     with pytest.raises(ProgrammingError, match="permission denied"), _isolado(sessao_restrita):
         sessao_restrita.execute(
             text("insert into usuario_escopo (usuario_id, dimensao, valor) "
@@ -639,21 +653,193 @@ def test_funcao_recusa_frente_inexistente(sessao_restrita, semente):
         )
 
 
+#: O codigo do papel de teto FECHADO que o teste abaixo precisa.
+#:
+#: Nenhum dos oito papeis de 0003 e assim — todos tem `ve_campos_sensiveis`
+#: verdadeiro —, e e justamente esse estado que 0087 torna util. O papel e criado
+#: pela conta ADMINISTRATIVA porque `painel_app` nao insere em `papel`, e nao
+#: inserir ali e exatamente uma das coisas que esta suite guarda.
+PAPEL_SEM_SENSIVEL = "crm_leitura_restrito_teste"
+
+
+@pytest.fixture(scope="module")
+def papel_sem_sensivel(engine_restrito):
+    """Um papel que abre o CRM e NAO alcanca o sensivel, so para este teste."""
+    administrativo = create_engine(URL, isolation_level="AUTOCOMMIT")
+    with administrativo.connect() as conexao:
+        conexao.execute(
+            text(
+                "insert into papel (codigo, nome, acessa_crm, ve_campos_sensiveis) "
+                "values (:codigo, 'CRM sem sensivel', true, false) "
+                "on conflict (codigo) do nothing"
+            ),
+            {"codigo": PAPEL_SEM_SENSIVEL},
+        )
+
+    yield PAPEL_SEM_SENSIVEL
+
+    with administrativo.connect() as conexao:
+        # Sai de cena: um papel de teste sobrando no banco apareceria na tela de
+        # administracao da proxima pessoa que rodasse a suite localmente.
+        conexao.execute(
+            text("delete from papel where codigo = :codigo"),
+            {"codigo": PAPEL_SEM_SENSIVEL},
+        )
+    administrativo.dispose()
+
+
+def test_funcao_recusa_sensivel_acima_do_teto_do_papel(
+    sessao_restrita, semente, papel_sem_sensivel
+):
+    """Marcar a pessoa nao pode prometer mais do que o cargo permite.
+
+    A conjuncao no Python ja faria o acesso ser falso, entao esta recusa nao
+    protege dado nenhum — protege a TELA de dizer uma coisa e o sistema fazer
+    outra. Sem ela, a pessoa apareceria como "com acesso sensivel", nao veria o
+    campo, e quem administra procuraria o defeito no lugar errado.
+    """
+    concedente, alvo = _dois_usuarios(sessao_restrita)
+
+    with pytest.raises(InternalError, match="alcan"), _isolado(sessao_restrita):
+        sessao_restrita.execute(
+            text(
+                "select conceder_acesso(:alvo, :quem, :papel, "
+                "true, false, null, '{}'::text[], '{}'::text[], null, true)"
+            ),
+            {"alvo": alvo, "quem": concedente, "papel": papel_sem_sensivel},
+        )
+
+
+def test_o_mesmo_papel_aceita_concessao_sem_a_camada(
+    sessao_restrita, semente, papel_sem_sensivel
+):
+    """A recusa acima e sobre o EXCESSO, e nao sobre o papel.
+
+    Sem este par, a recusa poderia estar barrando qualquer concessao a um papel
+    de teto fechado — o que tornaria o papel inutilizavel em vez de restrito.
+    """
+    concedente, alvo = _dois_usuarios(sessao_restrita)
+
+    sessao_restrita.execute(
+        text(
+            "select conceder_acesso(:alvo, :quem, :papel, "
+            "true, false, null, '{}'::text[], '{}'::text[], null, false)"
+        ),
+        {"alvo": alvo, "quem": concedente, "papel": papel_sem_sensivel},
+    )
+
+    gravado = sessao_restrita.execute(
+        text(
+            "select p.codigo, u.acesso_sensivel from usuario u "
+            "  join papel p on p.id = u.papel_id where u.id = :id"
+        ),
+        {"id": alvo},
+    ).one()
+    assert gravado.codigo == papel_sem_sensivel
+    assert gravado.acesso_sensivel is False
+
+
+def test_revogar_apaga_a_camada_sensivel(sessao_restrita, semente):
+    """Revogar e estado limpo, e a camada entra nessa limpeza.
+
+    Guardar a marca de quem nao tem papel e guardar uma surpresa para quem
+    conceder papel depois: um contrato encerrado ressuscitaria com o relato
+    liberado. Falha fechada, que e o que se quer de uma ressurreicao.
+    """
+    concedente, alvo = _dois_usuarios(sessao_restrita)
+
+    sessao_restrita.execute(
+        text(
+            "select conceder_acesso(:alvo, :quem, 'crm_edicao', true, false, null, "
+            "'{}'::text[], '{}'::text[], null, true)"
+        ),
+        {"alvo": alvo, "quem": concedente},
+    )
+    assert (
+        sessao_restrita.execute(
+            text("select acesso_sensivel from usuario where id = :id"), {"id": alvo}
+        ).scalar()
+        is True
+    )
+
+    versao = sessao_restrita.execute(
+        text("select papel_concedido_em from usuario where id = :id"), {"id": alvo}
+    ).scalar()
+
+    # Revoga. `sensivel` vai `true` DE PROPOSITO: e o que prova que a limpeza
+    # ignora o que foi pedido, em vez de apenas repassar um `false`.
+    sessao_restrita.execute(
+        text(
+            "select conceder_acesso(:alvo, :quem, null, false, false, null, "
+            "'{}'::text[], '{}'::text[], :versao, true)"
+        ),
+        {"alvo": alvo, "quem": concedente, "versao": versao},
+    )
+
+    assert (
+        sessao_restrita.execute(
+            text("select acesso_sensivel from usuario where id = :id"), {"id": alvo}
+        ).scalar()
+        is False
+    )
+
+
+def test_a_trilha_registra_a_mudanca_da_camada_sensivel(sessao_restrita, semente):
+    """O gatilho de 0005 ENUMERA as colunas que audita.
+
+    Uma coluna de autorizacao fora dessa lista e mudanca de acesso sem rastro, e
+    o esquecimento seria invisivel: a concessao funcionaria, a tela confirmaria,
+    e a trilha simplesmente nao teria a linha. "Quem liberou isto?" e a pergunta
+    que a tabela existe para responder.
+    """
+    concedente, alvo = _dois_usuarios(sessao_restrita)
+
+    # O alvo nasce com o padrao `true` da coluna; concede com `false` para que
+    # haja MUDANCA — o gatilho so grava quando o valor muda.
+    sessao_restrita.execute(
+        text(
+            "select conceder_acesso(:alvo, :quem, 'crm_edicao', true, false, null, "
+            "'{}'::text[], '{}'::text[], null, false)"
+        ),
+        {"alvo": alvo, "quem": concedente},
+    )
+
+    linhas = sessao_restrita.execute(
+        text(
+            "select valor_anterior, valor_novo from usuario_auditoria "
+            " where usuario_id = :id and campo = 'acesso_sensivel'"
+        ),
+        {"id": alvo},
+    ).all()
+
+    assert linhas, "a mudanca da camada sensivel nao deixou rastro"
+    assert linhas[-1].valor_anterior == "true"
+    assert linhas[-1].valor_novo == "false"
+
+
 def test_funcao_nao_e_executavel_por_public(sessao_restrita):
     """Funcao nasce executavel por `PUBLIC` no PostgreSQL.
 
     Sem a revogacao, a concessao explicita a `painel_app` seria decorativa:
     qualquer papel com conexao chamaria a funcao privilegiada.
 
-    A assinatura precisa estar COMPLETA aqui, com o `timestamptz` final da
-    versao otimista: `has_function_privilege` sobre uma assinatura que nao
-    existe devolve erro ou `false`, e o teste passaria em falso.
+    A assinatura precisa estar COMPLETA aqui, com o `timestamptz` da versao
+    otimista e o `boolean` da camada sensivel: `has_function_privilege` sobre
+    uma assinatura que nao existe devolve erro ou `false`, e o teste passaria em
+    falso.
+
+    E ESTE TESTE JA COBROU A DIVIDA UMA VEZ. A migration 0087 acrescentou o
+    decimo parametro e, com ele, trocou a assinatura; o `drop` da antiga levou
+    embora os `grant` dela. Foi aqui que isso apareceu — com erro de funcao
+    inexistente, que e o sinal certo. Sem a assinatura escrita por extenso o
+    teste teria continuado verde sobre uma funcao que nao existia mais, e a
+    revogacao a `public` da funcao NOVA nunca teria sido conferida.
     """
     pode = sessao_restrita.execute(
         text(
             "select has_function_privilege('public', "
             "'conceder_acesso(uuid,uuid,text,boolean,boolean,date,"
-            "text[],text[],timestamptz)', 'EXECUTE')"
+            "text[],text[],timestamptz,boolean)', 'EXECUTE')"
         )
     ).scalar()
     assert pode is False
