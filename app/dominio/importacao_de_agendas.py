@@ -477,6 +477,21 @@ _AGENDAS = Aba(
         Coluna(
             nome="Unidade de negócio", campo="unidade_negocio_id", vocabulario="unidades_negocio"
         ),
+        # A CLASSIFICAÇÃO FICA NA SEÇÃO 3, junto do que IDENTIFICA a agenda, e
+        # é onde o formulário também a põe. Não é output nem desfecho: "esta
+        # reunião é delicada" se sabe antes de ela acontecer, e quem preenche a
+        # planilha decide isso na mesma linha em que escolhe a instituição.
+        #
+        # Sim/não como `preve_desdobramento`, e vazio é NÃO — ver
+        # `importar_agendas._booleano`. Vazio precisa significar "comum":
+        # planilha de 500 linhas com a coluna em branco não pode trancar o
+        # acervo inteiro, e quem quer marcar escreve.
+        #
+        # SÓ QUEM TEM A CAMADA SENSÍVEL IMPORTA AGENDA MARCADA. A recusa está
+        # em `importar_agendas`, com a identidade de quem confirma em mão —
+        # pela mesma razão da rota de cadastro: não se classifica algo dentro
+        # de um cofre que não se abre.
+        Coluna(nome="Informação sensível?", campo="sensivel"),
         # Temas e áreas são COLUNAS, não abas: uma aba própria custaria duas
         # abas a mais para um vocabulário que cabe em colunas com lista
         # suspensa. O teto é arbitrário e ampliável — a seção "Abas de
@@ -606,6 +621,14 @@ _SIMPLIFICADO: tuple[str, ...] = (
     "Instituição",
     "UF",
     "Unidade de negócio",
+    # ENTRA NOS DOIS MODELOS, e pelo mesmo argumento que trouxe as 18 colunas de
+    # tema para cá: o recorte do simplificado é sobre quais CAMPOS a pessoa não
+    # precisa preencher num evento — aceite, expectativa, materiais —, não sobre
+    # o que a agenda É. Uma reunião delicada num dia de 54 conversas é
+    # exatamente o caso em que a classificação importa, e oferecê-la num modelo
+    # e não no outro faria a MESMA agenda poder ou não ser marcada dependendo do
+    # arquivo que a pessoa baixou.
+    "Informação sensível?",
     # AS MESMAS 18 DO COMPLETO, por decisão do dono do produto (08/10/2026).
     #
     # EU HAVIA DEIXADO TRÊS, argumentando que o simplificado existe para o evento
@@ -717,6 +740,7 @@ DESTINO_DO_CAMPO: dict[str, str] = {
     "clima_esperado": "da planilha",
     "expectativa": "da planilha",
     "preve_desdobramento": "da planilha",
+    "sensivel": "da planilha",
     "clima": "da planilha",
     "resultado": "da planilha",
     "relato": "da planilha",

@@ -1379,7 +1379,7 @@ def propor_de_linhas(
                             coluna=coluna.nome,
                         )
                     )
-            elif coluna.campo == "preve_desdobramento":
+            elif coluna.campo in ("preve_desdobramento", "sensivel"):
                 convertido = _booleano(bruto)
                 if isinstance(convertido, str):
                     divergencias.append(
@@ -1394,6 +1394,15 @@ def propor_de_linhas(
                     valor = None
                 else:
                     valor = convertido
+                #: VAZIO É "NÃO" PARA `sensivel`, e não nulo.
+                #:
+                #: A coluna é `not null` no banco, e o agregado tem `False` por
+                #: padrão — mas aqui o valor segue para um `dict` de alterações,
+                #: e `None` ali afirmaria "sem classificação" num campo que não
+                #: aceita. Planilha de 500 linhas com a coluna em branco tem de
+                #: produzir 500 agendas comuns, não 500 erros.
+                if coluna.campo == "sensivel" and valor is None:
+                    valor = False
             elif coluna.campo == "uf":
                 valor = str(bruto).upper() if bruto is not None else None
                 if valor is not None and valor not in ABRANGENCIAS_VALIDAS:

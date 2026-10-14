@@ -21,7 +21,7 @@ def listar(
     *,
     recorte: Recorte,
     escopo: Escopo,
-    busca_em_campos_sensiveis: bool,
+    alcanca_sensivel: bool,
     pagina: int = 1,
     tamanho: int = 50,
     ordenacao: str = "-data_interacao",
@@ -37,26 +37,41 @@ def listar(
     return repositorio.listar(
         recorte,
         escopo=escopo,
-        busca_em_campos_sensiveis=busca_em_campos_sensiveis,
+        alcanca_sensivel=alcanca_sensivel,
         pagina=pagina,
         tamanho=tamanho,
         ordenacao=ordenacao,
     )
 
 
-def obter(repositorio: RepositorioDeInteracoes, *, id: UUID, escopo: Escopo) -> Interacao:
+def obter(
+    repositorio: RepositorioDeInteracoes,
+    *,
+    id: UUID,
+    escopo: Escopo,
+    alcanca_sensivel: bool,
+) -> Interacao:
     """A ficha do registro.
 
-    Precisa recusar exatamente o que a listagem esconde — arquivado, invisível
-    e fora do escopo do usuário. Hoje o repositório aplica as três em SQL, mas
-    a checagem em Python fica: ela é barata e um repositório em memória escrito
-    para teste não teria como reproduzir o `where`.
+    Precisa recusar exatamente o que a listagem esconde — arquivado, invisível,
+    fora do escopo do usuário e, desde 0089, a agenda SENSÍVEL para quem não tem
+    a camada. Hoje o repositório aplica tudo em SQL, mas a checagem em Python
+    fica: ela é barata e um repositório em memória escrito para teste não teria
+    como reproduzir o `where`.
 
-    Fora do escopo devolve "não encontrada", e não "não autorizada", de
-    propósito: a segunda mensagem confirmaria a existência do registro para
-    quem não deveria saber sequer disso.
+    "NÃO ENCONTRADA", e não "não autorizada", de propósito — e isso vale para o
+    sensível igualmente. A segunda mensagem confirmaria a existência do registro
+    para quem não deveria saber sequer disso, e numa agenda restrita a própria
+    existência do encontro costuma ser a informação que se protege.
     """
-    interacao = repositorio.obter(id, escopo=escopo)
-    if interacao is None or interacao.arquivada or not interacao.visivel:
+    interacao = repositorio.obter(
+        id, escopo=escopo, alcanca_sensivel=alcanca_sensivel
+    )
+    if (
+        interacao is None
+        or interacao.arquivada
+        or not interacao.visivel
+        or (interacao.sensivel and not alcanca_sensivel)
+    ):
         raise NaoEncontrado(f"Interação {id} não encontrada.")
     return interacao

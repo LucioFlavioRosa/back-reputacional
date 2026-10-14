@@ -38,6 +38,7 @@ from app.casos_de_uso.consulta_recebida import validar_consulta
 from app.casos_de_uso.derivar_esfera import derivar_esfera
 from app.casos_de_uso.derivar_frente import derivar_frente
 from app.dominio.erros import RegraViolada
+from app.dominio.identidade import UsuarioAtual
 from app.dominio.interacao import MOMENTOS_DE_MATERIAL
 from app.dominio.recorte import Recorte
 from app.esquemas.interacoes import (
@@ -195,6 +196,31 @@ def obter_recorte(
 RecorteAtual = Annotated[Recorte, Depends(obter_recorte)]
 
 
+def exigir_direito_de_marcar_sensivel(usuario: UsuarioAtual, marcada: bool) -> None:
+    """Só quem tem a camada sensível classifica uma agenda como sensível.
+
+    NÃO SE CLASSIFICA ALGO DENTRO DE UM COFRE QUE NÃO SE ABRE. Quem marcasse
+    sem a camada perderia o próprio registro de vista no mesmo instante — a
+    agenda sairia da listagem, da ficha e da busca dele —, e não conseguiria
+    nem desmarcar: precisaria pedir a outra pessoa. A tela esconde a caixa, e
+    esta é a barreira de verdade, porque esconder botão não fecha rota.
+
+    `marcada` falso passa sempre: desmarcar é alargar, e quem não alcança uma
+    agenda sensível nem chega aqui — `consultar_interacoes.obter` já devolveu
+    "não encontrada".
+
+    `RegraViolada` e não `NaoAutorizado`: o pedido é compreensível e a pessoa
+    tem acesso ao CRM; o que não se pode é ESTE estado. Vira 422 com o motivo,
+    que é o que a tela sabe mostrar.
+    """
+    if marcada and not usuario.ve_campos_sensiveis:
+        raise RegraViolada(
+            "Seu perfil não tem acesso a informação sensível, então não pode "
+            "marcar uma agenda como sensível — você deixaria de enxergá-la. "
+            "Peça a quem tem a camada."
+        )
+
+
 @rotas.get("")
 def listar(
     sessao: Sessao,
@@ -211,16 +237,16 @@ def listar(
         RepositorioSQL(sessao),
         recorte=recorte,
         escopo=usuario.escopo,
-        busca_em_campos_sensiveis=usuario.ve_campos_sensiveis,
+        alcanca_sensivel=usuario.ve_campos_sensiveis,
         pagina=pagina,
         tamanho=tamanho,
         ordenacao=ordenacao,
     )
     return PaginaDeInteracoes(
-        itens=[
-            InteracaoSaida.de_dominio(i, ve_campos_sensiveis=usuario.ve_campos_sensiveis)
-            for i in resultado.itens
-        ],
+        #: SEM MASCARAR NADA. O filtro de linha em `condicoes()` já tirou do
+        #: conjunto as agendas que esta pessoa não alcança; as que chegaram, ela
+        #: alcança por inteiro. Ver a migration 0089.
+        itens=[InteracaoSaida.de_dominio(i) for i in resultado.itens],
         total=resultado.total,
         pagina=resultado.pagina,
         tamanho=resultado.tamanho,
@@ -249,22 +275,26 @@ def criar(
         sessao, instituicao_id=entrada.instituicao_id
     )
     interacao = entrada.para_dominio(frente=frente, esfera_id=esfera_id)
+    exigir_direito_de_marcar_sensivel(usuario, interacao.sensivel)
     # O BLOCO DA CONSULTA SÓ VALE NO TIPO CERTO, e quem garante é o servidor:
     # a tela já manda coerente, mas a API aceita um cliente direto.
     validar_consulta(sessao, interacao)
     criada = registrar_interacao.registrar(
         RepositorioSQL(sessao), interacao=interacao, usuario=usuario
     )
-    return InteracaoSaida.de_dominio(criada, ve_campos_sensiveis=usuario.ve_campos_sensiveis)
+    return InteracaoSaida.de_dominio(criada)
 
 
 @rotas.get("/{id}")
 def obter(sessao: Sessao, usuario: UsuarioLogado, id: UUID) -> InteracaoSaida:
     """A ficha do registro."""
     interacao = consultar_interacoes.obter(
-        RepositorioSQL(sessao), id=id, escopo=usuario.escopo
+        RepositorioSQL(sessao),
+        id=id,
+        escopo=usuario.escopo,
+        alcanca_sensivel=usuario.ve_campos_sensiveis,
     )
-    return InteracaoSaida.de_dominio(interacao, ve_campos_sensiveis=usuario.ve_campos_sensiveis)
+    return InteracaoSaida.de_dominio(interacao)
 
 
 @rotas.patch("/{id}")
@@ -277,8 +307,23 @@ def editar(
 ) -> InteracaoSaida:
     repositorio = RepositorioSQL(sessao)
 
-    atual = consultar_interacoes.obter(repositorio, id=id, escopo=usuario.escopo)
+    atual = consultar_interacoes.obter(
+        repositorio,
+        id=id,
+        escopo=usuario.escopo,
+        alcanca_sensivel=usuario.ve_campos_sensiveis,
+    )
     alteracoes = edicao.alteracoes(frente_atual=atual.frente)
+
+    #: MARCAR exige a camada; DESMARCAR também.
+    #:
+    #: Desmarcar abre a agenda para todo mundo que tem o CRM, e quem não
+    #: alcançava a agenda não chegaria aqui de todo jeito — `obter` acima já
+    #: teria devolvido "não encontrada". A guarda cobre o caso de quem alcança a
+    #: agenda (ela não é sensível) e quer torná-la sensível sem ter a camada:
+    #: trancaria o próprio registro e não conseguiria mais abri-lo.
+    if "sensivel" in alteracoes:
+        exigir_direito_de_marcar_sensivel(usuario, bool(alteracoes["sensivel"]))
 
     # A ESFERA SEGUE A INSTITUIÇÃO TAMBÉM NA TROCA, e não só no dia em que a
     # agenda nasce. Derivar apenas na criação deixava o registro com a esfera do
@@ -312,7 +357,7 @@ def editar(
     # `caminhos_orfaos()` so le uma lista em memoria: nao toca na sessao, que
     # a essa altura ja esta fechada.
     tarefas.add_task(registrar_interacao.apagar_bytes_orfaos, repositorio)
-    return InteracaoSaida.de_dominio(atualizada, ve_campos_sensiveis=usuario.ve_campos_sensiveis)
+    return InteracaoSaida.de_dominio(atualizada)
 
 
 @rotas.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -349,7 +394,15 @@ def subir_arquivo_de_material(
     # O ESCOPO ENTRA AQUI TAMBÉM. Sem isto, quem não enxerga uma agenda poderia
     # escrever no armazenamento dela conhecendo só o id — e a pasta é o que dá
     # a ligação entre arquivo e agenda.
-    interacao = consultar_interacoes.obter(repositorio, id=id, escopo=usuario.escopo)
+    #
+    # E A CAMADA SENSÍVEL PELO MESMO MOTIVO: anexar arquivo a uma agenda
+    # restrita é escrever dentro dela, e quem não a alcança não deve conseguir.
+    interacao = consultar_interacoes.obter(
+        repositorio,
+        id=id,
+        escopo=usuario.escopo,
+        alcanca_sensivel=usuario.ve_campos_sensiveis,
+    )
 
     if momento not in MOMENTOS_DE_MATERIAL:
         raise RegraViolada(
@@ -397,7 +450,18 @@ def baixar_arquivo_de_material(
     cada download.
     """
     repositorio = RepositorioSQL(sessao)
-    consultar_interacoes.obter(repositorio, id=id, escopo=usuario.escopo)
+    #: A CAMADA SENSÍVEL VALE PARA O DOWNLOAD, e aqui é onde ela mais importa:
+    #: o material da agenda restrita é justamente o conteúdo que a marca
+    #: protege. Sem isto, quem não alcança a agenda baixaria o anexo dela
+    #: conhecendo o id — e o docstring acima explica por que o byte passa pela
+    #: API em vez de um link direto: para a autorização ser conferida a cada
+    #: download. Conferir o escopo e esquecer o sensível anularia metade disso.
+    consultar_interacoes.obter(
+        repositorio,
+        id=id,
+        escopo=usuario.escopo,
+        alcanca_sensivel=usuario.ve_campos_sensiveis,
+    )
 
     registro = registrar_interacao.arquivo_da_interacao(
         repositorio, interacao_id=id, arquivo_id=arquivo_id

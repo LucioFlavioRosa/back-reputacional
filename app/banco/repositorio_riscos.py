@@ -345,6 +345,20 @@ def agendas_de_incidente(
             #: não arquivada, e dentro do alcance do usuário.
             InteracaoRegistro.visivel.is_(True),
             InteracaoRegistro.arquivado_em.is_(None),
+            #: E A AGENDA SENSÍVEL FICA FORA (migration 0089).
+            #:
+            #: Esta consulta devolve `interacao_id` e `data` POR LINHA, não
+            #: agregado: a matriz de risco listaria a data de uma agenda
+            #: restrita ligada a um risco, e a data de um encontro com um órgão
+            #: é a informação que a marca existe para guardar. Abrir a ficha
+            #: daria 404, e seria pior — a pessoa saberia que existe e não
+            #: entenderia por que não abre.
+            #:
+            #: Sem a bandeira de quem pede, como no Score (ver
+            #: `repositorio_score.so_interacoes_visiveis`): a matriz é leitura
+            #: da companhia, e o custo é o mesmo — a agenda restrita não conta
+            #: como incidente para ninguém.
+            InteracaoRegistro.sensivel.is_(False),
             *condicoes_de_escopo(escopo),
             Risco.ativo.is_(True),
             Tema.ativo.is_(True),

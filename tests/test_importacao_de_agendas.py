@@ -400,6 +400,10 @@ def test_a_ordem_das_colunas_segue_o_FORMULARIO():
         "Instituição",
         "UF",
         "Unidade de negócio",
+        # A CLASSIFICAÇÃO FICA AQUI, e não entre os outputs: "esta reunião é
+        # delicada" se sabe antes de ela acontecer, e o formulário também a põe
+        # na seção 3. Ver a migration 0089.
+        "Informação sensível?",
         # AS 18 COLUNAS DE TEMA SAEM DA CONSTANTE, e não escritas uma a uma: o
         # teto é ampliável de propósito, e dezoito nomes copiados aqui fariam
         # este teste virar o lugar onde a próxima ampliação é esquecida.
@@ -522,21 +526,25 @@ def test_os_dois_modelos_recortam_a_MESMA_descricao():
         assert desconhecidas == set(), (nome_do_modelo, desconhecidas)
 
 
-def test_o_completo_tem_74_colunas_e_o_front_diz_esse_numero():
+def test_o_completo_tem_75_colunas_e_o_front_diz_esse_numero():
     """O NÚMERO ESTÁ ESCRITO À MÃO NO FRONT, e é isto que impede a divergência.
 
-    `front-reputacional/src/paginas/importacao/BotaoDeImportar.tsx` mostra "74
-    colunas" no cartão do modelo completo, para a pessoa escolher sabendo o que
-    vai baixar. O front não importa a descrição do formato, então o número é
-    texto — e texto não acompanha uma coluna nova.
+    `front-reputacional/src/paginas/importacao/BotaoDeImportar.tsx` mostra o
+    número de colunas no cartão do modelo completo, para a pessoa escolher
+    sabendo o que vai baixar. O front não importa a descrição do formato, então
+    o número é texto — e texto não acompanha uma coluna nova.
 
     Quando este teste falhar, são DOIS arquivos a mudar: o número aqui e o
     rótulo lá. É de propósito que dê trabalho: o rótulo existe para ser verdade.
+
+    FORAM 74 ATÉ 0089, que acrescentou "Informação sensível?" à seção 3 — e
+    este teste foi exatamente quem cobrou o rótulo do front, que eu teria
+    deixado dizendo 74.
     """
     from app.dominio.importacao_de_agendas import MODELOS
 
-    assert len(MODELOS["completo"]) == 74
-    assert len(MODELOS["simplificado"]) == 37
+    assert len(MODELOS["completo"]) == 75
+    assert len(MODELOS["simplificado"]) == 38
 
 
 def test_o_modelo_completo_e_a_descricao_inteira_na_ordem_dela():
@@ -545,7 +553,7 @@ def test_o_modelo_completo_e_a_descricao_inteira_na_ordem_dela():
     assert list(MODELOS["completo"]) == [coluna.nome for coluna in aba_de("Agendas").colunas]
 
 
-def test_o_simplificado_tem_as_37_colunas_do_evento():
+def test_o_simplificado_tem_as_38_colunas_do_evento():
     """AS COLUNAS QUE O DONO DO PRODUTO PEDIU, e a razão: 54 agendas do mesmo dia
     são um evento, com muitas conversas curtas. As 74 colunas do completo viram
     rolagem horizontal para preencher quatro coisas por linha.
@@ -565,6 +573,11 @@ def test_o_simplificado_tem_as_37_colunas_do_evento():
         "Instituição",
         "UF",
         "Unidade de negócio",
+        # NOS DOIS MODELOS. Uma reunião delicada num dia de 54 conversas é
+        # exatamente o caso em que a classificação importa, e oferecê-la só no
+        # completo faria a MESMA agenda poder ou não ser marcada dependendo do
+        # arquivo que a pessoa baixou.
+        "Informação sensível?",
         *(f"Tema {numero}" for numero in range(1, TETO_DE_TEMAS_POR_AGENDA + 1)),
         "Modalidade",
         "Local",

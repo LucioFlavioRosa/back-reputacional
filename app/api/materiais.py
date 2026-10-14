@@ -98,7 +98,7 @@ def listar(
             *condicoes(
                 recorte,
                 escopo=usuario.escopo,
-                busca_em_campos_sensiveis=usuario.ve_campos_sensiveis,
+                alcanca_sensivel=usuario.ve_campos_sensiveis,
             ),
         )
         .order_by(Material.criado_em.desc())

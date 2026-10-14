@@ -119,7 +119,7 @@ def kpis(sessao: Sessao, usuario: UsuarioLogado, recorte: RecorteAtual) -> KpisS
         sessao,
         recorte,
         escopo=usuario.escopo,
-        busca_em_campos_sensiveis=usuario.ve_campos_sensiveis,
+        alcanca_sensivel=usuario.ve_campos_sensiveis,
     )
     return KpisSaida(
         total=calculado.total,
@@ -140,7 +140,7 @@ def resolutividade(
         sessao,
         recorte,
         escopo=usuario.escopo,
-        busca_em_campos_sensiveis=usuario.ve_campos_sensiveis,
+        alcanca_sensivel=usuario.ve_campos_sensiveis,
     )
     return ResolutividadeSaida(
         taxa=calculado.taxa,
@@ -176,7 +176,7 @@ def serie_mensal(
             sessao,
             recorte,
             escopo=usuario.escopo,
-            busca_em_campos_sensiveis=usuario.ve_campos_sensiveis,
+            alcanca_sensivel=usuario.ve_campos_sensiveis,
             segmento=segmento,
         )
     ]
@@ -190,6 +190,6 @@ def mapa(sessao: Sessao, usuario: UsuarioLogado, recorte: RecorteAtual) -> list[
             sessao,
             recorte,
             escopo=usuario.escopo,
-            busca_em_campos_sensiveis=usuario.ve_campos_sensiveis,
+            alcanca_sensivel=usuario.ve_campos_sensiveis,
         )
     ]

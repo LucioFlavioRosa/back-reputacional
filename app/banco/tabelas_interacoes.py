@@ -182,6 +182,14 @@ class InteracaoRegistro(Tabela):
     # procedência e ciclo de vida
     fonte: Mapped[str] = mapped_column(Text, default="cadastro_manual")
     visivel: Mapped[bool] = mapped_column(Boolean, default=True)
+    #: A agenda INTEIRA é restrita a quem tem `usuario.acesso_sensivel`.
+    #:
+    #: Para quem não tem, a LINHA não existe: `filtros_sql.condicoes()` a tira
+    #: da Base, do KPI, da busca e da abertura por URL. É por linha, e não por
+    #: campo — ver a migration 0089.
+    #:
+    #: NÃO confundir com `visivel`, logo acima, que esconde de TODO mundo.
+    sensivel: Mapped[bool] = mapped_column(Boolean, default=False)
     origem_aba: Mapped[str | None] = mapped_column(Text, nullable=True)
     origem_linha: Mapped[int | None] = mapped_column(Integer, nullable=True)
     criado_por: Mapped[uuid.UUID] = mapped_column(

@@ -802,6 +802,102 @@ def _dossie_de(sessao, codigo: str, *, ve_diretorio: bool, mes: str = "2026-06")
     )
 
 
+def _agenda_do_crm(sessao, *, instituicao: str, sensivel: bool, mes: str = "2026-06"):
+    """Uma agenda com clima, para o Score ter o que contar.
+
+    `clima` é obrigatório aqui: `_serie_do_crm` e o índice contam POR CLIMA, e
+    agenda sem clima não entra em nenhum dos dois — uma fixture sem ele faria o
+    teste passar por ausência de dado, não por causa do filtro.
+    """
+    from uuid import uuid4 as _uuid4
+
+    from sqlalchemy import text as _text
+
+    from app.banco.tabelas_acesso import Usuario
+    from app.banco.tabelas_catalogo import Clima
+    from app.banco.tabelas_interacoes import InteracaoRegistro
+    from app.banco.tabelas_stakeholders import Instituicao
+    from app.dominio.frentes import Frente
+
+    sufixo = _uuid4().hex[:8]
+    autor = Usuario(
+        entra_object_id=f"lente-{sufixo}",
+        email=f"{sufixo}@aegea.com.br",
+        nome="Autor da lente",
+        acesso_irrestrito=True,
+    )
+    orgao = Instituicao(
+        nome=instituicao,
+        nome_normalizado=instituicao.lower(),
+        tipo="entidade",
+        uf="SP",
+    )
+    sessao.add_all([autor, orgao])
+    sessao.flush()
+
+    clima_id = sessao.scalar(select(Clima.id).where(Clima.codigo == "tenso"))
+    frente_id = sessao.scalar(
+        _text("select id from frente where codigo = :c"), {"c": Frente.GOVERNO.value}
+    )
+    #: `status_id` é `not null` no banco — a agenda sempre está em algum ponto
+    #: do fluxo. Escrevendo o registro direto, sem passar pelo domínio, o padrão
+    #: de `InteracaoEntrada` ("solicitado") não se aplica.
+    status_id = sessao.scalar(
+        _text("select id from status where codigo = 'aceito'")
+    ) or sessao.scalar(_text("select id from status limit 1"))
+
+    agenda = InteracaoRegistro(
+        frente_id=frente_id,
+        data_interacao=date(int(mes[:4]), int(mes[5:7]), 10),
+        instituicao_id=orgao.id,
+        uf="SP",
+        pauta="Reunião registrada para a lente",
+        status_id=status_id,
+        clima_id=clima_id,
+        criado_por=autor.id,
+        sensivel=sensivel,
+    )
+    sessao.add(agenda)
+    sessao.flush()
+    return agenda
+
+
+def test_a_agenda_sensivel_nao_entra_no_score_nem_nomeia_o_orgao(sessao):
+    """A DECISÃO MAIS PESADA DE 0089, e a única que vale para TODO mundo.
+
+    `orgaos_do_crm` devolve nome de instituição com contagem por mês, e
+    `temas_do_crm` nome de tema. Uma agenda restrita apareceria ali; com
+    contagem 1 num mês, o par instituição-mês revela que o encontro existiu —
+    que é exatamente o que a marca protege. É a mesma classe de vazamento que
+    `visivel = false` já tinha causado por este caminho, e o conserto é no mesmo
+    lugar: `repositorio_score.so_interacoes_visiveis`.
+
+    SEM A BANDEIRA DE QUEM PEDE, e o teste prova isso usando `ve_diretorio=True`
+    — o perfil que PODE ler nomes de órgão. Se o filtro fosse por pessoa, este
+    nome apareceria. O Score é índice da companhia: duas pessoas lendo notas
+    diferentes para o mesmo mês é pior do que o custo de a agenda restrita não
+    pesar no índice.
+    """
+    restrita = _agenda_do_crm(
+        sessao, instituicao="Agência Reservada do Teste", sensivel=True
+    )
+    comum = _agenda_do_crm(
+        sessao, instituicao="Agência Aberta do Teste", sensivel=False
+    )
+    assert restrita.sensivel and not comum.sensivel
+
+    paineis = _dossie_de(sessao, "institucional", ve_diretorio=True).paineis
+    nomes = [str(p) for p in paineis]
+    texto = " ".join(nomes)
+
+    assert "Agência Reservada do Teste" not in texto, (
+        "o nome da instituição de uma agenda restrita chegou ao dossiê do Score"
+    )
+    #: O CONTRAPESO: sem ele, um filtro que escondesse TUDO passaria como
+    #: conserto — e o painel inteiro teria sumido.
+    assert "Agência Aberta do Teste" in texto
+
+
 def test_sem_ve_diretorio_a_matriz_de_jornalistas_nao_vem(sessao):
     """Ela nomeia gente de fora, uma por linha, com veículo e prioridade."""
     tipos = [p.tipo for p in _dossie_de(sessao, "imprensa", ve_diretorio=False).paineis]

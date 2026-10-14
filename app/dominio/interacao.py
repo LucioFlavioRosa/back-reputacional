@@ -295,6 +295,18 @@ class Interacao:
     # procedência e ciclo de vida
     fonte: str = "cadastro_manual"
     visivel: bool = True
+    #: A AGENDA INTEIRA É RESTRITA a quem tem `usuario.acesso_sensivel`.
+    #:
+    #: Quem classifica é quem registra, uma agenda por vez, e o efeito é sobre
+    #: a LINHA: para quem não tem a camada, ela não existe — nem na Base, nem no
+    #: KPI, nem na busca, nem abrindo pela URL. Ver a migration 0089.
+    #:
+    #: `False` por padrão. O contrário esconderia o acervo inteiro de quem não
+    #: tem a camada, e aí ninguém sem ela teria painel nenhum.
+    #:
+    #: NÃO confundir com `visivel`, logo acima: aquela esconde de TODO mundo, e
+    #: serve para importação que deu errado ou duplicata.
+    sensivel: bool = False
     origem_aba: str | None = None
     origem_linha: int | None = None
     criado_por: UUID | None = None

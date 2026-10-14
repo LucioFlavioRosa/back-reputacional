@@ -262,10 +262,10 @@ def test_a_agregacao_respeita_o_escopo(cliente, base, sessao):
         sessao,
         Recorte(),
         escopo=Escopo(frentes=frozenset({"imprensa"})),
-        busca_em_campos_sensiveis=True,
+        alcanca_sensivel=True,
     )
     tudo = consultas.kpis(
-        sessao, Recorte(), escopo=Escopo.total(), busca_em_campos_sensiveis=True
+        sessao, Recorte(), escopo=Escopo.total(), alcanca_sensivel=True
     )
 
     assert so_imprensa.total < tudo.total
@@ -280,7 +280,7 @@ def test_escopo_sem_concessao_agrega_zero(cliente, base, sessao):
         sessao,
         Recorte(),
         escopo=Escopo(irrestrito=False),
-        busca_em_campos_sensiveis=True,
+        alcanca_sensivel=True,
     )
     assert nenhum.total == 0
 
@@ -290,7 +290,7 @@ def test_periodo_do_recorte_vale_na_agregacao(cliente, base, sessao):
         sessao,
         Recorte(periodo=Periodo(de=date(2026, 3, 1), ate=date(2026, 3, 31))),
         escopo=Escopo.total(),
-        busca_em_campos_sensiveis=True,
+        alcanca_sensivel=True,
     )
     assert dentro.total == 3
 

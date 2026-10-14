@@ -66,7 +66,7 @@ def registrar(sessao: Session, *, recorte: Recorte, usuario: UsuarioAtual) -> Ex
     total = RepositorioSQL(sessao).contar(
         recorte,
         escopo=usuario.escopo,
-        busca_em_campos_sensiveis=usuario.ve_campos_sensiveis,
+        alcanca_sensivel=usuario.ve_campos_sensiveis,
     )
 
     registro = ExportacaoRegistro(
