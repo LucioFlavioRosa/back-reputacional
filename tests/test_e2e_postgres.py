@@ -1138,6 +1138,40 @@ def test_recorte_nao_amplia_o_escopo(cliente, semente, sessao):
     assert resposta.json()["total"] == 0
 
 
+def test_sensivel_nulo_no_patch_e_entrada_invalida_e_nao_500(cliente, semente, sessao):
+    """`null` não é "não mexi nisto" — isso é o campo AUSENTE.
+
+    `alteracoes()` usa `exclude_unset`, então `None` só chega se o cliente
+    mandou `null`. A coluna é `not null`: sem a recusa o valor seguia até o
+    banco e voltava 500 — erro de servidor para uma entrada corrigível.
+    """
+    id_ = cliente.post("/api/interacoes", json=corpo(semente)).json()["id"]
+    sessao.flush()
+
+    recusa = cliente.patch(f"/api/interacoes/{id_}", json={"sensivel": None})
+    assert recusa.status_code == 422, recusa.json()
+    assert "omita" in recusa.json()["detalhe"].lower()
+
+
+def test_omitir_sensivel_no_patch_preserva_a_classificacao(cliente, semente, sessao):
+    """O par do teste acima: ausente é "não mexi nisto", e tem de preservar.
+
+    Sem isto, quem editasse o relato de uma agenda restrita a desclassificaria
+    sem pedir — e o registro abriria para todo mundo em silêncio.
+    """
+    id_ = cliente.post(
+        "/api/interacoes", json=corpo(semente, sensivel=True)
+    ).json()["id"]
+    sessao.flush()
+
+    editada = cliente.patch(
+        f"/api/interacoes/{id_}", json={"relato": "texto novo"}
+    )
+    assert editada.status_code == 200, editada.json()
+    assert editada.json()["sensivel"] is True
+    assert editada.json()["relato"] == "texto novo"
+
+
 def test_a_busca_nao_delata_a_agenda_restrita(cliente, semente, sessao):
     """A busca não acha o que a pessoa não alcança — e acha o que ela alcança.
 

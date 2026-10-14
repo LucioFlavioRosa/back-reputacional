@@ -347,6 +347,108 @@ def test_nenhuma_leitura_de_interacao_fixa_o_alcance():
     )
 
 
+#: Os módulos que leem `InteracaoRegistro` e NÃO precisam do filtro, com o
+#: motivo de cada um. Qualquer outro tem de aplicar `condicoes()` ou citar
+#: `sensivel` — ver `test_todo_modulo_que_le_interacao_decide_sobre_o_sensivel`.
+LEITURAS_SEM_FILTRO = {
+    #: É quem DEFINE o filtro.
+    "banco/filtros_sql.py",
+    #: Só o mapeamento ORM.
+    "banco/tabelas_interacoes.py",
+    #: Semeadores: populam o banco em desenvolvimento, não servem requisição.
+    "banco/semear_desenvolvimento.py",
+    "banco/semear_enredos.py",
+    "banco/semear_taxonomia_de_temas.py",
+    #: Rotinas de MANUTENÇÃO, chamadas por comando e não por rota. Preenchem
+    #: campo de cadastro a partir do acervo (`Instituicao.tier`, categoria de
+    #: público sugerida). Excluir a agenda sensível aqui faria um campo
+    #: cadastral depender de quem pode vê-la, o que não tem sentido — o cadastro
+    #: não é por pessoa. Achado de revisão, deixado de fora com o motivo.
+    "banco/derivados.py",
+    "banco/sugerir_categoria_de_publico.py",
+    #: FUSÃO DE CADASTROS DUPLICADOS: um `update` que reaponta as agendas do
+    #: perfil absorvido para o sobrevivente. Tem de tocar TODAS as linhas —
+    #: filtrar deixaria as restritas apontando para um cadastro que deixou de
+    #: existir, e isso não é privacidade, é corrupção de dado.
+    "casos_de_uso/atores_duplicados.py",
+    #: CONTAGEM QUE PROTEGE INTEGRIDADE, não contagem que informa.
+    #:
+    #: `mudar_a_casa` conta quantas agendas serão reapontadas ao mover um
+    #: contato de instituição, e a conferência de exclusão de stakeholder conta
+    #: quantas impedem o `delete`. As duas existem para a OPERAÇÃO acertar: uma
+    #: conta filtrada diria "zero, pode apagar" com uma agenda restrita ainda
+    #: apontando para a linha, e o `delete` falharia na chave estrangeira — ou
+    #: pior, a operação mexeria em menos registros do que diz.
+    #:
+    #: "Quantas coisas apontam para isto" é fato estrutural; "quais reuniões
+    #: aconteceram" é a informação protegida. Só a segunda a marca esconde.
+    #: Hoje as duas são alcançadas só por `administra_dicionarios`, que implica
+    #: a camada. Achado de revisão, mantido com o motivo.
+    "casos_de_uso/mudar_a_casa.py",
+}
+
+#: O que conta como "este módulo decidiu sobre o sensível".
+#:
+#: `so_interacoes_visiveis` entra porque é o auxiliar COMPARTILHADO do Score: é
+#: lá que o filtro mora, e quem o chama está coberto sem citar a coluna. Sem
+#: este marcador, `repositorio_lentes` apareceria como culpado por estar certo.
+MARCAS_DE_DECISAO = ("condicoes(", "sensivel", "so_interacoes_visiveis")
+
+
+def test_todo_modulo_que_le_interacao_decide_sobre_o_sensivel():
+    """A GUARDA QUE A PRIMEIRA VERSÃO DESTE ARQUIVO NÃO TINHA.
+
+    A guarda anterior procurava `alcanca_sensivel=True/False` escrito no código
+    — e só isso. Não pegava o caso que de fato vazou: a leitura que simplesmente
+    OMITE o filtro, montando o próprio `where`. Foi assim que a deduplicação da
+    importação, o contador de alegações e as conferências de exclusão de
+    stakeholder continuaram contando agendas restritas, e foi um revisor que
+    apontou — a guarda me deu confiança falsa.
+
+    Agora a pergunta é outra: todo módulo que toca `InteracaoRegistro` ou
+    aplica `condicoes()`, ou cita `sensivel` explicitamente. Citar não prova que
+    está certo; prova que alguém DECIDIU. A isenção é nominal, com motivo
+    escrito, e é isso que força a decisão a passar por aqui.
+
+    `banco/__init__.py` já diz que `condicoes()` é invariante do sistema: "uma
+    consulta que monte `where` por conta própria quebra a garantia de que o KPI
+    conta o que a tabela lista — e quebra em silêncio". Esta é a versão
+    executável dessa frase.
+
+    O QUE ELA AINDA NÃO PEGA, e é melhor estar escrito do que descoberto:
+
+    1. É POR MÓDULO, não por consulta. Um arquivo que aplique `condicoes()`
+       numa função e conte à mão noutra passa. Foi exatamente o caso de
+       `api/stakeholders.py`, e um revisor o achou — não esta guarda.
+    2. Não vê quem conta por uma tabela FILHA sem tocar `interacao`. Foi o caso
+       de `_consultas_por_alegacao`, que contava `interacao_alegacao` direto: a
+       contagem revelava que uma consulta existe sobre aquela alegação, e o
+       nome `InteracaoRegistro` não aparecia no arquivo.
+
+    Ela é uma rede, não uma prova. Serve para a leitura NOVA não nascer
+    esquecida; as duas acima pedem revisão humana.
+    """
+    culpados: list[str] = []
+
+    for caminho in sorted(APP.rglob("*.py")):
+        relativo = caminho.relative_to(APP).as_posix()
+        if relativo in LEITURAS_SEM_FILTRO:
+            continue
+
+        fonte = caminho.read_text(encoding="utf-8")
+        if "InteracaoRegistro" not in fonte:
+            continue
+        if any(marca in fonte for marca in MARCAS_DE_DECISAO):
+            continue
+        culpados.append(relativo)
+
+    assert culpados == [], (
+        "Estes módulos leem `interacao` e não dizem nada sobre o sensível. "
+        "Apliquem `condicoes()`, citem `sensivel`, ou entrem em "
+        "`LEITURAS_SEM_FILTRO` com o motivo:\n  " + "\n  ".join(culpados)
+    )
+
+
 def test_as_guardas_reconhecem_o_que_existem_para_pegar():
     """Guarda de fonte que nunca viu um positivo pode ter parado de casar."""
     assert re.search(

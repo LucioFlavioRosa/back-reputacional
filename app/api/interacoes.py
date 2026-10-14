@@ -205,9 +205,13 @@ def exigir_direito_de_marcar_sensivel(usuario: UsuarioAtual, marcada: bool) -> N
     nem desmarcar: precisaria pedir a outra pessoa. A tela esconde a caixa, e
     esta é a barreira de verdade, porque esconder botão não fecha rota.
 
-    `marcada` falso passa sempre: desmarcar é alargar, e quem não alcança uma
-    agenda sensível nem chega aqui — `consultar_interacoes.obter` já devolveu
-    "não encontrada".
+    `marcada` falso passa sempre NA CRIAÇÃO — agenda nova nasce comum, e exigir
+    a camada para criar agenda comum barraria todo cadastro de quem não a tem.
+
+    NA EDIÇÃO quem chama passa `true` também para DESMARCAR uma agenda que já é
+    sensível: abrir o que estava restrito é a operação mais perigosa das duas, e
+    quem não alcança a agenda não deveria poder abri-la nem por acidente. Ver o
+    `PATCH`.
 
     `RegraViolada` e não `NaoAutorizado`: o pedido é compreensível e a pessoa
     tem acesso ao CRM; o que não se pode é ESTE estado. Vira 422 com o motivo,
@@ -315,15 +319,36 @@ def editar(
     )
     alteracoes = edicao.alteracoes(frente_atual=atual.frente)
 
-    #: MARCAR exige a camada; DESMARCAR também.
-    #:
-    #: Desmarcar abre a agenda para todo mundo que tem o CRM, e quem não
-    #: alcançava a agenda não chegaria aqui de todo jeito — `obter` acima já
-    #: teria devolvido "não encontrada". A guarda cobre o caso de quem alcança a
-    #: agenda (ela não é sensível) e quer torná-la sensível sem ter a camada:
-    #: trancaria o próprio registro e não conseguiria mais abri-lo.
     if "sensivel" in alteracoes:
-        exigir_direito_de_marcar_sensivel(usuario, bool(alteracoes["sensivel"]))
+        #: `null` EXPLÍCITO É ENTRADA INVÁLIDA, e não "não mexi nisto".
+        #:
+        #: `alteracoes()` usa `exclude_unset`, então `None` aqui só aparece se o
+        #: cliente MANDOU `null`. A coluna é `not null`: sem esta recusa o valor
+        #: seguiria até o banco e voltaria como 500 — erro de servidor para uma
+        #: entrada que a pessoa pode corrigir. Achado de revisão.
+        if alteracoes["sensivel"] is None:
+            raise RegraViolada(
+                "`sensivel` aceita true ou false. Para não alterar a "
+                "classificação, omita o campo."
+            )
+
+        #: MARCAR exige a camada, e DESMARCAR também — nos dois sentidos.
+        #:
+        #: Marcar sem a camada trancaria o próprio registro: a pessoa o perderia
+        #: de vista no mesmo instante e não conseguiria nem desmarcar.
+        #:
+        #: Desmarcar ABRE a agenda para todo mundo que tem o CRM, e é a operação
+        #: mais perigosa das duas. Hoje quem não alcança a agenda nem chega
+        #: aqui — `obter` acima já devolveu "não encontrada" —, então a guarda é
+        #: redundante. Ela existe porque essa redundância é a única coisa que
+        #: separa um defeito no filtro de linha de uma agenda DESCLASSIFICADA em
+        #: silêncio: o front manda `sensivel` em toda edição, e um formulário
+        #: que carregasse a agenda com o campo em `false` a abriria sem ninguém
+        #: pedir. Defesa em profundidade, no lugar onde a identidade está em mão.
+        exigir_direito_de_marcar_sensivel(
+            usuario,
+            bool(alteracoes["sensivel"]) or atual.sensivel,
+        )
 
     # A ESFERA SEGUE A INSTITUIÇÃO TAMBÉM NA TROCA, e não só no dia em que a
     # agenda nasce. Derivar apenas na criação deixava o registro com a esfera do
