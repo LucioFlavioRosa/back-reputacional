@@ -29,13 +29,13 @@ import io
 from datetime import date
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
 from app.banco.tabelas_score import Mencao, ScoreFonte
 from app.casos_de_uso import ingerir_mencoes
 from app.dominio.ingestao_score import CAMPOS_OBRIGATORIOS, Mapeamento, achatar
-from tests.test_e2e_postgres import URL
+from tests.test_e2e_postgres import MIGRATIONS, URL
 
 _engine = create_engine(URL, pool_pre_ping=True)
 
@@ -224,17 +224,27 @@ def test_a_planilha_sem_as_colunas_novas_sobe_igual(sessao, fontes):
     assert gravada.sentimento == "neg" and da_cm.sentimento == "neg"
 
 
-@pytest.mark.parametrize(
-    ("aba", "coluna", "torta", "canonica"),
-    [
-        ("SL", "Concessionárias", "Águas do Para", "Águas do Pará"),
-        ("SL", "Tags (tema)", "Premios", "Prêmios"),
-        ("SL", "Tags (subtema)", "Gestao de Residuos", "Gestão de Resíduos"),
-        ("CM", "Concessionárias", "Águas do Para", "Águas do Pará"),
-        ("CM", "TAG (assunto 1)", "Reclamação de Serviços", "Reclamação de serviços"),
-    ],
-)
-def test_o_apelido_junta_as_duas_grafias(sessao, fontes, aba, coluna, torta, canonica):
+#: OS SETE APELIDOS, com o CAMPO em que cada um tem de cair.
+#:
+#: O CAMPO IMPORTA, e esta lista nasceu sem ele: a primeira versão deste teste
+#: conferia se a forma canônica aparecia na UNIÃO de `unidade_texto`,
+#: `tema_texto` e `subtema` — então um apelido que convergisse a grafia no campo
+#: ERRADO passava. `apelidos` é um dicionário plano aplicado aos quatro campos
+#: que passam por `_rotulo`, e é exatamente esse espalhamento que o teste tem de
+#: vigiar. Achado da revisão.
+APELIDOS = [
+    ("SL", "Concessionárias", "unidade_texto", "Águas do Para", "Águas do Pará"),
+    ("SL", "Tags (tema)", "tema_texto", "Premios", "Prêmios"),
+    ("SL", "Tags (subtema)", "subtema", "Gestao de Residuos", "Gestão de Resíduos"),
+    ("SL", "Tags (subtema)", "subtema", "Seguranca no Trabalho", "Segurança no Trabalho"),
+    ("SL", "Tags (subtema)", "subtema", "Pescando Tradicoes", "Pescando Tradições"),
+    ("CM", "Concessionárias", "unidade_texto", "Águas do Para", "Águas do Pará"),
+    ("CM", "TAG (assunto 1)", "tema_texto", "Reclamação de Serviços", "Reclamação de serviços"),
+]
+
+
+@pytest.mark.parametrize(("aba", "coluna", "campo", "torta", "canonica"), APELIDOS)
+def test_o_apelido_junta_as_duas_grafias(sessao, fontes, aba, coluna, campo, torta, canonica):
     """Medido no arquivo real: a grafia sem acento virava uma segunda barra."""
     sl = dict(LINHA_SL)
     cm = dict(LINHA_CM)
@@ -244,9 +254,26 @@ def test_o_apelido_junta_as_duas_grafias(sessao, fontes, aba, coluna, torta, can
 
     fonte = fontes["approach_sl" if aba == "SL" else "approach_cm"]
     gravada = _gravada(sessao, fonte, date(2026, 8, 1))
-    valores = {gravada.unidade_texto, gravada.tema_texto, gravada.subtema}
-    assert canonica in valores, f"{torta!r} não convergiu; gravou {valores}"
-    assert torta not in valores
+    assert getattr(gravada, campo) == canonica, (
+        f"{torta!r} devia virar {canonica!r} em `{campo}`; "
+        f"gravou {getattr(gravada, campo)!r}"
+    )
+
+
+def test_todo_apelido_do_cadastro_esta_exercitado(fontes):
+    """A lista de cima não pode ficar atrás do cadastro.
+
+    Dois dos sete apelidos não tinham caso quando este arquivo nasceu, e foi a
+    revisão que contou. Derivar a conferência do cadastro é o que impede o
+    próximo apelido de entrar sem ninguém provar que ele funciona.
+    """
+    exercitados = {(aba, torta) for aba, _, _, torta, _ in APELIDOS}
+    for codigo, fonte in fontes.items():
+        aba = "SL" if codigo.endswith("_sl") else "CM"
+        for de in Mapeamento.de_json(fonte.mapeamento_colunas).apelidos:
+            assert (aba, de) in exercitados, (
+                f"o apelido {de!r} da {codigo} não tem caso em `APELIDOS`."
+            )
 
 
 def test_o_apelido_so_junta_grafias_da_mesma_coisa(fontes):
@@ -274,3 +301,74 @@ def test_o_subtema_e_o_nivel_abaixo_do_tema(fontes):
     #: um SACO DE ETIQUETAS posicional — 1.135 linhas com `replied`, 544 com
     #: `Visto` —, e não o nível abaixo do assunto.
     assert "subtema" not in Mapeamento.de_json(fontes["approach_cm"].mapeamento_colunas).colunas
+
+
+#: O MAPEAMENTO DE ANTES DA 0091, por fonte. É o que a migration tinha de
+#: PRESERVAR, e ela mexe no JSON inteiro com `||` e `jsonb_build_object` — um
+#: `jsonb_set` no caminho errado, ou um `||` invertido, apagaria isto sem erro
+#: nenhum e a subida passaria a recusar a planilha por coluna faltando.
+ANTES_DA_0091 = {
+    "approach_sl": {
+        "aba": "SL",
+        "arquivo": "approach",
+        "colunas": {
+            "data": "Data",
+            "sentimento": "Sentimento",
+            "engajamento": "Engajamento",
+            "tema": "Tags (tema)",
+            "unidade": "Concessionárias",
+        },
+    },
+    "approach_cm": {
+        "aba": "CM",
+        "arquivo": "approach",
+        "colunas": {
+            "data": "Data",
+            "sentimento": "Sentimento",
+            "engajamento": "Interações",
+            "tema": "TAG (assunto 1)",
+            "unidade": "Concessionárias",
+            "teor": "TAG (motivo)",
+        },
+    },
+}
+#: O prefixo de taxonomia que a 0048 cadastrou. Vale para as duas fontes.
+PREFIXO_DA_0048 = "^(\\d+\\s*[,-]\\s*)?(Aegea\\s*[,-]\\s*)?"
+
+
+def test_o_mapeamento_de_antes_sobrevive_a_migration(fontes):
+    """A 0091 ACRESCENTA. Nada do cadastro anterior pode ter sumido."""
+    for codigo, esperado in ANTES_DA_0091.items():
+        mapeamento = dict(fontes[codigo].mapeamento_colunas)
+        assert mapeamento["aba"] == esperado["aba"]
+        assert mapeamento["arquivo"] == esperado["arquivo"]
+        assert mapeamento["prefixo_a_remover"] == PREFIXO_DA_0048, (
+            f"{codigo} perdeu o prefixo de taxonomia; sem ele "
+            '"2 - Aegea - Falta de Água" vira assunto.'
+        )
+        for campo, coluna in esperado["colunas"].items():
+            assert mapeamento["colunas"].get(campo) == coluna, (
+                f"{codigo}: o mapeamento de `{campo}` era {coluna!r} e virou "
+                f"{mapeamento['colunas'].get(campo)!r}."
+            )
+
+
+def test_a_0091_pode_rodar_duas_vezes(sessao, fontes):
+    """Idempotente: o ambiente que reaplica uma migration não pode divergir.
+
+    Roda DENTRO da transação do teste, que é desfeita no fim.
+    """
+    (arquivo,) = MIGRATIONS.glob("0091_*.sql")
+    antes = {codigo: dict(fonte.mapeamento_colunas) for codigo, fonte in fontes.items()}
+
+    sessao.execute(text(arquivo.read_text(encoding="utf-8")))
+    sessao.flush()
+    sessao.expire_all()
+
+    depois = {
+        fonte.codigo: dict(fonte.mapeamento_colunas)
+        for fonte in sessao.scalars(
+            select(ScoreFonte).where(ScoreFonte.codigo.in_(tuple(antes)))
+        )
+    }
+    assert depois == antes
