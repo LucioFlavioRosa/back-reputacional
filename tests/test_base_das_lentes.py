@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.api.base_das_lentes import listar_mencoes, opcoes_da_base
 from app.banco.tabelas_score import Mencao, ScoreFonte
+from app.dominio.causa_da_lente import DIMENSOES_POR_LENTE, nomeia_o_diretorio
 from app.dominio.erros import NaoEncontrado, RegraViolada
 from tests.test_e2e_postgres import URL
 
@@ -74,7 +75,7 @@ def imprensa(sessao):
     return linhas
 
 
-def _listar(sessao, ve_diretorio=True, **params):
+def _listar(sessao, ve_diretorio=True, codigo="imprensa", **params):
     padrao = dict(
         de=date(2026, 7, 1), ate=date(2026, 8, 31), q=None, fonte=None, sentimento=None,
         tier=None, veiculo=None, atributo=None, tema=None, perfil_autor=None, uf=None,
@@ -83,7 +84,17 @@ def _listar(sessao, ve_diretorio=True, **params):
     )
     padrao.update(params)
     return listar_mencoes(
-        sessao=sessao, usuario=_QuemOlha(ve_diretorio), codigo="imprensa", **padrao
+        sessao=sessao, usuario=_QuemOlha(ve_diretorio), codigo=codigo, **padrao
+    )
+
+
+def _opcoes(sessao, ve_diretorio=True, codigo="imprensa"):
+    return opcoes_da_base(
+        sessao=sessao,
+        usuario=_QuemOlha(ve_diretorio),
+        codigo=codigo,
+        de=date(2026, 7, 1),
+        ate=date(2026, 8, 31),
     )
 
 
@@ -147,3 +158,125 @@ def test_as_opcoes_do_periodo(sessao, imprensa):
 def test_institucional_nao_tem_base_de_mencoes(sessao):
     with pytest.raises(NaoEncontrado):
         listar_mencoes(sessao=sessao, usuario=_QuemOlha(), codigo="institucional")
+
+
+# -- QUEM NOMEIA GENTE DE FORA, E QUEM NÃO ------------------------------------
+#
+# A regra do autor escondido vale POR ORIGEM DO DADO, e não por lente favorita:
+# na Imprensa o `autor` é o jornalista do CADASTRO de terceiros, que
+# `ve_diretorio` guarda; nas lentes de rede é o perfil que veio DENTRO da
+# menção — o `Publicador` que a Approach manda na própria linha da planilha, o
+# `Autor` que a Bites manda. Esse segundo é aberto, e já era: o cartão "Onde
+# está a causa" da Sociedade digital declara `Dimensao("autor", "Autor",
+# "autor")` sem `nomeia_o_diretorio`, e o indicador "Autor mais negativo" o
+# mostra a todo mundo.
+#
+# A PERGUNTA MORAVA EM DOIS LUGARES: o cartão perguntava à declaração
+# (`causa_da_lente`), e esta Base comparava `codigo == "imprensa"` em três
+# pontos. Marcar uma lente nova como quem nomeia o diretório tiraria a aba do
+# cartão e deixaria esta Base publicando a coluna e oferecendo o filtro — sem
+# erro nenhum. Agora as duas leem a mesma declaração, e é isto que os dois
+# testes abaixo prendem.
+
+
+@pytest.fixture
+def clientes(sessao):
+    """Duas menções de Community Management, com o perfil que comentou cada uma.
+
+    DUAS, E DE AUTORES DIFERENTES: com uma só, "o filtro de autor funcionou" e
+    "o filtro foi ignorado porque o autor está escondido" devolvem o mesmo
+    total, e a asserção não distingue os dois casos — que é exatamente o que
+    estes testes existem para distinguir.
+    """
+    cm = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "approach_cm")).one()
+    for dia, autor, texto in (
+        (4, "branca_medeiros15", "Vocês deveriam ter vergonha"),
+        (11, "fernandescaggy", "Terceiro dia sem água aqui"),
+    ):
+        sessao.add(
+            Mencao(
+                fonte_id=cm.id,
+                mes=date(2026, 8, 1),
+                data=date(2026, 8, dia),
+                sentimento="neg",
+                titulo_texto=texto,
+                autor=autor,
+                teor="Reclamação",
+                engajamento=2,
+            )
+        )
+    sessao.flush()
+
+
+def test_o_perfil_que_comentou_aparece_sem_o_diretorio(sessao, clientes):
+    """O `Publicador` da Approach é dado da menção, não cadastro de terceiros.
+
+    SE ESTE TESTE QUEBRAR, houve uma decisão de produto, não um ajuste: alguém
+    passou a tratar o perfil de quem comenta num post da Aegea como o cadastro
+    de jornalistas. É a mesma pergunta de
+    `test_o_jornalista_so_para_quem_ve_o_diretorio`, com a resposta oposta — e
+    a diferença é a origem do dado.
+    """
+    pagina = _listar(sessao, ve_diretorio=False, codigo="clientes")
+
+    assert [m.autor for m in pagina.itens] == ["fernandescaggy", "branca_medeiros15"]
+    #: E O FILTRO FUNCIONA, porque não há nome a proteger aqui: uma das duas.
+    assert _listar(
+        sessao, ve_diretorio=False, codigo="clientes", autor="branca_medeiros15"
+    ).total == 1
+    assert "branca_medeiros15" in _opcoes(sessao, ve_diretorio=False, codigo="clientes").autores
+
+
+def test_a_base_segue_a_declaracao_e_nao_o_nome_da_lente(sessao, clientes, monkeypatch):
+    """A PROVA DA DERIVAÇÃO: marcar a lente na declaração esconde o autor aqui.
+
+    Enquanto esta Base comparava `codigo == "imprensa"`, marcar uma lente nova
+    com `nomeia_o_diretorio=True` tirava a aba do cartão "Onde está a causa" e
+    deixava a coluna e o filtro de autor publicando o nome — sem erro nenhum,
+    porque as duas regras eram cópias. Este teste é o que torna isso impossível:
+    ele muda SÓ a declaração e exige que a Base obedeça.
+    """
+    from app.dominio import causa_da_lente
+
+    monkeypatch.setitem(
+        causa_da_lente.DIMENSOES_POR_LENTE,
+        "clientes",
+        (
+            *causa_da_lente.DIMENSOES_POR_LENTE["clientes"],
+            causa_da_lente.Dimensao("autor", "Autor", "autor", nomeia_o_diretorio=True),
+        ),
+    )
+
+    pagina = _listar(sessao, ve_diretorio=False, codigo="clientes")
+    assert all(m.autor is None for m in pagina.itens)
+    #: E O FILTRO É IGNORADO — senão a contagem revelaria o nome escondido.
+    assert _listar(
+        sessao, ve_diretorio=False, codigo="clientes", autor="branca_medeiros15"
+    ).total == 2
+    assert _opcoes(sessao, ve_diretorio=False, codigo="clientes").autores == []
+    #: Quem tem a permissão continua vendo os dois.
+    assert _listar(sessao, ve_diretorio=True, codigo="clientes").itens[0].autor == "fernandescaggy"
+
+
+def test_a_base_e_o_cartao_perguntam_a_mesma_coisa():
+    """As duas regras do autor saem da MESMA declaração.
+
+    `nomeia_o_diretorio` é a função que `base_das_lentes` passou a chamar nos
+    três pontos onde havia `codigo == "imprensa"`. Este teste prende o estado
+    de hoje — só a Imprensa — e, mais que isso, prende que a resposta vem da
+    declaração por dimensão, que é onde a política está escrita.
+    """
+    nomeiam = sorted(
+        codigo for codigo in DIMENSOES_POR_LENTE if nomeia_o_diretorio(codigo)
+    )
+
+    assert nomeiam == ["imprensa"], (
+        f"mudou quem nomeia o diretório: hoje {nomeiam}. Se foi de propósito, a "
+        "Base das Lentes já acompanha — confira se a lente nova tem mesmo autor "
+        "de CADASTRO, e não o perfil que vem dentro da menção."
+    )
+    #: E A LENTE DE CLIENTES NÃO TEM ABA DE AUTOR NENHUMA: o cartão dela oferece
+    #: tema, subtema, concessionária e UF. O perfil aparece na Base, não ali.
+    assert all(
+        dimensao.campo != "autor" for dimensao in DIMENSOES_POR_LENTE["clientes"]
+    )
