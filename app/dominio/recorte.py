@@ -5,9 +5,13 @@ respondem ao MESMO conjunto de filtros; se cada endpoint montasse o seu próprio
 `where`, o número do KPI deixaria de bater com o da tabela na primeira
 divergência.
 
-São 16 campos. A gaveta de filtros da tela expõe 13 deles; `porta_voz`,
-`pessoa` e `grupo_status` existem hoje só na query string da API — ver
-`obter_recorte` em `app/api/interacoes.py`.
+A gaveta de filtros da tela expõe quase todos; `porta_voz`, `pessoa` e
+`grupo_status` existem hoje só na query string da API — ver `obter_recorte` em
+`app/api/interacoes.py`.
+
+SEM CONTAGEM ESCRITA AQUI: havia "São 16 campos", e o dataclass já tinha 23
+quando alguém foi conferir. Número em prosa não acompanha campo novo, e a
+lista que vale está logo abaixo.
 
 Por isso o Recorte é um objeto só, imutável, construído uma vez na fronteira
 HTTP e passado adiante. A tradução dele para SQL mora em um único lugar:
@@ -92,6 +96,16 @@ class Recorte:
     #: estratégico estreita, não soma.
     temas_n2: tuple[int, ...] = ()
     temas_n1: tuple[int, ...] = ()
+    #: AGENDAS DE DESTAQUE — a marca editorial de `interacao.destaque` (0090).
+    #:
+    #: TRÊS ESTADOS, de propósito: `None` não filtra, `True` traz só as de
+    #: destaque, `False` traz só as que não são. A caixa da tela liga apenas o
+    #: `True`, mas a API aceita os dois lados, e por isso `filtros_sql` testa
+    #: `is not None` — `if recorte.destaque:` trataria `destaque=false` como
+    #: "sem filtro" e devolveria a base inteira a um pedido estreito. É o mesmo
+    #: defeito que `__post_init__` documenta para a string vazia, e o único
+    #: campo booleano desta classe.
+    destaque: bool | None = None
     busca: str | None = None
 
     #: Os campos que chegam como TEXTO da URL e podem chegar vazios.
@@ -176,7 +190,7 @@ class Recorte:
                 self.frente, self.unidade, self.uf, self.esfera, self.tier,
                 self.clima, self.clima_esperado, self.resultado, self.status, self.grupo_status,
                 self.entidade, self.subtipo, self.porta_voz, self.pessoa,
-                self.alegacao, self.busca,
+                self.alegacao, self.busca, self.destaque,
             )
             if valor is not None
         )

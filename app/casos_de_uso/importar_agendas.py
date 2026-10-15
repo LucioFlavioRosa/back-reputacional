@@ -1410,7 +1410,7 @@ def propor_de_linhas(
                             coluna=coluna.nome,
                         )
                     )
-            elif coluna.campo in ("preve_desdobramento", "sensivel"):
+            elif coluna.campo in ("preve_desdobramento", "sensivel", "destaque"):
                 convertido = _booleano(bruto)
                 if isinstance(convertido, str):
                     divergencias.append(
@@ -1425,14 +1425,21 @@ def propor_de_linhas(
                     valor = None
                 else:
                     valor = convertido
-                #: VAZIO É "NÃO" PARA `sensivel`, e não nulo.
+                #: VAZIO É "NÃO" PARA `sensivel` E `destaque`, e não nulo.
                 #:
-                #: A coluna é `not null` no banco, e o agregado tem `False` por
-                #: padrão — mas aqui o valor segue para um `dict` de alterações,
-                #: e `None` ali afirmaria "sem classificação" num campo que não
-                #: aceita. Planilha de 500 linhas com a coluna em branco tem de
-                #: produzir 500 agendas comuns, não 500 erros.
-                if coluna.campo == "sensivel" and valor is None:
+                #: As duas colunas são `not null` no banco, e o agregado tem
+                #: `False` por padrão — mas aqui o valor segue para um `dict` de
+                #: alterações, e `None` ali afirmaria "sem classificação" num
+                #: campo que não aceita. Planilha de 500 linhas com a coluna em
+                #: branco tem de produzir 500 agendas comuns, não 500 erros.
+                #:
+                #: `preve_desdobramento` FICA FORA desta lista de propósito: a
+                #: coluna dele é nula no banco, e ali "não respondeu" é um
+                #: terceiro estado legítimo — forçá-lo a `False` afirmaria que
+                #: a agenda não prevê desdobramento, que é diferente de não se
+                #: saber. A lista é a das colunas `not null`, e não a das
+                #: booleanas.
+                if coluna.campo in ("sensivel", "destaque") and valor is None:
                     valor = False
             elif coluna.campo == "uf":
                 valor = str(bruto).upper() if bruto is not None else None

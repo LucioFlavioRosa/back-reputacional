@@ -156,6 +156,15 @@ def obter_recorte(
             description="ids de pilar (N1) da taxonomia de temas, separados por vírgula",
         ),
     ] = None,
+    destaque: Annotated[
+        bool | None,
+        Query(
+            description=(
+                "true: só agendas de destaque; false: só as que não são; "
+                "ausente: não filtra"
+            )
+        ),
+    ] = None,
     q: Annotated[str | None, Query(description="busca livre")] = None,
 ) -> Recorte:
     """Monta o Recorte a partir da query string.
@@ -189,6 +198,7 @@ def obter_recorte(
         categorias_publico=categorias_publico,
         temas_n2=temas_n2,
         temas_n1=temas_n1,
+        destaque=destaque,
         busca=q,
     )
 

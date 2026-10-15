@@ -133,6 +133,14 @@ def todas_as_linhas(cliente, consulta: str = "") -> list[dict]:
         # Recorte que não devolve nada: o caso em que uma divisão por zero
         # apareceria como 500 em vez de 0%.
         "&uf=AC",
+        # OS DOIS LADOS DA MARCA DE DESTAQUE (0090), e é a costura que eles
+        # pegam: um filtro aplicado só na listagem OU só na agregação faria
+        # esta comparação falhar em um dos dois sentidos. Na base de teste
+        # ninguém está marcado, então `true` devolve zero e `false` devolve
+        # tudo — e as duas contas têm de concordar com a tabela de qualquer
+        # jeito.
+        "&destaque=true",
+        "&destaque=false",
     ],
 )
 def test_o_kpi_bate_com_a_tabela(cliente, base, consulta):

@@ -4178,3 +4178,70 @@ def test_a_instituicao_declarada_que_DEIXA_de_resolver_devolve_409(
         ).first()
         is None
     )
+
+
+def test_a_coluna_de_destaque_marca_a_agenda_e_o_branco_nao(
+    cliente_admin, sessao, semente
+):
+    """A marca editorial pela planilha, nos dois casos que importam.
+
+    "sim" aponta a agenda; CÉLULA EM BRANCO produz agenda comum, e não erro —
+    é o que permite subir uma planilha de 500 linhas sem tocar na coluna. Sem
+    esse padrão, a importação de quem não conhece o campo travaria inteira.
+
+    SEM EXIGIR PERMISSÃO, ao contrário de "Informação sensível?": é a outra
+    metade da decisão, e o teste que falharia se alguém copiasse a guarda
+    daquela coluna para esta.
+    """
+    from datetime import date
+
+    from openpyxl import load_workbook
+
+    modelo = modelo_de_importacao.gerar(importar_agendas.vocabularios(sessao))
+    pasta = load_workbook(io.BytesIO(modelo))
+    folha = pasta["Agendas"]
+    cabecalho = [celula.value for celula in next(folha.iter_rows())]
+    assert "Agenda de destaque?" in cabecalho, "a coluna saiu do modelo"
+
+    #: Duas linhas: uma marcada e uma com a célula em branco.
+    marcada = {
+        "Data": date(2026, 9, 25),
+        "Instituição": semente["instituicao"].nome,
+        "UF": "SP",
+        "Agenda de destaque?": "sim",
+    }
+    em_branco = {
+        "Data": date(2026, 9, 26),
+        "Instituição": semente["instituicao"].nome,
+        "UF": "SP",
+        #: A COLUNA FICA EM BRANCO — é este o caso que não pode travar.
+    }
+    for valores in (marcada, em_branco):
+        folha.append([valores.get(coluna) for coluna in cabecalho])
+
+    saida = io.BytesIO()
+    pasta.save(saida)
+
+    corpo = cliente_admin.post(
+        "/api/importacoes", files={"arquivo": ("dia.xlsx", saida.getvalue(), TIPO_XLSX)}
+    ).json()
+    assert corpo["pendencias"] == 0, corpo["grupos"]
+
+    confirmada = cliente_admin.post(f"/api/importacoes/{corpo['id']}/confirmacao")
+    assert confirmada.status_code == 201, confirmada.json()
+    assert confirmada.json()["criadas"] == 2
+
+    #: PELA DATA, e não pela pauta: a identificação tem de usar uma coluna que
+    #: a planilha realmente carrega e a listagem realmente devolve.
+    por_data = {
+        linha["data_interacao"]: linha
+        for linha in cliente_admin.get("/api/interacoes").json()["itens"]
+    }
+    assert por_data["2026-09-25"]["destaque"] is True
+    assert por_data["2026-09-26"]["destaque"] is False
+
+    #: E O FILTRO ACHA a que veio da planilha — o ciclo que a tela vai fazer.
+    so_destaque = cliente_admin.get("/api/interacoes?destaque=true").json()
+    datas = {linha["data_interacao"] for linha in so_destaque["itens"]}
+    assert "2026-09-25" in datas
+    assert "2026-09-26" not in datas

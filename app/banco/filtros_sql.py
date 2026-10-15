@@ -413,6 +413,14 @@ def condicoes(
         onde.append(InteracaoRegistro.uf == recorte.uf)
     if recorte.tier is not None:
         onde.append(InteracaoRegistro.tier == recorte.tier)
+    #: `is not None`, E NÃO TRUTHINESS — ver o campo em `Recorte`. `destaque`
+    #: tem três estados: não filtrar, só as de destaque, só as que não são.
+    #: `if recorte.destaque:` devolveria a base inteira para `destaque=false`.
+    #:
+    #: E É FILTRO PEDIDO, não alcance: ao contrário de `sensivel` lá em cima,
+    #: só entra quando a tela manda. Marca editorial não restringe ninguém.
+    if recorte.destaque is not None:
+        onde.append(InteracaoRegistro.destaque.is_(recorte.destaque))
     if recorte.pessoa:
         onde.append(_participou(recorte.pessoa))
 
