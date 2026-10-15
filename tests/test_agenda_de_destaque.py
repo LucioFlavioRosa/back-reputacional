@@ -164,3 +164,40 @@ def test_a_marca_tem_procedencia_declarada():
     from app.dominio.importacao_de_agendas import DESTINO_DO_CAMPO
 
     assert DESTINO_DO_CAMPO["destaque"] == "da planilha"
+
+
+# -- a guarda que não depende da minha lista -----------------------------------
+
+
+def test_toda_bandeira_booleana_obrigatoria_recusa_null_no_patch():
+    """DERIVADA DO ORM, e não de uma lista escrita à mão.
+
+    `PATCH {"campo": null}` num booleano `not null` chega ao banco e volta 500
+    por `NotNullViolation` — erro de servidor para uma entrada que a pessoa
+    pode corrigir. A recusa existia só para `sensivel`, dentro do bloco que
+    também verifica a camada, e por isso `destaque` nasceu sem ela.
+
+    Escrever a lista de novo no teste repetiria o mesmo esquecimento. Esta
+    pergunta é outra: QUAIS colunas booleanas obrigatórias a tela pode editar?
+    O ORM responde, e campo novo entra na conta sozinho.
+    """
+    from sqlalchemy import Boolean
+
+    from app.api.interacoes import MARCAS_NAO_NULAS
+    from app.banco.tabelas_interacoes import InteracaoRegistro
+    from app.esquemas.interacoes import InteracaoEdicao
+
+    editaveis = set(InteracaoEdicao.model_fields)
+    obrigatorias = {
+        coluna.name
+        for coluna in InteracaoRegistro.__table__.columns
+        if isinstance(coluna.type, Boolean)
+        and not coluna.nullable
+        and coluna.name in editaveis
+    }
+
+    faltando = sorted(obrigatorias - set(MARCAS_NAO_NULAS))
+    assert not faltando, (
+        f"booleana obrigatória editável sem recusa de `null`: {faltando}. "
+        "Acrescente a `MARCAS_NAO_NULAS` em `app/api/interacoes.py`."
+    )

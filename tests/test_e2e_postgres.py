@@ -2481,3 +2481,40 @@ def test_omitir_destaque_no_patch_preserva_a_marca(cliente, semente, sessao):
     desmarcada = cliente.patch(f"/api/interacoes/{id_}", json={"destaque": False})
     assert desmarcada.status_code == 200, desmarcada.json()
     assert desmarcada.json()["destaque"] is False
+
+
+def test_destaque_nulo_no_patch_e_entrada_invalida_e_nao_500(cliente, semente, sessao):
+    """`null` explícito é entrada inválida, e não "não mexi nisto".
+
+    `alteracoes()` usa `exclude_unset`, então `None` só chega aqui se o cliente
+    MANDOU `null`. A coluna é `not null`: sem recusa na borda o valor segue até
+    o banco e volta como 500 — erro de servidor para uma entrada que a pessoa
+    pode corrigir.
+
+    O PAR DO MESMO TESTE PARA `sensivel` existe desde a 0089, e foi achado de
+    revisão. A guarda de lá era um `if` dentro de um bloco que só `sensivel`
+    tinha, e por isso o campo novo nasceu sem ela.
+    """
+    id_ = cliente.post("/api/interacoes", json=corpo(semente, destaque=True)).json()["id"]
+    sessao.flush()
+
+    recusa = cliente.patch(f"/api/interacoes/{id_}", json={"destaque": None})
+    assert recusa.status_code == 422, recusa.json()
+    assert "destaque" in recusa.json()["detalhe"].lower()
+
+
+def test_visivel_nulo_no_patch_tambem_e_entrada_invalida(cliente, semente, sessao):
+    """O MESMO DEFEITO EM `visivel`, e ele é ANTERIOR à marca de destaque.
+
+    Foi a guarda derivada do ORM (`test_agenda_de_destaque`) que o achou: a
+    pergunta "quais booleanas obrigatórias a tela edita?" tem três respostas, e
+    a recusa de `null` cobria uma. `visivel` é a que esconde um registro de
+    todo mundo — importação que deu errado, duplicata —, e `PATCH
+    {"visivel": null}` voltava 500 por `NotNullViolation`.
+    """
+    id_ = cliente.post("/api/interacoes", json=corpo(semente)).json()["id"]
+    sessao.flush()
+
+    recusa = cliente.patch(f"/api/interacoes/{id_}", json={"visivel": None})
+    assert recusa.status_code == 422, recusa.json()
+    assert "visivel" in recusa.json()["detalhe"].lower()

@@ -206,6 +206,46 @@ def obter_recorte(
 RecorteAtual = Annotated[Recorte, Depends(obter_recorte)]
 
 
+#: As bandeiras booleanas de `interacao` que são `not null` no banco, e o nome
+#: com que a recusa fala de cada uma.
+#:
+#: JUNTAS NUMA LISTA, e isto é o conserto de um defeito real. A recusa de
+#: `null` explícito nasceu só para `sensivel`, dentro do bloco `if "sensivel"
+#: in alteracoes` que também faz a verificação de camada — e quando `destaque`
+#: entrou (0090) não passou por lá: `PATCH {"destaque": null}` chegava ao banco
+#: e voltava 500 por `NotNullViolation`, erro de servidor para uma entrada que
+#: a pessoa pode corrigir. Medido, não suposto.
+#:
+#: Bandeira `not null` nova entra AQUI, e ganha a recusa de graça.
+MARCAS_NAO_NULAS = {
+    "sensivel": "a classificação",
+    "destaque": "a marca",
+    #: `visivel` ENTROU PELA GUARDA, e o defeito dela é anterior a 0090: é a
+    #: bandeira que esconde um registro de TODO mundo (importação que deu
+    #: errado, duplicata), e `PATCH {"visivel": null}` voltava 500 igual.
+    #: Ninguém tinha perguntado "quais booleanas obrigatórias a tela edita?" —
+    #: a guarda derivada do ORM pergunta, e são três.
+    "visivel": "a visibilidade",
+}
+
+
+def exigir_entrada_booleana(alteracoes: dict[str, object]) -> None:
+    """Recusa `null` explícito nas bandeiras que o banco não aceita nulas.
+
+    `InteracaoEdicao.alteracoes()` usa `exclude_unset`, então `None` só aparece
+    aqui se o cliente MANDOU `null` — campo omitido não entra no dicionário. As
+    duas coisas são diferentes e a diferença é o contrato do `PATCH`: ausente é
+    "não mexi nisto", `null` seria "apague", e não há como apagar um booleano
+    obrigatório.
+    """
+    for marca, nome in MARCAS_NAO_NULAS.items():
+        if marca in alteracoes and alteracoes[marca] is None:
+            raise RegraViolada(
+                f"`{marca}` aceita true ou false. Para não alterar {nome}, "
+                "omita o campo."
+            )
+
+
 def exigir_direito_de_marcar_sensivel(usuario: UsuarioAtual, marcada: bool) -> None:
     """Só quem tem a camada sensível classifica uma agenda como sensível.
 
@@ -329,19 +369,11 @@ def editar(
     )
     alteracoes = edicao.alteracoes(frente_atual=atual.frente)
 
-    if "sensivel" in alteracoes:
-        #: `null` EXPLÍCITO É ENTRADA INVÁLIDA, e não "não mexi nisto".
-        #:
-        #: `alteracoes()` usa `exclude_unset`, então `None` aqui só aparece se o
-        #: cliente MANDOU `null`. A coluna é `not null`: sem esta recusa o valor
-        #: seguiria até o banco e voltaria como 500 — erro de servidor para uma
-        #: entrada que a pessoa pode corrigir. Achado de revisão.
-        if alteracoes["sensivel"] is None:
-            raise RegraViolada(
-                "`sensivel` aceita true ou false. Para não alterar a "
-                "classificação, omita o campo."
-            )
+    #: ANTES DE QUALQUER OUTRA COISA, e para as DUAS bandeiras `not null` —
+    #: ver `MARCAS_NAO_NULAS`, que explica por que elas estão numa lista.
+    exigir_entrada_booleana(alteracoes)
 
+    if "sensivel" in alteracoes:
         #: MARCAR exige a camada, e DESMARCAR também — nos dois sentidos.
         #:
         #: Marcar sem a camada trancaria o próprio registro: a pessoa o perderia
