@@ -228,6 +228,10 @@ class RepositorioSQL:
         #: `api/interacoes.exigir_direito_de_marcar_sensivel` — a decisão é de
         #: autorização, e autorização mora na borda, com a identidade em mão.
         registro.sensivel = interacao.sensivel
+        #: Sem guarda nenhuma, e é a diferença em relação à linha acima: marca
+        #: editorial não restringe ninguém, então não há autorização a pedir
+        #: nem na borda nem aqui.
+        registro.destaque = interacao.destaque
         registro.arquivado_em = interacao.arquivado_em
 
         if interacao.origem_aba is not None:
@@ -957,6 +961,7 @@ class RepositorioSQL:
             fonte=registro.fonte,
             visivel=registro.visivel,
             sensivel=registro.sensivel,
+            destaque=registro.destaque,
             origem_aba=registro.origem_aba,
             origem_linha=registro.origem_linha,
             criado_por=registro.criado_por,

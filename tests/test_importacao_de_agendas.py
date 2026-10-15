@@ -411,6 +411,9 @@ def test_a_ordem_das_colunas_segue_o_FORMULARIO():
         # 5. Onde será ou foi realizada
         "Modalidade",
         "Local",
+        # A marca editorial, na seção 5 por decisão do dono do produto — e a
+        # única coluna da seção que não fala de ONDE a agenda acontece.
+        "Agenda de destaque?",
         # 6. Situação e expectativa
         "Iniciativa",
         "Situação",
@@ -543,8 +546,8 @@ def test_o_completo_tem_75_colunas_e_o_front_diz_esse_numero():
     """
     from app.dominio.importacao_de_agendas import MODELOS
 
-    assert len(MODELOS["completo"]) == 75
-    assert len(MODELOS["simplificado"]) == 38
+    assert len(MODELOS["completo"]) == 76
+    assert len(MODELOS["simplificado"]) == 39
 
 
 def test_o_modelo_completo_e_a_descricao_inteira_na_ordem_dela():
@@ -581,6 +584,7 @@ def test_o_simplificado_tem_as_38_colunas_do_evento():
         *(f"Tema {numero}" for numero in range(1, TETO_DE_TEMAS_POR_AGENDA + 1)),
         "Modalidade",
         "Local",
+        "Agenda de destaque?",
         "Relato",
         "Repercussão e encaminhamentos",
         "Observações",

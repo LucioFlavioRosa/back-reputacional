@@ -2367,3 +2367,154 @@ def test_trocar_a_instituicao_respeita_a_esfera_mandada_de_proposito(cliente, se
     assert editada.status_code == 200, editada.text
 
     assert editada.json()["esfera_id"] == municipal
+
+
+# -- a agenda de destaque (0090) ----------------------------------------------
+
+
+def test_a_marca_de_destaque_faz_o_ciclo_completo(cliente, semente, sessao):
+    """Gravar, devolver e ACHAR DE VOLTA pelo filtro.
+
+    O ciclo inteiro num teste só porque é o ciclo que importa: uma marca que
+    grava e não filtra é um campo que ninguém encontra depois, e foi por isso
+    que o filtro entrou junto com o campo.
+    """
+    marcada = cliente.post("/api/interacoes", json=corpo(semente, destaque=True))
+    assert marcada.status_code == 201, marcada.json()
+    assert marcada.json()["destaque"] is True
+    id_marcada = marcada.json()["id"]
+
+    comum = cliente.post("/api/interacoes", json=corpo(semente))
+    assert comum.json()["destaque"] is False
+    sessao.flush()
+
+    so_destaque = cliente.get("/api/interacoes?destaque=true").json()
+    ids = [linha["id"] for linha in so_destaque["itens"]]
+    assert id_marcada in ids
+    assert comum.json()["id"] not in ids
+
+    #: O OUTRO LADO, que é o que `if recorte.destaque:` quebraria em silêncio.
+    so_comuns = cliente.get("/api/interacoes?destaque=false").json()
+    ids_comuns = [linha["id"] for linha in so_comuns["itens"]]
+    assert comum.json()["id"] in ids_comuns
+    assert id_marcada not in ids_comuns
+
+    #: E SEM O FILTRO, as duas. Um padrão que filtrasse esconderia metade da
+    #: base de quem nunca abriu a gaveta.
+    todas = cliente.get("/api/interacoes").json()
+    presentes = {linha["id"] for linha in todas["itens"]}
+    assert {id_marcada, comum.json()["id"]} <= presentes
+
+
+def test_marcar_destaque_nao_pede_camada_nenhuma(cliente, semente, sessao):
+    """A diferença em relação a `sensivel`, e o lugar onde copiar a guarda de
+    uma para a outra seria o defeito.
+
+    Destaque é marca EDITORIAL: não tira a agenda da vista de ninguém, logo não
+    há cofre a abrir e não há permissão a exigir. Quem pode registrar a agenda
+    pode apontá-la — INCLUSIVE quem não tem a camada sensível, que é justamente
+    quem a guarda do `sensivel` barra.
+
+    USUÁRIO DE VERDADE NO BANCO, como no teste da camada: este ESCREVE, e
+    `interacao.criado_por` tem chave estrangeira.
+    """
+    import uuid as _uuid
+
+    from app.api.dependencias import obter_usuario_atual
+    from app.banco.tabelas_acesso import Usuario
+    from app.dominio.identidade import Escopo, Papel, UsuarioAtual
+
+    sufixo = _uuid.uuid4().hex[:8]
+    autor = Usuario(
+        entra_object_id=f"destaque-sem-camada-{sufixo}",
+        email=f"{sufixo}@aegea.com.br",
+        nome="Analista sem camada",
+        acesso_irrestrito=True,
+    )
+    sessao.add(autor)
+    sessao.flush()
+
+    anterior = app.dependency_overrides.get(obter_usuario_atual)
+    app.dependency_overrides[obter_usuario_atual] = lambda: UsuarioAtual(
+        id=autor.id,
+        nome=autor.nome,
+        email=str(autor.email),
+        papel=Papel(
+            codigo="crm_edicao",
+            nome="Analista",
+            pode_criar=True,
+            pode_editar_proprio=True,
+            ve_campos_sensiveis=False,
+            acessa_crm=True,
+        ),
+        escopo=Escopo(frentes=frozenset({"imprensa"})),
+        acesso_sensivel=False,
+    )
+    try:
+        criada = cliente.post("/api/interacoes", json=corpo(semente, destaque=True))
+        assert criada.status_code == 201, criada.json()
+        assert criada.json()["destaque"] is True
+    finally:
+        if anterior is None:
+            app.dependency_overrides.pop(obter_usuario_atual, None)
+        else:
+            app.dependency_overrides[obter_usuario_atual] = anterior
+
+
+def test_omitir_destaque_no_patch_preserva_a_marca(cliente, semente, sessao):
+    """Ausente é "não mexi nisto".
+
+    Sem isto, editar o relato de uma agenda apontada a desapontaria em
+    silêncio — e quem a tinha destacado só descobriria ao não achá-la mais.
+    """
+    id_ = cliente.post(
+        "/api/interacoes", json=corpo(semente, destaque=True)
+    ).json()["id"]
+    sessao.flush()
+
+    editada = cliente.patch(f"/api/interacoes/{id_}", json={"relato": "texto novo"})
+    assert editada.status_code == 200, editada.json()
+    assert editada.json()["destaque"] is True
+
+    #: E DESMARCAR FUNCIONA, explícito. Sem este par, um `destaque` que o PATCH
+    #: ignorasse por completo passaria pelo teste de cima.
+    desmarcada = cliente.patch(f"/api/interacoes/{id_}", json={"destaque": False})
+    assert desmarcada.status_code == 200, desmarcada.json()
+    assert desmarcada.json()["destaque"] is False
+
+
+def test_destaque_nulo_no_patch_e_entrada_invalida_e_nao_500(cliente, semente, sessao):
+    """`null` explícito é entrada inválida, e não "não mexi nisto".
+
+    `alteracoes()` usa `exclude_unset`, então `None` só chega aqui se o cliente
+    MANDOU `null`. A coluna é `not null`: sem recusa na borda o valor segue até
+    o banco e volta como 500 — erro de servidor para uma entrada que a pessoa
+    pode corrigir.
+
+    O PAR DO MESMO TESTE PARA `sensivel` existe desde a 0089, e foi achado de
+    revisão. A guarda de lá era um `if` dentro de um bloco que só `sensivel`
+    tinha, e por isso o campo novo nasceu sem ela.
+    """
+    id_ = cliente.post("/api/interacoes", json=corpo(semente, destaque=True)).json()["id"]
+    sessao.flush()
+
+    recusa = cliente.patch(f"/api/interacoes/{id_}", json={"destaque": None})
+    assert recusa.status_code == 422, recusa.json()
+    assert "destaque" in recusa.json()["detalhe"].lower()
+
+
+def test_visivel_nulo_no_patch_tambem_e_entrada_invalida(cliente, semente, sessao):
+    """O MESMO DEFEITO EM `visivel`, e ele é ANTERIOR à marca de destaque.
+
+    Foi a guarda derivada do ORM (`test_agenda_de_destaque`) que o achou: a
+    pergunta "quais booleanas obrigatórias a tela edita?" tem três respostas, e
+    a recusa de `null` cobria uma. `visivel` é a que esconde um registro de
+    todo mundo — importação que deu errado, duplicata —, e `PATCH
+    {"visivel": null}` voltava 500 por `NotNullViolation`.
+    """
+    id_ = cliente.post("/api/interacoes", json=corpo(semente)).json()["id"]
+    sessao.flush()
+
+    recusa = cliente.patch(f"/api/interacoes/{id_}", json={"visivel": None})
+    assert recusa.status_code == 422, recusa.json()
+    assert "visivel" in recusa.json()["detalhe"].lower()

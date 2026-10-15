@@ -190,6 +190,11 @@ class InteracaoRegistro(Tabela):
     #:
     #: NÃO confundir com `visivel`, logo acima, que esconde de TODO mundo.
     sensivel: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: Marca editorial: esta agenda merece ser destacada (migration 0090).
+    #:
+    #: NÃO é controle de acesso. Diferente de `sensivel`, acima, não entra em
+    #: `filtros_sql.condicoes()` por conta própria: só quando o Recorte pede.
+    destaque: Mapped[bool] = mapped_column(Boolean, default=False)
     origem_aba: Mapped[str | None] = mapped_column(Text, nullable=True)
     origem_linha: Mapped[int | None] = mapped_column(Integer, nullable=True)
     criado_por: Mapped[uuid.UUID] = mapped_column(

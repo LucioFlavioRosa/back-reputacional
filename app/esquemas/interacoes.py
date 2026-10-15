@@ -286,6 +286,11 @@ class InteracaoEntrada(BaseModel):
     #: contrário faria quem esquecesse o campo trancar o registro sem querer.
     #: Marcar exige a camada — a recusa está em `api/interacoes`.
     sensivel: bool = False
+    #: Marca editorial — "esta agenda merece ser destacada" (0090).
+    #:
+    #: `False` por padrão como `sensivel`, mas por outro motivo: não há camada
+    #: a exigir. Quem pode criar a agenda pode marcá-la, e quem a vê vê a marca.
+    destaque: bool = False
 
     extensao: ExtensaoEntrada | None = None
     temas: list[int] = Field(default_factory=list)
@@ -331,6 +336,7 @@ class InteracaoEntrada(BaseModel):
             modalidade=self.modalidade,
             local=self.local,
             sensivel=self.sensivel,
+            destaque=self.destaque,
             extensao=self.extensao.para_dominio(frente) if self.extensao else None,
             temas=tuple(self.temas),
             areas=tuple(self.areas),
@@ -414,6 +420,11 @@ class InteracaoEdicao(BaseModel):
     #: Marcar exige a camada: a recusa está em `api/interacoes`, não aqui,
     #: porque é decisão de autorização e precisa da identidade de quem pede.
     sensivel: bool | None = None
+    #: Marca editorial (0090). `None` é "não mexi nisto", como nos vizinhos.
+    #:
+    #: SEM EXIGÊNCIA DE CAMADA, diferente de `sensivel`: desmarcar destaque não
+    #: abre nada que estivesse restrito, então não há autorização a pedir.
+    destaque: bool | None = None
     temas: list[int] | None = None
     areas: list[int] | None = None
     participacoes: list[ParticipacaoEntrada] | None = None
@@ -596,6 +607,9 @@ class InteracaoSaida(BaseModel):
     #: num registro comum. Agora é a linha que se restringe, e a agenda que
     #: chega chega inteira.
     sensivel: bool
+    #: Marca editorial (0090). Sai para todo mundo que alcança a linha: é dela
+    #: que a tabela e a ficha tiram a marca que a pessoa reconhece.
+    destaque: bool
     criado_por: UUID | None
     criado_em: datetime | None
     atualizado_em: datetime | None
@@ -713,6 +727,7 @@ class InteracaoSaida(BaseModel):
             fonte=interacao.fonte,
             visivel=interacao.visivel,
             sensivel=interacao.sensivel,
+            destaque=interacao.destaque,
             criado_por=interacao.criado_por,
             criado_em=interacao.criado_em,
             atualizado_em=interacao.atualizado_em,

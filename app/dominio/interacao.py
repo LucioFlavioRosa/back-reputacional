@@ -307,6 +307,16 @@ class Interacao:
     #: NÃO confundir com `visivel`, logo acima: aquela esconde de TODO mundo, e
     #: serve para importação que deu errado ou duplicata.
     sensivel: bool = False
+    #: MARCA EDITORIAL de quem registra: "esta agenda merece ser destacada".
+    #:
+    #: Não restringe ninguém — quem alcança a agenda vê a marca. É filtro
+    #: OPCIONAL, como frente ou UF: só estreita quando a tela pede. Ver a
+    #: migration 0090.
+    #:
+    #: NÃO confundir com `sensivel`, logo acima. Aquela decide QUEM alcança a
+    #: linha e entra no filtro sempre; esta só aponta, e é inerte até alguém
+    #: filtrar por ela.
+    destaque: bool = False
     origem_aba: str | None = None
     origem_linha: int | None = None
     criado_por: UUID | None = None

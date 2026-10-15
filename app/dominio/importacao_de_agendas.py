@@ -506,6 +506,21 @@ _AGENDAS = Aba(
         # -- 5. Onde será ou foi realizada ---------------------------------
         Coluna(nome="Modalidade", campo="modalidade", vocabulario="modalidade"),
         Coluna(nome="Local", campo="local"),
+        # A MARCA DE DESTAQUE FICA NA SEÇÃO 5 por decisão do dono do produto
+        # (15/10/2026), e é onde o formulário também a põe — as duas ordens não
+        # podem divergir, senão a pessoa procura na planilha onde a tela mostra.
+        #
+        # ELA NÃO FALA DE "ONDE", e isto fica registrado porque é a única
+        # coluna da seção sem parentesco com as vizinhas: se um dia alguém
+        # reorganizar as seções por assunto, é esta que não se encaixa.
+        #
+        # Sim/não como `sensivel`, e vazio é NÃO — ver `importar_agendas`.
+        # Planilha com a coluna em branco produz agendas comuns, não erros.
+        #
+        # SEM EXIGÊNCIA DE PERMISSÃO, diferente de "Informação sensível?":
+        # marcar destaque não tira a agenda da vista de ninguém, então não há
+        # cofre a abrir e quem pode importar pode marcar.
+        Coluna(nome="Agenda de destaque?", campo="destaque"),
         # -- 6. Situação e expectativa -------------------------------------
         Coluna(nome="Iniciativa", campo="iniciativa", vocabulario="iniciativas"),
         Coluna(nome="Situação", campo="status", vocabulario="status"),
@@ -646,6 +661,11 @@ _SIMPLIFICADO: tuple[str, ...] = (
     *(f"Tema {numero}" for numero in range(1, TETO_DE_TEMAS_POR_AGENDA + 1)),
     "Modalidade",
     "Local",
+    # No simplificado pelo mesmo motivo de "Informação sensível?": o recorte do
+    # simplificado é sobre quais CAMPOS a pessoa não precisa preencher num
+    # evento, não sobre o que a agenda É. Uma conversa que mereça destaque
+    # merece nos dois modelos.
+    "Agenda de destaque?",
     "Relato",
     "Repercussão e encaminhamentos",
     "Observações",
@@ -741,6 +761,7 @@ DESTINO_DO_CAMPO: dict[str, str] = {
     "expectativa": "da planilha",
     "preve_desdobramento": "da planilha",
     "sensivel": "da planilha",
+    "destaque": "da planilha",
     "clima": "da planilha",
     "resultado": "da planilha",
     "relato": "da planilha",
