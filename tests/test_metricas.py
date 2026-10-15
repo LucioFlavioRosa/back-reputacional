@@ -62,11 +62,26 @@ def base(cliente, semente):
     """
     from tests.test_e2e_postgres import corpo
 
+    # DUAS AGENDAS DE DESTAQUE, e em frentes diferentes.
+    #
+    # A parametrização de `test_o_kpi_bate_com_a_tabela` inclui
+    # `&destaque=true`, e com a base inteira em `destaque=false` aquele recorte
+    # comparava ZERO com ZERO: a asserção existia e não dizia nada sobre este
+    # filtro. Agora `true` e `false` são subconjuntos próprios e
+    # complementares, e a comparação por frente também tem o que comparar.
+    #
+    # O QUE AQUELE TESTE NÃO PEGA, e precisa estar dito: ele compara o KPI com
+    # a TABELA, então os dois ignorarem o filtro juntos passa igual — 8 de um
+    # lado, 8 do outro. Quem fecha isso é a contagem ABSOLUTA em
+    # `test_o_recorte_de_destaque_nao_e_vazio`, abaixo, e o teste de ponta a
+    # ponta em `test_e2e_postgres`. Achado de revisão.
     registros = [
-        dict(frente="imprensa", status="confirmada", tier=1, uf="SP", data_interacao="2026-01-15"),
+        dict(frente="imprensa", status="confirmada", tier=1, uf="SP", data_interacao="2026-01-15",
+             destaque=True),
         dict(frente="imprensa", status="confirmada", tier=2, uf="SP", data_interacao="2026-01-20"),
         dict(frente="imprensa", status="declinado", tier=1, uf="RJ", data_interacao="2026-02-10"),
-        dict(frente="governo", status="confirmada", tier=1, uf="DF", data_interacao="2026-02-11"),
+        dict(frente="governo", status="confirmada", tier=1, uf="DF", data_interacao="2026-02-11",
+             destaque=True),
         dict(frente="parceiros", status="solicitado", tier=3, uf="MG", data_interacao="2026-03-01"),
         dict(frente="investidores", status="confirmada", tier=1, uf="IN",
              data_interacao="2026-03-05"),
@@ -402,3 +417,21 @@ def test_segmento_invalido_e_recusado(cliente, base):
     """Vocabulário fechado: `segmento=frentte` devolveria série vazia em silêncio."""
     resposta = cliente.get("/api/metricas/serie-mensal?segmento=frentte")
     assert resposta.status_code == 422
+
+
+def test_o_recorte_de_destaque_nao_e_vazio(cliente, base):
+    """A CONTAGEM ABSOLUTA, e é ela que fecha o buraco do teste acima.
+
+    `test_o_kpi_bate_com_a_tabela` compara o KPI com a tabela: se listagem e
+    agregação ignorassem o filtro de destaque JUNTAS, as duas devolveriam a
+    base inteira e a comparação passaria. Aqui o número é afirmado: são duas
+    agendas marcadas de oito, e os dois lados do filtro somam o total.
+    """
+    marcadas = cliente.get("/api/metricas/kpis?destaque=true").json()
+    comuns = cliente.get("/api/metricas/kpis?destaque=false").json()
+    tudo = cliente.get("/api/metricas/kpis").json()
+
+    assert marcadas["total"] == 2
+    assert comuns["total"] == len(base) - 2
+    #: E O FILTRO NÃO INVENTA NEM PERDE LINHA: as duas metades fecham o total.
+    assert marcadas["total"] + comuns["total"] == tudo["total"] == len(base)
