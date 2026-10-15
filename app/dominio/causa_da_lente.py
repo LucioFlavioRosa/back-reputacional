@@ -179,6 +179,33 @@ DIMENSOES_POR_LENTE: dict[str, tuple[Dimensao, ...]] = {
 #:
 #: E VALE PARA TODAS AS LENTES, e para os dois lugares onde as abas aparecem: o
 #: cartão da tela e o painel de aprofundamento.
+def nomeia_o_diretorio(codigo_da_lente: str) -> bool:
+    """Esta lente publica nome de gente de fora que o CADASTRO guarda?
+
+    A PERGUNTA É A MESMA EM DOIS LUGARES, e a resposta tem de ser uma. Além do
+    cartão "Onde está a causa" (que tira a aba), a Base das Lentes esconde a
+    coluna `autor` e não oferece o filtro dela — e essa segunda regra estava
+    escrita como `codigo == "imprensa"`, repetida em três pontos de
+    `app/api/base_das_lentes.py`.
+
+    DUAS CÓPIAS DE UMA REGRA DE ACESSO DIVERGEM NA PRIMEIRA MUDANÇA: marcar uma
+    lente nova com `nomeia_o_diretorio=True` tiraria a aba do cartão e deixaria
+    a coluna e o filtro da Base publicando o nome, sem erro nenhum. Derivar da
+    declaração é o que fecha esse vão.
+
+    O CRITÉRIO É A ORIGEM DO DADO, não o nome da coluna (ver `Dimensao`): na
+    Imprensa, `autor` é o jornalista do cadastro de terceiros; na Sociedade
+    digital e em Clientes é o perfil que veio DENTRO da menção — o `Publicador`
+    que o fornecedor manda na própria linha, que o indicador "Autor mais
+    negativo" já mostra a todo mundo. Por isso só a Imprensa responde `True`
+    hoje, e por isso o `Publicador` da Approach entra aberto.
+    """
+    return any(
+        dimensao.nomeia_o_diretorio
+        for dimensao in DIMENSOES_POR_LENTE.get(codigo_da_lente, ())
+    )
+
+
 def dimensoes_do_recorte(codigo_da_lente: str, ve_diretorio: bool = True) -> list[Dimensao]:
     """Os cortes que esta lente oferece, na ordem em que ela se explica.
 

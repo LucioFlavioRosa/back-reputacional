@@ -772,7 +772,14 @@ def ingerir(
     if not fonte.ativo:
         raise RegraViolada(f"{fonte.nome} está inativa. Reative-a antes de importar.")
     if len(conteudo) > TAMANHO_MAXIMO:
-        raise RegraViolada("A planilha passa de 40 MB.")
+        #: O NÚMERO SAI DA CONSTANTE, e não do texto: a mensagem dizia
+        #: "40 MB" enquanto `TAMANHO_MAXIMO` já era 80 — quem recebesse a
+        #: recusa cortaria a planilha pela metade por nada. Derivar é o que
+        #: impede a mensagem de envelhecer de novo (mesmo jeito de
+        #: `app/armazenamento/blob.py`).
+        raise RegraViolada(
+            f"A planilha passa de {TAMANHO_MAXIMO // (1024 * 1024)} MB."
+        )
     if not conteudo.startswith(ASSINATURA_ZIP):
         raise RegraViolada(
             "O arquivo não é uma planilha .xlsx. "
