@@ -561,6 +561,13 @@ def test_a_planilha_guardada_nao_carrega_nenhuma_conclusao_da_conferencia(sessao
     `PlanilhaRecebida.__table__`, que é o ORM — e o ORM é o que alguém editaria
     JUNTO com a coluna nova. Quem precisa discordar é o schema que a migration
     criou. Achado da revisão do Codex em 16/10/2026.
+
+    `completa_em` ENTROU E ESTE TESTE A BARROU, que era o trabalho dele. Ela
+    PASSA, e vale escrever por quê: é estado da SUBIDA — a que instante o byte
+    acabou de chegar —, não conclusão sobre o dado. A linha que separa é se o
+    servidor teria de concluir de novo para recalcular o valor: previsão,
+    veículo novo e contagem mudam quando o cadastro muda; "o arquivo terminou de
+    subir às 14h32" não muda nunca. Ver a `0094`.
     """
     colunas = set(
         sessao.scalars(
@@ -578,6 +585,8 @@ def test_a_planilha_guardada_nao_carrega_nenhuma_conclusao_da_conferencia(sessao
         "tamanho",
         "criado_por",
         "criado_em",
+        #: ESTADO DA SUBIDA, não conclusão da conferência. Ver o docstring.
+        "completa_em",
     }
     #: E O ORM PRECISA CONCORDAR com ele: divergir faria a leitura calar sobre
     #: uma coluna que existe.

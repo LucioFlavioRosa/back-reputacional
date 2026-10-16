@@ -1487,7 +1487,9 @@ def comecar_subida_em_partes(
     sessao: Sessao,
     usuario: UsuarioQueAdministraCadastros,
     codigo: str,
+    tarefas: BackgroundTasks,
     tamanho: Annotated[int, Form()],
+    nome: Annotated[str, Form()],
 ) -> SubidaEmPartesSaida:
     """Abre uma subida em partes para uma planilha grande.
 
@@ -1522,9 +1524,16 @@ def comecar_subida_em_partes(
     #: também o tamanho e a assinatura de ZIP, e aqui não há byte para conferir.
     #: Chamá-la com `b""` recusava toda planilha — catorze testes de uma vez.
     ingerir_mencoes.recusar_a_fonte(fonte)
-    planilha_id = planilha_do_score.comecar(tamanho=tamanho)
+    #: A LINHA NASCE AQUI, e é o que dá dono à subida — ver `comecar`. Abrir
+    #: subida nova substitui a pendência daquela pessoa naquela fonte, byte
+    #: inclusive, como a conferência de uma vez só faz.
+    aberta = planilha_do_score.comecar(
+        sessao, fonte=fonte, usuario_id=usuario.id, nome=nome, tamanho=tamanho
+    )
+    tarefas.add_task(planilha_do_score.apagar_byte, aberta.caminho_substituido)
+    assert aberta.id is not None  # `comecar` recusa sem armazenamento
     return SubidaEmPartesSaida(
-        planilha_id=planilha_id, tamanho_da_parte=planilha_do_score.TAMANHO_DA_PARTE
+        planilha_id=aberta.id, tamanho_da_parte=planilha_do_score.TAMANHO_DA_PARTE
     )
 
 
@@ -1549,12 +1558,22 @@ def subir_parte_da_planilha(
     A PARTE NÃO EXISTE PARA NINGUÉM até a montagem — são blocos não commitados
     no armazenamento. Uma subida abandonada não deixa arquivo pela metade para
     alguém ler, e o serviço descarta os blocos em sete dias.
+
+    E A SUBIDA TEM DONO: `receber_parte` consulta a linha por (id, fonte, dono,
+    ainda subindo) antes de escrever. Sem isso, conhecer o uuid de outra pessoa
+    bastava para mandar parte na subida dela — achado da revisão do Codex em
+    16/10/2026, e a razão de a `0094` existir.
     """
     fonte = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == codigo))
     if fonte is None:
         raise NaoEncontrado("Fonte não encontrada.")
     planilha_do_score.receber_parte(
-        fonte=fonte, planilha_id=planilha_id, indice=indice, dados=parte.file.read()
+        sessao,
+        fonte=fonte,
+        planilha_id=planilha_id,
+        usuario_id=usuario.id,
+        indice=indice,
+        dados=parte.file.read(),
     )
 
 
@@ -1566,50 +1585,53 @@ def conferir_planilha_em_partes(
     planilha_id: UUID,
     tarefas: BackgroundTasks,
     partes: Annotated[int, Form()],
-    nome: Annotated[str, Form()],
 ) -> ConferenciaSaida:
-    """Junta as partes, confere, e guarda — a mesma resposta da outra conferência.
+    """Junta as partes, confere, e fecha a subida — a mesma resposta da outra.
 
-    A ORDEM É A DA OUTRA, e isso é o que importa: montar, RECUSAR o que não
-    entra, conferir, e só então gravar a linha. Gravar antes de conferir
-    encheria o contêiner com os arquivos que não servem, que é o defeito que a
-    revisão do Codex já apontou uma vez neste mesmo caminho.
+    A ORDEM É A DA OUTRA: montar, RECUSAR o que não entra, conferir, e só então
+    marcar a subida completa. Marcar antes de conferir deixaria confirmável uma
+    planilha que a conferência recusou.
 
-    O BYTE JÁ ESTÁ PUBLICADO quando chegamos aqui, ao contrário da subida de uma
-    vez — é dele que se leu para conferir. Então qualquer recusa daqui para
-    frente precisa apagá-lo explicitamente, e é o que o `try` faz: sem isso,
-    cada planilha recusada deixaria até 80 MB no contêiner, e recusar é caso
-    normal, não excepcional.
+    O `try` COMEÇA ANTES DE `montar`, e esta é correção de defeito. Na primeira
+    versão ele começava DEPOIS: `montar` publicava o arquivo e, se a resposta do
+    Azure se perdesse ou `blob.ler` falhasse, o byte ficava sem ninguém apagar —
+    porque a limpeza morava num `except` que ainda não tinha começado. Achado da
+    revisão do Codex em 16/10/2026.
+
+    E O BYTE NÃO SE PERDE DE VISTA nem quando a limpeza falha, que é a outra
+    metade da `0094`: a linha da subida existe desde a abertura e continua
+    apontando para o caminho. Antes, a linha nascia DEPOIS do arquivo, e o
+    commit da sessão roda depois de a rota retornar (`banco/sessao.py`) — um
+    commit que falhasse desfazia a linha e deixava um arquivo que nenhuma linha
+    citava, com id aleatório.
+
+    O NOME NÃO VEM MAIS AQUI: ele é gravado na abertura, porque a linha existe
+    desde lá. Pedi-lo nos dois lugares convidaria os dois a divergirem.
     """
     fonte = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == codigo))
     if fonte is None:
         raise NaoEncontrado("Fonte não encontrada.")
 
-    conteudo = planilha_do_score.montar(
-        fonte=fonte, planilha_id=planilha_id, partes=partes
-    )
     try:
+        subida, conteudo = planilha_do_score.montar(
+            sessao,
+            fonte=fonte,
+            planilha_id=planilha_id,
+            usuario_id=usuario.id,
+            partes=partes,
+        )
         ingerir_mencoes.recusar_o_que_nao_entra(fonte, conteudo)
         previsao, reconhecimento, assuntos = ingerir_mencoes.conferir(
             sessao, fonte, conteudo
         )
-        guardada = planilha_do_score.registrar_montada(
-            sessao,
-            fonte=fonte,
-            usuario_id=usuario.id,
-            planilha_id=planilha_id,
-            nome=nome,
-            tamanho=len(conteudo),
-        )
+        planilha_do_score.concluir(subida, tamanho=len(conteudo))
     except Exception:
-        #: O ARQUIVO MONTADO SAI JUNTO COM A RECUSA. `raise` sem isto deixaria
-        #: byte pago que nenhuma linha cita — e o id é aleatório, então nem
-        #: procurá-lo seria possível.
+        #: O ARQUIVO MONTADO SAI JUNTO COM A RECUSA, e recusar é caso normal:
+        #: sem isto cada planilha recusada deixaria até 80 MB no contêiner.
         planilha_do_score.descartar_montagem(fonte=fonte, planilha_id=planilha_id)
         raise
 
-    tarefas.add_task(planilha_do_score.apagar_byte, guardada.caminho_substituido)
-    return _saida_da_conferencia(guardada.id, previsao, reconhecimento, assuntos)
+    return _saida_da_conferencia(planilha_id, previsao, reconhecimento, assuntos)
 
 
 @rotas.post("/fontes/{codigo}/planilha", status_code=status.HTTP_201_CREATED)
