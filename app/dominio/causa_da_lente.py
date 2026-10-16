@@ -165,27 +165,6 @@ DIMENSOES_POR_LENTE: dict[str, tuple[Dimensao, ...]] = {
 }
 
 
-#: AS MESMAS ABAS EM TODO MÊS, E A QUE NÃO TEM DADO FICA VAZIA — decisão do dono
-#: do produto (05/10/2026), e ela SUBSTITUI as "dimensões úteis" do pacote
-#: (FRONTEND §3), que mediam quanto cada dimensão explicava o mês e escondiam a
-#: que explicava pouco.
-#:
-#: O QUE O CRITÉRIO DO PACOTE CUSTAVA, no dado real: até maio/2026 só a Approach
-#: entregava, e o tema vinha em 97% a 100% dos itens; em junho a Bites entra com
-#: 4.973 posts sem tema, o tema cai para 28% do mês e a aba SUMIA. O dono do
-#: produto abriu junho pelo ponto da Jornada e reparou na hora — "não tenho a
-#: opção de tema como aparece nos demais meses".
-#:
-#: UMA FILEIRA DE ABAS QUE MUDA DE MÊS PARA MÊS SE LÊ COMO TELA QUEBRADA, e o
-#: preço de mostrar a aba vazia é menor: ela diz que a fonte não classificou
-#: aquele campo naquele mês — um fato sobre a fonte, e acionável, porque dá para
-#: cobrar do fornecedor.
-#:
-#: QUANTO FALTA CONTINUA DITO na ficha de cada aba ("Tema vem em 1.959 das 6.932
-#: menções do mês"), que é onde a informação não concorre com a navegação.
-#:
-#: E VALE PARA TODAS AS LENTES, e para os dois lugares onde as abas aparecem: o
-#: cartão da tela e o painel de aprofundamento.
 #: AS ABAS DO APROFUNDAMENTO — o painel que abre ao clicar num dado (a coluna da
 #: Evolução, uma barra de tema) —, quando a lente pede abas próprias ali.
 #:
@@ -216,6 +195,56 @@ def dimensoes_do_aprofundamento(
     if proprias is None:
         return dimensoes_do_recorte(codigo_da_lente, ve_diretorio)
     return [d for d in proprias if ve_diretorio or not d.nomeia_o_diretorio]
+
+
+def nomeia_o_diretorio(codigo_da_lente: str) -> bool:
+    """Esta lente publica nome de gente de fora que o CADASTRO guarda?
+
+    A PERGUNTA É A MESMA EM DOIS LUGARES, e a resposta tem de ser uma. Além do
+    cartão "Onde está a causa" (que tira a aba), a Base das Lentes esconde a
+    coluna `autor` e não oferece o filtro dela — e essa segunda regra estava
+    escrita como `codigo == "imprensa"`, repetida em três pontos de
+    `app/api/base_das_lentes.py`.
+
+    DUAS CÓPIAS DE UMA REGRA DE ACESSO DIVERGEM NA PRIMEIRA MUDANÇA: marcar uma
+    lente nova com `nomeia_o_diretorio=True` tiraria a aba do cartão e deixaria
+    a coluna e o filtro da Base publicando o nome, sem erro nenhum. Derivar da
+    declaração é o que fecha esse vão.
+
+    O CRITÉRIO É A ORIGEM DO DADO, não o nome da coluna (ver `Dimensao`): na
+    Imprensa, `autor` é o jornalista do cadastro de terceiros; na Sociedade
+    digital e em Clientes é o perfil que veio DENTRO da menção — o `Publicador`
+    que o fornecedor manda na própria linha, que o indicador "Autor mais
+    negativo" já mostra a todo mundo. Por isso só a Imprensa responde `True`
+    hoje, e por isso o `Publicador` da Approach entra aberto.
+    """
+    return any(
+        dimensao.nomeia_o_diretorio
+        for dimensao in DIMENSOES_POR_LENTE.get(codigo_da_lente, ())
+    )
+
+
+#: AS MESMAS ABAS EM TODO MÊS, E A QUE NÃO TEM DADO FICA VAZIA — decisão do dono
+#: do produto (05/10/2026), e ela SUBSTITUI as "dimensões úteis" do pacote
+#: (FRONTEND §3), que mediam quanto cada dimensão explicava o mês e escondiam a
+#: que explicava pouco.
+#:
+#: O QUE O CRITÉRIO DO PACOTE CUSTAVA, no dado real: até maio/2026 só a Approach
+#: entregava, e o tema vinha em 97% a 100% dos itens; em junho a Bites entra com
+#: 4.973 posts sem tema, o tema cai para 28% do mês e a aba SUMIA. O dono do
+#: produto abriu junho pelo ponto da Jornada e reparou na hora — "não tenho a
+#: opção de tema como aparece nos demais meses".
+#:
+#: UMA FILEIRA DE ABAS QUE MUDA DE MÊS PARA MÊS SE LÊ COMO TELA QUEBRADA, e o
+#: preço de mostrar a aba vazia é menor: ela diz que a fonte não classificou
+#: aquele campo naquele mês — um fato sobre a fonte, e acionável, porque dá para
+#: cobrar do fornecedor.
+#:
+#: QUANTO FALTA CONTINUA DITO na ficha de cada aba ("Tema vem em 1.959 das 6.932
+#: menções do mês"), que é onde a informação não concorre com a navegação.
+#:
+#: E VALE PARA TODAS AS LENTES, e para os dois lugares onde as abas aparecem: o
+#: cartão da tela e o painel de aprofundamento.
 
 
 def dimensoes_do_recorte(codigo_da_lente: str, ve_diretorio: bool = True) -> list[Dimensao]:

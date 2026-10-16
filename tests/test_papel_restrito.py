@@ -517,6 +517,59 @@ def test_subir_importacao_funciona_com_o_papel_restrito(sessao_restrita, semente
     assert len(saida_da_rota.linhas) == 1
 
 
+def test_planilha_do_score_guarda_e_descarta_com_o_papel_restrito(
+    sessao_restrita, semente, monkeypatch
+):
+    """`planilha_recebida` (0092) nasce de `alter default privileges`, que não dá `delete`.
+
+    O bloco de tabelas futuras da 0009 concede `select, insert, update` — e só.
+    `delete` é por tabela, explícito, porque o papel "apaga apenas linhas filhas
+    de agregado". Uma tabela nova que precisa apagar precisa do `grant` na
+    própria migration, e é o mesmo ponto cego que já cobrou duas vezes: a 0041
+    com `interacao_area`, e a 0068 com `importacao` — esta, depois de a
+    importação já estar no ar.
+
+    E aqui apagar não é exceção, é o caminho normal: conferir de novo substitui
+    a anterior (`guardar`), e confirmar tira a linha (`descartar`). Sem o
+    `grant`, a primeira conferência funciona e a confirmação devolve 500.
+
+    O caminho vai pelos CASOS DE USO, não por um `delete` cru: é o que prova
+    que a ordem real — select, delete, flush, insert no ponto de salvamento —
+    atravessa com a conta restrita.
+    """
+    from app.armazenamento import blob
+    from app.banco.tabelas_score import PlanilhaRecebida, ScoreFonte
+    from app.casos_de_uso import planilha_do_score
+
+    fonte = sessao_restrita.scalars(
+        select(ScoreFonte).where(ScoreFonte.interna.is_(False)).limit(1)
+    ).first()
+    assert fonte is not None, "nenhuma fonte externa no cadastro"
+
+    #: O armazenamento sai de cena de propósito: o que está sob teste é o
+    #: privilégio no Postgres, e um Azurite ausente faria o teste falhar pelo
+    #: motivo errado.
+    monkeypatch.setattr(blob, "ligado", lambda: True)
+    monkeypatch.setattr(blob, "guardar", lambda *_a, **_k: None)
+
+    planilha_do_score.guardar(
+        sessao_restrita, fonte=fonte, usuario_id=semente.id, nome="a.xlsx", dados=b"a"
+    )
+    sessao_restrita.flush()
+
+    # A SEGUNDA conferência apaga a primeira — primeiro `delete` do caminho.
+    segunda = planilha_do_score.guardar(
+        sessao_restrita, fonte=fonte, usuario_id=semente.id, nome="b.xlsx", dados=b"bb"
+    )
+    sessao_restrita.flush()
+    assert segunda.caminho_substituido is not None, "não substituiu a anterior"
+
+    # E a confirmação descarta a linha — segundo `delete`.
+    assert planilha_do_score.descartar(sessao_restrita, planilha_id=segunda.id) is not None
+    sessao_restrita.flush()
+    assert sessao_restrita.scalar(select(PlanilhaRecebida)) is None
+
+
 def test_papel_da_aplicacao_executa_a_funcao_de_concessao(sessao_restrita, semente):
     """O outro lado: a barreira não pode impedir o trabalho.
 

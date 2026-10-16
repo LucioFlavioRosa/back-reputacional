@@ -709,6 +709,13 @@ def _por_coluna_de_texto(
     ]
 
 
+#: AS DUAS DIMENSÕES QUE SAEM DO CADASTRO, e não de uma coluna da menção. Num
+#: lugar só porque três decisões dependem da mesma lista — o corte, a presença e
+#: a saída da consulta única —, e três literais `("tema_n2", "tema_n3")` divergem
+#: na primeira dimensão nova.
+_DIMENSOES_DA_TAXONOMIA = frozenset({"tema_n2", "tema_n3"})
+
+
 def _por_taxonomia(
     sessao: Session,
     nivel: str,
@@ -756,6 +763,55 @@ def _por_taxonomia(
         {"rotulo": valor, "positivo": pos, "neutro": neu, "negativo": neg}
         for valor, pos, neu, neg in sessao.execute(consulta)
     ]
+
+
+def _presenca_da_taxonomia(
+    sessao: Session,
+    nivel: str,
+    lente_id: int,
+    mes: date,
+    calibracao: Calibracao,
+    filtro: FiltroDeMencoes | None = None,
+) -> Presenca:
+    """Quanto a aba de taxonomia PODE mostrar — pelo mesmo caminho que ela usa.
+
+    POR QUE NÃO SERVE A PRESENÇA DE `tema_id`, que é o `campo` destas duas
+    dimensões. `presenca_das_dimensoes` conta `count(tema_id)`: toda menção com
+    vínculo. Mas `_por_taxonomia` chega ao N2 ATRAVESSANDO `MacroTema`, e
+    `Tema.macro_tema_id` É NULÁVEL — há 45 temas órfãos em 149 no cadastro, que
+    a reconciliação da `0058` deixou para trás por casar só pelo nome exato.
+
+    Uma menção presa a um tema órfão seria CONTADA no "vem em X menções do mês"
+    e EXCLUÍDA das barras pelo join. Isto é exatamente o que a ficha existe para
+    impedir — "quanto falta vai escrito, e é o que impede a aba de mentir por
+    omissão" —, e seria ela mesma mentindo.
+
+    Hoje são 0 menções nessa situação na Imprensa (os 45 órfãos são os temas que
+    a taxonomia v4 desativou, e nada novo se liga a eles). Então isto não
+    conserta um número errado na tela: impede que ele apareça no dia em que um
+    tema nascer sem pilar — e aí ninguém estaria olhando.
+
+    O `count()` SEM COLUNA depois de joins internos já é "quantas menções a aba
+    alcança": o join é o filtro. E `distintas` conta o nível certo — macro tema
+    no N2, tema no N3 —, não `tema_id` nos dois.
+    """
+    alvo = MacroTema.id if nivel == "tema_n2" else Tema.id
+    consulta = (
+        select(func.count(), func.count(alvo.distinct()))
+        .select_from(Mencao)
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .join(Tema, Tema.id == Mencao.tema_id)
+    )
+    if nivel == "tema_n2":
+        consulta = consulta.join(MacroTema, MacroTema.id == Tema.macro_tema_id)
+    consulta = consulta.where(
+        ScoreFonte.lente_id == lente_id,
+        Mencao.mes == primeiro_dia(mes),
+        *so_fontes_ligadas(calibracao),
+        *condicoes_do_filtro(filtro),
+    )
+    preenchidas, distintas = sessao.execute(consulta).one()
+    return Presenca(preenchidas=int(preenchidas or 0), distintas=int(distintas or 0))
 
 
 def presenca_das_dimensoes(
@@ -858,8 +914,17 @@ def cortes_da_causa(
         dimensoes = dimensoes_do_recorte(codigo_da_lente, ve_diretorio)
     if not dimensoes:
         return []
+    #: A TAXONOMIA FICA FORA DA CONSULTA ÚNICA, e tem presença própria: o `campo`
+    #: das duas é `tema_id`, que não é o que as abas delas alcançam — ver
+    #: `_presenca_da_taxonomia`. Deixá-las aqui também punha `tema_id` DUAS vezes
+    #: em `campos`, e o dicionário de presenças descartava uma em silêncio.
     presencas_por_campo, total = presenca_das_dimensoes(
-        sessao, [dimensao.campo for dimensao in dimensoes], lente_id, mes, calibracao, filtro
+        sessao,
+        [d.campo for d in dimensoes if d.chave not in _DIMENSOES_DA_TAXONOMIA],
+        lente_id,
+        mes,
+        calibracao,
+        filtro,
     )
     presencas = presencas_por_campo
     #: UM CORTE POR DIMENSÃO, SEMPRE — e a que não tem dado volta com `linhas`
@@ -867,7 +932,12 @@ def cortes_da_causa(
     #: `dimensoes_do_recorte`: a fileira de abas é a mesma em todo mês.
     cortes: list[CorteDaCausa] = []
     for dimensao in dimensoes:
-        presenca = presencas[dimensao.campo]
+        if dimensao.chave in _DIMENSOES_DA_TAXONOMIA:
+            presenca = _presenca_da_taxonomia(
+                sessao, dimensao.chave, lente_id, mes, calibracao, filtro
+            )
+        else:
+            presenca = presencas[dimensao.campo]
         limite = None if dimensao.todos else quantos
         if not presenca.preenchidas:
             #: SEM UM VALOR SEQUER, nem se consulta: a aba sai vazia, e a medida
@@ -888,7 +958,7 @@ def cortes_da_causa(
                     sessao, lente_id, mes, calibracao, filtro, quantos
                 )
             ]
-        elif dimensao.chave in ("tema_n2", "tema_n3"):
+        elif dimensao.chave in _DIMENSOES_DA_TAXONOMIA:
             linhas = _por_taxonomia(
                 sessao, dimensao.chave, lente_id, mes, calibracao, filtro, limite
             )

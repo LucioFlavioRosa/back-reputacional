@@ -1,0 +1,36 @@
+-- =============================================================================
+-- 0093 — `planilha_recebida` ganha o `delete` que a aplicação precisa.
+--
+-- A 0092 criou a tabela e parou antes da linha que a faz funcionar em produção.
+-- É o MESMO ponto cego de sempre, e já é a terceira vez: a 0041 o descreveu
+-- para `interacao_area`, e a 0068 o pagou mais caro em `importacao` — lá a
+-- funcionalidade já estava no ar quando alguém tentou usá-la e caiu em
+-- "permission denied for table importacao".
+--
+-- POR QUE O PONTO CEGO EXISTE. O bloco de tabelas futuras da 0009
+-- (`alter default privileges`) concede `select, insert, update` — e só. `delete`
+-- é por tabela, explícito e deliberado, porque `painel_app` "apaga apenas linhas
+-- filhas de agregado". Tabela nova que precisa apagar precisa do `grant` na
+-- própria migration, e NADA avisa: em desenvolvimento tudo roda como
+-- superusuário, e a suíte inteira continua verde.
+--
+-- E AQUI APAGAR NÃO É EXCEÇÃO, É O CAMINHO NORMAL — por isso a falta doía
+-- rápido:
+--
+--   * conferir de novo substitui a planilha anterior (`planilha_do_score.guardar`);
+--   * confirmar tira a linha depois de gravar (`planilha_do_score.descartar`).
+--
+-- O segundo é o que torna a tabela transitória em vez de um depósito. Sem o
+-- `grant`, a primeira conferência de cada pessoa funcionaria — insert só — e a
+-- CONFIRMAÇÃO devolveria 500, justamente no pedido que a pessoa espera há um
+-- minuto de leitura. Medido em 16/10/2026, antes de implantar.
+--
+-- `tests/test_papel_restrito.py::test_planilha_do_score_guarda_e_descarta_com_o_papel_restrito`
+-- é a guarda: ele conecta como `painel_app` de verdade e atravessa os dois
+-- caminhos pelos casos de uso. Sem este `grant` ele falha com
+-- "permission denied for table planilha_recebida" — foi assim que isto apareceu.
+--
+-- NÃO ALTERA A 0092, que já foi aplicada. Idempotente: `grant` repetido é inócuo.
+-- =============================================================================
+
+grant delete on planilha_recebida to painel_app;

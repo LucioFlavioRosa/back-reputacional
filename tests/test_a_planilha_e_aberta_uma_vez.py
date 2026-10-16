@@ -271,21 +271,21 @@ def test_o_CABECALHO_e_procurado_POR_FONTE_e_nao_herdado():
 
 
 def test_ARQUIVO_GRANDE_nao_fica_guardado(sessao, clipei, contador, monkeypatch):
-    """O teto de memória, e o preço que ele cobra.
+    """O orçamento de memória, e o preço que ele cobra.
 
     Guardar as células de um arquivo de 80 MB comprimido — o limite de upload —
-    chegaria a vários GB. Acima do teto a subida volta a decodificar por
+    chegaria a vários GB. Acima do orçamento a subida volta a decodificar por
     etapa: fica lenta como era antes, em vez de arriscar a memória do servidor.
 
     E É ESTA DECISÃO QUE TORNOU OS 80 MB POSSÍVEIS. O teto de upload subiu de 40
-    para 80 MB sem subir o pico de memória, porque acima de 8 MB de arquivo nada
-    fica retido. O que cresce é o tempo.
+    para 80 MB sem subir o pico de memória, porque o que não cabe não fica
+    retido. O que cresce é o tempo.
 
-    O TETO É BAIXADO no teste em vez de se gerar um arquivo de 8 MB: o que se
-    afirma é a DECISÃO, e gerar oito megabytes de planilha para prová-la custaria
-    minutos de suíte.
+    O ORÇAMENTO É BAIXADO no teste em vez de se gerar um arquivo gigante: o que
+    se afirma é a DECISÃO, e gerar dezenas de megabytes de planilha para
+    prová-la custaria minutos de suíte.
     """
-    monkeypatch.setattr(ingerir_mencoes, "TAMANHO_PARA_GUARDAR_A_LEITURA", 1)
+    monkeypatch.setattr(ingerir_mencoes, "orcamento_de_leitura", lambda: 1)
 
     ingerir_mencoes.conferir(sessao, clipei, _planilha())
 
@@ -299,7 +299,7 @@ def test_ARQUIVO_GRANDE_nao_fica_guardado(sessao, clipei, contador, monkeypatch)
 
 def test_arquivo_grande_ainda_entrega_as_linhas_certas(sessao, clipei, monkeypatch):
     """O contrapeso: o caminho sem cache não pode servir meia planilha."""
-    monkeypatch.setattr(ingerir_mencoes, "TAMANHO_PARA_GUARDAR_A_LEITURA", 1)
+    monkeypatch.setattr(ingerir_mencoes, "orcamento_de_leitura", lambda: 1)
 
     ingerir_mencoes.ingerir(sessao, clipei, _planilha(3))
 

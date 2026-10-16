@@ -326,6 +326,105 @@ def test_o_painel_da_imprensa_desce_pela_taxonomia_n1_n2_n3(sessao):
     assert n1.recorta == "atributo" and n2.recorta == "tema_n2" and n3.recorta == "tema_n3"
 
 
+def test_a_ficha_da_aba_n2_conta_exatamente_o_que_as_barras_somam(sessao):
+    """A aba não pode dizer "vem em X menções" e desenhar menos que X.
+
+    `tema_n2` chega ao pilar ATRAVESSANDO `MacroTema`, e `Tema.macro_tema_id` é
+    nulável — há 45 temas órfãos em 149 no cadastro, que a reconciliação da
+    `0058` deixou para trás por casar só pelo nome exato. Antes desta correção a
+    presença vinha de `count(tema_id)`, que conta a menção do órfão, enquanto o
+    join a excluía das barras.
+
+    É EXATAMENTE O QUE A FICHA EXISTE PARA IMPEDIR — "quanto falta vai escrito, e
+    é o que impede a aba de mentir por omissão" — e era ela mentindo.
+
+    O TESTE AFIRMA A INVARIANTE, não um número: a presença da aba tem de bater
+    com a soma das barras dela. Um número escrito aqui envelheceria com a
+    semente; a invariante não.
+
+    E A ABA N3 CONTINUA CONTANDO O ÓRFÃO, que é o certo: um subtema sem pilar
+    ainda é um subtema.
+    """
+    from app.banco import repositorio_lentes
+    from app.dominio.causa_da_lente import dimensoes_do_aprofundamento
+
+    orfao = Tema(nome="Tema sem pilar nenhum", nivel="estrategico", macro_tema_id=None)
+    sessao.add(orfao)
+    sessao.flush()
+    assert orfao.macro_tema_id is None, "o teste precisa de um tema SEM pilar"
+
+    linhas = _linhas_da_imprensa(sessao)
+    linhas.append({
+        "veiculo": "Folha", "unidade_texto": "Águas do Rio", "data": date(2031, 5, 12),
+        "sentimento": "neg", "tier": "relevante", "tema_id": orfao.id,
+        "tema_texto": orfao.nome, "atributo": "1. Governança",
+    })
+    _gravar(sessao, "clipei", linhas)
+
+    lente = _lente(sessao, "imprensa")
+    cortes = repositorio_lentes.cortes_da_causa(
+        sessao,
+        "imprensa",
+        lente.id,
+        MES,
+        repositorio_score.calibracao_vigente(sessao),
+        dimensoes=dimensoes_do_aprofundamento("imprensa"),
+    )
+    por_chave = {corte.dimensao.chave: corte for corte in cortes}
+
+    def soma_das_barras(corte) -> int:
+        return sum(
+            linha["positivo"] + linha["neutro"] + linha["negativo"] for linha in corte.linhas
+        )
+
+    n2, n3 = por_chave["tema_n2"], por_chave["tema_n3"]
+    assert n2.presenca.preenchidas == soma_das_barras(n2)
+    assert n3.presenca.preenchidas == soma_das_barras(n3)
+
+    #: E O ÓRFÃO ESTÁ DE FATO NO MÊS, senão a invariante acima passaria por não
+    #: haver o caso: ele aparece no N3 e não no N2.
+    assert orfao.nome in [linha["rotulo"] for linha in n3.linhas]
+    assert orfao.nome not in [linha["rotulo"] for linha in n2.linhas]
+    assert n3.presenca.preenchidas == n2.presenca.preenchidas + 1
+
+
+def test_o_filtro_do_atributo_alcanca_a_grafia_CRUA_do_export(sessao):
+    """O valor com prefixo ("1. Governança") vem de link antigo e do mock.
+
+    `ATRIBUTO_SEM_PREFIXO` fez a aba N1 agrupar pelo nome limpo, e o filtro
+    passou a aceitar os dois por um `or_`. Mas o teste que exercitava a grafia
+    crua foi substituído por um que usa só a limpa — e a suíte INTEIRA (2187)
+    passava com o lado cru do `or_` removido, provado por mutação em 16/10/2026.
+
+    Sem esta guarda, um link guardado nos favoritos passa a devolver vazio em
+    silêncio: nenhum erro, nenhuma menção.
+    """
+    _gravar(sessao, "clipei", _linhas_da_imprensa(sessao))
+    lente = _lente(sessao, "imprensa")
+    calibracao = repositorio_score.calibracao_vigente(sessao)
+
+    pelo_cru = repositorio_score.impacto_do_recorte(
+        sessao, lente.id, MES, calibracao, FiltroDeMencoes(atributo="1. Governança")
+    )
+    pelo_limpo = repositorio_score.impacto_do_recorte(
+        sessao, lente.id, MES, calibracao, FiltroDeMencoes(atributo="Governança")
+    )
+
+    #: ESTA É A GUARDA: com o lado cru do `or_` removido, "1. Governança" só
+    #: casaria contra o valor JÁ LIMPO, que nunca traz o prefixo — zero menções,
+    #: impacto zero.
+    assert pelo_cru != 0, "a grafia crua do export deixou de alcançar a menção"
+
+    #: E OS DOIS NÃO SÃO O MESMO NÚMERO: o limpo alcança também a menção
+    #: POSITIVA sem prefixo, e as duas se cancelam em parte — por isso o
+    #: impacto dele é MENOR em módulo.
+    #:
+    #: ESTA LINHA AFIRMAVA O CONTRÁRIO ("mais menções, mais impacto") e o teste
+    #: caiu na primeira execução. Mais menções não é mais impacto quando os
+    #: sentimentos se opõem; a conta certa veio da medição, não da intuição.
+    assert abs(pelo_limpo) < abs(pelo_cru), "o nome limpo tem de alcançar as duas grafias"
+
+
 def test_escolher_um_atributo_tira_a_aba_n1_e_a_trilha_o_nomeia(sessao):
     _gravar(sessao, "clipei", _linhas_da_imprensa(sessao))
     recorte = _recorte(sessao, atributo="Governança")

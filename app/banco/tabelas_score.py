@@ -9,6 +9,7 @@ O índice mensal tem quatro coisas guardadas e uma calculada:
     score_estimativa    o NS suposto, onde não houve medição
     score_config        a régua em vigor, versionada
     score_fato          o que explica a curva, escrito por gente
+    planilha_recebida   o arquivo esperando entre conferir e confirmar (0092)
 
 O score em si não mora aqui: é calculado na leitura, por `app/dominio/score.py`,
 porque a régua que o produz é configurável — ver o cabeçalho da 0048.
@@ -247,5 +248,32 @@ class ScoreFato(Tabela):
     efeito: Mapped[str] = mapped_column(Text)
     criado_por: Mapped[uuid.UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("usuario.id"), nullable=True
+    )
+    criado_em: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class PlanilhaRecebida(Tabela):
+    """A planilha que já subiu e espera a confirmação. Espelha a `0092`.
+
+    GUARDA O BYTE, NUNCA A CONCLUSÃO: nada do que a conferência calculou está
+    aqui. A confirmação relê a planilha inteira e reconfere contra o cadastro
+    do instante em que ela roda — o que esta linha dispensa é o UPLOAD, e só.
+    """
+
+    __tablename__ = "planilha_recebida"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    fonte_id: Mapped[int] = mapped_column(SmallInteger, ForeignKey("score_fonte.id"))
+    #: Onde o byte mora. Quem monta a árvore é `blob.caminho_da_planilha`.
+    caminho: Mapped[str] = mapped_column(Text)
+    #: O nome que a pessoa escolheu, para a tela dizer o que ela vai confirmar.
+    nome: Mapped[str] = mapped_column(Text)
+    tamanho: Mapped[int] = mapped_column(Integer)
+    #: CONTROLE DE ACESSO, não auditoria: só quem conferiu confirma. Por isso
+    #: NOT NULL — uma linha sem dono não teria como ser recusada.
+    criado_por: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("usuario.id")
     )
     criado_em: Mapped[datetime] = mapped_column(server_default=func.now())
