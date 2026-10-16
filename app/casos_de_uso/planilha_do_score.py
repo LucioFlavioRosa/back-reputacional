@@ -267,21 +267,41 @@ def comecar(
     O IDENTIFICADOR É DO SERVIDOR, e não do cliente: ele entra no caminho do
     armazenamento, e caminho montado com valor que o cliente escolhe é como se
     escreve em pasta alheia.
+
+    DEVOLVE `id` NULO SEM ARMAZENAMENTO, como `guardar` faz — e esta é a
+    correção de um defeito de desenho meu, achado em 16/10/2026 ao baixar o
+    limiar da tela. O docstring desta função e o da rota diziam, os dois, que
+    "a tela cai no envio de uma vez só"; ela não caía. Isto aqui RECUSAVA com
+    422, o cliente não tinha como distinguir essa recusa das outras três desta
+    mesma função, e a pessoa lia "este ambiente não guarda arquivos" sem ter
+    pedido nada sobre armazenamento.
+
+    O NULO É A CONVENÇÃO QUE JÁ EXISTIA: a conferência de uma vez só devolve
+    `planilha_id` nulo quando o blob está desligado, e a tela entende isso como
+    "mande o arquivo de novo na confirmação". Repetir a convenção custa uma
+    linha e dispensa um código de erro legível por máquina — que o envelope
+    `{detalhe, referencia}` não tem.
+
+    E SEM ISSO O LIMIAR MENOR QUEBRARIA A PILHA LOCAL, onde não há blob: toda
+    planilha acima de um pedaço passaria a ser recusada em ambiente que hoje
+    importa sem reclamar. Vale o princípio do cabeçalho deste módulo — a subida
+    guardada é uma economia, nunca uma dependência.
     """
-    if not blob.ligado():
-        #: Sem armazenamento não há onde montar. A tela cai no envio de uma vez
-        #: só, que é o caminho que sempre existiu.
-        raise RegraViolada(
-            "Este ambiente não guarda arquivos, então a planilha precisa subir "
-            "de uma vez. Se ela for grande demais para isso, fale com quem "
-            "administra."
-        )
+    #: O TAMANHO É CONFERIDO ANTES DO ARMAZENAMENTO, de propósito: sem blob a
+    #: resposta manda a tela subir de uma vez, e aí um arquivo de 100 MB
+    #: atravessaria a rede inteira para ser recusado pelo tamanho no fim. A
+    #: recusa que já é possível agora sai agora.
     if tamanho <= 0:
         raise RegraViolada("Diga o tamanho da planilha para começar a subida.")
     if tamanho > ingerir_mencoes.TAMANHO_MAXIMO:
         raise RegraViolada(
             f"A planilha passa de {ingerir_mencoes.TAMANHO_MAXIMO // (1024 * 1024)} MB."
         )
+    if not blob.ligado():
+        #: NENHUMA LINHA NASCE AQUI: sem byte para guardar não há subida para
+        #: ter dono, e gravar uma linha incompleta que ninguém vai completar
+        #: deixaria a pessoa travada no índice único até conferir de novo.
+        return Guardada(id=None, caminho_substituido=None)
     planilha_id = uuid4()
     return _registrar(
         sessao,

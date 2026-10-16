@@ -352,10 +352,12 @@ def test_o_TETO_e_conferido_na_ABERTURA_e_nao_depois_de_onze_partes(
     """Descobrir o teto na décima primeira parte é fazer a pessoa pagar o
     upload inteiro para ouvir não.
 
-    A FIXTURE DO ARMAZENAMENTO É NECESSÁRIA AQUI, e a primeira versão deste
-    teste não a tinha: sem ela a recusa de "este ambiente não guarda arquivos"
-    dispara primeiro, o teste passava pelo motivo errado, e eu só reparei porque
-    afirmei a mensagem em vez de só o código 422.
+    A FIXTURE DO ARMAZENAMENTO está aqui por história: enquanto a abertura
+    recusava sem blob, era ela que impedia este teste de passar pelo motivo
+    errado — e eu só reparei porque afirmei a mensagem em vez de só o 422. Hoje
+    o tamanho é conferido ANTES do armazenamento, de propósito (ver
+    `test_SEM_ARMAZENAMENTO_o_TETO_DE_TAMANHO_ainda_recusa`), então as duas
+    ordens dão 422. A afirmação da mensagem continua sendo o que amarra.
     """
     resposta = _comecar(cliente, ingerir_mencoes.TAMANHO_MAXIMO + 1)
 
@@ -379,18 +381,51 @@ def test_a_FONTE_INTERNA_e_recusada_na_abertura(cliente, armazenamento):
     assert "interna" in resposta.text
 
 
-def test_SEM_ARMAZENAMENTO_a_abertura_recusa_dizendo_o_que_fazer(
-    cliente, sem_armazenamento
+def test_SEM_ARMAZENAMENTO_a_abertura_MANDA_SUBIR_DE_UMA_VEZ(
+    cliente, sessao, sem_armazenamento
 ):
     """Não há onde montar, e a tela tem de cair no envio de uma vez só.
 
-    A recusa precisa DIZER isso: "não consegui" sem alternativa deixa a pessoa
-    sem caminho, e o caminho existe.
+    ANTES ERA 422 COM UMA MENSAGEM, e era defeito de desenho: a tela não tinha
+    como distinguir esta recusa das outras três desta rota — fonte interna,
+    fonte inativa, passa de 80 MB — porque o envelope de erro é
+    `{detalhe, referencia}` e não traz código. Então ela mostrava "este ambiente
+    não guarda arquivos" para quem nunca pediu nada sobre armazenamento, em vez
+    de simplesmente mandar o arquivo. Os docstrings dos dois lados afirmavam que
+    "a tela cai no envio de uma vez só"; ela não caía.
+
+    `planilha_id` NULO É A CONVENÇÃO QUE JÁ EXISTIA neste produto: a conferência
+    de uma vez só devolve nulo quando não guardou o arquivo, e a tela já entende
+    isso. Repetir a convenção dispensa inventar um código de erro.
     """
     resposta = _comecar(cliente, 5 * 1024 * 1024)
 
+    assert resposta.status_code == 200, resposta.text
+    assert resposta.json()["planilha_id"] is None
+
+    #: `tamanho_da_parte` VEM MESMO ASSIM: ele não depende do armazenamento, e
+    #: um campo que às vezes falta obrigaria o cliente a tratar duas formas de
+    #: resposta em vez de um campo nulo.
+    assert resposta.json()["tamanho_da_parte"] == _PARTE_DE_TESTE
+
+    #: E NENHUMA LINHA NASCE. Sem byte para guardar não há subida para ter dono,
+    #: e uma linha incompleta que ninguém vai completar travaria a pessoa no
+    #: índice único de (fonte, criado_por) até ela conferir aquela fonte de novo.
+    assert sessao.scalars(select(PlanilhaRecebida)).all() == []
+
+
+def test_SEM_ARMAZENAMENTO_o_TETO_DE_TAMANHO_ainda_recusa(cliente, sem_armazenamento):
+    """A recusa que já é possível agora sai agora, e não depois da rede inteira.
+
+    POR QUE A ORDEM DAS CONFERÊNCIAS IMPORTA: a resposta sem armazenamento manda
+    a tela subir de uma vez. Se o tamanho fosse conferido DEPOIS do
+    armazenamento, um arquivo de 100 MB receberia "suba de uma vez", atravessaria
+    a rede inteira e só então ouviria que passa de 80 MB.
+    """
+    resposta = _comecar(cliente, ingerir_mencoes.TAMANHO_MAXIMO + 1)
+
     assert resposta.status_code == 422, resposta.text
-    assert "de uma vez" in resposta.text
+    assert "MB" in resposta.text
 
 
 def test_a_PARTE_VAZIA_e_recusada(cliente, armazenamento):
