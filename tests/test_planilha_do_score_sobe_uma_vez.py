@@ -20,7 +20,7 @@ import io
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.orm import Session
 
 from app.armazenamento import blob
@@ -28,6 +28,7 @@ from app.banco.sessao import obter_sessao
 from app.banco.tabelas_acesso import Papel, Usuario
 from app.banco.tabelas_score import Mencao, PlanilhaRecebida, ScoreFonte
 from app.banco.tabelas_stakeholders import Instituicao
+from app.casos_de_uso import ingerir_mencoes
 from main import app
 from tests.test_e2e_postgres import URL
 
@@ -238,13 +239,24 @@ def test_o_byte_e_a_linha_somem_quando_a_importacao_grava(
 
 
 def test_a_confirmacao_le_exatamente_os_bytes_que_a_conferencia_recebeu(
-    cliente, sessao, armazenamento
+    cliente, sessao, armazenamento, monkeypatch
 ):
+    """O NOME PRECISA SER VERDADE, e a primeira versão não era.
+
+    Ela conferia e afirmava sobre o que ficou guardado — provava a conferência,
+    não a confirmação, apesar do nome. Achado da revisão do Codex em
+    16/10/2026. Agora a confirmação roda e o teste pega o que ELA leu.
+    """
     conteudo = _planilha(["Jornal de Teste", "Outro Jornal"])
+    planilha_id = _conferir(cliente, conteudo).json()["planilha_id"]
 
-    _conferir(cliente, conteudo)
+    lidos: list[bytes] = []
+    original = blob.ler
+    monkeypatch.setattr(blob, "ler", lambda caminho: lidos.append(original(caminho)) or lidos[-1])
 
-    assert list(armazenamento.values()) == [conteudo]
+    assert _importar_pelo_id(cliente, planilha_id).status_code == 201
+
+    assert lidos == [conteudo], "a confirmação leu bytes diferentes dos conferidos"
 
 
 # -- o identificador não é uma chave -----------------------------------------
@@ -391,8 +403,8 @@ def test_sem_armazenamento_a_importacao_pelo_arquivo_continua_funcionando(
 # -- guarda o byte, nunca a conclusão ----------------------------------------
 
 
-def test_a_planilha_guardada_nao_carrega_nenhuma_conclusao_da_conferencia():
-    """DERIVADO DA TABELA, e é esta a guarda que importa mais.
+def test_a_planilha_guardada_nao_carrega_nenhuma_conclusao_da_conferencia(sessao):
+    """DERIVADO DO SCHEMA REAL, e é esta a guarda que importa mais.
 
     A importação de subtemas registra por que o arquivo vai de novo: "o servidor
     relê e reconfere contra o banco daquele instante", e guardar as propostas
@@ -402,8 +414,21 @@ def test_a_planilha_guardada_nao_carrega_nenhuma_conclusao_da_conferencia():
     Uma coluna nova aqui (`previsao`, `veiculos_novos`, qualquer contagem) seria
     a tabela de rascunho nascendo sem ninguém decidir, e este teste existe para
     que isso não passe calado.
+
+    PERGUNTA AO BANCO, E NÃO AO MODELO. A primeira versão lia
+    `PlanilhaRecebida.__table__`, que é o ORM — e o ORM é o que alguém editaria
+    JUNTO com a coluna nova. Quem precisa discordar é o schema que a migration
+    criou. Achado da revisão do Codex em 16/10/2026.
     """
-    assert {coluna.name for coluna in PlanilhaRecebida.__table__.columns} == {
+    colunas = set(
+        sessao.scalars(
+            text(
+                "select column_name from information_schema.columns "
+                "where table_name = 'planilha_recebida'"
+            )
+        )
+    )
+    assert colunas == {
         "id",
         "fonte_id",
         "caminho",
@@ -412,6 +437,9 @@ def test_a_planilha_guardada_nao_carrega_nenhuma_conclusao_da_conferencia():
         "criado_por",
         "criado_em",
     }
+    #: E O ORM PRECISA CONCORDAR com ele: divergir faria a leitura calar sobre
+    #: uma coluna que existe.
+    assert colunas == {coluna.name for coluna in PlanilhaRecebida.__table__.columns}
 
 
 def test_a_confirmacao_reconfere_contra_o_cadastro_deste_instante(
@@ -451,6 +479,97 @@ def test_a_confirmacao_reconfere_contra_o_cadastro_deste_instante(
         )
         == 1
     ), "criou um segundo veículo com o mesmo nome: reaproveitou a conclusão antiga"
+
+
+# -- o que a revisão do Codex (16/10/2026) mostrou que faltava ---------------
+
+
+def test_a_planilha_acima_do_teto_e_recusada_ANTES_de_ser_guardada(
+    cliente, armazenamento, monkeypatch
+):
+    """Guardar uma planilha que a subida vai recusar é pagar armazenamento por
+    um arquivo que nunca entra — e se a pessoa desistir ali, o byte fica.
+
+    O teto das quatro recusas estruturais agora vale na conferência também, e
+    não só na subida: `ingerir_mencoes.recusar_o_que_nao_entra`.
+    """
+    monkeypatch.setattr(ingerir_mencoes, "TAMANHO_MAXIMO", 1024)
+
+    resposta = _conferir(cliente, _planilha())
+
+    assert resposta.status_code == 422
+    assert "passa de" in resposta.text
+    assert armazenamento == {}, "guardou um arquivo que a subida recusaria"
+
+
+def test_a_fonte_interna_e_recusada_na_conferencia_e_nao_so_na_subida(
+    cliente, sessao, armazenamento
+):
+    """Mesma razão: conferir com um conjunto de recusas e gravar com outro faz
+    a conferência mentir sobre o que a subida faria."""
+    crm = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == "crm"))
+    assert crm is not None and crm.interna
+
+    resposta = _conferir(cliente, _planilha(), codigo="crm")
+
+    assert resposta.status_code == 422
+    assert "fonte interna" in resposta.text
+    assert armazenamento == {}
+
+
+def test_duas_conferencias_ao_mesmo_tempo_dao_409_e_nao_500(
+    cliente, sessao, armazenamento, monkeypatch
+):
+    """A corrida é real — o Codex a reproduziu no Postgres em 16/10/2026.
+
+    Aqui ela é FORÇADA em vez de disputada: duas sessões de verdade num teste
+    seriam lentas e intermitentes, e o que importa provar é a tradução. 500
+    diria "o servidor quebrou" e mandaria procurar defeito; 409 diz o que houve
+    e que repetir resolve.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    original = sessao.flush
+
+    def flush_que_colide(*args, **kwargs):
+        #: PELO QUE ESTÁ PENDENTE, e não por contagem de chamadas. Uma primeira
+        #: versão contava ("o segundo flush é o do insert") e explodia no
+        #: `select` — o SQLAlchemy faz autoflush antes de consultar, e a ordem
+        #: não é a que o código parece ter. Perguntar o que está na sessão é
+        #: exato, e não depende de quantas vezes o ORM resolveu descarregar.
+        if any(isinstance(objeto, PlanilhaRecebida) for objeto in sessao.new):
+            raise IntegrityError("insert", {}, Exception("unique violation"))
+        return original(*args, **kwargs)
+
+    _conferir(cliente, _planilha())  # cria a anterior, para haver `delete`
+    monkeypatch.setattr(sessao, "flush", flush_que_colide)
+
+    resposta = _conferir(cliente, _planilha(["Jornal Dois"]))
+
+    assert resposta.status_code == 409, resposta.text
+
+
+def test_o_blob_caindo_entre_conferir_e_confirmar_pede_conferir_de_novo(
+    cliente, sessao, armazenamento, monkeypatch
+):
+    """Conferiu com armazenamento, confirmou sem. A linha existe e o byte não
+    está alcançável.
+
+    "O armazenamento não está configurado" seria verdade sobre o servidor e
+    inútil para quem queria subir uma planilha. Conferir de novo resolve de
+    fato: sem Blob, a conferência devolve `planilha_id` nulo e a tela volta a
+    mandar o arquivo.
+    """
+    planilha_id = _conferir(cliente, _planilha()).json()["planilha_id"]
+
+    def desligado(*_args, **_kwargs):
+        raise blob.ArmazenamentoDesligado("sem armazenamento")
+
+    monkeypatch.setattr(blob, "ler", desligado)
+
+    resposta = _importar_pelo_id(cliente, planilha_id)
+
+    assert resposta.status_code == 404, resposta.text
 
 
 def test_a_fonte_guardada_e_a_fonte_que_conferiu(cliente, sessao, armazenamento):

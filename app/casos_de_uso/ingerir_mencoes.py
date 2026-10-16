@@ -765,26 +765,7 @@ def ingerir(
     rota seria um jeito de cadastrar instituição arbitrária por um campo de
     formulário.
     """
-    if fonte.interna:
-        raise RegraViolada(
-            f"{fonte.nome} é fonte interna: o dado já está neste banco e não se importa."
-        )
-    if not fonte.ativo:
-        raise RegraViolada(f"{fonte.nome} está inativa. Reative-a antes de importar.")
-    if len(conteudo) > TAMANHO_MAXIMO:
-        #: O NÚMERO SAI DA CONSTANTE, e não do texto: a mensagem dizia
-        #: "40 MB" enquanto `TAMANHO_MAXIMO` já era 80 — quem recebesse a
-        #: recusa cortaria a planilha pela metade por nada. Derivar é o que
-        #: impede a mensagem de envelhecer de novo (mesmo jeito de
-        #: `app/armazenamento/blob.py`).
-        raise RegraViolada(
-            f"A planilha passa de {TAMANHO_MAXIMO // (1024 * 1024)} MB."
-        )
-    if not conteudo.startswith(ASSINATURA_ZIP):
-        raise RegraViolada(
-            "O arquivo não é uma planilha .xlsx. "
-            "Se ele veio em .xls ou .csv, salve como .xlsx e envie de novo."
-        )
+    recusar_o_que_nao_entra(fonte, conteudo)
 
     # OS VEÍCULOS NASCEM UMA VEZ, antes das fontes irmãs: as duas leem o mesmo
     # arquivo e veriam os mesmos veículos. Criar por fonte faria a segunda achar
@@ -955,6 +936,46 @@ def assuntos_da_planilha(
     return contagem
 
 
+def recusar_o_que_nao_entra(fonte: ScoreFonte, conteudo: bytes) -> None:
+    """As recusas que valem ANTES de abrir a planilha, para os dois caminhos.
+
+    POR QUE ISTO VIROU FUNÇÃO. Estas quatro moravam só em `ingerir`, e a
+    conferência não fazia nenhuma delas: dava para conferir uma fonte interna,
+    uma fonte inativa, um `.pdf` renomeado e um arquivo de 200 MB — e só
+    descobrir na hora de gravar, depois de a pessoa ter escolhido os veículos.
+
+    Ficou caro quando a conferência passou a GUARDAR o arquivo
+    (`casos_de_uso/planilha_do_score`): uma planilha acima do teto era
+    armazenada, ganhava `planilha_id`, e só era recusada na confirmação — e se
+    a pessoa desistisse ali, o byte ficava. Achado da revisão do Codex em
+    16/10/2026.
+
+    SÃO AS MESMAS QUATRO, na mesma ordem, e é esse o ponto: conferir com um
+    conjunto de recusas e gravar com outro faz a conferência mentir sobre o que
+    a subida faria, que é a única coisa que ela existe para dizer.
+    """
+    if fonte.interna:
+        raise RegraViolada(
+            f"{fonte.nome} é fonte interna: o dado já está neste banco e não se importa."
+        )
+    if not fonte.ativo:
+        raise RegraViolada(f"{fonte.nome} está inativa. Reative-a antes de importar.")
+    if len(conteudo) > TAMANHO_MAXIMO:
+        #: O NÚMERO SAI DA CONSTANTE, e não do texto: a mensagem dizia
+        #: "40 MB" enquanto `TAMANHO_MAXIMO` já era 80 — quem recebesse a
+        #: recusa cortaria a planilha pela metade por nada. Derivar é o que
+        #: impede a mensagem de envelhecer de novo (mesmo jeito de
+        #: `app/armazenamento/blob.py`).
+        raise RegraViolada(
+            f"A planilha passa de {TAMANHO_MAXIMO // (1024 * 1024)} MB."
+        )
+    if not conteudo.startswith(ASSINATURA_ZIP):
+        raise RegraViolada(
+            "O arquivo não é uma planilha .xlsx. "
+            "Se ele veio em .xls ou .csv, salve como .xlsx e envie de novo."
+        )
+
+
 def conferir(
     sessao: Session, fonte: ScoreFonte, conteudo: bytes
 ) -> tuple[
@@ -979,6 +1000,9 @@ def conferir(
 
     NÃO ESCREVE, e há teste para isso. `_ingerir_uma` grava; esta só lê.
     """
+    #: AS MESMAS RECUSAS DA SUBIDA, e aqui elas chegam antes de o arquivo ser
+    #: guardado. Ver `recusar_o_que_nao_entra`.
+    recusar_o_que_nao_entra(fonte, conteudo)
     #: ABERTA UMA VEZ, e as quatro etapas abaixo reusam a leitura. Medido com
     #: 25.000 linhas: eram 14,3s em quatro decodificações do mesmo arquivo —
     #: duas na previsão (uma por irmã), uma nos veículos, uma nos assuntos —

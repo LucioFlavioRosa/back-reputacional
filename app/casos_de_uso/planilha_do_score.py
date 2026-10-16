@@ -56,11 +56,12 @@ from dataclasses import dataclass
 from uuid import UUID, uuid4
 
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.armazenamento import blob
 from app.banco.tabelas_score import PlanilhaRecebida, ScoreFonte
-from app.dominio.erros import NaoEncontrado
+from app.dominio.erros import Conflito, NaoEncontrado
 
 #: O que um `.xlsx` é para o Storage. A planilha NÃO passa por
 #: `blob.exigir_tipo_aceito`: aquela lista guarda material de agenda, cujo teto
@@ -125,8 +126,27 @@ def guardar(
         tamanho=len(dados),
         criado_por=usuario_id,
     )
-    sessao.add(recebida)
-    sessao.flush()
+    try:
+        #: PONTO DE SALVAMENTO, e não um `try` seco: uma violação de restrição
+        #: envenena a transação inteira no psycopg, e sem o aninhamento o
+        #: `rollback` levaria junto tudo o que a conferência já tinha feito.
+        with sessao.begin_nested():
+            sessao.add(recebida)
+            sessao.flush()
+    except IntegrityError as erro:
+        #: DUAS CONFERÊNCIAS AO MESMO TEMPO, da mesma pessoa na mesma fonte: as
+        #: duas passam pelo `select` acima, as duas apagam a anterior, e o
+        #: índice único deixa só uma entrar. A corrida é real — o Codex a
+        #: reproduziu no Postgres em 16/10/2026 — e é rara e inofensiva em
+        #: dado: nada foi gravado errado, uma das duas só precisa repetir.
+        #:
+        #: 409, E NÃO 500: 500 diz "o servidor quebrou" e manda procurar
+        #: defeito; 409 diz o que houve e o que fazer. Travar a linha antes não
+        #: resolveria o caso que importa — na PRIMEIRA conferência não há linha
+        #: anterior para travar.
+        raise Conflito(
+            "Outra conferência desta planilha está em andamento. Tente de novo."
+        ) from erro
 
     blob.guardar(recebida.caminho, dados, TIPO_DA_PLANILHA)
     return Guardada(id=planilha_id, caminho_substituido=substituido)
@@ -163,7 +183,22 @@ def recuperar(
         raise NaoEncontrado(
             "Esta planilha não está mais guardada. Confira o arquivo de novo."
         )
-    return blob.ler(recebida.caminho)
+    try:
+        return blob.ler(recebida.caminho)
+    except blob.ArmazenamentoDesligado as erro:
+        #: O BLOB CAIU ENTRE OS DOIS PEDIDOS. A linha existe e o byte não está
+        #: alcançável — para quem está na tela, é indistinguível de a planilha
+        #: ter sumido, e é essa a mensagem útil: conferir de novo resolve,
+        #: porque com o armazenamento desligado a conferência devolve
+        #: `planilha_id` nulo e a tela volta a mandar o arquivo.
+        #:
+        #: 503 SERIA PIOR AQUI. "O armazenamento não está configurado" é
+        #: verdade sobre o servidor e inútil para quem queria subir uma
+        #: planilha: não diz o que fazer, e o que fazer existe. Achado da
+        #: revisão do Codex em 16/10/2026.
+        raise NaoEncontrado(
+            "Esta planilha não está mais guardada. Confira o arquivo de novo."
+        ) from erro
 
 
 def descartar(sessao: Session, *, planilha_id: UUID) -> str | None:

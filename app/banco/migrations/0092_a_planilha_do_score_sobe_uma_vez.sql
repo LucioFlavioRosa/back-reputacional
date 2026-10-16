@@ -40,7 +40,19 @@
 --
 -- `on delete cascade` NO USUÁRIO: apagar uma pessoa não pode ser barrado por
 -- uma planilha que ela conferiu e não confirmou. O byte correspondente vira
--- órfão no contêiner, que é inofensivo e a retenção varre.
+-- órfão no contêiner.
+--
+-- NÃO HÁ VARREDURA DE ABANDONADAS, e isto é limitação conhecida, não descuido.
+-- Achado da revisão do Codex em 16/10/2026: uma versão anterior deste
+-- comentário dizia que "a retenção varre", e isso era falso — a
+-- `delete_retention_policy` da conta guarda o que JÁ foi apagado por 7 dias, e
+-- não apaga o que ninguém apagou.
+--
+-- O QUE DE FATO LIMITA O ESTRAGO é o índice único abaixo: no pior caso existe
+-- uma planilha pendente por fonte e por pessoa — hoje 5 fontes, e o teto por
+-- arquivo são 80 MB. Não é zero, e uma expiração por idade é o próximo passo
+-- honesto; ela não entrou aqui porque é outro desenho (quem varre? com que
+-- gatilho?) e misturá-lo faria um PR que ninguém consegue revisar.
 
 create table if not exists planilha_recebida (
     id         uuid primary key,
