@@ -240,6 +240,17 @@ class Configuracao(BaseSettings):
     #: seja recusado na porta, e não depois de ocupar a rede.
     blob_tamanho_maximo: int = 25 * 1024 * 1024
 
+    #: QUANTOS BYTES A LEITURA DE UMA PLANILHA PODE OCUPAR. Zero — o padrão —
+    #: quer dizer "deduza do contêiner": 40% do limite que o cgroup publica, ou
+    #: 192 MB onde não há cgroup. Ver `ingerir_mencoes.orcamento_de_leitura`.
+    #:
+    #: EXISTE PARA QUEM MEDIU O PRÓPRIO AMBIENTE. A dedução automática é
+    #: deliberadamente conservadora, e quem conhece o pico real do seu pod pode
+    #: liberar mais memória para a leitura — o que troca tempo de importação por
+    #: memória, nessa ordem. Acima do orçamento a planilha ainda é lida, pelo
+    #: caminho lento e de memória constante; nada é recusado por causa disto.
+    leitura_orcamento_de_memoria: int = 0
+
     @property
     def blob_ligado(self) -> bool:
         return bool(self.blob_url)
