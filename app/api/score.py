@@ -1426,8 +1426,22 @@ def conferir_planilha(
     #: transação deixaria a linha dela ressuscitada apontando para o vazio se
     #: algo voltasse atrás. Ver `planilha_do_score.Guardada`.
     tarefas.add_task(planilha_do_score.apagar_byte, guardada.caminho_substituido)
+    return _saida_da_conferencia(guardada.id, previsao, reconhecimento, assuntos)
+
+
+def _saida_da_conferencia(
+    planilha_id: UUID | None, previsao, reconhecimento, assuntos
+) -> ConferenciaSaida:
+    """A resposta da conferência, montada num lugar só.
+
+    DOIS CAMINHOS CHEGAM AQUI: a planilha que sobe de uma vez e a que sobe em
+    partes. A tela é a mesma nos dois, e tem de ser — a previsão, os veículos
+    novos e os assuntos não reconhecidos são o que a pessoa decide em cima. Duas
+    montagens divergiriam no primeiro campo novo, e a divergência apareceria
+    como "a tela do arquivo grande não mostra os assuntos".
+    """
     return ConferenciaSaida(
-        planilha_id=guardada.id,
+        planilha_id=planilha_id,
         previsao=[_saida_da_importacao(resumo) for resumo in previsao],
         veiculos_novos=[
             VeiculoNovoSaida(
@@ -1459,6 +1473,143 @@ def conferir_planilha(
             for item in assuntos.nao_ligados[:30]
         ],
     )
+
+
+class SubidaEmPartesSaida(BaseModel):
+    """O que o cliente precisa para subir a planilha em pedaços."""
+
+    planilha_id: UUID
+    tamanho_da_parte: int
+
+
+@rotas.post("/fontes/{codigo}/planilha/upload")
+def comecar_subida_em_partes(
+    sessao: Sessao,
+    usuario: UsuarioQueAdministraCadastros,
+    codigo: str,
+    tamanho: Annotated[int, Form()],
+) -> SubidaEmPartesSaida:
+    """Abre uma subida em partes para uma planilha grande.
+
+    POR QUE ESTE CAMINHO EXISTE, com os números medidos em 16/10/2026 no
+    ambiente implantado. O ingress do Container Apps encerra a requisição por
+    volta de 240 s, e isso NÃO é configurável. A telemetria do navegador
+    registrou, do mesmo arquivo e da mesma máquina:
+
+        1,42 MB  ->    4,1 s  -> 200
+        1,33 MB  ->   73,2 s  -> 200
+       10,53 MB  ->  212,4 s  -> 403   (o ingress desistindo)
+
+    A banda de subida variou de ~18 KB/s a ~350 KB/s na mesma hora. A 18 KB/s,
+    10,53 MB precisam de 390 s — e nunca cabem numa requisição.
+
+    EM PARTES, NENHUMA REQUISIÇÃO CHEGA PERTO DO TETO: 1 MB leva ~57 s no pior
+    caso medido. O tempo total pode ser de minutos; o que deixa de existir é a
+    requisição longa.
+
+    NÃO SUBSTITUI A SUBIDA DE UMA VEZ. Arquivo pequeno não paga onze idas, e um
+    ambiente sem armazenamento não tem onde montar — ali este caminho recusa com
+    nome e a tela usa o de sempre.
+    """
+    fonte = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == codigo))
+    if fonte is None:
+        raise NaoEncontrado("Fonte não encontrada.")
+    #: AS RECUSAS DE CADASTRO VALEM AQUI TAMBÉM: fonte interna e fonte inativa
+    #: não recebem planilha, e descobrir isso depois de onze partes subirem
+    #: seria fazer a pessoa pagar o upload inteiro para ouvir não.
+    #:
+    #: `recusar_a_fonte` E NÃO `recusar_o_que_nao_entra`: a segunda confere
+    #: também o tamanho e a assinatura de ZIP, e aqui não há byte para conferir.
+    #: Chamá-la com `b""` recusava toda planilha — catorze testes de uma vez.
+    ingerir_mencoes.recusar_a_fonte(fonte)
+    planilha_id = planilha_do_score.comecar(tamanho=tamanho)
+    return SubidaEmPartesSaida(
+        planilha_id=planilha_id, tamanho_da_parte=planilha_do_score.TAMANHO_DA_PARTE
+    )
+
+
+@rotas.put(
+    "/fontes/{codigo}/planilha/{planilha_id}/parte/{indice}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def subir_parte_da_planilha(
+    sessao: Sessao,
+    usuario: UsuarioQueAdministraCadastros,
+    codigo: str,
+    planilha_id: UUID,
+    indice: int,
+    parte: Annotated[UploadFile, File()],
+) -> None:
+    """Recebe uma parte. Não publica nada.
+
+    `PUT` E NÃO `POST` porque a operação é idempotente por índice: reenviar a
+    parte 3 substitui a parte 3, e é isso que permite ao cliente repetir a que
+    falhou sem recomeçar a subida.
+
+    A PARTE NÃO EXISTE PARA NINGUÉM até a montagem — são blocos não commitados
+    no armazenamento. Uma subida abandonada não deixa arquivo pela metade para
+    alguém ler, e o serviço descarta os blocos em sete dias.
+    """
+    fonte = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == codigo))
+    if fonte is None:
+        raise NaoEncontrado("Fonte não encontrada.")
+    planilha_do_score.receber_parte(
+        fonte=fonte, planilha_id=planilha_id, indice=indice, dados=parte.file.read()
+    )
+
+
+@rotas.post("/fontes/{codigo}/planilha/{planilha_id}/conferencia")
+def conferir_planilha_em_partes(
+    sessao: Sessao,
+    usuario: UsuarioQueAdministraCadastros,
+    codigo: str,
+    planilha_id: UUID,
+    tarefas: BackgroundTasks,
+    partes: Annotated[int, Form()],
+    nome: Annotated[str, Form()],
+) -> ConferenciaSaida:
+    """Junta as partes, confere, e guarda — a mesma resposta da outra conferência.
+
+    A ORDEM É A DA OUTRA, e isso é o que importa: montar, RECUSAR o que não
+    entra, conferir, e só então gravar a linha. Gravar antes de conferir
+    encheria o contêiner com os arquivos que não servem, que é o defeito que a
+    revisão do Codex já apontou uma vez neste mesmo caminho.
+
+    O BYTE JÁ ESTÁ PUBLICADO quando chegamos aqui, ao contrário da subida de uma
+    vez — é dele que se leu para conferir. Então qualquer recusa daqui para
+    frente precisa apagá-lo explicitamente, e é o que o `try` faz: sem isso,
+    cada planilha recusada deixaria até 80 MB no contêiner, e recusar é caso
+    normal, não excepcional.
+    """
+    fonte = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == codigo))
+    if fonte is None:
+        raise NaoEncontrado("Fonte não encontrada.")
+
+    conteudo = planilha_do_score.montar(
+        fonte=fonte, planilha_id=planilha_id, partes=partes
+    )
+    try:
+        ingerir_mencoes.recusar_o_que_nao_entra(fonte, conteudo)
+        previsao, reconhecimento, assuntos = ingerir_mencoes.conferir(
+            sessao, fonte, conteudo
+        )
+        guardada = planilha_do_score.registrar_montada(
+            sessao,
+            fonte=fonte,
+            usuario_id=usuario.id,
+            planilha_id=planilha_id,
+            nome=nome,
+            tamanho=len(conteudo),
+        )
+    except Exception:
+        #: O ARQUIVO MONTADO SAI JUNTO COM A RECUSA. `raise` sem isto deixaria
+        #: byte pago que nenhuma linha cita — e o id é aleatório, então nem
+        #: procurá-lo seria possível.
+        planilha_do_score.descartar_montagem(fonte=fonte, planilha_id=planilha_id)
+        raise
+
+    tarefas.add_task(planilha_do_score.apagar_byte, guardada.caminho_substituido)
+    return _saida_da_conferencia(guardada.id, previsao, reconhecimento, assuntos)
 
 
 @rotas.post("/fontes/{codigo}/planilha", status_code=status.HTTP_201_CREATED)

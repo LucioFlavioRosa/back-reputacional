@@ -339,6 +339,79 @@ def guardar(caminho: str, dados: bytes, tipo_conteudo: str) -> None:
     )
 
 
+def caminho_da_planilha_em_partes(*, fonte: str, planilha_id: UUID) -> str:
+    """Onde a planilha que sobe em partes se monta.
+
+        planilhas/<fonte>/<planilha_id>
+
+    SEM O NOME DO ARQUIVO, e é a única diferença em relação a
+    `caminho_da_planilha`. O nome só é conhecido quando a montagem termina, e o
+    caminho precisa existir antes — na primeira parte. Guardar o nome no
+    caminho exigiria repeti-lo em cada uma das onze requisições, ou um registro
+    de sessão de upload no banco; nenhum dos dois paga o que custa.
+
+    O NOME NÃO SE PERDE: ele vai para `planilha_recebida.nome`, que é de onde a
+    tela o lê. O que se perde é a legibilidade do contêiner quando um byte
+    sobra — e aí a fonte no caminho ainda diz de quem ele é.
+    """
+    return f"planilhas/{_sem_acento_nem_surpresa(fonte).lower()}/{planilha_id}"
+
+
+def guardar_parte(caminho: str, indice: int, dados: bytes) -> None:
+    """Põe uma parte no lugar, sem publicar o arquivo.
+
+    BLOCO NÃO COMMITADO, que é o mecanismo do próprio Blob para isto
+    (`stage_block`): as partes ficam associadas ao caminho final e o blob NÃO
+    EXISTE até `juntar_partes`. É o que faz uma montagem interrompida não deixar
+    arquivo pela metade para alguém ler — e o serviço descarta bloco não
+    commitado por conta própria em sete dias.
+
+    POR QUE NÃO UM BLOB POR PARTE: seriam onze blobs que alguém precisa apagar,
+    um estado a reconciliar quando a montagem falha no meio, e a leitura final
+    teria de baixar e concatenar tudo em memória. O bloco não commitado não
+    aparece, não precisa de limpeza e o serviço monta sem trafegar de novo.
+
+    O IDENTIFICADOR DO BLOCO É O ÍNDICE, com largura fixa e em base64 porque o
+    Blob exige isso — e todos os blocos de um blob têm de ter identificadores do
+    MESMO tamanho, senão o serviço recusa a lista. Largura fixa é o que garante.
+    """
+    _contenedor().get_blob_client(caminho).stage_block(
+        block_id=_id_do_bloco(indice), data=dados
+    )
+
+
+def juntar_partes(caminho: str, quantas: int, tipo_conteudo: str) -> None:
+    """Publica o arquivo a partir das partes, NA ORDEM.
+
+    A ORDEM VEM DA LISTA, e não da ordem de chegada: o cliente pode subir as
+    partes em paralelo ou repetir uma que falhou, e o arquivo montado é o mesmo.
+    É por isso que o índice entra no identificador do bloco em vez de o serviço
+    concatenar o que recebeu.
+
+    PARTE QUE FALTA FAZ O SERVIÇO RECUSAR a lista inteira, e é o desfecho certo:
+    um arquivo montado com um pedaço a menos seria um `.xlsx` corrompido, e o
+    erro apareceria como "não consegui abrir a planilha" — longe da causa.
+    """
+    from azure.storage.blob import BlobBlock
+
+    _contenedor().get_blob_client(caminho).commit_block_list(
+        [BlobBlock(block_id=_id_do_bloco(i)) for i in range(quantas)],
+        content_settings=ContentSettings(content_type=tipo_conteudo),
+    )
+
+
+def _id_do_bloco(indice: int) -> str:
+    """O índice como identificador de bloco: largura fixa, base64.
+
+    SEIS DÍGITOS dão 999.999 partes — com o pedaço de 1 MB que o front usa, isso
+    é mil vezes o teto de 80 MB da planilha. Largura fixa porque o Blob exige
+    que todos os blocos de um blob tenham identificadores do mesmo tamanho.
+    """
+    import base64
+
+    return base64.b64encode(f"{indice:06d}".encode()).decode()
+
+
 def ler(caminho: str) -> bytes:
     try:
         return _contenedor().download_blob(caminho).readall()

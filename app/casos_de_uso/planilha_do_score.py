@@ -61,7 +61,8 @@ from sqlalchemy.orm import Session
 
 from app.armazenamento import blob
 from app.banco.tabelas_score import PlanilhaRecebida, ScoreFonte
-from app.dominio.erros import Conflito, NaoEncontrado
+from app.casos_de_uso import ingerir_mencoes
+from app.dominio.erros import Conflito, NaoEncontrado, RegraViolada
 
 #: O que um `.xlsx` é para o Storage. A planilha NÃO passa por
 #: `blob.exigir_tipo_aceito`: aquela lista guarda material de agenda, cujo teto
@@ -102,6 +103,44 @@ def guardar(
     if not blob.ligado():
         return Guardada(id=None, caminho_substituido=None)
 
+    planilha_id = uuid4()
+    guardada = _registrar(
+        sessao,
+        fonte=fonte,
+        usuario_id=usuario_id,
+        planilha_id=planilha_id,
+        nome=nome,
+        tamanho=len(dados),
+        caminho=blob.caminho_da_planilha(
+            fonte=fonte.codigo, planilha_id=planilha_id, nome=nome
+        ),
+    )
+    blob.guardar(
+        blob.caminho_da_planilha(fonte=fonte.codigo, planilha_id=planilha_id, nome=nome),
+        dados,
+        TIPO_DA_PLANILHA,
+    )
+    return guardada
+
+
+def _registrar(
+    sessao: Session,
+    *,
+    fonte: ScoreFonte,
+    usuario_id: UUID,
+    planilha_id: UUID,
+    nome: str,
+    tamanho: int,
+    caminho: str,
+) -> Guardada:
+    """A LINHA, só ela — o byte é de quem chama.
+
+    EXTRAÍDA DE `guardar` PORQUE HÁ DOIS CAMINHOS ATÉ O BYTE e um só até a
+    linha. Quem sobe de uma vez grava a linha e depois o byte; quem sobe em
+    partes já tem o byte publicado quando chega aqui. A regra de substituir a
+    anterior, o ponto de salvamento e o 409 da corrida são os mesmos nos dois, e
+    duplicá-los seria garantir que divergissem.
+    """
     anterior = sessao.scalar(
         select(PlanilhaRecebida).where(
             PlanilhaRecebida.fonte_id == fonte.id,
@@ -115,15 +154,12 @@ def guardar(
         #: esbarra no índice único antes de o `delete` chegar ao banco.
         sessao.flush()
 
-    planilha_id = uuid4()
     recebida = PlanilhaRecebida(
         id=planilha_id,
         fonte_id=fonte.id,
-        caminho=blob.caminho_da_planilha(
-            fonte=fonte.codigo, planilha_id=planilha_id, nome=nome
-        ),
+        caminho=caminho,
         nome=nome,
-        tamanho=len(dados),
+        tamanho=tamanho,
         criado_por=usuario_id,
     )
     try:
@@ -148,8 +184,169 @@ def guardar(
             "Outra conferência desta planilha está em andamento. Tente de novo."
         ) from erro
 
-    blob.guardar(recebida.caminho, dados, TIPO_DA_PLANILHA)
     return Guardada(id=planilha_id, caminho_substituido=substituido)
+
+
+#: O PEDAÇO, e o número sai de medição, não de gosto.
+#:
+#: O TETO QUE MANDA é o do ingress do Container Apps: ~240 s por requisição, e
+#: ele NÃO é configurável. Medido no navegador dele em 16/10/2026, pela
+#: telemetria do próprio painel:
+#:
+#:     1,42 MB  ->    4,1 s  -> 200
+#:     1,33 MB  ->   73,2 s  -> 200
+#:    10,53 MB  ->  212,4 s  -> 403   (o ingress desistindo)
+#:    10,53 MB  ->  212,6 s  -> 403
+#:    10,53 MB  ->  227,4 s  -> 403
+#:
+#: A banda de subida varia de ~18 KB/s a ~350 KB/s na mesma máquina e na mesma
+#: hora. A 18 KB/s, 10,53 MB precisariam de 390 s e nunca caberiam em 240.
+#:
+#: 1 MB DÁ ~57 s NO PIOR CASO MEDIDO, quatro vezes de margem. Pedaço maior
+#: compra menos requisições e gasta a margem que justamente não existe; pedaço
+#: menor multiplica idas sem comprar segurança que já está em 4x.
+TAMANHO_DA_PARTE = 1 * 1024 * 1024
+
+
+def comecar(*, tamanho: int) -> UUID:
+    """Abre uma subida em partes e devolve o identificador dela.
+
+    NÃO TOCA NO BANCO NEM NO ARMAZENAMENTO, e isso é desenho. A linha de
+    `planilha_recebida` nasce quando a conferência termina, como no caminho de
+    uma vez só — nunca existe linha apontando para arquivo pela metade, e
+    `recuperar` não precisa aprender a distinguir uma coisa da outra.
+
+    O QUE SOBRA PARA GUARDAR O ESTADO É O PRÓPRIO CAMINHO NO BLOB, e os blocos
+    não commitados que vão se acumulando nele. Quem interromper a subida deixa
+    blocos invisíveis que o serviço descarta em sete dias.
+
+    O IDENTIFICADOR É DO SERVIDOR, e não do cliente: ele entra no caminho do
+    armazenamento, e caminho montado com valor que o cliente escolhe é como se
+    escreve em pasta alheia.
+
+    O TETO É CONFERIDO AQUI, pelo tamanho declarado — antes de onze requisições
+    acontecerem. A conferência real vem depois, sobre os bytes montados: o
+    declarado é uma afirmação do cliente e serve para poupar trabalho, não para
+    autorizar.
+    """
+    if not blob.ligado():
+        #: Sem armazenamento não há onde montar. A tela cai no envio de uma vez
+        #: só, que é o caminho que sempre existiu.
+        raise RegraViolada(
+            "Este ambiente não guarda arquivos, então a planilha precisa subir "
+            "de uma vez. Se ela for grande demais para isso, fale com quem "
+            "administra."
+        )
+    if tamanho <= 0:
+        raise RegraViolada("Diga o tamanho da planilha para começar a subida.")
+    if tamanho > ingerir_mencoes.TAMANHO_MAXIMO:
+        raise RegraViolada(
+            f"A planilha passa de {ingerir_mencoes.TAMANHO_MAXIMO // (1024 * 1024)} MB."
+        )
+    return uuid4()
+
+
+def receber_parte(*, fonte: ScoreFonte, planilha_id: UUID, indice: int, dados: bytes) -> None:
+    """Guarda uma parte, sem publicar o arquivo.
+
+    SEM CONSULTAR O BANCO, porque não há o que consultar: a subida em partes não
+    tem linha até terminar. O que protege o caminho é o identificador ser um
+    uuid4 do servidor — e os blocos ficarem NÃO COMMITADOS, logo invisíveis para
+    qualquer leitura até alguém montar.
+
+    A PARTE VAZIA É RECUSADA: o Blob aceita bloco de zero byte, e um deles no
+    meio da lista produz um `.xlsx` truncado que só falha na leitura, longe da
+    causa.
+    """
+    if not dados:
+        raise RegraViolada("A parte chegou vazia. Mande os bytes dela.")
+    if indice < 0:
+        raise RegraViolada("O índice da parte começa em zero.")
+    blob.guardar_parte(
+        blob.caminho_da_planilha_em_partes(fonte=fonte.codigo, planilha_id=planilha_id),
+        indice,
+        dados,
+    )
+
+
+def montar(*, fonte: ScoreFonte, planilha_id: UUID, partes: int) -> bytes:
+    """Junta as partes num arquivo e devolve os bytes.
+
+    DEVOLVE OS BYTES em vez de só publicar porque quem chama precisa deles para
+    conferir — e lê-los de volta do armazenamento é o que garante que o que vai
+    ser conferido é exatamente o que ficou gravado, e não o que o servidor
+    pensava ter montado.
+
+    PARTE FALTANDO VIRA RECUSA COM NOME, e não erro de leitura: o serviço recusa
+    a lista inteira quando um bloco não está lá, e sem esta tradução a pessoa
+    leria "não consegui abrir o arquivo como planilha" — que manda procurar
+    defeito no arquivo dela.
+    """
+    if partes <= 0:
+        raise RegraViolada("Diga quantas partes a planilha tem.")
+    caminho = blob.caminho_da_planilha_em_partes(
+        fonte=fonte.codigo, planilha_id=planilha_id
+    )
+    try:
+        blob.juntar_partes(caminho, partes, TIPO_DA_PLANILHA)
+    except Exception as erro:  # noqa: BLE001 - bloco ausente, expirado ou id errado
+        raise RegraViolada(
+            "Faltou alguma parte da planilha. Comece a subida de novo."
+        ) from erro
+    return blob.ler(caminho)
+
+
+def registrar_montada(
+    sessao: Session,
+    *,
+    fonte: ScoreFonte,
+    usuario_id: UUID,
+    planilha_id: UUID,
+    nome: str,
+    tamanho: int,
+) -> Guardada:
+    """A linha da planilha que subiu em partes — o byte já está publicado.
+
+    ORDEM INVERTIDA EM RELAÇÃO A `guardar`, e de propósito. Lá a linha vem antes
+    do byte para que um upload falho desfaça os dois. Aqui o byte precisa existir
+    ANTES, porque é dele que a conferência leu — e conferir é o que decide se
+    vale guardar.
+
+    O PREÇO É UM BYTE ÓRFÃO quando o 409 da corrida aparece aqui: o arquivo está
+    publicado e a linha não entra. Quem chama apaga nesse caso; é a razão de
+    `descartar_montagem` existir.
+    """
+    return _registrar(
+        sessao,
+        fonte=fonte,
+        usuario_id=usuario_id,
+        planilha_id=planilha_id,
+        nome=nome,
+        tamanho=tamanho,
+        caminho=blob.caminho_da_planilha_em_partes(
+            fonte=fonte.codigo, planilha_id=planilha_id
+        ),
+    )
+
+
+def descartar_montagem(*, fonte: ScoreFonte, planilha_id: UUID) -> None:
+    """Apaga o arquivo montado que não virou linha. Engole a falha.
+
+    CHAMADA QUANDO A CONFERÊNCIA RECUSA ou quando a corrida dá 409: nos dois o
+    byte está publicado e ninguém mais vai citá-lo. Sem isto, cada planilha
+    recusada deixaria até 80 MB no contêiner — e recusar é caso normal, não
+    excepcional.
+    """
+    try:
+        blob.apagar(
+            blob.caminho_da_planilha_em_partes(fonte=fonte.codigo, planilha_id=planilha_id)
+        )
+    except Exception:  # noqa: BLE001
+        _log.warning(
+            "Planilha montada e não registrada ficou no contêiner: fonte %s, id %s.",
+            fonte.codigo,
+            planilha_id,
+        )
 
 
 def recuperar(
