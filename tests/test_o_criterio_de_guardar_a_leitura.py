@@ -35,6 +35,15 @@ def sem_cache_do_cgroup():
     ingerir_mencoes._memoria_do_conteiner.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def sem_reserva_pendente():
+    """A reserva é estado de MÓDULO, e um teste que a deixe suja reprova o
+    seguinte com "não cabe" — falha que parece regressão e não é."""
+    yield
+    with ingerir_mencoes._reserva:
+        ingerir_mencoes._reservado = 0
+
+
 def _zip_com_abas(abas: dict[str, bytes]) -> bytes:
     """Um ZIP com as abas pedidas, e NADA MAIS.
 
@@ -113,7 +122,8 @@ def test_uma_dimensao_que_mente_para_BAIXO_nao_engana():
 def test_bytes_que_nao_sao_zip_nao_sabem_dizer():
     """E `None` é tratado como "não cabe" — adivinhar seria adivinhar para cima."""
     assert ingerir_mencoes.celulas_da_maior_aba(b"nao sou um zip") is None
-    assert ingerir_mencoes.vale_guardar(b"nao sou um zip") is False
+    assert ingerir_mencoes.custo_da_leitura(b"nao sou um zip") is None
+    assert ingerir_mencoes.vale_guardar(b"nao sou um zip") is None
 
 
 def test_zip_sem_aba_nenhuma_nao_sabe_dizer():
@@ -231,13 +241,169 @@ def test_o_BYTE_COMPRIMIDO_nao_participa_mais_da_decisao(monkeypatch):
     o que antes bastava para recusar o cache agora não é consultado.
     """
     conteudo = _zip_com_abas({"sheet1.xml": _aba("A1:T100")})
-    custo = 20 * 100 * ingerir_mencoes.MEMORIA_POR_CELULA
+    custo = ingerir_mencoes.custo_da_leitura(conteudo)
+    assert custo is not None
 
     monkeypatch.setattr(ingerir_mencoes, "orcamento_de_leitura", lambda: custo)
-    assert ingerir_mencoes.vale_guardar(conteudo) is True
+    assert ingerir_mencoes.vale_guardar(conteudo) == custo
 
     monkeypatch.setattr(ingerir_mencoes, "orcamento_de_leitura", lambda: custo - 1)
-    assert ingerir_mencoes.vale_guardar(conteudo) is False
+    assert ingerir_mencoes.vale_guardar(conteudo) is None
+
+
+# -- o texto, que mora fora da aba ------------------------------------------
+
+
+def _zip_com_texto(aba: bytes, quantas: int, unicas: int, bytes_do_sst: int) -> bytes:
+    """Um ZIP com `sharedStrings.xml` do tamanho e dos contadores pedidos.
+
+    O CABEÇALHO É O QUE IMPORTA aqui: `bytes_de_texto` lê o tamanho do arquivo
+    no diretório central e os dois contadores nos primeiros 2 KB. O corpo é
+    recheio.
+    """
+    cabeca = f'<?xml version="1.0"?><sst count="{quantas}" uniqueCount="{unicas}">'.encode()
+    corpo = b"<si><t>x</t></si>" * max(0, (bytes_do_sst - len(cabeca)) // 17)
+    saida = io.BytesIO()
+    with zipfile.ZipFile(saida, "w", zipfile.ZIP_DEFLATED) as pacote:
+        pacote.writestr("xl/worksheets/sheet1.xml", aba)
+        pacote.writestr("xl/sharedStrings.xml", cabeca + corpo + b"</sst>")
+    return saida.getvalue()
+
+
+def test_sem_sharedStrings_o_texto_nao_cobra_nada():
+    """O arquivo guarda o texto INLINE na aba, e o tamanho dela já o contou.
+
+    É o que o openpyxl escreve — e foi por isso que o primeiro experimento não
+    reproduziu o defeito do texto: ele gerava arquivos sem `sharedStrings`.
+    """
+    conteudo = _zip_com_abas({"sheet1.xml": _aba("A1:T100")})
+
+    assert ingerir_mencoes.bytes_de_texto(conteudo) == (0, 0)
+
+
+def test_o_texto_materializado_usa_a_razao_count_por_unique():
+    """A razão é o que a estimativa anterior não tinha.
+
+    1.000 células apontando para 10 textos: o arquivo guarda 10 e o leitor
+    materializa 1.000 — fator 100.
+    """
+    conteudo = _zip_com_texto(_aba("A1:A1000"), quantas=1000, unicas=10, bytes_do_sst=50_000)
+
+    materializado, unico = ingerir_mencoes.bytes_de_texto(conteudo)
+
+    assert unico == pytest.approx(50_000, rel=0.2)
+    assert materializado == pytest.approx(unico * 100, rel=0.2)
+
+
+def test_TEXTO_REPETIDO_cobra_mesmo_com_sharedStrings_minusculo():
+    """O caso que derrubou a correção óbvia, e a razão de existirem dois termos.
+
+    Somar `sharedStrings.file_size` — que foi a correção proposta na revisão —
+    não pega isto: com um texto só para todas as células o arquivo é minúsculo
+    e o custo continua, porque o calamine materializa uma string Python POR
+    CÉLULA. Medido: 0,00 MB de `sharedStrings` contra 19,1 MB de pico.
+    """
+    #: POUCAS CÉLULAS E MUITO TEXTO, que é a forma do defeito: com a aba grande
+    #: o termo de célula domina e a diferença fica em 1,8x — o teste passaria
+    #: mas não provaria nada. Aqui o texto é o assunto.
+    #:
+    #: Mesma aba, mesmo `sharedStrings`; só a RAZÃO muda.
+    sem_repeticao = _zip_com_texto(
+        _aba("A1:A1000"), quantas=1_000, unicas=1_000, bytes_do_sst=100_000
+    )
+    com_repeticao = _zip_com_texto(
+        _aba("A1:A1000"), quantas=1_000, unicas=1, bytes_do_sst=100_000
+    )
+
+    barato = ingerir_mencoes.custo_da_leitura(sem_repeticao)
+    caro = ingerir_mencoes.custo_da_leitura(com_repeticao)
+
+    assert barato is not None and caro is not None
+    #: 1.000 células contra 1 texto é fator 1.000 no termo materializado. Afirmo
+    #: 20x para não prender o coeficiente exato, que é calibragem e pode mudar.
+    assert caro > barato * 20, "a repetição não foi cobrada; o `file_size` sozinho enganou"
+
+
+def test_sharedStrings_sem_cabecalho_legivel_nao_sabe_dizer():
+    """Sem a razão não há como estimar, e estimar sem ela SUBESTIMA.
+
+    `None` manda a leitura para o caminho lento, que é o lado seguro.
+    """
+    saida = io.BytesIO()
+    with zipfile.ZipFile(saida, "w") as pacote:
+        pacote.writestr("xl/worksheets/sheet1.xml", _aba("A1:T100"))
+        pacote.writestr("xl/sharedStrings.xml", b"<sst>sem contadores</sst>")
+
+    assert ingerir_mencoes.bytes_de_texto(saida.getvalue()) is None
+    assert ingerir_mencoes.custo_da_leitura(saida.getvalue()) is None
+
+
+def test_o_custo_do_texto_longo_nao_e_mais_invisivel():
+    """A regressão que isto prende, com os números medidos.
+
+    Aba de 0,36 MB e `sharedStrings` de 95,57 MB custavam 287,7 MB de verdade e
+    eram estimados em 2,0 MB — erro de 141,8×. Só o termo de célula não vê isso.
+    """
+    aba = _aba("A1:E2000")  # 10.000 células, aba pequena
+    so_celulas = _zip_com_abas({"sheet1.xml": aba})
+    com_texto = _zip_com_texto(aba, quantas=10_000, unicas=10_000, bytes_do_sst=95_000_000)
+
+    sem = ingerir_mencoes.custo_da_leitura(so_celulas)
+    com = ingerir_mencoes.custo_da_leitura(com_texto)
+
+    assert sem is not None and com is not None
+    #: A ORDEM DE GRANDEZA é o que se afirma: o texto tem de dominar.
+    assert com > sem * 50
+
+
+# -- o orçamento é do processo, não do arquivo -------------------------------
+
+
+def test_duas_leituras_grandes_nao_tomam_duas_vezes_o_orcamento(monkeypatch):
+    """O defeito que a revisão achou: o critério era por ARQUIVO.
+
+    Duas leituras simultâneas na mesma réplica passavam as duas pelo mesmo
+    orçamento inteiro — `0,8 L` mais os ~88 MB já residentes. Num contêiner de
+    512 MiB são ~498 de 537 MB, e três passam claramente.
+
+    A SEGUNDA DEGRADA, não falha: vai pelo caminho lento, de memória constante.
+    """
+    conteudo = _zip_com_abas({"sheet1.xml": _aba("A1:T100")})
+    custo = ingerir_mencoes.custo_da_leitura(conteudo)
+    assert custo is not None
+
+    #: Orçamento para UMA leitura e meia: a segunda não cabe.
+    monkeypatch.setattr(ingerir_mencoes, "orcamento_de_leitura", lambda: int(custo * 1.5))
+
+    primeira = ingerir_mencoes.ArquivoLido(conteudo)
+    assert primeira._guardar is True
+    assert ingerir_mencoes.reservado_agora() == custo
+
+    segunda = ingerir_mencoes.ArquivoLido(conteudo)
+    assert segunda._guardar is False, "a segunda leitura tomou orçamento que não havia"
+    assert ingerir_mencoes.reservado_agora() == custo, "reservou sem conceder"
+
+    #: E A TERCEIRA CABE DEPOIS DE A PRIMEIRA MORRER, que é o que torna isto
+    #: admissão e não um teto permanente.
+    del primeira
+    import gc
+
+    gc.collect()
+    assert ingerir_mencoes.reservado_agora() == 0
+
+    terceira = ingerir_mencoes.ArquivoLido(conteudo)
+    assert terceira._guardar is True
+
+
+def test_o_caminho_lento_nao_reserva_nada(monkeypatch):
+    """Quem vai pelo openpyxl tem memória constante e não disputa orçamento."""
+    conteudo = _zip_com_abas({"sheet1.xml": _aba("A1:T100")})
+    monkeypatch.setattr(ingerir_mencoes, "orcamento_de_leitura", lambda: 1)
+
+    arquivo = ingerir_mencoes.ArquivoLido(conteudo)
+
+    assert arquivo._guardar is False
+    assert ingerir_mencoes.reservado_agora() == 0
 
 
 def test_o_clipping_da_clipei_cabe_a_partir_de_1_GiB_e_nao_cabe_em_512_MiB():
