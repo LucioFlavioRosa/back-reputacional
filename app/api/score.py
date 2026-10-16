@@ -1503,9 +1503,17 @@ def importar_planilha(
     if fonte is None:
         raise NaoEncontrado("Fonte não encontrada.")
 
-    if (arquivo is None) == (planilha_id is None):
+    #: DUAS RECUSAS, E NÃO UMA, porque são dois enganos diferentes e a pessoa
+    #: precisa saber qual cometeu. Uma condição só (`(a is None) == (b is
+    #: None)`) é mais curta e dizia "não os dois" para quem não mandou nenhum —
+    #: mensagem que manda procurar o erro no lugar errado.
+    if arquivo is not None and planilha_id is not None:
         raise RegraViolada(
             "Mande o arquivo OU o identificador da planilha conferida, não os dois."
+        )
+    if arquivo is None and planilha_id is None:
+        raise RegraViolada(
+            "Mande a planilha: o arquivo, ou o identificador que a conferência devolveu."
         )
 
     if planilha_id is not None:

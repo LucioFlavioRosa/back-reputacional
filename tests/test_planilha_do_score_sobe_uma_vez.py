@@ -324,9 +324,17 @@ def test_o_arquivo_e_o_identificador_juntos_sao_recusados(cliente, armazenamento
 
 
 def test_nem_arquivo_nem_identificador_e_recusado(cliente, armazenamento):
+    """E a mensagem é a DESTE engano.
+
+    Uma condição única cobria os dois casos com o mesmo texto, e dizia "não os
+    dois" para quem não mandou nenhum — mandando procurar o erro no lugar
+    errado. Afirmar o texto é o que impede a economia de voltar.
+    """
     resposta = cliente.post("/api/score/fontes/clipei/planilha", data={})
 
     assert resposta.status_code == 422
+    assert "Mande a planilha" in resposta.text
+    assert "não os dois" not in resposta.text
 
 
 # -- uma por fonte e por pessoa ----------------------------------------------
