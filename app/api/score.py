@@ -22,7 +22,16 @@ from datetime import date
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    Query,
+    UploadFile,
+    status,
+)
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, select
 
@@ -36,7 +45,7 @@ from app.banco.sessao import SessaoDoPedido
 from app.banco.tabelas_catalogo import CategoriaPublico, SubcategoriaPublico
 from app.banco.tabelas_score import Lente, ScoreConfig, ScoreFato, ScoreFonte, ScoreMesFonte
 from app.banco.tabelas_stakeholders import Instituicao
-from app.casos_de_uso import ingerir_mencoes
+from app.casos_de_uso import ingerir_mencoes, planilha_do_score
 from app.casos_de_uso.ler_sinais_da_lente import regua_dos_sinais
 from app.dominio.erros import Conflito, NaoEncontrado, RegraViolada
 from app.dominio.ingestao_score import rotulo_do_cargo
@@ -1196,6 +1205,10 @@ class ConferenciaSaida(BaseModel):
     #: pessoa leva para o fornecedor — ou para o cadastro, quando o tema existe
     #: e está desativado.
     assuntos_nao_reconhecidos: list[AssuntoNaoReconhecidoSaida] = []
+    #: O ARQUIVO JÁ ESTÁ GUARDADO, e a confirmação pode mandar este id em vez
+    #: dos bytes de novo. Nulo quando o ambiente não tem armazenamento — e aí a
+    #: tela manda o arquivo, como sempre fez. Ver `casos_de_uso/planilha_do_score`.
+    planilha_id: UUID | None = None
 
 
 #: A subcategoria de público que define a lente Mercado.
@@ -1374,8 +1387,9 @@ def conferir_planilha(
     usuario: UsuarioQueAdministraCadastros,
     codigo: str,
     arquivo: Annotated[UploadFile, File()],
+    tarefas: BackgroundTasks,
 ) -> ConferenciaSaida:
-    """Lê o export e diz o que a subida faria. NADA É GRAVADO.
+    """Lê o export, diz o que a subida faria, e GUARDA o arquivo.
 
     POR QUE ELA EXISTE. O dono do produto pediu que o veículo sem cadastro nasça
     junto com a subida, e pediu que a conta apareça antes — o que é o que torna
@@ -1386,15 +1400,34 @@ def conferir_planilha(
     AS RECUSAS ESTRUTURAIS APARECEM AQUI, antes de a pessoa escolher nada:
     arquivo que não abre, aba que falta, coluna que o cadastro espera e não
     existe. `app/api/erros.py` as traduz para 422.
+
+    GUARDAR VEM DEPOIS DE CONFERIR, e a ordem é a economia inteira: planilha
+    que a conferência recusa não chega a ocupar armazenamento. Guardar antes
+    encheria o contêiner justamente com os arquivos que não servem.
+
+    O `planilha_id` que sai daqui poupa à confirmação subir os mesmos bytes de
+    novo — 10,53 MB no clipping real da Clipei. Vem nulo quando o ambiente não
+    tem armazenamento, e aí a tela manda o arquivo, como sempre fez.
     """
     fonte = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == codigo))
     if fonte is None:
         raise NaoEncontrado("Fonte não encontrada.")
 
-    previsao, reconhecimento, assuntos = ingerir_mencoes.conferir(
-        sessao, fonte, arquivo.file.read()
+    conteudo = arquivo.file.read()
+    previsao, reconhecimento, assuntos = ingerir_mencoes.conferir(sessao, fonte, conteudo)
+    guardada = planilha_do_score.guardar(
+        sessao,
+        fonte=fonte,
+        usuario_id=usuario.id,
+        nome=arquivo.filename or "planilha.xlsx",
+        dados=conteudo,
     )
+    #: DEPOIS DO COMMIT: apagar o byte da conferência anterior dentro da
+    #: transação deixaria a linha dela ressuscitada apontando para o vazio se
+    #: algo voltasse atrás. Ver `planilha_do_score.Guardada`.
+    tarefas.add_task(planilha_do_score.apagar_byte, guardada.caminho_substituido)
     return ConferenciaSaida(
+        planilha_id=guardada.id,
         previsao=[_saida_da_importacao(resumo) for resumo in previsao],
         veiculos_novos=[
             VeiculoNovoSaida(
@@ -1433,7 +1466,9 @@ def importar_planilha(
     sessao: Sessao,
     usuario: UsuarioQueAdministraCadastros,
     codigo: str,
-    arquivo: Annotated[UploadFile, File()],
+    tarefas: BackgroundTasks,
+    arquivo: Annotated[UploadFile | None, File()] = None,
+    planilha_id: Annotated[UUID | None, Form()] = None,
     veiculos_a_criar: Annotated[str | None, Form()] = None,
 ) -> list[ImportacaoSaida]:
     """Lê o export do fornecedor e substitui os meses que ele traz.
@@ -1446,17 +1481,54 @@ def importar_planilha(
     MESMA PERMISSÃO DA CALIBRAÇÃO, e pelo mesmo motivo: isto muda o número que
     todo mundo lê na reunião. Ler o Score basta ter o portal; mexer no que o
     alimenta é da coordenação.
+
+    DOIS JEITOS DE DIZER QUAL PLANILHA, e um só por pedido:
+
+      * `planilha_id` — a que a conferência já guardou. É o caminho normal, e
+        poupa subir os mesmos bytes duas vezes;
+      * `arquivo` — os bytes. Continua existindo porque o ambiente pode não ter
+        armazenamento, e porque quem chama a API direto não passou por
+        conferência nenhuma.
+
+    OS DOIS JUNTOS SÃO RECUSA, não precedência. Escolher um em silêncio
+    gravaria o arquivo que a pessoa não quis, no mês de todo mundo, e a resposta
+    pareceria certa.
+
+    A RELEITURA CONTINUA INTEIRA. `planilha_id` devolve os BYTES guardados —
+    nenhuma conclusão da conferência é reaproveitada. Veículo por veículo e tema
+    por tema são reconferidos contra o cadastro deste instante, que é a razão de
+    a importação de subtemas pedir o arquivo de novo e continua valendo aqui.
     """
     fonte = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == codigo))
     if fonte is None:
         raise NaoEncontrado("Fonte não encontrada.")
 
-    return [
+    if (arquivo is None) == (planilha_id is None):
+        raise RegraViolada(
+            "Mande o arquivo OU o identificador da planilha conferida, não os dois."
+        )
+
+    if planilha_id is not None:
+        conteudo = planilha_do_score.recuperar(
+            sessao, planilha_id=planilha_id, fonte=fonte, usuario_id=usuario.id
+        )
+    else:
+        conteudo = arquivo.file.read()
+
+    resumos = [
         _saida_da_importacao(resumo)
         for resumo in ingerir_mencoes.ingerir(
-            sessao, fonte, arquivo.file.read(), _nomes_autorizados(veiculos_a_criar)
+            sessao, fonte, conteudo, _nomes_autorizados(veiculos_a_criar)
         )
     ]
+    #: A LINHA SAI NA TRANSAÇÃO, o byte depois dela: gravou, a planilha
+    #: guardada cumpriu o papel e não há por que mantê-la ocupando o contêiner.
+    if planilha_id is not None:
+        tarefas.add_task(
+            planilha_do_score.apagar_byte,
+            planilha_do_score.descartar(sessao, planilha_id=planilha_id),
+        )
+    return resumos
 
 
 def _nomes_autorizados(bruto: str | None) -> tuple[str, ...]:
