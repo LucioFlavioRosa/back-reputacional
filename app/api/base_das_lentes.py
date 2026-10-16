@@ -14,6 +14,13 @@ diz de onde cada linha veio, e a tela avisa quais estão fora do cálculo.
 O JORNALISTA SÓ PARA QUEM VÊ O DIRETÓRIO. Na Imprensa, `autor` é cadastro de
 terceiros — a mesma regra que o dossiê aplica (`ve_diretorio`). Sem a
 permissão, a coluna vem vazia e a opção de filtro não é oferecida.
+
+QUEM DECIDE ISSO É `causa_da_lente.nomeia_o_diretorio`, e não um `codigo ==
+"imprensa"` escrito aqui: a mesma pergunta já governava as abas do cartão "Onde
+está a causa", e duas cópias de uma regra de acesso divergem na primeira
+mudança. O critério é a ORIGEM do dado — cadastro de terceiros (o jornalista)
+contra o perfil que veio dentro da menção (o `Publicador` da Approach, o autor
+da Bites), que é aberto nas duas lentes de rede.
 """
 
 from __future__ import annotations
@@ -30,6 +37,7 @@ from app.banco import repositorio_lentes, repositorio_score
 from app.banco.sessao import SessaoDoPedido
 from app.banco.tabelas_catalogo import BlocoTema, MacroTema, Tema
 from app.banco.tabelas_score import Mencao, ScoreFonte
+from app.dominio.causa_da_lente import nomeia_o_diretorio
 from app.dominio.erros import NaoEncontrado, RegraViolada
 from app.dominio.score import FiltroDeMencoes
 from app.dominio.texto import normalizar
@@ -203,7 +211,7 @@ def listar_mencoes(
         uf=uf,
         subtema=subtema,
         #: O JORNALISTA não filtra quem não o vê — senão a contagem o revelaria.
-        autor=autor if (usuario.ve_diretorio or codigo != "imprensa") else None,
+        autor=autor if (usuario.ve_diretorio or not nomeia_o_diretorio(codigo)) else None,
         empresa=empresa,
         tema_n1=tema_n1,
         tema_n2=tema_n2,
@@ -253,7 +261,7 @@ def listar_mencoes(
         .limit(tamanho)
     )
     desligadas = set(calibracao.fontes_desligadas or ())
-    esconde_autor = codigo == "imprensa" and not usuario.ve_diretorio
+    esconde_autor = nomeia_o_diretorio(codigo) and not usuario.ve_diretorio
     itens = [
         MencaoDaBase(
             id=str(m.id),
@@ -318,7 +326,7 @@ def opcoes_da_base(
         )
         return [str(valor) for valor, _ in sessao.execute(consulta) if valor]
 
-    esconde_autor = codigo == "imprensa" and not usuario.ve_diretorio
+    esconde_autor = nomeia_o_diretorio(codigo) and not usuario.ve_diretorio
     return OpcoesDaBase(
         fontes=distintos(ScoreFonte.nome),
         sentimentos=distintos(Mencao.sentimento),

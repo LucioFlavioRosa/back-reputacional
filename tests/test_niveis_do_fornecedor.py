@@ -20,9 +20,11 @@ O QUE ESTES TESTES PROTEGEM:
   consolidada da Bites o `Atributo` contradizia o `N1` em 1.418 das 2.842 linhas
   (migration 0079). Quem tirou o `atributo` do mapeamento da Bites foi a
   migration **0069**; a 0079 trocou o `tema` de `Categoria` para `N3`;
-* os dois campos que carregam taxonomia, `tema` e `subtema`. O segundo está em
-  `CAMPOS` e é lido, mas nenhum fornecedor o mapeia hoje — é caminho aberto, e
-  prendê-lo agora custa um teste;
+* os dois campos que carregam taxonomia, `tema` e `subtema`. O segundo passou
+  a ser mapeado pela **0091**, na `approach_sl` (`Tags (subtema)`, o nível
+  abaixo de `Tags (tema)`) — foi a primeira fonte a usá-lo, e as duas colunas
+  daquele fornecedor são de níveis vizinhos de propósito. Ver
+  `tests/test_mapeamento_da_approach.py`;
 * o vocabulário fechado: um nome de campo fora de `CAMPOS` faz a subida ser
   recusada por "campo desconhecido", e o lugar de descobrir isso é aqui, não no
   upload do dono do produto.

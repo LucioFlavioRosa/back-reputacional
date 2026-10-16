@@ -22,6 +22,15 @@ servem a quem chega pelo CONTÊINER — "onde está o Q&A de tarifa", "o que o
 mercado mandou em setembro" — e uma pasta de uuid não responde nenhuma das
 duas sem consultar o banco.
 
+E UMA QUARTA, que não é acervo:
+
+    planilhas/{fonte}/{planilha_id}-{nome}
+
+A planilha do Score esperando entre a conferência e a confirmação. É a única
+árvore cujo conteúdo nasce para ser APAGADO — as três de cima guardam o que o
+painel afirma, esta guarda o que ele está prestes a ler. Por isso é rasa: não
+há acervo para navegar, só byte em trânsito.
+
 O `arquivo_id` no começo do nome é o que garante unicidade — dois arquivos com
 o mesmo nome na mesma agenda não se sobrescrevem. O nome vem junto porque
 quem abre o Storage Explorer para conferir precisa reconhecer o que está
@@ -235,6 +244,32 @@ def caminho_da_referencia(
     )
 
 
+def caminho_da_planilha(*, fonte: str, planilha_id: UUID, nome: str) -> str:
+    """Onde a planilha do Score espera entre a conferência e a confirmação.
+
+        planilhas/<fonte>/<planilha_id>-<nome>
+
+    É UMA QUARTA ÁRVORE, e rasa de propósito. As outras três organizam acervo —
+    alguém abre o contêiner procurando "o Q&A de tarifa". Esta guarda
+    PASSAGEIRO: o byte existe entre dois cliques da mesma pessoa e some quando
+    a importação termina. Afundar isso numa árvore navegável seria prometer
+    permanência a um arquivo que nasce para ser apagado.
+
+    A FONTE NO CAMINHO é o que torna o contêiner legível quando algo sobra: um
+    byte órfão em `planilhas/clipei/` se explica sozinho. Sem ela, restaria uma
+    pasta de uuids que só o banco sabe ler — e o banco é justamente o que pode
+    ter perdido a linha.
+
+    O `planilha_id` vem antes do nome porque `guardar` grava com
+    `overwrite=False`: é ele que garante caminho novo quando a mesma pessoa
+    confere duas vezes o mesmo arquivo da mesma fonte.
+    """
+    return (
+        f"planilhas/{_sem_acento_nem_surpresa(fonte).lower()}"
+        f"/{planilha_id}-{_sem_acento_nem_surpresa(nome)}"
+    )
+
+
 def _servico(endereco: str) -> BlobServiceClient:
     """O cliente do Storage, pelo caminho que o ambiente oferece.
 
@@ -277,6 +312,19 @@ def _contenedor():
 
 class ArmazenamentoDesligado(RuntimeError):
     """O Blob não está configurado. Estado previsto, não defeito."""
+
+
+def ligado() -> bool:
+    """Há armazenamento neste ambiente?
+
+    EXISTE PARA QUEM PODE SEGUIR SEM ELE. `guardar` e `ler` explodem com
+    `ArmazenamentoDesligado` porque sem byte não há material — ali a falha é a
+    resposta certa. Mas a planilha do Score só usa o Blob para ECONOMIZAR um
+    upload: ela precisa perguntar antes e seguir em frente, e perguntar com um
+    `try/except` em volta de `guardar` confundiria "não está configurado" com
+    "a conta recusou", que são coisas diferentes e pedem respostas diferentes.
+    """
+    return obter_configuracao().blob_ligado
 
 
 def guardar(caminho: str, dados: bytes, tipo_conteudo: str) -> None:
