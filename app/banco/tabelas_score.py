@@ -277,3 +277,29 @@ class PlanilhaRecebida(Tabela):
         PG_UUID(as_uuid=True), ForeignKey("usuario.id")
     )
     criado_em: Mapped[datetime] = mapped_column(server_default=func.now())
+    #: NULO ENQUANTO A PLANILHA SOBE EM PARTES. Ver a `0094`.
+    #:
+    #: É O QUE DÁ DONO À SUBIDA: com a linha gravada desde a abertura, "de quem
+    #: é esta subida" deixa de ser pergunta sem resposta — e a resposta é a
+    #: verificação. Sem ela o `planilha_id` valia como senha ao portador.
+    #:
+    #: E É O QUE IMPEDE BYTE ÓRFÃO: a linha nasce antes do arquivo, então uma
+    #: conferência que falhe em qualquer ponto — inclusive no commit, que roda
+    #: depois de a rota retornar — deixa uma linha INCOMPLETA apontando para o
+    #: byte, em vez de um arquivo que ninguém sabe que existe.
+    #:
+    #: TIMESTAMP E NÃO BOOLEANO: diz também QUANDO terminou, que é o que uma
+    #: varredura por idade vai precisar para separar subida abandonada de
+    #: planilha conferida e esquecida.
+    completa_em: Mapped[datetime | None] = mapped_column(nullable=True)
+
+    @property
+    def subindo(self) -> bool:
+        """A planilha ainda está chegando em partes?
+
+        PROPRIEDADE E NÃO COMPARAÇÃO SOLTA: `completa_em is None` espalhado por
+        quatro lugares é a forma de um deles divergir. E a leitura de
+        `recuperar` depende disto — confirmar uma planilha que ainda sobe leria
+        um arquivo que não existe, ou pior, um pela metade.
+        """
+        return self.completa_em is None

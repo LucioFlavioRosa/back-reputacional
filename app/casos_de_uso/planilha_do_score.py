@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import delete, select
@@ -132,6 +133,7 @@ def _registrar(
     nome: str,
     tamanho: int,
     caminho: str,
+    completa: bool = True,
 ) -> Guardada:
     """A LINHA, só ela — o byte é de quem chama.
 
@@ -161,6 +163,10 @@ def _registrar(
         nome=nome,
         tamanho=tamanho,
         criado_por=usuario_id,
+        #: `None` É O ESTADO "SUBINDO". A subida de uma vez só grava a linha
+        #: depois de conferir, então ela nasce completa; a em partes nasce
+        #: incompleta e `concluir` a fecha. Ver a `0094`.
+        completa_em=datetime.now(UTC) if completa else None,
     )
     try:
         #: PONTO DE SALVAMENTO, e não um `try` seco: uma violação de restrição
@@ -208,26 +214,59 @@ def _registrar(
 TAMANHO_DA_PARTE = 1 * 1024 * 1024
 
 
-def comecar(*, tamanho: int) -> UUID:
-    """Abre uma subida em partes e devolve o identificador dela.
+def _partes_maximas() -> int:
+    """O máximo de partes que uma subida pode ter, derivado e não escolhido.
 
-    NÃO TOCA NO BANCO NEM NO ARMAZENAMENTO, e isso é desenho. A linha de
-    `planilha_recebida` nasce quando a conferência termina, como no caminho de
-    uma vez só — nunca existe linha apontando para arquivo pela metade, e
-    `recuperar` não precisa aprender a distinguir uma coisa da outra.
+    EXISTE PORQUE `partes` VEM DO CLIENTE. Sem este limite,
+    `partes=1_000_000_000` na conferência fazia o processo construir a lista de
+    blocos ANTES de falar com o Azure — uma requisição derrubava a réplica.
+    Achado da revisão do Codex em 16/10/2026.
 
-    O QUE SOBRA PARA GUARDAR O ESTADO É O PRÓPRIO CAMINHO NO BLOB, e os blocos
-    não commitados que vão se acumulando nele. Quem interromper a subida deixa
-    blocos invisíveis que o serviço descarta em sete dias.
+    FUNÇÃO E NÃO CONSTANTE porque `TAMANHO_DA_PARTE` é trocado nos testes, e uma
+    constante calculada no import ficaria com o valor antigo — o teto deixaria
+    de valer exatamente onde se quer provar que ele vale.
+    """
+    return ingerir_mencoes.TAMANHO_MAXIMO // TAMANHO_DA_PARTE + 1
+
+
+def comecar(
+    sessao: Session, *, fonte: ScoreFonte, usuario_id: UUID, nome: str, tamanho: int
+) -> Guardada:
+    """Abre uma subida em partes: GRAVA A LINHA e devolve o identificador.
+
+    A LINHA NASCE AQUI, e esta é a correção de quatro defeitos de uma vez —
+    todos achados pela revisão do Codex em 16/10/2026, quando esta função não
+    tocava no banco e o estado da subida era só o caminho no Blob:
+
+      1. O IDENTIFICADOR VALIA COMO SENHA AO PORTADOR. Sem linha, `receber_parte`
+         não tinha o que consultar para saber de quem era a subida — então
+         aceitava parte de qualquer sessão, e quem conhecesse o uuid de outra
+         pessoa registrava a planilha dela no próprio nome.
+
+      2. O TETO DECLARADO NÃO LIMITAVA. Declarar 1 MB e enviar oitenta partes de
+         1 MB montava 80 MB. Agora o declarado fica GRAVADO, e é contra ele que
+         cada parte é conferida.
+
+      3. O BYTE FICAVA ÓRFÃO. A linha vinha depois do arquivo, e o commit da
+         sessão roda DEPOIS de a rota retornar (`banco/sessao.py`): um commit
+         que falhasse desfazia a linha e deixava o arquivo publicado. Com a
+         linha nascendo antes, o pior caso é uma linha INCOMPLETA apontando para
+         o byte — que é o que permite achá-lo.
+
+      4. Nada limitava quantas subidas uma pessoa abria. O índice único de
+         (fonte, criado_por) passa a significar "uma subida em voo por fonte e
+         por pessoa".
+
+    SUBSTITUI A ANTERIOR, como a conferência de uma vez só faz: abrir subida nova
+    descarta a planilha pendente daquela pessoa naquela fonte, byte inclusive.
+    Quem chama põe `caminho_substituido` numa tarefa de fundo.
+
+    O NOME VEM AGORA, e não no fim: ele é coluna `not null`, e a linha existe
+    desde já. Pedi-lo no último passo obrigaria um valor de mentira no meio.
 
     O IDENTIFICADOR É DO SERVIDOR, e não do cliente: ele entra no caminho do
     armazenamento, e caminho montado com valor que o cliente escolhe é como se
     escreve em pasta alheia.
-
-    O TETO É CONFERIDO AQUI, pelo tamanho declarado — antes de onze requisições
-    acontecerem. A conferência real vem depois, sobre os bytes montados: o
-    declarado é uma afirmação do cliente e serve para poupar trabalho, não para
-    autorizar.
     """
     if not blob.ligado():
         #: Sem armazenamento não há onde montar. A tela cai no envio de uma vez
@@ -243,79 +282,7 @@ def comecar(*, tamanho: int) -> UUID:
         raise RegraViolada(
             f"A planilha passa de {ingerir_mencoes.TAMANHO_MAXIMO // (1024 * 1024)} MB."
         )
-    return uuid4()
-
-
-def receber_parte(*, fonte: ScoreFonte, planilha_id: UUID, indice: int, dados: bytes) -> None:
-    """Guarda uma parte, sem publicar o arquivo.
-
-    SEM CONSULTAR O BANCO, porque não há o que consultar: a subida em partes não
-    tem linha até terminar. O que protege o caminho é o identificador ser um
-    uuid4 do servidor — e os blocos ficarem NÃO COMMITADOS, logo invisíveis para
-    qualquer leitura até alguém montar.
-
-    A PARTE VAZIA É RECUSADA: o Blob aceita bloco de zero byte, e um deles no
-    meio da lista produz um `.xlsx` truncado que só falha na leitura, longe da
-    causa.
-    """
-    if not dados:
-        raise RegraViolada("A parte chegou vazia. Mande os bytes dela.")
-    if indice < 0:
-        raise RegraViolada("O índice da parte começa em zero.")
-    blob.guardar_parte(
-        blob.caminho_da_planilha_em_partes(fonte=fonte.codigo, planilha_id=planilha_id),
-        indice,
-        dados,
-    )
-
-
-def montar(*, fonte: ScoreFonte, planilha_id: UUID, partes: int) -> bytes:
-    """Junta as partes num arquivo e devolve os bytes.
-
-    DEVOLVE OS BYTES em vez de só publicar porque quem chama precisa deles para
-    conferir — e lê-los de volta do armazenamento é o que garante que o que vai
-    ser conferido é exatamente o que ficou gravado, e não o que o servidor
-    pensava ter montado.
-
-    PARTE FALTANDO VIRA RECUSA COM NOME, e não erro de leitura: o serviço recusa
-    a lista inteira quando um bloco não está lá, e sem esta tradução a pessoa
-    leria "não consegui abrir o arquivo como planilha" — que manda procurar
-    defeito no arquivo dela.
-    """
-    if partes <= 0:
-        raise RegraViolada("Diga quantas partes a planilha tem.")
-    caminho = blob.caminho_da_planilha_em_partes(
-        fonte=fonte.codigo, planilha_id=planilha_id
-    )
-    try:
-        blob.juntar_partes(caminho, partes, TIPO_DA_PLANILHA)
-    except Exception as erro:  # noqa: BLE001 - bloco ausente, expirado ou id errado
-        raise RegraViolada(
-            "Faltou alguma parte da planilha. Comece a subida de novo."
-        ) from erro
-    return blob.ler(caminho)
-
-
-def registrar_montada(
-    sessao: Session,
-    *,
-    fonte: ScoreFonte,
-    usuario_id: UUID,
-    planilha_id: UUID,
-    nome: str,
-    tamanho: int,
-) -> Guardada:
-    """A linha da planilha que subiu em partes — o byte já está publicado.
-
-    ORDEM INVERTIDA EM RELAÇÃO A `guardar`, e de propósito. Lá a linha vem antes
-    do byte para que um upload falho desfaça os dois. Aqui o byte precisa existir
-    ANTES, porque é dele que a conferência leu — e conferir é o que decide se
-    vale guardar.
-
-    O PREÇO É UM BYTE ÓRFÃO quando o 409 da corrida aparece aqui: o arquivo está
-    publicado e a linha não entra. Quem chama apaga nesse caso; é a razão de
-    `descartar_montagem` existir.
-    """
+    planilha_id = uuid4()
     return _registrar(
         sessao,
         fonte=fonte,
@@ -326,16 +293,184 @@ def registrar_montada(
         caminho=blob.caminho_da_planilha_em_partes(
             fonte=fonte.codigo, planilha_id=planilha_id
         ),
+        #: SUBINDO: é a ausência de `completa_em` que diz isso, e é ela que faz
+        #: `recuperar` recusar confirmar uma planilha que ainda chega.
+        completa=False,
     )
 
 
-def descartar_montagem(*, fonte: ScoreFonte, planilha_id: UUID) -> None:
-    """Apaga o arquivo montado que não virou linha. Engole a falha.
+def _subida_em_voo(
+    sessao: Session, *, planilha_id: UUID, fonte: ScoreFonte, usuario_id: UUID
+) -> PlanilhaRecebida:
+    """A subida que aquela pessoa abriu naquela fonte, ou recusa.
 
-    CHAMADA QUANDO A CONFERÊNCIA RECUSA ou quando a corrida dá 409: nos dois o
-    byte está publicado e ninguém mais vai citá-lo. Sem isto, cada planilha
-    recusada deixaria até 80 MB no contêiner — e recusar é caso normal, não
-    excepcional.
+    AS QUATRO CONDIÇÕES SÃO A SEGURANÇA DESTE CAMINHO, e cada uma recusa uma
+    coisa diferente:
+
+      * existir — `PUT` com uuid nunca aberto gastava armazenamento sem criar
+        estado nenhum;
+      * `criado_por` — é O defeito que a revisão achou. Sem isto o uuid valia
+        como senha ao portador: conhecê-lo bastava para mandar parte na subida
+        de outra pessoa e registrar a planilha dela no próprio nome;
+      * `fonte_id` — a planilha da Clipei não se monta pela rota da Approach;
+      * ESTAR SUBINDO — mandar parte para uma planilha já conferida
+        sobrescreveria, pelo `commit_block_list`, um arquivo que alguém está
+        prestes a confirmar.
+
+    A MESMA MENSAGEM NOS QUATRO CASOS, de propósito: distinguir "não é sua" de
+    "não existe" conta a quem tem o id se ele acertou o número de outra pessoa.
+    """
+    recebida = sessao.scalar(
+        select(PlanilhaRecebida).where(
+            PlanilhaRecebida.id == planilha_id,
+            PlanilhaRecebida.fonte_id == fonte.id,
+            PlanilhaRecebida.criado_por == usuario_id,
+            PlanilhaRecebida.completa_em.is_(None),
+        )
+    )
+    if recebida is None:
+        raise NaoEncontrado(
+            "Esta subida não está em andamento. Comece a subida de novo."
+        )
+    return recebida
+
+
+def receber_parte(
+    sessao: Session,
+    *,
+    fonte: ScoreFonte,
+    planilha_id: UUID,
+    usuario_id: UUID,
+    indice: int,
+    dados: bytes,
+) -> None:
+    """Guarda uma parte da subida DAQUELA PESSOA. Não publica nada.
+
+    CONSULTA O BANCO ANTES DE ESCREVER, e é essa a correção: antes não havia o
+    que consultar e a rota aceitava parte de qualquer sessão para qualquer uuid.
+    Ver `_subida_em_voo`.
+
+    OS DOIS TETOS SÃO O QUE SOBROU DO ABUSO. A rota da parte é isenta do limite
+    genérico de corpo — tem de ser, senão a primeira parte seria recusada — e o
+    servidor lê a parte inteira na memória. Sem estes dois, uma sessão autorizada
+    mandava partes de qualquer tamanho e acumulava além do teto:
+
+      * cada parte cabe em `TAMANHO_DA_PARTE`;
+      * o índice cabe no que o TAMANHO DECLARADO comporta.
+
+    Juntos eles limitam o arquivo montado a pouco mais do que foi declarado — e o
+    declarado já foi conferido contra os 80 MB na abertura. A conferência final
+    ainda mede os bytes de verdade, que é o que de fato autoriza.
+
+    A PARTE VAZIA É RECUSADA: o Blob aceita bloco de zero byte, e um deles no
+    meio da lista produz um `.xlsx` truncado que só falha na leitura, longe da
+    causa.
+    """
+    subida = _subida_em_voo(
+        sessao, planilha_id=planilha_id, fonte=fonte, usuario_id=usuario_id
+    )
+    esperadas = _partes_esperadas(subida.tamanho)
+    if not dados:
+        raise RegraViolada("A parte chegou vazia. Mande os bytes dela.")
+    if indice < 0 or indice >= esperadas:
+        raise RegraViolada(
+            "Esta parte está fora do tamanho que a subida declarou. "
+            "Comece a subida de novo."
+        )
+    #: PARTE CHEIA, EXCETO A ÚLTIMA — e esta regra é o que faz a aritmética do
+    #: teto fechar. Com ela, o arquivo montado não passa de
+    #: `partes_esperadas * TAMANHO_DA_PARTE`, que é o declarado arredondado para
+    #: cima; sem ela, partes menores permitiriam mais partes que o esperado e o
+    #: total voltaria a ser ilimitado.
+    #:
+    #: O SERVIDOR DITA O TAMANHO na abertura, então o cliente não tem o que
+    #: adivinhar. A recusa diz o número para quem estiver escrevendo outro
+    #: cliente.
+    ultima = indice == esperadas - 1
+    if len(dados) > TAMANHO_DA_PARTE or (not ultima and len(dados) != TAMANHO_DA_PARTE):
+        raise RegraViolada(
+            f"Cada parte tem {TAMANHO_DA_PARTE} bytes, menos a última. "
+            "Comece a subida de novo."
+        )
+    blob.guardar_parte(subida.caminho, indice, dados)
+
+
+def _partes_esperadas(tamanho_declarado: int) -> int:
+    """Quantas partes um arquivo daquele tamanho tem, para o teto do índice."""
+    return -(-tamanho_declarado // TAMANHO_DA_PARTE)
+
+
+def montar(
+    sessao: Session,
+    *,
+    fonte: ScoreFonte,
+    planilha_id: UUID,
+    usuario_id: UUID,
+    partes: int,
+) -> tuple[PlanilhaRecebida, bytes]:
+    """Junta as partes da subida daquela pessoa e devolve a linha e os bytes.
+
+    DEVOLVE OS BYTES em vez de só publicar porque quem chama precisa deles para
+    conferir — e lê-los de volta do armazenamento é o que garante que o que vai
+    ser conferido é exatamente o que ficou gravado, e não o que o servidor
+    pensava ter montado.
+
+    `partes` VEM DO CLIENTE, e por isso tem dois tetos: `PARTES_MAXIMAS`, que é
+    derivado do teto da planilha, e o que o tamanho DECLARADO desta subida
+    comporta. Sem eles, `partes=1_000_000_000` construía a lista de blocos na
+    memória antes de qualquer chamada ao Azure.
+
+    PARTE FALTANDO VIRA RECUSA COM NOME, e não erro de leitura: o serviço recusa
+    a lista inteira quando um bloco não está lá, e sem esta tradução a pessoa
+    leria "não consegui abrir o arquivo como planilha" — que manda procurar
+    defeito no arquivo dela.
+    """
+    subida = _subida_em_voo(
+        sessao, planilha_id=planilha_id, fonte=fonte, usuario_id=usuario_id
+    )
+    if partes <= 0:
+        raise RegraViolada("Diga quantas partes a planilha tem.")
+    if partes > _partes_maximas() or partes > _partes_esperadas(subida.tamanho):
+        raise RegraViolada(
+            "Esta contagem de partes não corresponde ao tamanho que a subida "
+            "declarou. Comece a subida de novo."
+        )
+    try:
+        blob.juntar_partes(subida.caminho, partes, TIPO_DA_PLANILHA)
+    except Exception as erro:  # noqa: BLE001 - bloco ausente, expirado ou id errado
+        raise RegraViolada(
+            "Faltou alguma parte da planilha. Comece a subida de novo."
+        ) from erro
+    return subida, blob.ler(subida.caminho)
+
+
+def concluir(subida: PlanilhaRecebida, *, tamanho: int) -> None:
+    """Marca a subida como completa, com o tamanho REAL do arquivo montado.
+
+    O DECLARADO ERA AFIRMAÇÃO DO CLIENTE e serviu para dimensionar os tetos; o
+    que fica gravado é o que o arquivo tem. Guardar o declarado faria a tela
+    dizer um número que ninguém mediu.
+
+    DEPOIS DE CONFERIR, nunca antes: enquanto `completa_em` é nulo, `recuperar`
+    recusa confirmar — e é isso que impede confirmar uma planilha que a
+    conferência acabou de recusar.
+    """
+    subida.tamanho = tamanho
+    subida.completa_em = datetime.now(UTC)
+
+
+def descartar_montagem(*, fonte: ScoreFonte, planilha_id: UUID) -> None:
+    """Apaga o arquivo montado de uma subida que foi recusada. Engole a falha.
+
+    ENGOLE PORQUE O ERRO ORIGINAL É O QUE IMPORTA: relançar daqui esconderia a
+    recusa da conferência — que é o que a pessoa precisa ler — por uma falha de
+    limpeza, que é problema nosso.
+
+    E O BYTE NÃO SE PERDE DE VISTA quando isto falha, que é a diferença em
+    relação à versão anterior: a linha da subida existe desde a abertura e
+    continua apontando para o caminho. Antes, falhar aqui deixava um arquivo que
+    nenhuma linha citava — e o id era aleatório, então nem procurá-lo era
+    possível. Uma varredura por idade (ainda não existe) acha pelo `criado_em`.
     """
     try:
         blob.apagar(
@@ -343,7 +478,8 @@ def descartar_montagem(*, fonte: ScoreFonte, planilha_id: UUID) -> None:
         )
     except Exception:  # noqa: BLE001
         _log.warning(
-            "Planilha montada e não registrada ficou no contêiner: fonte %s, id %s.",
+            "Byte de subida recusada ficou no contêiner: fonte %s, id %s. "
+            "A linha de planilha_recebida ainda o cita.",
             fonte.codigo,
             planilha_id,
         )
@@ -374,6 +510,15 @@ def recuperar(
             PlanilhaRecebida.id == planilha_id,
             PlanilhaRecebida.fonte_id == fonte.id,
             PlanilhaRecebida.criado_por == usuario_id,
+            #: A QUARTA CONDIÇÃO, e ela entrou com a subida em partes: confirmar
+            #: uma planilha que AINDA SOBE leria um arquivo que não existe —
+            #: `commit_block_list` não rodou — ou, se rodou e a conferência
+            #: falhou depois, um arquivo que a conferência recusou.
+            #:
+            #: A MESMA MENSAGEM dos outros três casos, e o conselho serve:
+            #: conferir de novo é o que resolve, porque a conferência é o passo
+            #: que marca a subida como completa.
+            PlanilhaRecebida.completa_em.is_not(None),
         )
     )
     if recebida is None:
