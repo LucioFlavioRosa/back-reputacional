@@ -1531,11 +1531,24 @@ def importar_planilha(
     ]
     #: A LINHA SAI NA TRANSAÇÃO, o byte depois dela: gravou, a planilha
     #: guardada cumpriu o papel e não há por que mantê-la ocupando o contêiner.
+    #:
+    #: OS DOIS RAMOS LIMPAM, e antes só o do identificador limpava — o do
+    #: arquivo terminava com sucesso deixando linha e byte guardados para
+    #: sempre. Mandar o arquivo é caminho legítimo e permanente, não só da
+    #: janela de deploy: a Calibração importa sem conferir, e a tela recai no
+    #: arquivo sempre que não tem a conferência em mão.
+    #:
+    #: POR ID QUANDO HÁ ID, por dono e fonte quando não há: a diferença não é
+    #: estilo. Uma conferência concorrente pode ter trocado a linha no meio do
+    #: caminho, e aí apagar por dono e fonte levaria a planilha NOVA, que a
+    #: pessoa ainda quer confirmar.
     if planilha_id is not None:
-        tarefas.add_task(
-            planilha_do_score.apagar_byte,
-            planilha_do_score.descartar(sessao, planilha_id=planilha_id),
+        descartado = planilha_do_score.descartar(sessao, planilha_id=planilha_id)
+    else:
+        descartado = planilha_do_score.descartar_pendente(
+            sessao, fonte=fonte, usuario_id=usuario.id
         )
+    tarefas.add_task(planilha_do_score.apagar_byte, descartado)
     return resumos
 
 
