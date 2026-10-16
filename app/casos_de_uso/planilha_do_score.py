@@ -216,6 +216,51 @@ def descartar(sessao: Session, *, planilha_id: UUID) -> str | None:
     return caminho
 
 
+def descartar_pendente(
+    sessao: Session, *, fonte: ScoreFonte, usuario_id: UUID
+) -> str | None:
+    """Tira a pendência daquela pessoa naquela fonte, sem precisar do id.
+
+    POR QUE EXISTE, em uma frase: a importação PELO ARQUIVO também precisa
+    limpar, e ela não tem identificador nenhum para citar.
+
+    O CAMINHO QUE VAZAVA. Quem manda `arquivo` na confirmação cai no ramo que
+    não conhece `planilha_id`, e esse ramo não descartava nada: a importação
+    terminava com sucesso e a linha mais o byte ficavam guardados para sempre —
+    até a pessoa conferir aquela fonte de novo, o que pode nunca acontecer.
+    Achado da revisão do Codex em 16/10/2026, enquanto se conferia a janela de
+    front velho com back novo; mas o vazamento NÃO é da janela, e sim
+    permanente, porque mandar o arquivo é caminho legítimo e definitivo (a
+    Calibração importa sem conferir, e a tela recai no arquivo sempre que não
+    tem a conferência em mão).
+
+    DESCARTAR É O CERTO, e não um efeito colateral tolerado: quem acabou de
+    importar aquela fonte por arquivo tornou obsoleta qualquer conferência
+    pendente dela — a previsão daquela conferência foi calculada contra um
+    banco que já não existe.
+
+    POR DONO E POR FONTE, que é a granularidade do índice único da `0092`:
+    apaga no máximo uma linha, e nunca a de outra pessoa nem a de outra fonte.
+
+    NÃO SUBSTITUI `descartar`. O ramo do identificador continua apagando POR
+    ID, de propósito: se uma conferência concorrente trocou a linha no meio do
+    caminho, apagar por dono e fonte levaria a planilha NOVA — a que a pessoa
+    acabou de conferir e ainda quer confirmar. Por id, a troca só faz o
+    descarte não achar nada, que é o desfecho inofensivo.
+    """
+    recebida = sessao.scalar(
+        select(PlanilhaRecebida).where(
+            PlanilhaRecebida.fonte_id == fonte.id,
+            PlanilhaRecebida.criado_por == usuario_id,
+        )
+    )
+    if recebida is None:
+        return None
+    caminho = recebida.caminho
+    sessao.execute(delete(PlanilhaRecebida).where(PlanilhaRecebida.id == recebida.id))
+    return caminho
+
+
 def apagar_byte(caminho: str | None) -> None:
     """Apaga o byte de uma planilha que já não tem linha. DEPOIS do commit.
 

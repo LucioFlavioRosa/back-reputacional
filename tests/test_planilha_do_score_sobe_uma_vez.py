@@ -371,6 +371,97 @@ def test_conferir_de_novo_substitui_a_anterior_byte_inclusive(
     ), "sobrou mais de uma planilha pendente para a mesma pessoa e fonte"
 
 
+# -- importar pelo arquivo também limpa --------------------------------------
+
+
+def _importar_pelo_arquivo(cliente, conteudo: bytes, codigo: str = "clipei", **extra):
+    return cliente.post(
+        f"/api/score/fontes/{codigo}/planilha",
+        files={"arquivo": ("export.xlsx", conteudo, _TIPO_XLSX)},
+        data=extra,
+    )
+
+
+def test_importar_pelo_arquivo_descarta_a_planilha_que_estava_guardada(
+    cliente, sessao, armazenamento
+):
+    """O ramo do arquivo não descartava nada, e o vazamento era PERMANENTE.
+
+    A importação terminava com sucesso e a linha mais o byte ficavam guardados
+    até a pessoa conferir aquela fonte de novo — o que pode nunca acontecer.
+    Achado na revisão do Codex de 16/10/2026 ao conferir a janela de front
+    velho com back novo; mas mandar o arquivo é caminho legítimo e definitivo,
+    então o buraco não era da janela.
+    """
+    planilha_id = _conferir(cliente, _planilha()).json()["planilha_id"]
+    caminho = sessao.get(PlanilhaRecebida, planilha_id).caminho
+    assert caminho in armazenamento, "a conferência não guardou; o teste não prova nada"
+
+    resposta = _importar_pelo_arquivo(cliente, _planilha())
+
+    assert resposta.status_code == 201, resposta.text
+    assert sessao.get(PlanilhaRecebida, planilha_id) is None, "a linha ficou"
+    assert caminho not in armazenamento, "o byte ficou ocupando o contêiner"
+
+
+def test_importar_pelo_arquivo_nao_mexe_na_planilha_de_outra_pessoa(
+    cliente, sessao, armazenamento, outra_pessoa
+):
+    """A limpeza é por dono, que é a granularidade do índice único da `0092`.
+
+    Sem o filtro de dono, importar por arquivo apagaria a conferência pendente
+    de um colega na mesma fonte — e ele descobriria na hora de confirmar.
+    """
+    planilha_id = _conferir(cliente, _planilha()).json()["planilha_id"]
+    recebida = sessao.get(PlanilhaRecebida, planilha_id)
+    recebida.criado_por = outra_pessoa.id
+    caminho_dela = recebida.caminho
+    sessao.flush()
+
+    resposta = _importar_pelo_arquivo(cliente, _planilha())
+
+    assert resposta.status_code == 201, resposta.text
+    assert sessao.get(PlanilhaRecebida, planilha_id) is not None, "apagou a do colega"
+    assert caminho_dela in armazenamento, "apagou o byte do colega"
+
+
+def test_importar_pelo_arquivo_nao_mexe_na_planilha_de_outra_fonte(
+    cliente, sessao, armazenamento
+):
+    """E é por fonte também: a pendência da irmã não é afetada."""
+    irma = sessao.scalar(
+        select(ScoreFonte).where(ScoreFonte.codigo == "clipei_investidores")
+    )
+    assert irma is not None, "sem a fonte irmã este teste não prova nada"
+
+    da_irma = _conferir(cliente, _planilha(), codigo="clipei_investidores").json()[
+        "planilha_id"
+    ]
+    caminho_da_irma = sessao.get(PlanilhaRecebida, da_irma).caminho
+
+    resposta = _importar_pelo_arquivo(cliente, _planilha())
+
+    assert resposta.status_code == 201, resposta.text
+    assert sessao.get(PlanilhaRecebida, da_irma) is not None, "apagou a da irmã"
+    assert caminho_da_irma in armazenamento, "apagou o byte da irmã"
+
+
+def test_importar_pelo_arquivo_sem_nada_guardado_nao_quebra(
+    cliente, sessao, armazenamento
+):
+    """Caminho mais comum de todos: importar sem ter conferido antes.
+
+    `descartar_pendente` devolve `None` e `apagar_byte` sai na primeira linha.
+    Um `None` chegando ao Blob seria 500 em cima de uma importação que deu
+    certo.
+    """
+    assert sessao.scalar(select(func.count()).select_from(PlanilhaRecebida)) == 0
+
+    resposta = _importar_pelo_arquivo(cliente, _planilha())
+
+    assert resposta.status_code == 201, resposta.text
+
+
 # -- sem armazenamento, tudo segue como antes --------------------------------
 
 
