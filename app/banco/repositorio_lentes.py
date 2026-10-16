@@ -30,6 +30,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.banco.repositorio_score import (
+    ATRIBUTO_SEM_PREFIXO,
     SENTIMENTO_DO_CLIMA,
     condicoes_do_filtro,
     primeiro_dia,
@@ -654,7 +655,7 @@ def _por_coluna_de_texto(
     mes: date,
     calibracao: Calibracao,
     filtro: FiltroDeMencoes | None = None,
-    quantos: int = 6,
+    quantos: int | None = 6,
     ordenar_pelo_negativo: bool = False,
 ) -> list[dict]:
     """O corte do mês por uma coluna de texto da própria menção.
@@ -704,6 +705,55 @@ def _por_coluna_de_texto(
     )
     return [
         {rotulo: valor, "positivo": pos, "neutro": neu, "negativo": neg}
+        for valor, pos, neu, neg in sessao.execute(consulta)
+    ]
+
+
+def _por_taxonomia(
+    sessao: Session,
+    nivel: str,
+    lente_id: int,
+    mes: date,
+    calibracao: Calibracao,
+    filtro: FiltroDeMencoes | None = None,
+    quantos: int | None = None,
+) -> list[dict]:
+    """O corte do mês pelo N2 (tema estratégico) ou pelo N3 (subtema) do
+    cadastro, contado por sentimento.
+
+    PELO `tema_id` DA MENÇÃO, e só por ele — o mesmo caminho dos filtros
+    `tema_n2`/`tema_n3` (`condicoes_do_filtro`). Agrupar por outro caminho (o
+    texto do fornecedor, por exemplo) faria a coluna contar menções que o
+    clique nela não recorta. Menção sem vínculo fica fora, como o nulo das
+    outras abas; quanto falta vai na ficha.
+    """
+    nome = MacroTema.nome if nivel == "tema_n2" else Tema.nome
+    consulta = (
+        select(
+            nome,
+            func.count().filter(Mencao.sentimento == "pos"),
+            func.count().filter(Mencao.sentimento == "neu"),
+            func.count().filter(Mencao.sentimento == "neg"),
+        )
+        .select_from(Mencao)
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .join(Tema, Tema.id == Mencao.tema_id)
+    )
+    if nivel == "tema_n2":
+        consulta = consulta.join(MacroTema, MacroTema.id == Tema.macro_tema_id)
+    consulta = (
+        consulta.where(
+            ScoreFonte.lente_id == lente_id,
+            Mencao.mes == primeiro_dia(mes),
+            *so_fontes_ligadas(calibracao),
+            *condicoes_do_filtro(filtro),
+        )
+        .group_by(nome)
+        .order_by(func.count().desc(), nome.asc())
+        .limit(quantos)
+    )
+    return [
+        {"rotulo": valor, "positivo": pos, "neutro": neu, "negativo": neg}
         for valor, pos, neu, neg in sessao.execute(consulta)
     ]
 
@@ -784,6 +834,7 @@ def cortes_da_causa(
     filtro: FiltroDeMencoes | None = None,
     quantos: int = 6,
     ve_diretorio: bool = True,
+    dimensoes: list[Dimensao] | None = None,
 ) -> list[CorteDaCausa]:
     """Os cortes que explicam o mês desta lente — um por aba de "onde está a
     causa", cada um com as suas linhas e com quanto da dimensão o mês tem.
@@ -801,7 +852,10 @@ def cortes_da_causa(
     escolhida, as abas passam a explicar AQUELA UF. Descer um nível é refazer a
     mesma pergunta num pedaço menor, e não olhar o mês inteiro de outro jeito.
     """
-    dimensoes = dimensoes_do_recorte(codigo_da_lente, ve_diretorio)
+    #: `dimensoes` VEM DE QUEM CHAMA quando o painel de aprofundamento tem abas
+    #: próprias (ver `dimensoes_do_aprofundamento`); sem ela, as do cartão.
+    if dimensoes is None:
+        dimensoes = dimensoes_do_recorte(codigo_da_lente, ve_diretorio)
     if not dimensoes:
         return []
     presencas_por_campo, total = presenca_das_dimensoes(
@@ -812,8 +866,9 @@ def cortes_da_causa(
     #: vazio, para a aba existir e dizer que a fonte não classificou. Ver
     #: `dimensoes_do_recorte`: a fileira de abas é a mesma em todo mês.
     cortes: list[CorteDaCausa] = []
-    for dimensao in dimensoes_do_recorte(codigo_da_lente, ve_diretorio):
+    for dimensao in dimensoes:
         presenca = presencas[dimensao.campo]
+        limite = None if dimensao.todos else quantos
         if not presenca.preenchidas:
             #: SEM UM VALOR SEQUER, nem se consulta: a aba sai vazia, e a medida
             #: que já está na mão é o que explica por quê.
@@ -833,16 +888,24 @@ def cortes_da_causa(
                     sessao, lente_id, mes, calibracao, filtro, quantos
                 )
             ]
+        elif dimensao.chave in ("tema_n2", "tema_n3"):
+            linhas = _por_taxonomia(
+                sessao, dimensao.chave, lente_id, mes, calibracao, filtro, limite
+            )
         else:
             linhas = _por_coluna_de_texto(
                 sessao,
-                getattr(Mencao, dimensao.campo),
+                #: O ATRIBUTO SEM O PREFIXO "7. ": a mesma pílula para o mock e
+                #: para a planilha real, e o clique filtra pelo mesmo rótulo.
+                ATRIBUTO_SEM_PREFIXO
+                if dimensao.chave == "atributo"
+                else getattr(Mencao, dimensao.campo),
                 "rotulo",
                 lente_id,
                 mes,
                 calibracao,
                 filtro,
-                quantos,
+                limite,
             )
         cortes.append(CorteDaCausa(dimensao, linhas, presenca, total))
     return cortes

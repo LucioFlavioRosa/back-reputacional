@@ -41,10 +41,13 @@ ROTULO_DA_DIMENSAO: dict[str, str] = {
     "autor": "Autor",
     "uf": "UF",
     "tier": "Tier",
-    "atributo": "Atributo",
+    #: O ATRIBUTO DA CLIPEI É O N1 DA AEGEA — os 7 atributos reputacionais
+    #: (Governança, Eficiência Operacional e Qualidade…), por pedido do dono do
+    #: produto. A planilha real o traz com prefixo ("7. Prosperidade…").
+    "atributo": "N1 Atributo Reputacional",
     "tema_n1": "Pilar (N1)",
-    "tema_n2": "Tema estratégico (N2)",
-    "tema_n3": "Subtema (N3)",
+    "tema_n2": "N2 Tema estratégico",
+    "tema_n3": "N3 Subtema",
     "sentimento": "Sentimento",
 }
 
@@ -74,6 +77,10 @@ class Dimensao:
     #: pelo nome esconderia da Sociedade um dado que é dela, ou publicaria o da
     #: Imprensa. É a mesma pergunta que `_nomeia_o_diretorio` faz dos painéis.
     nomeia_o_diretorio: bool = False
+    #: TODOS OS VALORES, sem o corte dos seis maiores. Para a taxonomia da Aegea
+    #: (7 atributos, ~41 temas estratégicos, 104 subtemas): é um vocabulário
+    #: FECHADO, e cortar o sétimo atributo esconderia justamente um dos sete.
+    todos: bool = False
 
 
 @dataclass(frozen=True)
@@ -179,6 +186,38 @@ DIMENSOES_POR_LENTE: dict[str, tuple[Dimensao, ...]] = {
 #:
 #: E VALE PARA TODAS AS LENTES, e para os dois lugares onde as abas aparecem: o
 #: cartão da tela e o painel de aprofundamento.
+#: AS ABAS DO APROFUNDAMENTO — o painel que abre ao clicar num dado (a coluna da
+#: Evolução, uma barra de tema) —, quando a lente pede abas próprias ali.
+#:
+#: NA IMPRENSA, A TAXONOMIA DA AEGEA, na ordem em que ela desce, por pedido do
+#: dono do produto: N1 (os 7 atributos reputacionais, da coluna Atributo da
+#: Clipei), N2 (os temas estratégicos) e N3 (os subtemas). N2 e N3 saem do
+#: vínculo da menção com o cadastro (`tema_id`, gravado na ingestão desde o
+#: `temas_da_mencao`): é o mesmo caminho que o filtro `tema_n2`/`tema_n3` usa, e
+#: por isso o clique numa coluna recorta exatamente o que a coluna contou.
+#:
+#: O CARTÃO "ONDE ESTÁ A CAUSA" DA SÍNTESE CONTINUA com as abas de
+#: `DIMENSOES_POR_LENTE`: o pedido foi para o painel, não para o cartão.
+DIMENSOES_DO_APROFUNDAMENTO: dict[str, tuple[Dimensao, ...]] = {
+    "imprensa": (
+        Dimensao("atributo", "N1 Atributo Reputacional", "atributo", todos=True),
+        Dimensao("tema_n2", "N2 Temas estratégicos", "tema_id", todos=True),
+        Dimensao("tema_n3", "N3 Subtemas", "tema_id", todos=True),
+    ),
+}
+
+
+def dimensoes_do_aprofundamento(
+    codigo_da_lente: str, ve_diretorio: bool = True
+) -> list[Dimensao]:
+    """As abas do painel de aprofundamento: as próprias da lente, quando ela as
+    declara, e senão as mesmas do cartão "Onde está a causa"."""
+    proprias = DIMENSOES_DO_APROFUNDAMENTO.get(codigo_da_lente)
+    if proprias is None:
+        return dimensoes_do_recorte(codigo_da_lente, ve_diretorio)
+    return [d for d in proprias if ve_diretorio or not d.nomeia_o_diretorio]
+
+
 def dimensoes_do_recorte(codigo_da_lente: str, ve_diretorio: bool = True) -> list[Dimensao]:
     """Os cortes que esta lente oferece, na ordem em que ela se explica.
 

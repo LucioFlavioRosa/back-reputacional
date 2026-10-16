@@ -40,7 +40,12 @@ from app.banco.sessao import SessaoDoPedido
 from app.banco.tabelas_score import Mencao
 from app.casos_de_uso.ler_sinais_da_lente import ler_sinais, regua_dos_sinais
 from app.dominio import frases_de_sinais as frases
-from app.dominio.causa_da_lente import DIMENSOES_POR_LENTE, ROTULO_DA_DIMENSAO
+from app.dominio.causa_da_lente import (
+    DIMENSOES_DO_APROFUNDAMENTO,
+    DIMENSOES_POR_LENTE,
+    ROTULO_DA_DIMENSAO,
+    dimensoes_do_aprofundamento,
+)
 from app.dominio.erros import NaoEncontrado
 from app.dominio.lentes import (
     Conceito,
@@ -893,6 +898,7 @@ def _onde_esta_a_causa(
     filtro: FiltroDeMencoes | None = None,
     ja_usadas: FiltroDeMencoes | None = None,
     ve_diretorio: bool = True,
+    aprofundamento: bool = False,
 ) -> list[BlocoSaida]:
     """As abas do cartão "Onde está a causa": o mesmo mês, cortado por cada
     dimensão que o explica.
@@ -918,7 +924,18 @@ def _onde_esta_a_causa(
     mais negativo" já publica o perfil que mais pesou, pela mesma razão.
     """
     cortes = repositorio_lentes.cortes_da_causa(
-        sessao, lente.codigo, lente.id, mes, calibracao, filtro, ve_diretorio=ve_diretorio
+        sessao,
+        lente.codigo,
+        lente.id,
+        mes,
+        calibracao,
+        filtro,
+        ve_diretorio=ve_diretorio,
+        #: NO PAINEL DE APROFUNDAMENTO, as abas próprias da lente (na Imprensa,
+        #: N1 › N2 › N3); no cartão da Síntese, as de sempre.
+        dimensoes=(
+            dimensoes_do_aprofundamento(lente.codigo, ve_diretorio) if aprofundamento else None
+        ),
     )
     #: DENTRO DE "UF: RJ" NÃO SE OFERECE UF DE NOVO, e é esta linha que faz o
     #: empilhamento ter fim: a dimensão já usada daria uma única barra de 100% e
@@ -1018,9 +1035,13 @@ def _trilha_do_recorte(codigo_da_lente: str, filtro: FiltroDeMencoes) -> list[Pa
     #: vieram à cabeça. `subtema` na Imprensa, `empresa` em qualquer lente cuja
     #: lista não a traga: aplicados pelo servidor e invisíveis na trilha. Um
     #: degrau invisível não dá para remover.
-    da_lente = [d.chave for d in DIMENSOES_POR_LENTE.get(codigo_da_lente, ())]
+    #: A TAXONOMIA PRIMEIRO, quando a lente desce por ela (N1 › N2 › N3): é a
+    #: sequência que o painel de aprofundamento oferece, e a trilha se lê igual.
+    proprias = DIMENSOES_DO_APROFUNDAMENTO.get(codigo_da_lente, ())
+    do_cartao = DIMENSOES_POR_LENTE.get(codigo_da_lente, ())
+    da_lente = list(dict.fromkeys(d.chave for d in (*proprias, *do_cartao)))
     ordem = da_lente + [chave for chave in ROTULO_DA_DIMENSAO if chave not in da_lente]
-    rotulos = {d.chave: d.rotulo for d in DIMENSOES_POR_LENTE.get(codigo_da_lente, ())}
+    rotulos = {d.chave: d.rotulo for d in (*do_cartao, *proprias)}
     return [
         PassoDaTrilha(
             chave=chave,
@@ -2335,6 +2356,7 @@ def obter_recorte(
             filtro,
             ja_usadas=filtro,
             ve_diretorio=usuario.ve_diretorio,
+            aprofundamento=True,
         ),
         itens_do_recorte=_materias_recentes(sessao, lente, alvo, calibracao, filtro),
     )

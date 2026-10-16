@@ -146,12 +146,10 @@ def test_o_pilar_sem_divergencia_e_o_recorte_pelo_atributo(sessao):
     calibracao = repositorio_score.calibracao_vigente(sessao)
     lente = _lente(sessao, "imprensa")
     # As duas menções de Governança vêm SÓ pelo atributo, uma com o prefixo do
-    # export real e outra sem — o recorte do dossiê precisa das duas grafias.
-    governanca = sum(
-        repositorio_score.impacto_do_recorte(
-            sessao, lente.id, MES, calibracao, FiltroDeMencoes(atributo=valor)
-        )
-        for valor in ("1. Governança", "Governança")
+    # export real e outra sem — e o filtro pelo nome limpo alcança as duas
+    # grafias (é o rótulo que a aba N1 do painel mostra e o clique manda).
+    governanca = repositorio_score.impacto_do_recorte(
+        sessao, lente.id, MES, calibracao, FiltroDeMencoes(atributo="Governança")
     )
     assert pilares["governanca"]["impacto"] == round(governanca, 1)
     assert pilares["governanca"]["volume"] == 2
@@ -232,11 +230,8 @@ def test_o_mes_anterior_agrupado_no_banco_da_o_mesmo_impacto_do_recorte(sessao):
 
     calibracao = repositorio_score.calibracao_vigente(sessao)
     lente = _lente(sessao, "imprensa")
-    governanca_em_abril = sum(
-        repositorio_score.impacto_do_recorte(
-            sessao, lente.id, abril, calibracao, FiltroDeMencoes(atributo=valor)
-        )
-        for valor in ("1. Governança", "Governança")
+    governanca_em_abril = repositorio_score.impacto_do_recorte(
+        sessao, lente.id, abril, calibracao, FiltroDeMencoes(atributo="Governança")
     )
     assert pilares["governanca"]["impactoMesAnterior"] == round(governanca_em_abril, 1)
     tema = next(
@@ -291,3 +286,51 @@ def test_pelo_http_lente_fora_da_consulta_e_404(cliente):
         f"/api/score/lentes/sociedade/consulta?mes={TEXTO_DO_MES}"
     )
     assert resposta.status_code == 404
+
+
+# -- o painel de aprofundamento da Imprensa: N1 › N2 › N3 -----------------------
+
+
+def _recorte(sessao, **filtro):
+    from app.api.lentes import obter_recorte
+
+    parametros = dict(
+        tier=None, veiculo=None, atributo=None, tema=None, perfil_autor=None, uf=None,
+        subtema=None, autor=None, empresa=None, tema_n1=None, tema_n2=None, tema_n3=None,
+        sentimento=None,
+    )
+    parametros.update(filtro)
+    return obter_recorte(
+        sessao=sessao, usuario=_QuemOlha(), codigo="imprensa", mes=TEXTO_DO_MES, **parametros
+    )
+
+
+def test_o_painel_da_imprensa_desce_pela_taxonomia_n1_n2_n3(sessao):
+    """Por pedido do dono do produto: as abas do painel são os 7 atributos (N1),
+    os temas estratégicos (N2) e os subtemas (N3) — nessa ordem."""
+    _gravar(sessao, "clipei", _linhas_da_imprensa(sessao))
+    recorte = _recorte(sessao)
+    assert [bloco.titulo for bloco in recorte.dentro] == [
+        "N1 Atributo Reputacional",
+        "N2 Temas estratégicos",
+        "N3 Subtemas",
+    ]
+    n1, n2, n3 = recorte.dentro
+    # O ATRIBUTO SEM O PREFIXO "1. ": as duas grafias de Governança viram uma pílula.
+    rotulos = {linha["rotulo"]: linha for linha in n1.dados}
+    assert "Governança" in rotulos and "1. Governança" not in rotulos
+    assert rotulos["Governança"]["negativo"] == 1 and rotulos["Governança"]["positivo"] == 1
+    # N2 e N3 pelo vínculo com o cadastro: só a menção com tema_id entra.
+    assert [linha["rotulo"] for linha in n3.dados] == ["Atendimento ao cliente"]
+    assert len(n2.dados) == 1
+    assert n1.recorta == "atributo" and n2.recorta == "tema_n2" and n3.recorta == "tema_n3"
+
+
+def test_escolher_um_atributo_tira_a_aba_n1_e_a_trilha_o_nomeia(sessao):
+    _gravar(sessao, "clipei", _linhas_da_imprensa(sessao))
+    recorte = _recorte(sessao, atributo="Governança")
+    assert [bloco.titulo for bloco in recorte.dentro] == ["N2 Temas estratégicos", "N3 Subtemas"]
+    assert recorte.trilha[0].dimensao == "N1 Atributo Reputacional"
+    assert recorte.trilha[0].valor == "Governança"
+    # O filtro pelo nome limpo alcança as duas grafias: as duas menções de Governança.
+    assert recorte.itens == 2
