@@ -1520,8 +1520,16 @@ def importar_planilha(
         conteudo = planilha_do_score.recuperar(
             sessao, planilha_id=planilha_id, fonte=fonte, usuario_id=usuario.id
         )
+        a_descartar = planilha_id
     else:
         conteudo = arquivo.file.read()
+        #: QUAL PENDÊNCIA EXISTE AGORA, antes de ingerir — e não depois. A
+        #: ingestão leva 62 s medidos, e nesse tempo outra conferência da mesma
+        #: pessoa nesta fonte pode gravar uma planilha NOVA. Perguntar depois e
+        #: apagar "a pendência" levaria essa nova, que ela ainda quer confirmar.
+        a_descartar = planilha_do_score.id_da_pendente(
+            sessao, fonte=fonte, usuario_id=usuario.id
+        )
 
     resumos = [
         _saida_da_importacao(resumo)
@@ -1538,16 +1546,16 @@ def importar_planilha(
     #: janela de deploy: a Calibração importa sem conferir, e a tela recai no
     #: arquivo sempre que não tem a conferência em mão.
     #:
-    #: POR ID QUANDO HÁ ID, por dono e fonte quando não há: a diferença não é
-    #: estilo. Uma conferência concorrente pode ter trocado a linha no meio do
-    #: caminho, e aí apagar por dono e fonte levaria a planilha NOVA, que a
-    #: pessoa ainda quer confirmar.
-    if planilha_id is not None:
-        descartado = planilha_do_score.descartar(sessao, planilha_id=planilha_id)
-    else:
-        descartado = planilha_do_score.descartar_pendente(
-            sessao, fonte=fonte, usuario_id=usuario.id
-        )
+    #: OS DOIS APAGAM POR ID, e agora pelo mesmo motivo. O ramo do arquivo
+    #: resolveu o id LÁ ATRÁS, antes de ingerir: apagar "a pendência" aqui no fim
+    #: levaria a planilha que uma conferência concorrente gravou durante os 62 s
+    #: da ingestão — e essa a pessoa ainda quer confirmar. Com o id em mão, a
+    #: troca só faz o descarte não achar nada.
+    descartado = (
+        planilha_do_score.descartar(sessao, planilha_id=a_descartar)
+        if a_descartar is not None
+        else None
+    )
     tarefas.add_task(planilha_do_score.apagar_byte, descartado)
     return resumos
 

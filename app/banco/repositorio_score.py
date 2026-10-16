@@ -65,7 +65,25 @@ FONTE_INTERNA_DO_CRM = "crm"
 #: Compartilhada" → "Prosperidade Compartilhada"). É por este rótulo que a aba
 #: N1 agrupa, e por isso o filtro `atributo` aceita os dois: o valor cru (o
 #: mock e links antigos) e o limpo (o que a aba mostra e o clique manda).
-ATRIBUTO_SEM_PREFIXO = func.regexp_replace(Mencao.atributo, r"^[0-9]+[.)-]?\s*", "")
+#:
+#: O SEPARADOR É OBRIGATÓRIO, e isto é conserto. O padrão era `[.)-]?` — com o
+#: `?`, o que vinha antes de um dígito era comido sem precisar de pontuação
+#: nenhuma, e aí valor legítimo virava outro valor:
+#:
+#:     "5G e cobertura"     -> "G e cobertura"
+#:     "2024 Resultados"    -> "Resultados"
+#:     "2 Ruas sem asfalto" -> "Ruas sem asfalto"
+#:     "2024"               -> ""
+#:
+#: Dois atributos diferentes podiam cair na MESMA pílula da aba N1, e a barra
+#: contaria os dois como um. Hoje os 7 atributos do cadastro usam ". " e nenhum
+#: deles disparava o defeito — ele esperava o primeiro valor que começasse com
+#: dígito sem pontuação. Achado da revisão do Codex em 16/10/2026.
+#:
+#: `^[0-9]+(?:[.)-]\s*|\s+)`, que foi a proposta da revisão, não resolve: ela
+#: aceita ESPAÇO como separador e continua comendo "2024 " e "2 ". Medido contra
+#: o banco antes de escolher.
+ATRIBUTO_SEM_PREFIXO = func.regexp_replace(Mencao.atributo, r"^[0-9]+[.)-]\s*", "")
 
 #: Como o clima de uma interação vira sentimento do índice (`SCORE.md` §2).
 #:

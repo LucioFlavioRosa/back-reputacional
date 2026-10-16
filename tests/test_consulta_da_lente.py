@@ -425,6 +425,60 @@ def test_o_filtro_do_atributo_alcanca_a_grafia_CRUA_do_export(sessao):
     assert abs(pelo_limpo) < abs(pelo_cru), "o nome limpo tem de alcançar as duas grafias"
 
 
+def test_um_atributo_que_COMECA_com_digito_nao_e_mutilado(sessao):
+    """"5G e cobertura" tem de chegar inteiro à aba N1.
+
+    `ATRIBUTO_SEM_PREFIXO` existe para tirar o "7. " do export real. O padrão
+    era `^[0-9]+[.)-]?\\s*` — com o `?`, a pontuação era OPCIONAL, e aí o
+    dígito sozinho bastava para comer o começo do valor:
+
+        "5G e cobertura"     -> "G e cobertura"
+        "2024 Resultados"    -> "Resultados"
+        "2 Ruas sem asfalto" -> "Ruas sem asfalto"
+
+    Dois atributos diferentes podiam cair na MESMA pílula da aba, e a barra
+    contaria os dois como um só. Os 7 atributos do cadastro usam ". " e nenhum
+    disparava o defeito — ele esperava o primeiro valor com dígito sem
+    pontuação.
+
+    O TESTE PASSA PELA ABA, e não só pela função: é a aba que agrupa, e era lá
+    que a fusão apareceria.
+    """
+    from app.banco import repositorio_lentes
+    from app.dominio.causa_da_lente import dimensoes_do_aprofundamento
+
+    base = {"veiculo": "Folha", "unidade_texto": "Águas do Rio", "data": date(2031, 5, 12)}
+    _gravar(sessao, "clipei", [
+        {**base, "sentimento": "neg", "tier": "relevante", "atributo": "5G e cobertura"},
+        {**base, "sentimento": "pos", "tier": "relevante", "atributo": "G e cobertura"},
+        {**base, "sentimento": "neu", "tier": "relevante", "atributo": "1. Governança"},
+    ])
+
+    lente = _lente(sessao, "imprensa")
+    cortes = repositorio_lentes.cortes_da_causa(
+        sessao,
+        "imprensa",
+        lente.id,
+        MES,
+        repositorio_score.calibracao_vigente(sessao),
+        dimensoes=dimensoes_do_aprofundamento("imprensa"),
+    )
+    n1 = next(corte for corte in cortes if corte.dimensao.chave == "atributo")
+    rotulos = {linha["rotulo"]: linha for linha in n1.linhas}
+
+    #: OS DOIS VALORES SÃO DISTINTOS e continuam distintos na aba. Com o `?`,
+    #: "5G e cobertura" virava "G e cobertura" e os dois fundiam numa pílula com
+    #: um positivo e um negativo.
+    assert "5G e cobertura" in rotulos, "o dígito do começo foi comido"
+    assert "G e cobertura" in rotulos
+    assert rotulos["5G e cobertura"]["negativo"] == 1
+    assert rotulos["5G e cobertura"]["positivo"] == 0
+    assert rotulos["G e cobertura"]["positivo"] == 1
+
+    #: E O PREFIXO DE VERDADE CONTINUA SAINDO, que é a razão de a função existir.
+    assert "Governança" in rotulos and "1. Governança" not in rotulos
+
+
 def test_escolher_um_atributo_tira_a_aba_n1_e_a_trilha_o_nomeia(sessao):
     _gravar(sessao, "clipei", _linhas_da_imprensa(sessao))
     recorte = _recorte(sessao, atributo="Governança")

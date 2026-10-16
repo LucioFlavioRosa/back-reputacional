@@ -451,7 +451,7 @@ def test_importar_pelo_arquivo_sem_nada_guardado_nao_quebra(
 ):
     """Caminho mais comum de todos: importar sem ter conferido antes.
 
-    `descartar_pendente` devolve `None` e `apagar_byte` sai na primeira linha.
+    `id_da_pendente` devolve `None` e `apagar_byte` sai na primeira linha.
     Um `None` chegando ao Blob seria 500 em cima de uma importação que deu
     certo.
     """
@@ -460,6 +460,57 @@ def test_importar_pelo_arquivo_sem_nada_guardado_nao_quebra(
     resposta = _importar_pelo_arquivo(cliente, _planilha())
 
     assert resposta.status_code == 201, resposta.text
+
+
+def test_uma_conferencia_que_chega_durante_a_importacao_nao_e_descartada(
+    cliente, sessao, armazenamento, monkeypatch
+):
+    """A corrida que PERDE TRABALHO, e por que a limpeza pergunta antes.
+
+    A ingestão leva 62 s medidos com o clipping real. Nesse tempo a mesma pessoa
+    pode conferir aquela fonte de novo — e a planilha nova é a que ela quer
+    confirmar em seguida. Uma versão anterior apagava "a pendência" no FIM da
+    importação, por (fonte, dono), e levava justamente essa.
+
+    Era incoerente: o ramo do `planilha_id` já apagava por id exatamente para
+    não fazer isso, e o do arquivo não. Achado da revisão do Codex em
+    16/10/2026.
+
+    A CONFERÊNCIA CONCORRENTE É SIMULADA DENTRO DA INGESTÃO, porque é lá que a
+    janela existe: `ingerir` roda e, no meio dela, outra planilha é guardada
+    para a mesma pessoa e fonte. Usar duas threads traria o banco de teste para
+    a discussão e mediria outra coisa.
+    """
+    primeira = _conferir(cliente, _planilha()).json()["planilha_id"]
+    caminho_da_primeira = sessao.get(PlanilhaRecebida, primeira).caminho
+
+    de_verdade = ingerir_mencoes.ingerir
+    trocadas: dict[str, object] = {}
+
+    def ingerir_e_trocar_a_pendencia(sessao_da_rota, fonte, conteudo, *resto, **nomeados):
+        resultado = de_verdade(sessao_da_rota, fonte, conteudo, *resto, **nomeados)
+        #: A conferência nova chega AGORA — depois de a rota ter resolvido o id,
+        #: e antes de ela descartar.
+        segunda = _conferir(cliente, _planilha(["Jornal Novo"])).json()["planilha_id"]
+        trocadas["segunda"] = segunda
+        return resultado
+
+    monkeypatch.setattr(ingerir_mencoes, "ingerir", ingerir_e_trocar_a_pendencia)
+
+    resposta = _importar_pelo_arquivo(cliente, _planilha())
+
+    assert resposta.status_code == 201, resposta.text
+    segunda = trocadas["segunda"]
+    assert segunda != primeira, "a conferência concorrente não gravou nada"
+
+    #: A PRIMEIRA JÁ NÃO EXISTE — a conferência nova a substituiu, que é o
+    #: comportamento de sempre. O que importa é a SEGUNDA ter sobrevivido.
+    assert sessao.get(PlanilhaRecebida, segunda) is not None, (
+        "a importação levou a planilha que a pessoa acabou de conferir"
+    )
+    recebida = sessao.get(PlanilhaRecebida, segunda)
+    assert recebida.caminho in armazenamento, "levou o byte da planilha nova"
+    assert caminho_da_primeira not in armazenamento
 
 
 # -- sem armazenamento, tudo segue como antes --------------------------------

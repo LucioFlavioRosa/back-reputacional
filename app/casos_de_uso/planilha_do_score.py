@@ -216,49 +216,48 @@ def descartar(sessao: Session, *, planilha_id: UUID) -> str | None:
     return caminho
 
 
-def descartar_pendente(
-    sessao: Session, *, fonte: ScoreFonte, usuario_id: UUID
-) -> str | None:
-    """Tira a pendência daquela pessoa naquela fonte, sem precisar do id.
+def id_da_pendente(sessao: Session, *, fonte: ScoreFonte, usuario_id: UUID) -> UUID | None:
+    """Qual planilha daquela pessoa está pendente naquela fonte AGORA.
 
     POR QUE EXISTE, em uma frase: a importação PELO ARQUIVO também precisa
-    limpar, e ela não tem identificador nenhum para citar.
+    limpar, e ela não tem identificador nenhum para citar — então ela pergunta
+    qual é, ANTES de ingerir, e depois descarta por id como o outro ramo.
 
     O CAMINHO QUE VAZAVA. Quem manda `arquivo` na confirmação cai no ramo que
     não conhece `planilha_id`, e esse ramo não descartava nada: a importação
-    terminava com sucesso e a linha mais o byte ficavam guardados para sempre —
-    até a pessoa conferir aquela fonte de novo, o que pode nunca acontecer.
-    Achado da revisão do Codex em 16/10/2026, enquanto se conferia a janela de
-    front velho com back novo; mas o vazamento NÃO é da janela, e sim
-    permanente, porque mandar o arquivo é caminho legítimo e definitivo (a
-    Calibração importa sem conferir, e a tela recai no arquivo sempre que não
-    tem a conferência em mão).
+    terminava com sucesso e a linha mais o byte ficavam guardados — até a pessoa
+    conferir aquela fonte de novo, o que pode nunca acontecer. Mandar o arquivo
+    é caminho legítimo e permanente (a Calibração importa sem conferir, e a tela
+    recai no arquivo sempre que não tem a conferência em mão).
 
-    DESCARTAR É O CERTO, e não um efeito colateral tolerado: quem acabou de
-    importar aquela fonte por arquivo tornou obsoleta qualquer conferência
-    pendente dela — a previsão daquela conferência foi calculada contra um
-    banco que já não existe.
+    E POR QUE ESTA FUNÇÃO SÓ PERGUNTA, EM VEZ DE APAGAR. A primeira versão
+    apagava por (fonte, dono) no fim da importação, e isso tinha uma corrida que
+    PERDE TRABALHO — achado da revisão do Codex em 16/10/2026:
 
-    POR DONO E POR FONTE, que é a granularidade do índice único da `0092`:
-    apaga no máximo uma linha, e nunca a de outra pessoa nem a de outra fonte.
+        1. a pessoa tem a planilha V1 pendente;
+        2. começa a importar por arquivo (62 s de ingestão, medidos);
+        3. no meio disso, outra conferência dela na mesma fonte grava V2;
+        4. a importação apaga "a pendência" — e leva V2.
 
-    NÃO SUBSTITUI `descartar`. O ramo do identificador continua apagando POR
-    ID, de propósito: se uma conferência concorrente trocou a linha no meio do
-    caminho, apagar por dono e fonte levaria a planilha NOVA — a que a pessoa
-    acabou de conferir e ainda quer confirmar. Por id, a troca só faz o
-    descarte não achar nada, que é o desfecho inofensivo.
+    V2 era a que ela ainda queria confirmar. Perguntar ANTES e apagar POR ID
+    fecha isso: se a troca aconteceu, o descarte não acha V1 e não toca em V2 —
+    o mesmo desfecho inofensivo que o ramo do identificador já tinha, e pela
+    mesma razão. Era incoerente proteger um ramo e não o outro.
+
+    DESCARTAR CONTINUA SENDO O CERTO para a pendência que existia antes: quem
+    importou aquela fonte por arquivo tornou obsoleta a conferência dela — a
+    previsão foi calculada contra um banco que já não existe.
+
+    POR DONO E POR FONTE na consulta, que é a granularidade do índice único da
+    `0092`: acha no máximo uma linha, e nunca a de outra pessoa nem de outra
+    fonte.
     """
-    recebida = sessao.scalar(
-        select(PlanilhaRecebida).where(
+    return sessao.scalar(
+        select(PlanilhaRecebida.id).where(
             PlanilhaRecebida.fonte_id == fonte.id,
             PlanilhaRecebida.criado_por == usuario_id,
         )
     )
-    if recebida is None:
-        return None
-    caminho = recebida.caminho
-    sessao.execute(delete(PlanilhaRecebida).where(PlanilhaRecebida.id == recebida.id))
-    return caminho
 
 
 def apagar_byte(caminho: str | None) -> None:
