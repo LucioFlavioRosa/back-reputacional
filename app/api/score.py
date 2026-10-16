@@ -1476,9 +1476,17 @@ def _saida_da_conferencia(
 
 
 class SubidaEmPartesSaida(BaseModel):
-    """O que o cliente precisa para subir a planilha em pedaços."""
+    """O que o cliente precisa para subir a planilha em pedaços.
 
-    planilha_id: UUID
+    `planilha_id` NULO SIGNIFICA "AQUI NÃO DÁ, MANDE DE UMA VEZ", e é a mesma
+    convenção que a conferência de uma vez só já usa para dizer que não guardou
+    o arquivo. Um ambiente sem armazenamento não tem onde montar as partes, e
+    sem este nulo a tela recebia um 422 indistinguível dos outros três desta
+    rota — então a pessoa lia "este ambiente não guarda arquivos" em vez de a
+    planilha simplesmente subir.
+    """
+
+    planilha_id: UUID | None
     tamanho_da_parte: int
 
 
@@ -1510,8 +1518,10 @@ def comecar_subida_em_partes(
     requisição longa.
 
     NÃO SUBSTITUI A SUBIDA DE UMA VEZ. Arquivo pequeno não paga onze idas, e um
-    ambiente sem armazenamento não tem onde montar — ali este caminho recusa com
-    nome e a tela usa o de sempre.
+    ambiente sem armazenamento não tem onde montar — ali esta rota devolve
+    `planilha_id` nulo e a tela usa o de sempre. ANTES ELA RECUSAVA COM 422, e
+    a tela não caía no caminho de sempre porque não tinha como distinguir essa
+    recusa de "fonte inativa" ou "passa de 80 MB": mostrava a mensagem crua.
     """
     fonte = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == codigo))
     if fonte is None:
@@ -1531,7 +1541,13 @@ def comecar_subida_em_partes(
         sessao, fonte=fonte, usuario_id=usuario.id, nome=nome, tamanho=tamanho
     )
     tarefas.add_task(planilha_do_score.apagar_byte, aberta.caminho_substituido)
-    assert aberta.id is not None  # `comecar` recusa sem armazenamento
+    #: `aberta.id` PODE SER NULO, e a tela conta com isso — ver
+    #: `SubidaEmPartesSaida`. Havia um `assert` aqui afirmando o contrário; ele
+    #: valia enquanto `comecar` recusava sem armazenamento.
+    #:
+    #: `tamanho_da_parte` VAI MESMO ASSIM, e não condicionalmente: ele não
+    #: depende do armazenamento, e um campo que às vezes falta obrigaria o
+    #: cliente a tratar duas formas de resposta em vez de um campo nulo.
     return SubidaEmPartesSaida(
         planilha_id=aberta.id, tamanho_da_parte=planilha_do_score.TAMANHO_DA_PARTE
     )
