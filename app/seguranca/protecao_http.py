@@ -183,6 +183,16 @@ _CAMINHOS_DE_UPLOAD = (
     #: É A TERCEIRA VEZ que este comentário se cumpre: a planilha do Score e a
     #: de agendas entraram aqui pelo mesmo motivo, depois de falharem assim.
     re.compile(r"^/api/score/fontes/[^/]+/conferencia$"),
+    #: A PARTE DA PLANILHA QUE SOBE EM PEDAÇOS. É a QUARTA vez que este
+    #: comentário se cumpre, e desta vez antes de doer: a parte tem 1 MB de
+    #: arquivo, e o `Content-Length` do multipart que a carrega passa de
+    #: 1.048.576 por causa das fronteiras e dos nomes de campo. Sem esta linha a
+    #: primeira parte seria recusada pelo teto genérico — e pelo mecanismo
+    #: descrito acima, apareceria como falha de rede, não como 413.
+    #:
+    #: O `$` IMPORTA nas outras: `^…/planilha$` NÃO casa `…/planilha/<id>/parte/0`,
+    #: então a isenção da subida de uma vez só não cobriria esta.
+    re.compile(rf"^/api/score/fontes/[^/]+/planilha/{_UUID}/parte/[0-9]+$"),
     re.compile(r"^/api/importacoes$"),
 )
 

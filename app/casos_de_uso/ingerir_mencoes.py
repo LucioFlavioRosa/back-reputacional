@@ -1296,6 +1296,27 @@ def assuntos_da_planilha(
     return contagem
 
 
+def recusar_a_fonte(fonte: ScoreFonte) -> None:
+    """As recusas que dependem SÓ DO CADASTRO, sem olhar byte nenhum.
+
+    SEPARADAS PORQUE A SUBIDA EM PARTES PRECISA DELAS ANTES DOS BYTES. Quando a
+    planilha sobe em pedaços, a abertura da subida acontece quando nada chegou
+    ainda — e descobrir "esta fonte é interna" na décima primeira parte é fazer
+    a pessoa pagar o upload inteiro para ouvir não.
+
+    ISTO JÁ ME PEGOU: chamar `recusar_o_que_nao_entra(fonte, b"")` na abertura
+    recusava TUDO, porque aquela função também confere a assinatura de ZIP — e
+    `b""` nunca a tem. Catorze testes caíram de uma vez, o que foi a sorte: a
+    alternativa era a abertura recusando toda planilha em produção.
+    """
+    if fonte.interna:
+        raise RegraViolada(
+            f"{fonte.nome} é fonte interna: o dado já está neste banco e não se importa."
+        )
+    if not fonte.ativo:
+        raise RegraViolada(f"{fonte.nome} está inativa. Reative-a antes de importar.")
+
+
 def recusar_o_que_nao_entra(fonte: ScoreFonte, conteudo: bytes) -> None:
     """As recusas que valem ANTES de abrir a planilha, para os dois caminhos.
 
@@ -1314,12 +1335,7 @@ def recusar_o_que_nao_entra(fonte: ScoreFonte, conteudo: bytes) -> None:
     conjunto de recusas e gravar com outro faz a conferência mentir sobre o que
     a subida faria, que é a única coisa que ela existe para dizer.
     """
-    if fonte.interna:
-        raise RegraViolada(
-            f"{fonte.nome} é fonte interna: o dado já está neste banco e não se importa."
-        )
-    if not fonte.ativo:
-        raise RegraViolada(f"{fonte.nome} está inativa. Reative-a antes de importar.")
+    recusar_a_fonte(fonte)
     if len(conteudo) > TAMANHO_MAXIMO:
         #: O NÚMERO SAI DA CONSTANTE, e não do texto: a mensagem dizia
         #: "40 MB" enquanto `TAMANHO_MAXIMO` já era 80 — quem recebesse a
