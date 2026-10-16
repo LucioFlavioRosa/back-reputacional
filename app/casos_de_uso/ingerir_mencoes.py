@@ -41,6 +41,8 @@ from __future__ import annotations
 
 import io
 import re
+import threading
+import weakref
 import zipfile
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -191,19 +193,58 @@ def _como_o_openpyxl(celula: object) -> object:
 # outras seis.
 # =============================================================================
 
-#: MEMÓRIA QUE UMA CÉLULA GUARDADA CUSTA, medida nos dois arquivos reais:
-#: 175 B/célula na Clipei (1.733.510 células, pico de 289 MB sobre a base) e
-#: 194 B/célula na Approach (219.140 células, 40,5 MB). 200 arredonda o pior
-#: para cima.
+#: TRÊS TERMOS, PORQUE O CUSTO TEM TRÊS FONTES — e a primeira versão tinha um
+#: só, o que subestimava por até 141×.
 #:
-#: O PICO INCLUI AS DUAS CÓPIAS, e é isso que ele tem de incluir: o calamine
-#: decodifica a aba inteira para a memória do Rust (~152 MB na Clipei) e a lista
-#: de tuplas que fica guardada é outra (~137 MB). As duas vivem ao mesmo tempo,
-#: e é o instante em que coexistem que mata o processo.
+#: O QUE A PRIMEIRA VERSÃO ERRAVA. Ela cobrava 200 B por célula e pronto. Mas o
+#: TEXTO de um `.xlsx` não mora na aba: mora em `xl/sharedStrings.xml`, e a aba
+#: guarda referências de ~30 B. Uma planilha de poucas células com textos
+#: enormes tinha aba pequena, estimativa pequena, e pico gigante. Medido em
+#: 16/10/2026 com arquivos montados à mão para isolar a forma (10.000 células):
 #:
-#: POR CÉLULA, E NÃO POR MB DE XML: por célula os dois arquivos discordam em
-#: 11%; por MB descomprimido, em 43%. Célula é a unidade de custo real.
-MEMORIA_POR_CELULA = 200
+#:     texto/célula    aba      sharedStrings   estimava   custava    erro
+#:           10 B     0,36 MB      0,29 MB        2,0 MB    2,1 MB    1,0x
+#:          100 B     0,36 MB      1,15 MB        2,0 MB    3,6 MB    1,8x
+#:            1 KB    0,36 MB      9,74 MB        2,0 MB   29,8 MB   14,7x
+#:           10 KB    0,36 MB     95,57 MB        2,0 MB  287,7 MB  141,8x
+#:
+#: E SOMAR `sharedStrings.file_size` NÃO BASTA, que era a correção óbvia: com
+#: texto REPETIDO o arquivo deduplica e aquele número vai a zero, enquanto o
+#: custo continua — o calamine materializa uma string Python POR CÉLULA. No caso
+#: medido: sharedStrings de 0,00 MB e pico de 19,1 MB.
+#:
+#: O QUE FALTAVA É A RAZÃO `count/uniqueCount`, que o `<sst>` declara no próprio
+#: cabeçalho: quantas células referenciam texto contra quantos textos distintos
+#: existem. `sharedStrings × razão` é o texto como ele é MATERIALIZADO. Na Clipei
+#: a razão é 13,2 (11,36 MB de arquivo, 150 MB materializados); na Approach, 4,8.
+#:
+#: OS TRÊS COEFICIENTES, ajustados contra nove casos — os dois arquivos reais e
+#: sete montados. Nenhum caso subestima; a folga vai de 1,08x a 1,45x:
+#:
+#:     Clipei          294 MB reais -> 357 estimados   1,21x
+#:     Approach         40,5        ->  58,7           1,45x
+#:     10 B              2,1        ->   2,4           1,13x
+#:      1 KB            29,8        ->  34,0           1,14x
+#:     10 KB           287,7       -> 321             1,12x
+#:      1 KB repetido   19,1       ->  23,4           1,23x
+#:    100 B x 100k      49,0       ->  52,9           1,08x
+#:
+#: SUBESTIMAR MATA O PROCESSO; superestimar só custa tempo, porque o caminho
+#: lento continua correto. Por isso os coeficientes ficam acima do ajuste.
+
+#: A célula em si: o `tuple`, o objeto Python do valor, o overhead do dicionário
+#: rio abaixo. Sai de 123 B/célula ajustados, arredondado para cima.
+MEMORIA_POR_CELULA = 140
+
+#: O TEXTO COMO CADA CÉLULA O MATERIALIZA (`sharedStrings × count/uniqueCount`).
+#: 0,55 porque o byte de XML vira caractere Python com overhead, e a
+#: deduplicação do arquivo não se repete na memória.
+MEMORIA_POR_TEXTO_MATERIALIZADO = 0.55
+
+#: O TEXTO ÚNICO que o leitor guarda uma vez (o lado Rust do calamine). 2,8
+#: sobre o tamanho de `sharedStrings.xml` — é o termo que domina quando o texto
+#: é longo e distinto, que é justamente o caso que a versão anterior não via.
+MEMORIA_POR_TEXTO_UNICO = 2.8
 
 #: BYTES DE XML QUE UMA CÉLULA OCUPA, para quando a planilha não declara as
 #: dimensões dela. Medido: 38 B/célula na Clipei e 31 na Approach. 35 fica no
@@ -224,9 +265,24 @@ FRACAO_DO_CONTEINER = 0.4
 #: há quem matar, e errar para baixo custa tempo, não o processo.
 ORCAMENTO_SEM_CONTEINER = 192 * 1024 * 1024
 
-#: Onde o cgroup publica o limite de memória. v2 primeiro — é o que AKS e
-#: Container Apps usam hoje; v1 ainda aparece no Docker Desktop, e ler só um
-#: deixaria metade dos ambientes sem resposta.
+#: Onde o cgroup publica o limite de memória. OS DOIS, e a ordem é só
+#: preferência.
+#:
+#: MEDIDO, e desmente o que esta nota dizia antes. Ela afirmava que "v2 é o que
+#: AKS e Container Apps usam hoje". Em 16/10/2026 eu li dentro da réplica
+#: implantada no **Container Apps**:
+#:
+#:     /sys/fs/cgroup/memory.max                    -> No such file or directory
+#:     /sys/fs/cgroup/memory/memory.limit_in_bytes  -> 4294967296
+#:
+#: Ou seja: o Container Apps usa **v1**. Se este módulo lesse só o v2 — o
+#: "moderno", que é o que a nota errada sugeria —, o orçamento cairia no padrão
+#: conservador e o ganho desta leitura desapareceria EM SILÊNCIO exatamente no
+#: ambiente para o qual ele foi medido.
+#:
+#: O AKS documenta v2 como padrão desde o Kubernetes 1.25, e é por isso que o
+#: v2 continua primeiro. Ler os dois é o que faz a decisão viajar entre os dois
+#: ambientes sem ninguém reparar.
 _LIMITES_DO_CGROUP = (
     Path("/sys/fs/cgroup/memory.max"),
     Path("/sys/fs/cgroup/memory/memory.limit_in_bytes"),
@@ -238,6 +294,16 @@ _SEM_LIMITE = 1 << 62
 #: `<dimension ref="A1:W75370"/>`, que fica nos primeiros bytes do XML da aba.
 #: É a planilha declarando quantas linhas e colunas ela tem.
 _DIMENSAO = re.compile(rb'<dimension\s+ref="[A-Z]+\d+:([A-Z]+)(\d+)"')
+
+#: O cabeçalho do `<sst>`: `count` são as CÉLULAS que referenciam texto,
+#: `uniqueCount` os textos DISTINTOS. A razão entre os dois é o fator de
+#: deduplicação, e sem ela a estimativa não vê o custo do texto repetido.
+#:
+#: OS DOIS ATRIBUTOS EM QUALQUER ORDEM, porque o formato não a fixa: um padrão
+#: que exigisse `count` antes de `uniqueCount` falharia em silêncio — e falhar
+#: aqui significa estimar baixo, que é o lado que mata o processo.
+_SST_COUNT = re.compile(rb'\bcount="(\d+)"')
+_SST_UNIQUE = re.compile(rb'\buniqueCount="(\d+)"')
 
 
 @lru_cache(maxsize=1)
@@ -349,17 +415,117 @@ def celulas_da_maior_aba(conteudo: bytes) -> int | None:
     return max(colunas * linhas, pelo_xml) or None
 
 
-def vale_guardar(conteudo: bytes) -> bool:
-    """A leitura rápida e guardada desta planilha cabe neste contêiner?
+def bytes_de_texto(conteudo: bytes) -> tuple[int, int] | None:
+    """O texto da planilha: o materializado por célula, e o único.
 
-    Acima do orçamento, cada etapa volta a decodificar em `read_only` sem
-    retenção: a subida fica lenta como era antes, o que é melhor que derrubar o
-    processo.
+    DEVOLVE (materializado, único) EM BYTES DE XML, lendo o tamanho de
+    `xl/sharedStrings.xml` no diretório central e os dois contadores do
+    cabeçalho `<sst>`. Descomprime 2 KB.
+
+    `count` SÃO AS CÉLULAS, `uniqueCount` OS TEXTOS, e a razão entre eles é o
+    que a estimativa anterior não tinha. Com texto repetido o arquivo guarda uma
+    cópia e o leitor materializa uma string Python por célula — medido: 0,00 MB
+    de `sharedStrings` contra 19,1 MB de pico.
+
+    SEM `sharedStrings` o arquivo guarda o texto INLINE na aba, e aí o tamanho
+    da aba já o contou: devolve (0, 0) e o termo de célula faz o trabalho. É o
+    que o openpyxl escreve, e foi por isso que o primeiro experimento não
+    reproduziu o defeito.
+
+    DEVOLVE `None` quando `sharedStrings` existe e o cabeçalho não se lê: aí não
+    há como saber a razão, e estimar sem ela subestima — o lado que mata o
+    processo. Quem chama trata `None` como "não cabe".
+    """
+    try:
+        with zipfile.ZipFile(io.BytesIO(conteudo)) as pacote:
+            try:
+                item = pacote.getinfo("xl/sharedStrings.xml")
+            except KeyError:
+                return (0, 0)
+            unico = item.file_size
+            with pacote.open(item) as fluxo:
+                cabeca = fluxo.read(2048)
+    except Exception:  # noqa: BLE001 - ZIP corrompido, truncado ou exótico
+        return None
+
+    quantas = _SST_COUNT.search(cabeca)
+    unicas = _SST_UNIQUE.search(cabeca)
+    if quantas is None or unicas is None:
+        return None
+    distintas = int(unicas.group(1))
+    if distintas <= 0:
+        return (0, unico)
+    razao = int(quantas.group(1)) / distintas
+    return (int(unico * razao), unico)
+
+
+def custo_da_leitura(conteudo: bytes) -> int | None:
+    """Quantos bytes de memória a leitura guardada desta planilha vai pedir.
+
+    TRÊS TERMOS, um por fonte de custo — ver os coeficientes no topo. Custa
+    ~9 ms no clipping de 10,53 MB: o diretório central do ZIP mais 6 KB
+    descomprimidos.
+
+    `None` quando qualquer parte não se deixa estimar.
     """
     celulas = celulas_da_maior_aba(conteudo)
-    if celulas is None:
-        return False
-    return celulas * MEMORIA_POR_CELULA <= orcamento_de_leitura()
+    texto = bytes_de_texto(conteudo)
+    if celulas is None or texto is None:
+        return None
+    materializado, unico = texto
+    return int(
+        celulas * MEMORIA_POR_CELULA
+        + materializado * MEMORIA_POR_TEXTO_MATERIALIZADO
+        + unico * MEMORIA_POR_TEXTO_UNICO
+    )
+
+
+#: AS LEITURAS GUARDADAS QUE ESTÃO DE PÉ AGORA, e quanto cada uma reservou.
+#: Ver `_reservar`.
+_reserva = threading.Lock()
+_reservado = 0
+
+
+def reservado_agora() -> int:
+    """Quantos bytes as leituras guardadas em curso já reservaram."""
+    with _reserva:
+        return _reservado
+
+
+def _devolver(quanto: int) -> None:
+    global _reservado
+    with _reserva:
+        _reservado -= quanto
+
+
+def vale_guardar(conteudo: bytes) -> int | None:
+    """O custo reservado, se a leitura guardada couber; `None` se não couber.
+
+    O ORÇAMENTO É DO PROCESSO, NÃO DO ARQUIVO — e esta é a correção de um
+    defeito meu que a revisão do Codex achou em 16/10/2026. A versão anterior
+    comparava cada arquivo com o orçamento inteiro, então DUAS leituras
+    simultâneas na mesma réplica podiam tomar duas vezes aquilo: `0,8 L` mais os
+    ~88 MB que o processo já carrega. Num contêiner de 512 MiB isso são ~498 de
+    537 MB; três leituras passam claramente.
+
+    AS DUAS RÉPLICAS NÃO COMPARTILHAM MEMÓRIA, mas uma delas atende pedidos
+    concorrentes, e o Uvicorn com um worker não serializa nada disto.
+
+    A SEGUNDA LEITURA DEGRADA, NÃO FALHA: quem não cabe na folga que sobrou vai
+    pelo caminho lento, de memória constante. É a mesma degradação de quem é
+    grande demais — e é por isso que isto é controle de admissão e não uma trava
+    que faz esperar: esperar transformaria duas importações simultâneas em uma
+    fila de dois minutos, e o resultado é o mesmo arquivo lido.
+    """
+    custo = custo_da_leitura(conteudo)
+    if custo is None:
+        return None
+    global _reservado
+    with _reserva:
+        if _reservado + custo > orcamento_de_leitura():
+            return None
+        _reservado += custo
+    return custo
 
 
 class ArquivoLido:
@@ -400,7 +566,15 @@ class ArquivoLido:
         self._conteudo = conteudo
         #: aba resolvida -> todas as células da aba, do topo ao fim
         self._lido: dict[str, list[tuple]] = {}
-        self._guardar = vale_guardar(conteudo)
+        reservado = vale_guardar(conteudo)
+        self._guardar = reservado is not None
+        #: A RESERVA VOLTA QUANDO ESTE OBJETO MORRE, que é quando o cache morre
+        #: com ele. `weakref.finalize` e não `__del__`: o segundo não roda se o
+        #: objeto entrar num ciclo de referências, e aí a reserva ficaria presa
+        #: para sempre — o processo passaria a recusar toda leitura guardada e
+        #: ninguém entenderia por quê.
+        if reservado is not None:
+            self._fim = weakref.finalize(self, _devolver, reservado)
 
     def linhas(self, mapeamento: Mapeamento) -> Iterator[Mapping[str, object]]:
         """As linhas como dicionários cabeçalho → célula, para este mapeamento."""
