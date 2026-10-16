@@ -41,10 +41,13 @@ ROTULO_DA_DIMENSAO: dict[str, str] = {
     "autor": "Autor",
     "uf": "UF",
     "tier": "Tier",
-    "atributo": "Atributo",
+    #: O ATRIBUTO DA CLIPEI É O N1 DA AEGEA — os 7 atributos reputacionais
+    #: (Governança, Eficiência Operacional e Qualidade…), por pedido do dono do
+    #: produto. A planilha real o traz com prefixo ("7. Prosperidade…").
+    "atributo": "N1 Atributo Reputacional",
     "tema_n1": "Pilar (N1)",
-    "tema_n2": "Tema estratégico (N2)",
-    "tema_n3": "Subtema (N3)",
+    "tema_n2": "N2 Tema estratégico",
+    "tema_n3": "N3 Subtema",
     "sentimento": "Sentimento",
 }
 
@@ -74,6 +77,10 @@ class Dimensao:
     #: pelo nome esconderia da Sociedade um dado que é dela, ou publicaria o da
     #: Imprensa. É a mesma pergunta que `_nomeia_o_diretorio` faz dos painéis.
     nomeia_o_diretorio: bool = False
+    #: TODOS OS VALORES, sem o corte dos seis maiores. Para a taxonomia da Aegea
+    #: (7 atributos, ~41 temas estratégicos, 104 subtemas): é um vocabulário
+    #: FECHADO, e cortar o sétimo atributo esconderia justamente um dos sete.
+    todos: bool = False
 
 
 @dataclass(frozen=True)
@@ -158,27 +165,38 @@ DIMENSOES_POR_LENTE: dict[str, tuple[Dimensao, ...]] = {
 }
 
 
-#: AS MESMAS ABAS EM TODO MÊS, E A QUE NÃO TEM DADO FICA VAZIA — decisão do dono
-#: do produto (05/10/2026), e ela SUBSTITUI as "dimensões úteis" do pacote
-#: (FRONTEND §3), que mediam quanto cada dimensão explicava o mês e escondiam a
-#: que explicava pouco.
+#: AS ABAS DO APROFUNDAMENTO — o painel que abre ao clicar num dado (a coluna da
+#: Evolução, uma barra de tema) —, quando a lente pede abas próprias ali.
 #:
-#: O QUE O CRITÉRIO DO PACOTE CUSTAVA, no dado real: até maio/2026 só a Approach
-#: entregava, e o tema vinha em 97% a 100% dos itens; em junho a Bites entra com
-#: 4.973 posts sem tema, o tema cai para 28% do mês e a aba SUMIA. O dono do
-#: produto abriu junho pelo ponto da Jornada e reparou na hora — "não tenho a
-#: opção de tema como aparece nos demais meses".
+#: NA IMPRENSA, A TAXONOMIA DA AEGEA, na ordem em que ela desce, por pedido do
+#: dono do produto: N1 (os 7 atributos reputacionais, da coluna Atributo da
+#: Clipei), N2 (os temas estratégicos) e N3 (os subtemas). N2 e N3 saem do
+#: vínculo da menção com o cadastro (`tema_id`, gravado na ingestão desde o
+#: `temas_da_mencao`): é o mesmo caminho que o filtro `tema_n2`/`tema_n3` usa, e
+#: por isso o clique numa coluna recorta exatamente o que a coluna contou.
 #:
-#: UMA FILEIRA DE ABAS QUE MUDA DE MÊS PARA MÊS SE LÊ COMO TELA QUEBRADA, e o
-#: preço de mostrar a aba vazia é menor: ela diz que a fonte não classificou
-#: aquele campo naquele mês — um fato sobre a fonte, e acionável, porque dá para
-#: cobrar do fornecedor.
-#:
-#: QUANTO FALTA CONTINUA DITO na ficha de cada aba ("Tema vem em 1.959 das 6.932
-#: menções do mês"), que é onde a informação não concorre com a navegação.
-#:
-#: E VALE PARA TODAS AS LENTES, e para os dois lugares onde as abas aparecem: o
-#: cartão da tela e o painel de aprofundamento.
+#: O CARTÃO "ONDE ESTÁ A CAUSA" DA SÍNTESE CONTINUA com as abas de
+#: `DIMENSOES_POR_LENTE`: o pedido foi para o painel, não para o cartão.
+DIMENSOES_DO_APROFUNDAMENTO: dict[str, tuple[Dimensao, ...]] = {
+    "imprensa": (
+        Dimensao("atributo", "N1 Atributo Reputacional", "atributo", todos=True),
+        Dimensao("tema_n2", "N2 Temas estratégicos", "tema_id", todos=True),
+        Dimensao("tema_n3", "N3 Subtemas", "tema_id", todos=True),
+    ),
+}
+
+
+def dimensoes_do_aprofundamento(
+    codigo_da_lente: str, ve_diretorio: bool = True
+) -> list[Dimensao]:
+    """As abas do painel de aprofundamento: as próprias da lente, quando ela as
+    declara, e senão as mesmas do cartão "Onde está a causa"."""
+    proprias = DIMENSOES_DO_APROFUNDAMENTO.get(codigo_da_lente)
+    if proprias is None:
+        return dimensoes_do_recorte(codigo_da_lente, ve_diretorio)
+    return [d for d in proprias if ve_diretorio or not d.nomeia_o_diretorio]
+
+
 def nomeia_o_diretorio(codigo_da_lente: str) -> bool:
     """Esta lente publica nome de gente de fora que o CADASTRO guarda?
 
@@ -204,6 +222,29 @@ def nomeia_o_diretorio(codigo_da_lente: str) -> bool:
         dimensao.nomeia_o_diretorio
         for dimensao in DIMENSOES_POR_LENTE.get(codigo_da_lente, ())
     )
+
+
+#: AS MESMAS ABAS EM TODO MÊS, E A QUE NÃO TEM DADO FICA VAZIA — decisão do dono
+#: do produto (05/10/2026), e ela SUBSTITUI as "dimensões úteis" do pacote
+#: (FRONTEND §3), que mediam quanto cada dimensão explicava o mês e escondiam a
+#: que explicava pouco.
+#:
+#: O QUE O CRITÉRIO DO PACOTE CUSTAVA, no dado real: até maio/2026 só a Approach
+#: entregava, e o tema vinha em 97% a 100% dos itens; em junho a Bites entra com
+#: 4.973 posts sem tema, o tema cai para 28% do mês e a aba SUMIA. O dono do
+#: produto abriu junho pelo ponto da Jornada e reparou na hora — "não tenho a
+#: opção de tema como aparece nos demais meses".
+#:
+#: UMA FILEIRA DE ABAS QUE MUDA DE MÊS PARA MÊS SE LÊ COMO TELA QUEBRADA, e o
+#: preço de mostrar a aba vazia é menor: ela diz que a fonte não classificou
+#: aquele campo naquele mês — um fato sobre a fonte, e acionável, porque dá para
+#: cobrar do fornecedor.
+#:
+#: QUANTO FALTA CONTINUA DITO na ficha de cada aba ("Tema vem em 1.959 das 6.932
+#: menções do mês"), que é onde a informação não concorre com a navegação.
+#:
+#: E VALE PARA TODAS AS LENTES, e para os dois lugares onde as abas aparecem: o
+#: cartão da tela e o painel de aprofundamento.
 
 
 def dimensoes_do_recorte(codigo_da_lente: str, ve_diretorio: bool = True) -> list[Dimensao]:

@@ -61,6 +61,12 @@ logger = logging.getLogger(__name__)
 #: O código da fonte que se lê deste banco, e não de planilha.
 FONTE_INTERNA_DO_CRM = "crm"
 
+#: O ATRIBUTO SEM O PREFIXO NUMÉRICO da planilha real ("7. Prosperidade
+#: Compartilhada" → "Prosperidade Compartilhada"). É por este rótulo que a aba
+#: N1 agrupa, e por isso o filtro `atributo` aceita os dois: o valor cru (o
+#: mock e links antigos) e o limpo (o que a aba mostra e o clique manda).
+ATRIBUTO_SEM_PREFIXO = func.regexp_replace(Mencao.atributo, r"^[0-9]+[.)-]?\s*", "")
+
 #: Como o clima de uma interação vira sentimento do índice (`SCORE.md` §2).
 #:
 #: PELO `codigo`, E NÃO PELO `nome`. O rótulo já mudou duas vezes — Proativo /
@@ -353,7 +359,6 @@ def condicoes_do_filtro(filtro: FiltroDeMencoes | None) -> list:
     de_cada = (
         (Mencao.tier, filtro.tier),
         (Mencao.veiculo, filtro.veiculo),
-        (Mencao.atributo, filtro.atributo),
         # -- as do padrão Aegea (0055) --
         (Mencao.perfil_autor, filtro.perfil_autor),
         (Mencao.uf, filtro.uf),
@@ -363,6 +368,10 @@ def condicoes_do_filtro(filtro: FiltroDeMencoes | None) -> list:
         (Mencao.sentimento, filtro.sentimento),
     )
     condicoes = [coluna == valor for coluna, valor in de_cada if valor]
+    if filtro.atributo:
+        condicoes.append(
+            or_(Mencao.atributo == filtro.atributo, ATRIBUTO_SEM_PREFIXO == filtro.atributo)
+        )
     if filtro.tema_texto:
         #: O TEMA CASA POR DUAS COLUNAS, e isto foi achado de revisão. O rótulo
         #: que a tela mostra é `coalesce(Tema.nome, Mencao.tema_texto)` — o nome
