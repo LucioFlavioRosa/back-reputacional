@@ -40,9 +40,13 @@ grão para reprocessar, se um dia for preciso, está inteiro em `mencao`.
 from __future__ import annotations
 
 import io
+import re
+import zipfile
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
+from functools import lru_cache
+from pathlib import Path
 
 from sqlalchemy import delete, func, insert, select
 from sqlalchemy.orm import Session
@@ -51,6 +55,7 @@ from app.banco.tabelas_lentes import MencaoNaoClassificada
 from app.banco.tabelas_score import Mencao, ScoreFonte, ScoreMesFonte
 from app.casos_de_uso import temas_da_mencao, veiculos_da_imprensa
 from app.casos_de_uso.veiculos_da_imprensa import nomes_da_lista
+from app.configuracao import obter_configuracao
 from app.dominio.erros import RegraViolada
 from app.dominio.ingestao_score import (
     Descarte,
@@ -68,8 +73,10 @@ from app.dominio.ingestao_score import (
 from app.dominio.texto import normalizar
 
 #: Abrir uma planilha de 10 mil linhas é barato; abrir um arquivo de 200 MB
-#: enviado por engano não é. O maior export real de hoje tem 3,8 MB (o clipping
-#: da Clipei), e o teto é pedido do dono do produto: planilhas de até 80 MB.
+#: enviado por engano não é. O maior export real medido é de 10,53 MB — o
+#: clipping de janeiro a julho da Clipei, 75.369 linhas (16/10/2026; a nota
+#: anterior aqui dizia 3,8 MB, de um recorte menor) —, e o teto é pedido do dono
+#: do produto: planilhas de até 80 MB.
 #:
 #: O `client_max_body_size` DO NGINX DO FRONT FICA ACIMA DISTO (81m), e a ordem
 #: é o que importa: o nginx vem primeiro, então cortar lá primeiro troca esta
@@ -158,23 +165,201 @@ def _como_o_openpyxl(celula: object) -> object:
     return celula
 
 
-#: ATÉ QUE TAMANHO DE ARQUIVO VALE GUARDAR A LEITURA.
+# =============================================================================
+# QUANDO VALE LER RÁPIDO E GUARDAR A LEITURA
+#
+# A pergunta é uma só — "a leitura desta planilha cabe na memória deste
+# contêiner?" — e dela sai TUDO: o leitor rápido e o cache andam juntos em
+# `ArquivoLido.linhas`, porque `_pelo_calamine` só é alcançável pelo ramo que
+# guarda. Dizer "não" perde os dois de uma vez.
+#
+# O QUE HAVIA ANTES, E POR QUE SAIU. A pergunta era respondida por
+# `len(conteudo) <= 8 MB`: o byte COMPRIMIDO do `.xlsx`. Medido em 16/10/2026
+# nos dois arquivos reais, esse proxy erra por 3,2×:
+#
+#     Clipei     10,53 MB comprimido  ->  66,19 MB de XML da aba   (6,3x)
+#     Approach    3,27 MB comprimido  ->   6,48 MB de XML da aba   (2,0x)
+#
+# Com um número só para os dois, ou se recusa o cache a quem cabe, ou se
+# concede a quem não cabe. Era o primeiro caso: o clipping da Clipei caía no
+# caminho lento e a conferência gastava 47,5 s só decodificando — quatro
+# passadas de 11,88 s —, contra 1,40 s pelo caminho rápido. É daí que vinham os
+# 113 s que estouraram o gateway do cliente em 15/10/2026.
+#
+# E O BYTE COMPRIMIDO NÃO SABE DE ABAS. O arquivo da Approach tem SETE, e cada
+# fonte lê uma: julgar pelo arquivo inteiro cobra de uma aba o tamanho das
+# outras seis.
+# =============================================================================
+
+#: MEMÓRIA QUE UMA CÉLULA GUARDADA CUSTA, medida nos dois arquivos reais:
+#: 175 B/célula na Clipei (1.733.510 células, pico de 289 MB sobre a base) e
+#: 194 B/célula na Approach (219.140 células, 40,5 MB). 200 arredonda o pior
+#: para cima.
 #:
-#: Guardar as células derruba a releitura (ver `ArquivoLido`), e o preço é
-#: memória: medido com 25.000 linhas, 20 MB — cerca de 0,8 KB por linha. O
-#: limite de upload é 80 MB de `.xlsx` COMPRIMIDO, e um arquivo desses pode
-#: trazer centenas de milhares de linhas: guardar tudo chegaria a vários GB, e o
-#: servidor é compartilhado.
+#: O PICO INCLUI AS DUAS CÓPIAS, e é isso que ele tem de incluir: o calamine
+#: decodifica a aba inteira para a memória do Rust (~152 MB na Clipei) e a lista
+#: de tuplas que fica guardada é outra (~137 MB). As duas vivem ao mesmo tempo,
+#: e é o instante em que coexistem que mata o processo.
 #:
-#: ESTE TETO É O QUE TORNA OS 80 MB VIÁVEIS DE MEMÓRIA. Sem ele, subir o limite
-#: de upload subiria o pico de memória na mesma proporção; com ele, o que cresce
-#: é o TEMPO, que é o limite de verdade (o ingress corta por volta de 240 s).
+#: POR CÉLULA, E NÃO POR MB DE XML: por célula os dois arquivos discordam em
+#: 11%; por MB descomprimido, em 43%. Célula é a unidade de custo real.
+MEMORIA_POR_CELULA = 200
+
+#: BYTES DE XML QUE UMA CÉLULA OCUPA, para quando a planilha não declara as
+#: dimensões dela. Medido: 38 B/célula na Clipei e 31 na Approach. 35 fica no
+#: meio, e a estimativa só é usada quando é a MAIOR das duas — ver
+#: `celulas_da_maior_aba`.
+XML_POR_CELULA = 35
+
+#: QUANTO DO CONTÊINER A LEITURA DE UMA PLANILHA PODE TOMAR.
 #:
-#: 8 MB porque os arquivos reais de hoje têm 2 a 5 MB — o ganho fica onde ele
-#: existe, com folga. Acima do teto, cada etapa volta a decodificar em
-#: `read_only`, sem retenção: a subida fica lenta como era antes, o que é
-#: melhor que derrubar o processo. Achado de revisão.
-TAMANHO_PARA_GUARDAR_A_LEITURA = 8 * 1024 * 1024
+#: Não é 100% porque o processo já carrega FastAPI, SQLAlchemy e o pool de
+#: conexões antes de abrir arquivo nenhum, e porque `max_replicas = 2` no back
+#: significa que o limite do contêiner é por réplica mas o pico pode coincidir.
+#: 40% deixa o dobro de folga sobre o que a leitura pede.
+FRACAO_DO_CONTEINER = 0.4
+
+#: O ORÇAMENTO QUANDO NÃO HÁ CONTÊINER QUE SE DECLARE — máquina de quem
+#: desenvolve, teste, um ambiente sem cgroup. Conservador de propósito: aqui não
+#: há quem matar, e errar para baixo custa tempo, não o processo.
+ORCAMENTO_SEM_CONTEINER = 192 * 1024 * 1024
+
+#: Onde o cgroup publica o limite de memória. v2 primeiro — é o que AKS e
+#: Container Apps usam hoje; v1 ainda aparece no Docker Desktop, e ler só um
+#: deixaria metade dos ambientes sem resposta.
+_LIMITES_DO_CGROUP = (
+    Path("/sys/fs/cgroup/memory.max"),
+    Path("/sys/fs/cgroup/memory/memory.limit_in_bytes"),
+)
+
+#: `max` (v2) ou um número perto de 2^63 (v1) querem dizer "sem limite".
+_SEM_LIMITE = 1 << 62
+
+#: `<dimension ref="A1:W75370"/>`, que fica nos primeiros bytes do XML da aba.
+#: É a planilha declarando quantas linhas e colunas ela tem.
+_DIMENSAO = re.compile(rb'<dimension\s+ref="[A-Z]+\d+:([A-Z]+)(\d+)"')
+
+
+@lru_cache(maxsize=1)
+def _memoria_do_conteiner() -> int | None:
+    """O limite de memória deste contêiner, ou `None` se não houver.
+
+    `lru_cache` porque isto não muda enquanto o processo vive, e porque a
+    pergunta é feita uma vez por planilha aberta.
+    """
+    for caminho in _LIMITES_DO_CGROUP:
+        try:
+            bruto = caminho.read_text().strip()
+        except OSError:
+            continue
+        if bruto == "max":
+            return None
+        try:
+            valor = int(bruto)
+        except ValueError:
+            continue
+        return None if valor >= _SEM_LIMITE else valor
+    return None
+
+
+def orcamento_de_leitura() -> int:
+    """Quantos bytes a leitura de uma planilha pode ocupar.
+
+    DEDUZIDO DO CONTÊINER, e não fixado no código: é o que faz esta decisão
+    viajar junto com o ambiente. O back roda em dois lugares com memórias
+    diferentes — Container Apps com 4 GiB e o cluster do cliente com o que o
+    `values.yaml` dele disser —, e um número no código serviria a um e mataria
+    ou travaria o outro.
+
+    Na prática:
+
+        contêiner de 4 GiB   -> 1,6 GB -> ~8,5 milhões de células
+        contêiner de 1 GiB   -> 410 MB -> ~2,1 milhões de células
+        contêiner de 512 MiB -> 205 MB -> ~1,0 milhão de células
+
+    O clipping da Clipei tem 1,73 milhão de células: ele cabe a partir de 1 GiB
+    e NÃO cabe em 512 MiB. Isto não é defeito desta função, é o fato — e é o
+    número a levar a quem opera o cluster, porque com 512 MiB a leitura segue
+    pelo caminho lento por falta de memória, não por falta de código.
+
+    A CONFIGURAÇÃO VENCE quando preenchida, para quem mediu o próprio ambiente e
+    sabe mais que esta heurística.
+    """
+    escolhido = obter_configuracao().leitura_orcamento_de_memoria
+    if escolhido > 0:
+        return escolhido
+    limite = _memoria_do_conteiner()
+    if limite is None:
+        return ORCAMENTO_SEM_CONTEINER
+    return int(limite * FRACAO_DO_CONTEINER)
+
+
+def celulas_da_maior_aba(conteudo: bytes) -> int | None:
+    """Quantas células a maior aba traz, SEM descomprimir a planilha.
+
+    CUSTA 6,7 ms no clipping de 10,53 MB, porque lê o diretório central do ZIP —
+    que já traz o tamanho descomprimido de cada arquivo — e descomprime só os
+    primeiros 4 KB da aba maior, à caça do `<dimension>`.
+
+    A MAIOR ABA, e não a aba que se vai ler: resolver nome de aba até o arquivo
+    exigiria `xl/workbook.xml` mais `xl/_rels/workbook.xml.rels`, e o ganho seria
+    estimar o que já está limitado. A maior aba é um teto para qualquer aba do
+    arquivo — erra para o lado de recusar o cache, que custa tempo, nunca o
+    processo.
+
+    AS DUAS ESTIMATIVAS, E A MAIOR DELAS VENCE. A dimensão declarada é exata
+    quando existe, mas `<dimension>` é opcional no formato e há quem escreva
+    `ref="A1:A1"` numa aba de 60 MB — confiar nela sozinha concederia o cache a
+    um arquivo enorme. O tamanho do XML é grosseiro mas nunca mente sobre ordem
+    de grandeza. Pegar o máximo deixa o erro sempre do lado seguro:
+
+        Clipei    dimensão 1.733.510   XML 1.983.000   ->  1.983.000  (+14%)
+        Approach  dimensão   219.140   XML   194.000   ->    219.140  (exato)
+
+    DEVOLVE `None` quando não consegue dizer — ZIP ilegível, nenhuma aba, uma
+    exceção qualquer. Quem chama trata `None` como "não cabe", porque a
+    alternativa é adivinhar para cima.
+    """
+    try:
+        with zipfile.ZipFile(io.BytesIO(conteudo)) as pacote:
+            abas = [
+                item
+                for item in pacote.infolist()
+                if item.filename.startswith("xl/worksheets/")
+                and item.filename.endswith(".xml")
+            ]
+            if not abas:
+                return None
+            maior = max(abas, key=lambda item: item.file_size)
+            pelo_xml = maior.file_size // XML_POR_CELULA
+            with pacote.open(maior) as fluxo:
+                cabeca = fluxo.read(4096)
+    except Exception:  # noqa: BLE001 - ZIP corrompido, truncado ou exótico
+        return None
+
+    achado = _DIMENSAO.search(cabeca)
+    if achado is None:
+        return pelo_xml or None
+    #: `A` -> 1, `Z` -> 26, `AA` -> 27: é base 26 com dígitos de 1 a 26, não de
+    #: 0 a 25. Iterar `bytes` entrega INTEIROS, e `b"A"[0]` é 65 — daí o 64.
+    colunas = 0
+    for letra in achado.group(1):
+        colunas = colunas * 26 + (letra - 64)
+    linhas = int(achado.group(2))
+    return max(colunas * linhas, pelo_xml) or None
+
+
+def vale_guardar(conteudo: bytes) -> bool:
+    """A leitura rápida e guardada desta planilha cabe neste contêiner?
+
+    Acima do orçamento, cada etapa volta a decodificar em `read_only` sem
+    retenção: a subida fica lenta como era antes, o que é melhor que derrubar o
+    processo.
+    """
+    celulas = celulas_da_maior_aba(conteudo)
+    if celulas is None:
+        return False
+    return celulas * MEMORIA_POR_CELULA <= orcamento_de_leitura()
 
 
 class ArquivoLido:
@@ -207,14 +392,15 @@ class ArquivoLido:
     e aí a segunda sai de graça — que é onde está o ganho, porque é esse o
     arquivo de 25.000 linhas.
 
-    ARQUIVO GRANDE NÃO É GUARDADO. Ver `TAMANHO_PARA_GUARDAR_A_LEITURA`.
+    O QUE NÃO CABE NA MEMÓRIA NÃO É GUARDADO, e aí também não é lido rápido —
+    os dois andam juntos. Ver `vale_guardar`.
     """
 
     def __init__(self, conteudo: bytes) -> None:
         self._conteudo = conteudo
         #: aba resolvida -> todas as células da aba, do topo ao fim
         self._lido: dict[str, list[tuple]] = {}
-        self._guardar = len(conteudo) <= TAMANHO_PARA_GUARDAR_A_LEITURA
+        self._guardar = vale_guardar(conteudo)
 
     def linhas(self, mapeamento: Mapeamento) -> Iterator[Mapping[str, object]]:
         """As linhas como dicionários cabeçalho → célula, para este mapeamento."""
