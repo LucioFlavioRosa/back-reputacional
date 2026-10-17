@@ -87,6 +87,20 @@ def codigo_estavel(nome: str) -> str:
     MORAVA EM `api/dicionarios.py` como `_codigo`, repetindo a linha de NFKD de
     `normalizar`. Está aqui pelo mesmo motivo que as outras duas: chave derivada
     de nome é regra, e regra que mora em dois lugares divergente em um deles.
+
+    E NÃO É IDÊNTICA À `_codigo` ANTIGA, ao contrário do que eu afirmei quando
+    a mudei de casa. A antiga fazia `lower()` ANTES de decompor, e por isso a
+    letra ASCII MAIÚSCULA que o NFKD produz (`№` → `No`, `™` → `TM`) era vista
+    como não alfanumérica e trocada por `_`: `№` dava `o`, `™` dava string
+    vazia. Aqui dão `no` e `tm`. São cinco entradas conhecidas, estão em
+    `test_a_chave_do_nome_sai_de_um_lugar_so.py`, e a nova é melhor em todas.
+
+    SÓ RODA NA CRIAÇÃO de um item (`api/dicionarios.acrescentar`): o código é
+    gravado uma vez e nunca recalculado. DE 256 ITENS GRAVADOS, 91 TÊM CÓDIGO
+    QUE ESTA FUNÇÃO NÃO PRODUZ — são as sementes, escritas à mão e mais curtas
+    (`relacoes_investidores`, não `relacoes_com_investidores`), e em `clima` de
+    propósito outra palavra (`Positivo` → `propositivo`). Quem for "padronizar"
+    recalculando os códigos troca o endereço de 91 itens que o front referencia.
     """
     return _NAO_ALFANUMERICO.sub("_", normalizar(nome)).strip("_")
 

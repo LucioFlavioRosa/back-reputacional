@@ -60,11 +60,43 @@ EXCECOES = {
 
 IGNORAR = {"__pycache__", ".pytest_cache", ".ruff_cache"}
 
+#: AS TRÊS FUNÇÕES CANÔNICAS. Um `re.sub` aplicado à saída de qualquer uma
+#: delas está derivando uma QUARTA chave — foi assim que `consulta_profundidade`
+#: ficou com uma cópia do corpo de `codigo_estavel` sem chamar `unicodedata`
+#: nenhuma vez, e por isso invisível para a primeira versão desta guarda.
+CANONICAS = {"normalizar", "achatar_para_comparar", "codigo_estavel"}
+
 
 def _modulos() -> list[Path]:
     return sorted(
         p for p in APP.rglob("*.py") if not any(x in p.parts for x in IGNORAR)
     )
+
+
+def _arvore(caminho: Path) -> ast.Module:
+    return ast.parse(caminho.read_text(encoding="utf-8"))
+
+
+def _apelidos_do_unicodedata(arvore: ast.Module) -> tuple[set[str], set[str]]:
+    """Os nomes pelos quais ESTE arquivo alcança `unicodedata.normalize`.
+
+    SÃO TRÊS FORMAS, e a primeira versão desta guarda só reconhecia uma —
+    `import unicodedata` com o nome literal. `import unicodedata as ud` e
+    `from unicodedata import normalize` passavam batido, e a guarda prometia
+    mais do que entregava.
+    """
+    modulos: set[str] = set()
+    diretos: set[str] = set()
+    for no in ast.walk(arvore):
+        if isinstance(no, ast.Import):
+            for alias in no.names:
+                if alias.name == "unicodedata":
+                    modulos.add(alias.asname or alias.name)
+        elif isinstance(no, ast.ImportFrom) and no.module == "unicodedata":
+            for alias in no.names:
+                if alias.name == "normalize":
+                    diretos.add(alias.asname or alias.name)
+    return modulos, diretos
 
 
 def _normaliza_unicode(caminho: Path) -> list[int]:
@@ -74,16 +106,46 @@ def _normaliza_unicode(caminho: Path) -> list[int]:
     docstring explicando por que `normalizar` resolve espaço não separável, e
     isso é documentação correta — não uma segunda implementação.
     """
+    arvore = _arvore(caminho)
+    modulos, diretos = _apelidos_do_unicodedata(arvore)
     achados = []
-    for no in ast.walk(ast.parse(caminho.read_text(encoding="utf-8"))):
+    for no in ast.walk(arvore):
         if not isinstance(no, ast.Call):
             continue
         alvo = no.func
         if isinstance(alvo, ast.Attribute) and alvo.attr == "normalize":
             dono = alvo.value
-            if isinstance(dono, ast.Name) and dono.id == "unicodedata":
+            if isinstance(dono, ast.Name) and dono.id in modulos:
                 achados.append(no.lineno)
-    return achados
+        elif isinstance(alvo, ast.Name) and alvo.id in diretos:
+            achados.append(no.lineno)
+    return sorted(achados)
+
+
+def _deriva_chave_de_nome(caminho: Path) -> list[int]:
+    """As linhas que aplicam `.sub(...)` à saída de uma das canônicas.
+
+    ESTA É A DETECÇÃO QUE FALTAVA. Chave de nome não se duplica só chamando
+    `unicodedata`: `_FORA_DO_SLUG.sub("_", normalizar(nome)).strip("_")` é o
+    corpo de `codigo_estavel` letra por letra, sem um `unicodedata` à vista.
+    O resultado coincidia — e é justamente por coincidir que a cópia é
+    perigosa: no dia em que a regra canônica mudar, ela não muda junto.
+    """
+    achados = []
+    for no in ast.walk(_arvore(caminho)):
+        if not isinstance(no, ast.Call):
+            continue
+        if not (isinstance(no.func, ast.Attribute) and no.func.attr in {"sub", "subn"}):
+            continue
+        for dentro in ast.walk(no):
+            if (
+                isinstance(dentro, ast.Call)
+                and isinstance(dentro.func, ast.Name)
+                and dentro.func.id in CANONICAS
+            ):
+                achados.append(no.lineno)
+                break
+    return sorted(achados)
 
 
 def _relativo(caminho: Path) -> str:
@@ -125,6 +187,61 @@ def test_a_varredura_acha_a_implementacao_canonica():
     assert _normaliza_unicode(CANONICO), "a detecção parou de reconhecer o canônico"
 
 
+def test_a_varredura_reconhece_apelido_e_from_import(tmp_path):
+    """AS TRÊS FORMAS DE ALCANÇAR `unicodedata.normalize`.
+
+    A primeira versão desta guarda só reconhecia a primeira, então uma quarta
+    regra entrava com `import unicodedata as ud` sem nada acusar. Estes são
+    arquivos sintéticos: eles existem para provar que a DETECÇÃO vê o que
+    promete ver, e não para afirmar algo sobre o `app/`.
+    """
+    formas = {
+        "literal.py": "import unicodedata\nx = unicodedata.normalize('NFKD', 'a')\n",
+        "apelido.py": "import unicodedata as ud\nx = ud.normalize('NFKD', 'a')\n",
+        "direto.py": "from unicodedata import normalize\nx = normalize('NFKD', 'a')\n",
+        "renomeado.py": "from unicodedata import normalize as nz\nx = nz('NFKD', 'a')\n",
+    }
+    for nome, fonte in formas.items():
+        caminho = tmp_path / nome
+        caminho.write_text(fonte, encoding="utf-8")
+        assert _normaliza_unicode(caminho) == [2], f"a detecção não viu {nome}"
+    #: E O OUTRO LADO: um `normalize` que não vem do `unicodedata` não é achado,
+    #: senão a guarda viraria ruído e a próxima pessoa a desligaria.
+    outro = tmp_path / "outro.py"
+    outro.write_text("from numpy import normalize\nx = normalize('a')\n", encoding="utf-8")
+    assert _normaliza_unicode(outro) == []
+
+
+def test_nenhuma_quarta_chave_derivada_da_canonica():
+    """A DUPLICAÇÃO QUE A PRIMEIRA VERSÃO DESTA GUARDA NÃO VIU.
+
+    `consulta_profundidade.slug` era `_FORA_DO_SLUG.sub("_", normalizar(nome))
+    .strip("_")` — o corpo de `codigo_estavel` letra por letra, sem chamar
+    `unicodedata` uma vez. Mesmo resultado, e era o "mesmo resultado" que fazia
+    a cópia valer a pena tirar: o endereço do N3 ficaria para trás sozinho no
+    dia em que a regra canônica mudasse.
+    """
+    fora = [
+        f"{_relativo(p)}:{','.join(str(x) for x in _deriva_chave_de_nome(p))}"
+        for p in _modulos()
+        if p != CANONICO and _deriva_chave_de_nome(p)
+    ]
+    assert not fora, (
+        "Chave derivada da saída de uma função canônica, fora de "
+        "`dominio/texto.py`:\n  "
+        + "\n  ".join(fora)
+        + "\n\nSe é uma quarta chave, ela mora em `dominio/texto.py` junto das "
+        "outras três. Se é uma das três, chame-a pelo nome."
+    )
+
+
+def test_a_varredura_acha_as_derivacoes_do_canonico():
+    """O canônico tem DUAS: `achatar_para_comparar` e `codigo_estavel` são
+    `sub` sobre `normalizar`. Se a detecção parar de vê-las, o teste acima
+    passa por vazio."""
+    assert len(_deriva_chave_de_nome(CANONICO)) == 2
+
+
 def test_a_chave_de_gravacao_colapsa_espaco_interno():
     """O DEFEITO, FIXADO. Era isto que `api/stakeholders._normalizar` não fazia,
     e é o que faz o formulário e a planilha chegarem à mesma chave."""
@@ -147,7 +264,7 @@ def test_as_tres_chaves_sao_diferentes_de_proposito():
     assert len({normalizar(nome), achatar_para_comparar(nome), codigo_estavel(nome)}) == 3
 
 
-def test_o_codigo_estavel_nao_mudou_de_comportamento():
+def test_o_codigo_estavel_faz_o_que_a_funcao_antiga_fazia():
     """Ele saiu de `api/dicionarios._codigo`. Estes casos vêm do que aquela
     função produzia, e não da saída da nova — senão o teste só afirma que nada
     mudou, sem provar que está certo."""
@@ -161,3 +278,32 @@ def test_o_codigo_estavel_nao_mudou_de_comportamento():
     #: Nome que não deixa nada alfanumérico devolve vazio — quem chama decide o
     #: que fazer, e é o mesmo que a função antiga fazia.
     assert codigo_estavel("***") == ""
+
+
+def test_onde_o_codigo_estavel_NAO_e_igual_a_funcao_antiga():
+    """EU AFIRMEI QUE ERAM IDÊNTICAS EM TODA ENTRADA, E NÃO SÃO.
+
+    A ordem mudou: a antiga fazia `lower()` ANTES de decompor, a nova decompõe
+    e só então faz `lower()`. Para o caractere cuja decomposição NFKD produz
+    LETRA ASCII MAIÚSCULA, a antiga via a maiúscula e a trocava por `_`:
+
+        `№`        antiga `o`          nova `no`
+        `₨`        antiga `s`          nova `rs`
+        `™`        antiga ``           nova `tm`
+        `㍱`        antiga `h_a`        nova `hpa`
+        `Banco № 1`  antiga `banco_o_1`  nova `banco_no_1`
+
+    A NOVA É MELHOR em todos os cinco — `™` virava string vazia —, então a
+    mudança fica. O que não fica é a afirmação de que nada mudou.
+
+    E O QUE ELA ALCANÇA, MEDIDO: nenhum dos 256 nomes de dicionário gravados
+    diverge entre as duas regras, e `codigo_estavel` só roda na CRIAÇÃO de um
+    item (`api/dicionarios.acrescentar`) — o código é gravado uma vez e nunca
+    recalculado. Então isto não mexe em linha nenhuma: muda o código que um
+    item FUTURO receberia se alguém nomeasse um dicionário com `№` ou `™`.
+    """
+    assert codigo_estavel("№") == "no"
+    assert codigo_estavel("₨") == "rs"
+    assert codigo_estavel("™") == "tm"
+    assert codigo_estavel("㍱") == "hpa"
+    assert codigo_estavel("Banco № 1") == "banco_no_1"

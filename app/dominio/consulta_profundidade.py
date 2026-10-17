@@ -67,7 +67,7 @@ from app.dominio.score import (
     peso_da_mencao,
 )
 from app.dominio.tema_do_mes import PONTOS_POR_NS
-from app.dominio.texto import normalizar
+from app.dominio.texto import codigo_estavel, normalizar
 
 #: Versão do contrato. O front ilustrativo é '1.0'; esta é a primeira que sai
 #: do banco, e o prefixo deixa claro de onde o JSON veio.
@@ -145,7 +145,6 @@ _CORES_DAS_FAIXAS: dict[str, tuple[str, str, str, str]] = {
 #: "7. X", "7) X", "7 - X", "7 – X": o número do pilar com qualquer separador
 #: que um export à mão costuma ter, com ou sem espaço antes dele.
 _PREFIXO_NUMERICO = re.compile(r"^\s*[0-9]+\s*[.)\-–]?\s*")
-_FORA_DO_SLUG = re.compile(r"[^a-z0-9]+")
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,11 +315,6 @@ def sem_prefixo(texto: str) -> str:
     return _PREFIXO_NUMERICO.sub("", texto)
 
 
-def slug(nome: str) -> str:
-    """O id do N3 no estilo do `codigo` de N1/N2: ASCII, minúsculas e '_'."""
-    return _FORA_DO_SLUG.sub("_", normalizar(nome)).strip("_")
-
-
 class Taxonomia:
     """Os três níveis ativos, indexados para resolver cada menção.
 
@@ -363,10 +357,18 @@ class Taxonomia:
         # O SLUG DO N3 COLIDE quando dois nomes só diferem em acento ou
         # pontuação; o primeiro por id fica com o slug limpo e os outros levam
         # o id — estável entre leituras, que é o que o endereço precisa.
+        #
+        # É `codigo_estavel`, A MESMA REGRA DO `codigo` DE N1/N2, e não uma
+        # terceira: o endereço do N3 tem de casar com o código que os outros
+        # dois níveis já publicam. Havia aqui um `slug()` com o regex e o
+        # `.strip("_")` copiados de `dominio/texto.py` — mesmo resultado, por
+        # enquanto, e é esse "por enquanto" que fazia a cópia valer a pena
+        # tirar: se a regra canônica mudar, o endereço do N3 ficava para trás
+        # sozinho.
         self.slug_do_subtema: dict[int, str] = {}
         usados: set[str] = set()
         for s in sorted(self.subtemas, key=lambda s: s.id):
-            base = slug(s.nome) or f"subtema_{s.id}"
+            base = codigo_estavel(s.nome) or f"subtema_{s.id}"
             self.slug_do_subtema[s.id] = base if base not in usados else f"{base}_{s.id}"
             usados.add(self.slug_do_subtema[s.id])
         self.nome_do_subtema = {self.slug_do_subtema[s.id]: s.nome for s in self.subtemas}
