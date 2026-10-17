@@ -201,15 +201,24 @@ privilégio](#versão-e-privilégio). 71 tabelas, organizadas em nove assuntos:
 | sinais | `alegacao`, `alegacao_tema`, `interacao_alegacao`, `apuracao`, `canal_consulta` |
 | score | `lente`, `score_fonte`, `mencao`, `score_mes_fonte`, `score_estimativa`, `score_config`, `score_fato` |
 | lentes | `evento_mercado`, `estudo_percepcao`, `estudo_atributo`, `jornalista_matriz`, `cm_resposta_mes`, `curadoria_lente`, `encaminhamento` |
-| trilhas | `auditoria`, `exportacao`, `importacao` (schema sem aplicação) |
+| trilhas | `auditoria`, `exportacao`, `importacao`, `importacao_linha` |
 
-As 48 migrations (`0001` a `0049`; a `0019` não existe) ficam em
-`app/banco/migrations/` e rodam **em ordem alfabética**, uma vez, na primeira
-subida do banco. Cada arquivo abre com um
-cabeçalho dizendo o que muda e por quê — é lá que está o histórico, e não aqui.
+As **98 migrations** (`0001` a `0096`; a `0019` não existe, e três prefixos se
+repetem — `0055`, `0060` e `0061` têm dois arquivos cada) ficam em
+`app/banco/migrations/`. Cada arquivo abre com um cabeçalho dizendo o que muda e
+por quê — é lá que está o histórico, e não aqui.
 
-Cada objeto é criado **uma vez**, no estado final. Não há migration que corrija
-outra.
+**ORDEM E CONTROLE SÃO PELO NOME COMPLETO DO ARQUIVO**, e não pelo prefixo:
+`migrar.py` ordena com `sorted(pasta.glob("*.sql"))` e registra cada arquivo
+aplicado em `migracao_aplicada`. Por isso os prefixos repetidos não colidem — são
+entradas distintas, em ordem determinística. Pela mesma razão, **renomear um
+arquivo já aplicado faz o runner rodá-lo de novo**.
+
+Nem todo objeto é criado uma vez: migrations posteriores corrigem anteriores
+(`0025` renomeou uma tabela, `0068` e `0093` concederam permissão que faltava,
+`0095` renomeou uma coluna, `0096` removeu outra). O que não se faz é **editar
+migration já aplicada** — quem a editar faz o banco novo divergir do que já
+rodou.
 
 > **Migration nova precisa conceder `delete` a `painel_app`.** A 0009 concede em
 > massa e só alcança o que já existia; `select`, `insert` e `update` vêm depois
@@ -331,9 +340,16 @@ a consulta operacional que ele serve — `acesso_log` é a única tabela sem tet
 crescimento, e uma varredura sequencial nela durante uma investigação seria cara
 justamente na hora errada.
 
-A segunda são os dois GIN de `importacao_linha`, em `0008_importacao.sql`. Ali a
-tabela inteira é rascunho — a importação da planilha não foi implementada, e o
-arquivo diz isso no cabeçalho. Os índices fazem parte do desenho e caem junto se
+A segunda são os dois GIN de `importacao_linha`, em `0008_importacao.sql`.
+
+> **O CABEÇALHO DA `0008` ESTÁ DESATUALIZADO, e não será editado.** Ele diz
+> "SCHEMA SEM APLICAÇÃO — não há rota, caso de uso nem tela de importação". Isso
+> era verdade quando ele foi escrito e deixou de ser: a importação existe em
+> `app/api/importacoes.py`, `app/casos_de_uso/importar_agendas.py` e na tela
+> `src/paginas/importacao/`, e a própria `0068` concedeu a escrita que faltava.
+> Migration aplicada não se edita — o histórico dela é o que ela dizia na época.
+
+Os índices fazem parte do desenho e caem junto se
 o desenho cair.
 
 Antes de acrescentar qualquer índice, meça: `explain (analyze, buffers)` sobre a
@@ -506,8 +522,11 @@ endereço do cliente é `app/seguranca/limite_de_taxa.py`, lendo o
 
 Escrito explicitamente para quem for continuar.
 
-- **Importação da planilha.** As tabelas existem (migration `0008`) e o desenho
-  está documentado lá; não há rota nem caso de uso.
+- **Comentários na agenda.** A tabela `comentario` existe desde a `0004` e tem
+  modelo (`tabelas_interacoes.Comentario`), mas **nada a lê ou escreve**. Ela
+  nasceu do mockup de handoff, que traz a interface inteira — lista por
+  registro, campo de texto e botão "Comentar". Falta a rota, o caso de uso e a
+  tela. Não confundir com código morto: é desenho não construído.
 - **Ingestão automática de e-mail.** A consulta recebida (`0046`) é
   REGISTRADA À MÃO: quem recebe o questionário cadastra a interação e a
   alegação que ela traz. Encaminhar para uma caixa e o sistema se registrar

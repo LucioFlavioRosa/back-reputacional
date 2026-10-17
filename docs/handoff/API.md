@@ -1,5 +1,25 @@
 # Contrato sugerido de API
 
+> ## ⚠ ESTE É UM DOCUMENTO DE DESENHO, DE ANTES DA IMPLEMENTAÇÃO
+>
+> **Não use como contrato da API atual.** Ele propõe rotas que nunca foram
+> escritas e nomes de parâmetro que a implementação não usa. Conferido em
+> 16/10/2026:
+>
+> | o documento propõe | o que existe |
+> |---|---|
+> | `/api/metricas/ranking`, `/geo`, `/status`, `/resultado`, `/comparativo`, `/porta-vozes`, `/interlocutores` | **não existem** |
+> | `/api/metricas/serie-mensal?por=area\|clima\|tema` | existe, mas o parâmetro é `segmento=frente\|clima\|tema` (`consultas_metricas.py:223`) |
+> | `/api/interacoes/export.csv` | **não existe** — o CSV é montado no navegador |
+> | `/api/porta-vozes` | é `/api/pessoas-aegea` |
+>
+> **A API de verdade são 95 rotas**, e a fonte é o código: os decoradores em
+> `app/api/*.py`, ou o `/docs` do FastAPI num ambiente que não seja produção.
+>
+> O documento fica porque o RACIOCÍNIO dele continua valendo — a ideia de que
+> toda leitura aceita o mesmo conjunto de filtros é o que `app/dominio/recorte.py`
+> implementa. O que envelheceu foram os nomes.
+
 REST/JSON. Todos os endpoints de leitura aceitam o **mesmo conjunto de filtros** do painel, para que qualquer view possa ser reproduzida server-side.
 
 ## Query params de filtro (comuns)
