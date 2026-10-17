@@ -163,29 +163,34 @@ services:
       # Sem Entra ID aqui. `AUTH_MOCK` provisiona um usuário fixo a cada
       # requisição, então o painel abre direto, sem tela de login.
       #
-      # Os quatro papéis de partida são a divisão por PORTAL:
-      #
-      # São OITO: um leitor e um editor para cada portal.
+      # ERA `false` ATÉ A 0096, e a entrada era pela tela de login, com as oito
+      # contas semeadas e senha. A senha saiu — só se entra por SSO — e aqui
+      # não há SSO, então o mock é a única porta.
+      AUTH_MOCK: "true"
+
+      # COMO TROCAR DE PAPEL. São oito contas semeadas, uma por papel:
       #
       #   plataforma_leitura / plataforma_edicao   os três portais
       #   crm_leitura        / crm_edicao          CRM dos Stakeholders
-      #   sintese_leitura    / sintese_edicao      Síntese (ainda sem tela)
-      #   score_leitura      / score_edicao        Score   (ainda sem tela)
+      #   inteligencia_de_mercado_leitura / _edicao   Inteligência de Mercado
+      #   score_leitura      / score_edicao        Score
       #
       # O prefixo diz ONDE entra; o sufixo diz o que FAZ lá dentro. Só
       # `plataforma_edicao` administra acessos.
       #
-      # Com `AUTH_MOCK: "false"` este perfil NÃO é usado — quem manda é o papel
-      # gravado no banco, e a entrada é pela tela de login.
-      AUTH_MOCK: "false"
+      # Mude o PAR abaixo e suba de novo. O `oid` do mock é derivado do perfil
+      # (`dependencias.oid_do_mock`), e `semear_desenvolvimento` usa a mesma
+      # convenção — então o par cai exatamente na conta semeada, com o papel
+      # que ela já tem. Mudar só o perfil, sem o e-mail, criaria uma conta
+      # nova em vez de usar a semeada.
+      AUTH_MOCK_PERFIL: crm_edicao
+      AUTH_MOCK_EMAIL: crm.edicao@aegea.com.br
 
-      # Exigidos quando `AUTH_MOCK` é falso. O SSO está desligado na tela, então
-      # estes valores não são usados — mas a configuração os pede, e recusar
-      # subir sem eles é melhor do que subir com o SSO meio configurado.
+      # A configuração os exige mesmo com o mock ligado, e recusar subir sem
+      # eles é melhor do que subir com o SSO meio configurado.
       ENTRA_TENANT_ID: nao-usado-o-sso-esta-desligado
       ENTRA_CLIENT_ID: nao-usado-o-sso-esta-desligado
       ENTRA_CLIENT_SECRET: nao-usado-o-sso-esta-desligado
-      AUTH_MOCK_PERFIL: crm_edicao
 
       SESSAO_SECRETA: teste-local-com-mais-de-trinta-e-dois-caracteres
 

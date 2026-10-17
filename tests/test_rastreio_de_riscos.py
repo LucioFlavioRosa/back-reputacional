@@ -122,12 +122,14 @@ def _agenda(sessao, tema: Tema, clima: str, **extra) -> InteracaoRegistro:
     #: migrations —, e `criado_por` é obrigatório. Um por sessão basta.
     quem = sessao.scalar(select(Usuario).order_by(Usuario.email).limit(1))
     if quem is None:
-        #: O CHECK `usuario_autentica_de_algum_jeito` exige senha ou Entra
-        #: ID: usuário que não autentica por nada não existe na plataforma.
+        #: `entra_object_id` É `not null` DESDE A 0096: usuário que não
+        #: autentica não existe na plataforma. O check
+        #: `usuario_autentica_de_algum_jeito`, que aceitava "senha OU Entra ID",
+        #: saiu junto com a senha — agora há um caminho só, e ele é obrigatório.
         quem = Usuario(
             email="risco.teste@aegea.com.br",
             nome="Teste do Risco",
-            senha_hash="x",
+            entra_object_id="mock-risco-teste",
         )
         sessao.add(quem)
         sessao.flush()

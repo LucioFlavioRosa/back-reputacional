@@ -15,15 +15,19 @@ Ou seja: sem este arquivo, a garantia seria verdadeira por acidente de
 leitura, e quebraria em silêncio no dia da virada para só-SSO — que é o pior
 dia possível para descobrir.
 
+A VIRADA ACONTECEU na migration 0096: a entrada por senha saiu, e o SSO é a
+única porta. Este arquivo foi escrito antes dela, prevendo-a, e o que ele
+guardava continua valendo — só que agora sem o par de comparação.
+
 `ativo` NA DECISÃO
 ------------------
-A conferência é em `_motivo_da_recusa`, e não só dentro de `autenticar()`: o
-caminho do SSO não passa por lá. Confiar na porta da senha faz desativar
-alguém PARECER que funciona — e a senha é justamente o que vai embora.
+A conferência é em `_motivo_da_recusa`, e não dentro de uma função de
+autenticação: o caminho do SSO não passa por lá.
 
 Como não existe apagar pessoa (`interacao.criado_por` e mais nove chaves
-apontam para `usuario`), desativar é a ÚNICA forma de remover alguém. Ela
-pararia de surtir efeito no login exatamente quando virasse a única forma.
+apontam para `usuario`), desativar é a ÚNICA forma de remover alguém — e ela
+precisava continuar surtindo efeito no login justamente no dia em que a senha
+saísse. Saiu, e continua.
 """
 
 from __future__ import annotations
@@ -151,9 +155,10 @@ def test_sem_papel_nao_entra():
 def test_desativado_nao_entra_mesmo_com_papel(sessao):
     """A regressão que este arquivo existe para impedir.
 
-    Conferido `ativo` só dentro de `autenticar()`, na porta da senha, uma conta
-    desativada COM papel passa por `_motivo_da_recusa` sem ser notada — e o SSO
-    usa só essa função.
+    Se `ativo` fosse conferido só dentro de uma função de autenticação, uma
+    conta desativada COM papel passaria por `_motivo_da_recusa` sem ser notada —
+    e o SSO usa só essa função. Era assim que a antiga porta da senha conferia,
+    e por isso a regra foi movida para cá antes de ela sair (0096).
     """
     papel = sessao.scalars(select(Papel).where(Papel.codigo == "crm_leitura")).first()
     desativada = _pessoa(papel=_papel_de(sessao, papel.id), ativo=False)
@@ -333,35 +338,11 @@ def test_sso_recusa_conta_desativada(cliente, sessao, marca, monkeypatch):
     )
 
 
-# -- a porta da senha ----------------------------------------------------------
-
-
-def test_senha_recusa_quem_nao_recebeu_papel(cliente, sessao, marca):
-    """A mesma regra, pela porta que existe hoje.
-
-    Existe para provar que as duas concordam. No dia em que a rota de senha
-    sair, este teste sai com ela — e o do SSO, acima, continua.
-    """
-    from app.casos_de_uso.autenticar_por_senha import gerar_hash
-
-    email = f"{uuid4().hex[:6]}.{marca}@aegea.com.br"
-    sessao.add(
-        Usuario(
-            email=email,
-            nome="Sem Papel",
-            # `n` minusculo de proposito: o scrypt de producao custa ~100ms, e
-            # o custo existe para quem ataca, nao para a suite.
-            senha_hash=gerar_hash("uma-senha-bem-longa", n=2**4),
-            papel_id=None,
-        )
-    )
-    sessao.commit()
-
-    resposta = cliente.post(
-        "/api/auth/senha", json={"email": email, "senha": "uma-senha-bem-longa"}
-    )
-    assert resposta.status_code == 403
-    assert "nao foi liberado" in _sem_acento(resposta.json()["detalhe"])
+# -- os dois auxiliares --------------------------------------------------------
+#
+# MORAVAM NO BLOCO DA SENHA, que saiu com a 0096. Não eram dele: os dois são
+# usados pelos testes do SSO, acima e abaixo. Ficaram ali por vizinhança, e
+# tirar o bloco inteiro os levou junto — a suíte apontou com onze NameError.
 
 
 def _sem_acento(texto: str) -> str:

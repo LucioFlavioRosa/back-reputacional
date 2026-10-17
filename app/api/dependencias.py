@@ -40,7 +40,22 @@ from app.seguranca.limite_de_taxa import (
 
 #: `oid` sintético do usuário de desenvolvimento. Estável, para que o mesmo
 #: registro seja reaproveitado entre execuções.
-OID_MOCK = "mock-desenvolvimento"
+#:
+#: DERIVADO DO PAPEL desde a 0096, e não mais uma constante única. A razão é a
+#: pilha local: ela entrava por SENHA, com oito contas semeadas — uma por papel
+#: —, e trocar de papel era sair e entrar como outra pessoa. Sem senha, quem
+#: abre a porta é o `AUTH_MOCK`.
+#:
+#: Com um `oid` fixo, o mock criaria UM usuário e `papel_inicial` só age na
+#: criação (ver `provisionar_usuario`): mudar `AUTH_MOCK_PERFIL` depois não
+#: mudaria nada, e trocar de papel exigiria apagar o usuário na mão. Derivando
+#: o `oid` do papel, cada perfil tem a sua linha — e `semear_desenvolvimento`
+#: usa a MESMA convenção, então as oito contas semeadas são alcançáveis.
+#:
+#: Trocar de papel volta a ser: mudar `AUTH_MOCK_PERFIL` e `AUTH_MOCK_EMAIL`
+#: para a conta correspondente, e subir de novo.
+def oid_do_mock(perfil: str) -> str:
+    return f"mock-{perfil}"
 
 
 #: Métodos que não alteram estado. Só os outros exigem token anti-CSRF.
@@ -92,7 +107,7 @@ def _usuario_provisionado(
 
     usuario = provisionar(
         sessao,
-        entra_object_id=OID_MOCK,
+        entra_object_id=oid_do_mock(configuracao.auth_mock_perfil),
         email=configuracao.auth_mock_email,
         nome=configuracao.auth_mock_nome,
         papel_inicial=Perfil(configuracao.auth_mock_perfil),
