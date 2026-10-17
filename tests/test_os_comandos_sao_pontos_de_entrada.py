@@ -21,81 +21,57 @@ NÃO PRECISA DE BANCO: é tudo leitura de fonte.
 
 from __future__ import annotations
 
-import ast
 import re
 from pathlib import Path
 
 import pytest
 
+from tests.varredura_de_imports import (
+    ignorado as _ignorado,
+)
+from tests.varredura_de_imports import (
+    imports_de,
+    modulos_de,
+    tem_porta_de_entrada,
+)
+
 RAIZ = Path(__file__).resolve().parents[1]
 APP = RAIZ / "app"
 COMANDOS = APP / "comandos"
 
-#: Onde não se procura: artefato de build, ambiente virtual, cache.
-IGNORAR = {".git", "node_modules", ".venv", "__pycache__", ".pytest_cache", ".ruff_cache"}
+#: A VARREDURA É A COMPARTILHADA, de `tests/varredura_de_imports.py`, e isso é
+#: correção de um achado de revisão: este arquivo tinha a SUA PRÓPRIA, mais
+#: fraca. Eu endureci a de `test_as_camadas_sao_respeitadas` e deixei esta como
+#: estava — então a regra "nenhuma camada importa um comando" voltou a poder
+#: ser burlada por import relativo e por `importlib`, enquanto a regra das
+#: camadas já não podia.
+MODULOS = modulos_de(RAIZ)
 
 
-def _ignorado(caminho: Path) -> bool:
-    return any(p in IGNORAR or p.endswith(".egg-info") for p in caminho.parts)
+def _importa(caminho: Path) -> set[str]:
+    return {a.modulo for a in imports_de(caminho, RAIZ, MODULOS)}
 
 
-def _tem_porta_de_entrada(caminho: Path) -> bool:
-    """O arquivo tem `if __name__ == "__main__":` no nível do módulo?
+def _executaveis() -> set[str]:
+    """Os módulos que `python -m` consegue DE FATO rodar.
 
-    POR AST, E NÃO POR TEXTO — achado da revisão do Codex. A busca por texto
-    contava a mesma coisa escrita dentro de uma docstring, de um comentário ou
-    de um bloco comentado: um arquivo que só FALA de `__main__` passaria por
-    comando, e um comando com a linha dentro de um `try` passaria por ajudante.
-    """
-    arvore = ast.parse(caminho.read_text(encoding="utf-8"))
-    for no in arvore.body:
-        if not isinstance(no, ast.If):
-            continue
-        teste = no.test
-        if not isinstance(teste, ast.Compare) or len(teste.ops) != 1:
-            continue
-        if not isinstance(teste.ops[0], ast.Eq):
-            continue
-        lados = [teste.left, teste.comparators[0]]
-        nomes = {x.id for x in lados if isinstance(x, ast.Name)}
-        textos = {x.value for x in lados if isinstance(x, ast.Constant)}
-        if "__name__" in nomes and "__main__" in textos:
-            return True
-    return False
-
-
-def _modulos_de_app() -> set[str]:
-    nomes = set()
-    for p in APP.rglob("*.py"):
-        if _ignorado(p):
-            continue
-        partes = p.relative_to(RAIZ).with_suffix("").parts
-        nomes.add(".".join(partes))
-        #: `app.comandos` (o pacote) também é importável, e `python -m` num
-        #: pacote com `__main__.py` é legítimo — nenhum existe hoje, mas o
-        #: teste não deve passar a acusar o dia em que existir.
-        if partes[-1] == "__init__":
-            nomes.add(".".join(partes[:-1]))
-    return nomes
-
-
-def _importa(caminho: Path, modulos: set[str]) -> set[str]:
-    """Os módulos de `app.` que este arquivo importa, nas DUAS formas.
-
-    `from app.banco import derivados` tem `app.banco` no nó e `derivados` em
-    `names` — ler só o nó do import é o ponto cego que faz um módulo usado
-    parecer órfão. Já me enganou uma vez nesta mesma mudança.
+    NÃO É A MESMA COISA QUE "EXISTE", e essa diferença era um falso positivo
+    meu — achado na segunda rodada de revisão do Codex, no código que eu já
+    havia empurrado. `python -m app.comandos` falha com
+    `No module named app.comandos.__main__`, porque um PACOTE só é executável
+    se tiver `__main__.py`, e `app/comandos/` não tem. A primeira versão deste
+    teste conferia só se o nome estava no mapa de módulos, então **aprovava um
+    caminho que não roda**.
     """
     saida: set[str] = set()
-    arvore = ast.parse(caminho.read_text(encoding="utf-8"))
-    for no in ast.walk(arvore):
-        if isinstance(no, ast.ImportFrom) and no.module and no.module.startswith("app."):
-            saida.add(no.module)
-            for a in no.names:
-                if f"{no.module}.{a.name}" in modulos:
-                    saida.add(f"{no.module}.{a.name}")
-        elif isinstance(no, ast.Import):
-            saida.update(a.name for a in no.names if a.name.startswith("app."))
+    for nome, caminho in MODULOS.items():
+        if caminho.name != "__init__.py":
+            #: Módulo em arquivo: `python -m` o executa.
+            saida.add(nome)
+        elif not nome.endswith(".__init__") and (caminho.parent / "__main__.py").exists():
+            #: O pacote só se roda com `__main__.py`. (`...__init__` nunca se
+            #: roda por nome próprio.)
+            saida.add(nome)
     return saida
 
 
@@ -103,12 +79,11 @@ def test_nenhuma_camada_importa_um_comando():
     """A METADE QUE IMPORTA. Se uma rota, um caso de uso ou um repositório
     importar de `app.comandos`, a pasta deixou de ser ponto de entrada e virou
     biblioteca — e a separação que esta estrutura comprou foi perdida."""
-    modulos = _modulos_de_app()
     presos: list[str] = []
     for p in APP.rglob("*.py"):
         if _ignorado(p) or COMANDOS in p.parents:
             continue
-        de_comando = sorted(m for m in _importa(p, modulos) if m.startswith("app.comandos"))
+        de_comando = sorted(m for m in _importa(p) if m.startswith("app.comandos"))
         if de_comando:
             presos.append(f"{p.relative_to(RAIZ)} importa {de_comando}")
     assert not presos, "camada importando comando:\n  " + "\n  ".join(presos)
@@ -118,8 +93,7 @@ def test_main_tambem_nao_importa_comando():
     """`main.py` mora na raiz e monta a aplicação. Ele é o outro ponto de
     entrada — e um comando subindo com o servidor seria carga rodando no
     processo que atende pedido."""
-    modulos = _modulos_de_app()
-    assert not {m for m in _importa(RAIZ / "main.py", modulos) if m.startswith("app.comandos")}
+    assert not {m for m in _importa(RAIZ / "main.py") if m.startswith("app.comandos")}
 
 
 def test_todo_arquivo_de_comandos_e_comando_ou_ajudante_so_dos_comandos():
@@ -127,18 +101,17 @@ def test_todo_arquivo_de_comandos_e_comando_ou_ajudante_so_dos_comandos():
     duas coisas: tem `__main__` (é comando) ou é importado SÓ por esta pasta
     (é ajudante dela). Um terceiro caso é código de produção escondido num
     lugar que diz não ter nenhum."""
-    modulos = _modulos_de_app()
     fora: list[str] = []
     for p in sorted(COMANDOS.glob("*.py")):
         if p.name == "__init__.py":
             continue
-        if _tem_porta_de_entrada(p):
+        if tem_porta_de_entrada(p):
             continue
         nome = ".".join(p.relative_to(RAIZ).with_suffix("").parts)
         de_fora = sorted(
             str(q.relative_to(RAIZ))
             for q in APP.rglob("*.py")
-            if not _ignorado(q) and COMANDOS not in q.parents and nome in _importa(q, modulos)
+            if not _ignorado(q) and COMANDOS not in q.parents and nome in _importa(q)
         )
         if de_fora:
             fora.append(f"{p.name} não tem __main__ e é importado de fora: {de_fora}")
@@ -174,6 +147,23 @@ SEM_EXTENSAO = {"Dockerfile", "Makefile", "Procfile"}
 ESTE_ARQUIVO = Path(__file__).name
 
 
+def _e_placeholder(texto: str, achado: re.Match[str]) -> bool:
+    """`python -m app.comandos.<nome>` é PROSA, não instrução.
+
+    O SEGUNDO FALSO POSITIVO ACHADO PELA REVISÃO, e também no meu próprio
+    código: `README.md` e `app/comandos/__init__.py` escrevem a forma genérica
+    com `<nome>`. A regex captura `app.comandos.`, o `rstrip(".")` devolve
+    `app.comandos`, e aí o teste cobrava que um PACOTE fosse executável —
+    reprovando uma frase que está certa.
+
+    O sinal é o `<` imediatamente depois do nome capturado. Só ele: um ponto
+    solto no fim (`python -m app.comandos.`) continua sendo erro de verdade e
+    segue sendo acusado.
+    """
+    seguinte = texto[achado.end() : achado.end() + 1]
+    return achado.group(1).endswith(".") and seguinte == "<"
+
+
 def _invocacoes() -> list[tuple[str, str]]:
     achadas = []
     for p in sorted(RAIZ.rglob("*")):
@@ -188,6 +178,8 @@ def _invocacoes() -> list[tuple[str, str]]:
         except UnicodeDecodeError:  # pragma: no cover - nenhum hoje
             continue
         for achado in INVOCACAO.finditer(texto):
+            if _e_placeholder(texto, achado):
+                continue
             achadas.append((str(p.relative_to(RAIZ)), achado.group(1).rstrip(".")))
     return achadas
 
@@ -222,16 +214,62 @@ def test_a_regex_reconhece_as_formas_de_invocar(linha, esperado):
         ('if __name__ == "__main__":\n    raise SystemExit(0)\n', True),
         ("if __name__ == '__main__':\n    raise SystemExit(0)\n", True),
         ('if "__main__" == __name__:\n    raise SystemExit(0)\n', True),
+        #: AS QUATRO FORMAS QUE A PRIMEIRA VERSÃO PERDIA, por enumerar `==`:
+        ('if __name__ in ("__main__",):\n    raise SystemExit(0)\n', True),
+        ('if True:\n    pass\nelif __name__ == "__main__":\n    raise SystemExit(0)\n', True),
+        (
+            'try:\n    if __name__ == "__main__":\n        raise SystemExit(0)\n'
+            "except Exception:\n    pass\n",
+            True,
+        ),
+        ('if __name__ == "__main__" and True:\n    raise SystemExit(0)\n', True),
         #: O QUE A BUSCA POR TEXTO CONTAVA E NÃO DEVIA:
         ('"""Rode com: if __name__ == "__main__" no fim."""\n', False),
         ('# if __name__ == "__main__":\n', False),
         ("def f():\n    pass\n", False),
+        #: E o que menciona só um dos dois símbolos não conta.
+        ('if __name__:\n    pass\n', False),
+        ('if "__main__" in x:\n    pass\n', False),
     ],
 )
 def test_a_porta_de_entrada_e_reconhecida_por_ast_e_nao_por_texto(fonte, esperado, tmp_path):
     alvo = tmp_path / "x.py"
     alvo.write_text(fonte, encoding="utf-8")
-    assert _tem_porta_de_entrada(alvo) is esperado
+    assert tem_porta_de_entrada(alvo) is esperado
+
+
+def test_o_pacote_app_comandos_NAO_e_executavel_e_o_teste_sabe():
+    """O falso positivo, fixado nas duas pontas.
+
+    `app.comandos` EXISTE como pacote e NÃO roda com `python -m` (não tem
+    `__main__.py`). O mapa de módulos conhece os dois; só o de executáveis
+    distingue. Se alguém acrescentar `app/comandos/__main__.py`, este caso
+    falha e pede que a distinção seja revista — que é o comportamento certo."""
+    assert "app.comandos" in MODULOS
+    assert not (COMANDOS / "__main__.py").exists()
+    assert "app.comandos" not in _executaveis()
+    assert "app.comandos.semear_score" in _executaveis()
+
+
+@pytest.mark.parametrize(
+    ("texto", "quantas"),
+    [
+        #: PROSA: a forma genérica, que o README e o `__init__` usam.
+        ("roda com `python -m app.comandos.<nome>`", 0),
+        ("python -m app.comandos.<comando>", 0),
+        #: INSTRUÇÃO DE VERDADE: continua sendo conferida.
+        ("python -m app.comandos.semear_score", 1),
+        #: PONTO SOLTO no fim NÃO é placeholder — é erro, e segue acusado.
+        ("python -m app.comandos.", 1),
+    ],
+)
+def test_o_placeholder_generico_nao_e_confundido_com_instrucao(texto, quantas, tmp_path):
+    alvo = tmp_path / "x.md"
+    alvo.write_text(texto, encoding="utf-8")
+    achados = [
+        a for a in INVOCACAO.finditer(texto) if not _e_placeholder(texto, a)
+    ]
+    assert len(achados) == quantas, [a.group(1) for a in achados]
 
 
 def test_o_projeto_documenta_pelo_menos_um_comando():
@@ -241,9 +279,10 @@ def test_o_projeto_documenta_pelo_menos_um_comando():
 
 
 @pytest.mark.parametrize(("onde", "modulo"), _invocacoes(), ids=lambda v: str(v))
-def test_todo_python_m_documentado_aponta_para_modulo_que_existe(onde, modulo):
-    modulos = _modulos_de_app()
-    assert modulo in modulos, (
-        f"{onde} manda rodar `python -m {modulo}`, e esse módulo não existe. "
-        "Um arquivo mudou de lugar e a instrução ficou para trás."
+def test_todo_python_m_documentado_aponta_para_modulo_que_RODA(onde, modulo):
+    assert modulo in _executaveis(), (
+        f"{onde} manda rodar `python -m {modulo}`, e isso não roda. Ou o módulo "
+        "não existe (um arquivo mudou de lugar e a instrução ficou para trás), "
+        "ou é um PACOTE sem `__main__.py` — que falha com "
+        "`No module named …__main__`."
     )
