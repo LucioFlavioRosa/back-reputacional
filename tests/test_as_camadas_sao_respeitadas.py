@@ -24,11 +24,12 @@ NÃO PRECISA DE BANCO: é leitura de fonte com `ast`.
 
 from __future__ import annotations
 
-import ast
 from collections import defaultdict
 from pathlib import Path
 
 import pytest
+
+from tests.varredura_de_imports import Alvo, imports_de, modulos_de
 
 RAIZ = Path(__file__).resolve().parents[1]
 APP = RAIZ / "app"
@@ -58,7 +59,12 @@ PERMITIDO: dict[str, set[str]] = {
     "esquemas": {"esquemas", "dominio"},
     "armazenamento": {"armazenamento", "dominio"},
     "banco": {"banco", "dominio"},
-    "seguranca": {"seguranca", "dominio", "banco"},
+    #: `banco` SAIU DAQUI, achado da revisão do Codex: nenhum módulo de
+    #: `seguranca/` importa `banco`, e eu havia liberado por suposição. Uma
+    #: permissão que não corresponde a nenhum import real é um furo esperando
+    #: acontecer — ela deixaria passar o primeiro `seguranca -> banco` sem
+    #: ninguém decidir que ele podia existir.
+    "seguranca": {"seguranca", "dominio"},
     "casos_de_uso": {
         "casos_de_uso",
         "dominio",
@@ -135,47 +141,72 @@ CICLOS_CONHECIDOS: set[tuple[str, ...]] = {
     ("app.banco.tabelas_interacoes", "app.banco.tabelas_referencias"),
 }
 
-IGNORAR = {"__pycache__", ".pytest_cache", ".ruff_cache"}
+MODULOS = modulos_de(RAIZ)
 
 
-def _modulos() -> dict[str, Path]:
-    saida = {}
-    for p in APP.rglob("*.py"):
-        if any(parte in IGNORAR for parte in p.parts):
-            continue
-        saida[".".join(p.relative_to(RAIZ).with_suffix("").parts)] = p
-    return saida
+def _imports(caminho: Path) -> list[Alvo]:
+    """A varredura ÚNICA, de `tests/varredura_de_imports.py`.
 
-
-MODULOS = _modulos()
-
-
-def _imports(caminho: Path) -> list[tuple[str, int, list[str]]]:
-    """Os imports de `app.` deste arquivo, nas DUAS formas.
-
-    `from app.banco import derivados` tem `app.banco` no nó e `derivados` em
-    `names`; ler só o nó do import faz um submódulo usado parecer órfão. Esse
-    ponto cego me enganou uma vez durante esta própria mudança — um módulo
-    apareceu como "ninguém importa" e eu quase o movi.
+    ELA NÃO MORA MAIS AQUI, e esse foi um achado de revisão por si: havia duas
+    varreduras no projeto — esta e a de `test_os_comandos_sao_pontos_de_entrada`,
+    mais fraca. Eu endureci esta depois de uma revisão e deixei a outra como
+    estava, então a regra "nenhuma camada importa um comando" voltou a poder ser
+    burlada por import relativo enquanto a regra das camadas já não podia. Duas
+    cópias da mesma pergunta, uma delas corrigida, é o modo de apodrecer mais
+    previsível que existe.
     """
-    saida = []
-    for no in ast.walk(ast.parse(caminho.read_text(encoding="utf-8"))):
-        if isinstance(no, ast.ImportFrom) and no.module and no.module.startswith("app."):
-            nomes = [a.name for a in no.names]
-            saida.append((no.module, no.lineno, nomes))
-            for nome in nomes:
-                if f"{no.module}.{nome}" in MODULOS:
-                    saida.append((f"{no.module}.{nome}", no.lineno, []))
-        elif isinstance(no, ast.Import):
-            for a in no.names:
-                if a.name.startswith("app."):
-                    saida.append((a.name, no.lineno, []))
-    return saida
+    return imports_de(caminho, RAIZ, MODULOS)
 
 
 def _camada(modulo: str) -> str | None:
     partes = modulo.split(".")
     return partes[1] if len(partes) >= 3 and partes[1] in PERMITIDO else None
+
+
+def test_a_varredura_reconhece_as_SEIS_formas_de_importar(tmp_path, monkeypatch):
+    """GUARDA QUE NUNCA VIU UM POSITIVO pode ter parado de casar.
+
+    Quatro destas seis formas não existem no código hoje, e três delas eram
+    FURO até a revisão do Codex apontar. Um teste que só roda contra o código
+    atual nunca as exercita — então elas são exercitadas aqui, num arquivo
+    temporário que finge estar em `app/banco/`, para o import relativo ter de
+    onde subir.
+    """
+    pasta = tmp_path / "app" / "banco"
+    pasta.mkdir(parents=True)
+    alvo = pasta / "falso.py"
+    alvo.write_text(
+        "import importlib\n"
+        "from app.dominio.erros import RegraViolada\n"  # 1: a óbvia
+        "from app.banco import filtros_sql\n"  # 2: submódulo em `names`
+        "import app.dominio.score\n"  # 3: import simples
+        "from app import casos_de_uso\n"  # 4: pacote raiz + nome
+        "from ..seguranca import oidc\n"  # 5: relativo
+        "importlib.import_module('app.api.score')\n",  # 6: dinâmico literal
+        encoding="utf-8",
+    )
+
+    #: `_imports` resolve o relativo contra a posição do ARQUIVO, então a raiz
+    #: tem de ser a do temporário. `MODULOS` segue sendo a do repositório de
+    #: verdade, que é o que faz a resolução de submódulo ter contra o que
+    #: conferir — por isso os nomes usados acima são todos REAIS.
+    monkeypatch.setattr(f"{__name__}.RAIZ", tmp_path)
+    achados = {a for a, _, _ in _imports(alvo)}
+
+    for esperado in (
+        "app.dominio.erros",
+        "app.banco",
+        "app.banco.filtros_sql",
+        "app.dominio.score",
+        "app.casos_de_uso",
+        "app.seguranca",
+        "app.seguranca.oidc",
+        "app.api.score",
+    ):
+        assert esperado in achados, (esperado, sorted(achados))
+
+    #: E o pacote raiz sozinho NÃO entra — ele não diz camada nenhuma.
+    assert "app" not in achados
 
 
 def test_nenhuma_camada_importa_o_que_nao_pode():
