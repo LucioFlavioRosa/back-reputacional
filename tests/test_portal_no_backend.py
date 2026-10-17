@@ -130,7 +130,7 @@ def test_a_plataforma_alcanca_as_rotas_do_crm(cliente, sessao, rota):
 # -- quem NÃO abre o CRM é barrado --------------------------------------------
 
 
-@pytest.mark.parametrize("papel", ["sintese_leitura", "score_leitura"])
+@pytest.mark.parametrize("papel", ["inteligencia_de_mercado_leitura", "score_leitura"])
 @pytest.mark.parametrize("rota", ROTAS_DO_CRM)
 def test_quem_nao_abre_o_crm_nao_le_o_crm(cliente, sessao, papel, rota):
     """O furo, em uma linha.
@@ -156,7 +156,7 @@ def test_a_trilha_de_exportacoes_e_barrada_por_DOIS_motivos(cliente, sessao):
     remover a permissão interna achando que o portal já basta, `sintese`
     continuaria barrado — mas `crm` passaria a ler o que todo mundo exportou.
     """
-    entra(cliente, sessao, "sintese_leitura")
+    entra(cliente, sessao, "inteligencia_de_mercado_leitura")
     por_portal = cliente.get("/api/exportacoes/historico")
     assert por_portal.status_code == 403
     assert "CRM dos Stakeholders" in por_portal.json()["detalhe"]
@@ -176,12 +176,12 @@ def test_a_recusa_diz_qual_modulo(cliente, sessao):
     Nomear o módulo não conta nada que a pessoa não saiba sobre si mesma, e é
     acionável — diferente de "não autorizado", que manda adivinhar.
     """
-    entra(cliente, sessao, "sintese_leitura")
+    entra(cliente, sessao, "inteligencia_de_mercado_leitura")
     resposta = cliente.get("/api/interacoes")
     assert "CRM dos Stakeholders" in resposta.json()["detalhe"]
 
 
-@pytest.mark.parametrize("papel", ["sintese_leitura", "score_leitura"])
+@pytest.mark.parametrize("papel", ["inteligencia_de_mercado_leitura", "score_leitura"])
 def test_quem_nao_abre_o_crm_tambem_nao_escreve(cliente, sessao, papel):
     """Barrado por `exigir_escrita` E pelo portal.
 
@@ -202,8 +202,8 @@ def test_quem_nao_abre_o_crm_tambem_nao_escreve(cliente, sessao, papel):
         "plataforma_edicao",
         "crm_leitura",
         "crm_edicao",
-        "sintese_leitura",
-        "sintese_edicao",
+        "inteligencia_de_mercado_leitura",
+        "inteligencia_de_mercado_edicao",
         "score_leitura",
         "score_edicao",
     ],

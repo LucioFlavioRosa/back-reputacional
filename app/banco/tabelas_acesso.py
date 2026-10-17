@@ -47,7 +47,7 @@ class Papel(Tabela):
 
     #: ONDE a pessoa entra. Ver o comentário em `Papel`, no domínio.
     acessa_crm: Mapped[bool] = mapped_column(Boolean, default=False)
-    acessa_sintese: Mapped[bool] = mapped_column(Boolean, default=False)
+    acessa_inteligencia_de_mercado: Mapped[bool] = mapped_column(Boolean, default=False)
     acessa_score: Mapped[bool] = mapped_column(Boolean, default=False)
 
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)

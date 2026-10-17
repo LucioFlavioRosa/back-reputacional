@@ -118,8 +118,19 @@ USUARIOS_DE_DESENVOLVIMENTO = [
     ("plataforma_edicao", "plataforma.edicao@aegea.com.br", "Plataforma · edição"),
     ("crm_leitura", "crm.leitura@aegea.com.br", "CRM · leitura"),
     ("crm_edicao", "crm.edicao@aegea.com.br", "CRM · edição"),
-    ("sintese_leitura", "sintese.leitura@aegea.com.br", "Síntese · leitura"),
-    ("sintese_edicao", "sintese.edicao@aegea.com.br", "Síntese · edição"),
+    #: O E-MAIL CONTINUA DIZENDO `sintese`, e é de propósito: ele é identidade
+    #: de login no ambiente local, e trocá-lo criaria conta nova em quem já tem
+    #: a pilha de pé. O código do papel seguiu o rename da 0095; o e-mail não.
+    (
+        "inteligencia_de_mercado_leitura",
+        "sintese.leitura@aegea.com.br",
+        "Inteligência de Mercado · leitura",
+    ),
+    (
+        "inteligencia_de_mercado_edicao",
+        "sintese.edicao@aegea.com.br",
+        "Inteligência de Mercado · edição",
+    ),
     ("score_leitura", "score.leitura@aegea.com.br", "Score · leitura"),
     ("score_edicao", "score.edicao@aegea.com.br", "Score · edição"),
 ]

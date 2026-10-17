@@ -439,7 +439,11 @@ def test_historico_pela_http(cliente, sessao):
     cliente.put(
         f"/api/acessos/{alvo.id}",
         headers={"X-CSRF-Token": token},
-        json={"papel": "sintese_leitura", "acesso_irrestrito": True, "versao_vista": None},
+        json={
+            "papel": "inteligencia_de_mercado_leitura",
+            "acesso_irrestrito": True,
+            "versao_vista": None,
+        },
     )
     corpo = cliente.get(f"/api/acessos/{alvo.id}/historico").json()
 
@@ -532,7 +536,7 @@ def test_dois_administradores_nao_se_sobrescrevem(sessao):
     administrar_acessos.conceder(
         sessao, alvo=alvo.id,
         concessao=administrar_acessos.Concessao(
-            papel="sintese_leitura", acesso_irrestrito=True,
+            papel="inteligencia_de_mercado_leitura", acesso_irrestrito=True,
             versao_vista=versao(sessao, alvo),
         ),
         solicitante=admin,
@@ -755,7 +759,13 @@ def test_duas_concessoes_simultaneas_nao_se_atropelam(dois_usuarios_comitados):
 
     primeira = _engine.connect()
     primeira.begin()
-    _conceder(primeira, alvo=alvo, quem=admin, papel="sintese_leitura", versao=versao)
+    _conceder(
+        primeira,
+        alvo=alvo,
+        quem=admin,
+        papel="inteligencia_de_mercado_leitura",
+        versao=versao,
+    )
     ja_comitou = False
 
     def segunda_concessao() -> None:
@@ -825,7 +835,7 @@ def test_duas_concessoes_simultaneas_nao_se_atropelam(dois_usuarios_comitados):
             ),
             {"id": alvo},
         ).scalar()
-    assert papel == "sintese_leitura", "quem chegou primeiro tem de continuar de pé"
+    assert papel == "inteligencia_de_mercado_leitura", "quem chegou primeiro tem de continuar de pé"
 
 
 # -- revogar é estado limpo ----------------------------------------------------
@@ -884,7 +894,7 @@ def test_escopo_antigo_nao_ressuscita(sessao):
     )
     sessao.flush()
 
-    for papel in (None, "sintese_leitura"):
+    for papel in (None, "inteligencia_de_mercado_leitura"):
         administrar_acessos.conceder(
             sessao, alvo=alvo.id,
             concessao=administrar_acessos.Concessao(
