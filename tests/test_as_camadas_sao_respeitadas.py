@@ -58,7 +58,12 @@ PERMITIDO: dict[str, set[str]] = {
     "esquemas": {"esquemas", "dominio"},
     "armazenamento": {"armazenamento", "dominio"},
     "banco": {"banco", "dominio"},
-    "seguranca": {"seguranca", "dominio", "banco"},
+    #: `banco` SAIU DAQUI, achado da revisão do Codex: nenhum módulo de
+    #: `seguranca/` importa `banco`, e eu havia liberado por suposição. Uma
+    #: permissão que não corresponde a nenhum import real é um furo esperando
+    #: acontecer — ela deixaria passar o primeiro `seguranca -> banco` sem
+    #: ninguém decidir que ele podia existir.
+    "seguranca": {"seguranca", "dominio"},
     "casos_de_uso": {
         "casos_de_uso",
         "dominio",
@@ -143,39 +148,155 @@ def _modulos() -> dict[str, Path]:
     for p in APP.rglob("*.py"):
         if any(parte in IGNORAR for parte in p.parts):
             continue
-        saida[".".join(p.relative_to(RAIZ).with_suffix("").parts)] = p
+        partes = p.relative_to(RAIZ).with_suffix("").parts
+        saida[".".join(partes)] = p
+        #: O PACOTE TAMBÉM, e não só o arquivo. Sem isto, `from app import banco`
+        #: não resolveria: o nome `banco` está em `names`, e a conferência é
+        #: `f"{alvo}.{nome}" in MODULOS` — `app.banco` precisa existir aqui.
+        if partes[-1] == "__init__":
+            saida[".".join(partes[:-1])] = p
     return saida
 
 
 MODULOS = _modulos()
 
 
-def _imports(caminho: Path) -> list[tuple[str, int, list[str]]]:
-    """Os imports de `app.` deste arquivo, nas DUAS formas.
+def _pacote_de(caminho: Path) -> str:
+    """O pacote que contém o arquivo — `app.banco` para `app/banco/x.py`.
 
-    `from app.banco import derivados` tem `app.banco` no nó e `derivados` em
-    `names`; ler só o nó do import faz um submódulo usado parecer órfão. Esse
-    ponto cego me enganou uma vez durante esta própria mudança — um módulo
-    apareceu como "ninguém importa" e eu quase o movi.
+    É o que resolve import RELATIVO: `from ..dominio import erros` dentro de
+    `app/banco/x.py` significa `app.dominio.erros`.
     """
-    saida = []
+    return ".".join(caminho.relative_to(RAIZ).parent.parts)
+
+
+def _resolver_relativo(caminho: Path, modulo: str | None, nivel: int) -> str | None:
+    """`from ..dominio import erros` → `app.dominio`.
+
+    Nível 1 é o próprio pacote, 2 é o pai, e assim por diante.
+    """
+    partes = _pacote_de(caminho).split(".")
+    subida = partes[: len(partes) - (nivel - 1)] if nivel > 1 else partes
+    if not subida:
+        return None
+    return ".".join([*subida, modulo]) if modulo else ".".join(subida)
+
+
+def _imports(caminho: Path) -> list[tuple[str, int, list[str]]]:
+    """Os imports de `app.` deste arquivo, em TODAS as formas que o Python tem.
+
+    AS QUATRO FORMAS, e cada uma já foi um furo:
+
+    1. `from app.banco.x import y` — a óbvia;
+    2. `from app.banco import derivados` — o submódulo está em `names`, não no
+       nó. Ler só o nó faz um módulo usado parecer órfão, e esse ponto cego me
+       enganou durante esta própria mudança: um módulo apareceu como "ninguém
+       importa" e eu quase o movi;
+    3. `import app.banco.x` / `import app.banco.x as y`;
+    4. `from app import banco` e `from ..banco import x` — ACHADOS DA REVISÃO
+       DO CODEX. O primeiro tem `module == "app"`, que não casa com o prefixo
+       `"app."` por um caractere; o segundo tem `module == "banco"` e
+       `level == 2`, e não parece `app.` nenhum. Nenhuma das duas existe no
+       código hoje, e as duas passariam direto.
+    """
+    saida: list[tuple[str, int, list[str]]] = []
+
+    def registrar(alvo: str, linha: int, nomes: list[str]) -> None:
+        if not (alvo == "app" or alvo.startswith("app.")):
+            return
+        #: O PACOTE RAIZ `app` NÃO ENTRA sozinho: ele não diz camada nenhuma
+        #: (`app/__init__.py` é só docstring), e registrá-lo faria
+        #: `from app import dominio` aparecer como "o domínio importou `app`" —
+        #: uma mensagem que não ajuda ninguém. O que entra é o submódulo
+        #: resolvido, abaixo.
+        if alvo != "app":
+            saida.append((alvo, linha, nomes))
+        #: O submódulo citado em `names` é um alvo por direito próprio.
+        for nome in nomes:
+            if f"{alvo}.{nome}" in MODULOS:
+                saida.append((f"{alvo}.{nome}", linha, []))
+
     for no in ast.walk(ast.parse(caminho.read_text(encoding="utf-8"))):
-        if isinstance(no, ast.ImportFrom) and no.module and no.module.startswith("app."):
-            nomes = [a.name for a in no.names]
-            saida.append((no.module, no.lineno, nomes))
-            for nome in nomes:
-                if f"{no.module}.{nome}" in MODULOS:
-                    saida.append((f"{no.module}.{nome}", no.lineno, []))
+        if isinstance(no, ast.ImportFrom):
+            alvo = (
+                _resolver_relativo(caminho, no.module, no.level)
+                if no.level
+                else no.module
+            )
+            if alvo:
+                registrar(alvo, no.lineno, [a.name for a in no.names])
         elif isinstance(no, ast.Import):
             for a in no.names:
-                if a.name.startswith("app."):
-                    saida.append((a.name, no.lineno, []))
+                registrar(a.name, no.lineno, [])
+        #: IMPORT DINÂMICO com caminho literal — `importlib.import_module("app.x")`
+        #: e `__import__("app.x")`. Também achado da revisão, e também inexistente
+        #: hoje. Só o LITERAL é alcançável: um caminho montado em variável nenhuma
+        #: varredura estática resolve, e prometer o contrário seria pior do que
+        #: não cobrir.
+        elif isinstance(no, ast.Call):
+            nome = (
+                no.func.attr
+                if isinstance(no.func, ast.Attribute)
+                else no.func.id
+                if isinstance(no.func, ast.Name)
+                else ""
+            )
+            if nome in ("import_module", "__import__") and no.args:
+                primeiro = no.args[0]
+                if isinstance(primeiro, ast.Constant) and isinstance(primeiro.value, str):
+                    registrar(primeiro.value, no.lineno, [])
     return saida
 
 
 def _camada(modulo: str) -> str | None:
     partes = modulo.split(".")
     return partes[1] if len(partes) >= 3 and partes[1] in PERMITIDO else None
+
+
+def test_a_varredura_reconhece_as_SEIS_formas_de_importar(tmp_path, monkeypatch):
+    """GUARDA QUE NUNCA VIU UM POSITIVO pode ter parado de casar.
+
+    Quatro destas seis formas não existem no código hoje, e três delas eram
+    FURO até a revisão do Codex apontar. Um teste que só roda contra o código
+    atual nunca as exercita — então elas são exercitadas aqui, num arquivo
+    temporário que finge estar em `app/banco/`, para o import relativo ter de
+    onde subir.
+    """
+    pasta = tmp_path / "app" / "banco"
+    pasta.mkdir(parents=True)
+    alvo = pasta / "falso.py"
+    alvo.write_text(
+        "import importlib\n"
+        "from app.dominio.erros import RegraViolada\n"  # 1: a óbvia
+        "from app.banco import filtros_sql\n"  # 2: submódulo em `names`
+        "import app.dominio.score\n"  # 3: import simples
+        "from app import casos_de_uso\n"  # 4: pacote raiz + nome
+        "from ..seguranca import oidc\n"  # 5: relativo
+        "importlib.import_module('app.api.score')\n",  # 6: dinâmico literal
+        encoding="utf-8",
+    )
+
+    #: `_imports` resolve o relativo contra a posição do ARQUIVO, então a raiz
+    #: tem de ser a do temporário. `MODULOS` segue sendo a do repositório de
+    #: verdade, que é o que faz a resolução de submódulo ter contra o que
+    #: conferir — por isso os nomes usados acima são todos REAIS.
+    monkeypatch.setattr(f"{__name__}.RAIZ", tmp_path)
+    achados = {a for a, _, _ in _imports(alvo)}
+
+    for esperado in (
+        "app.dominio.erros",
+        "app.banco",
+        "app.banco.filtros_sql",
+        "app.dominio.score",
+        "app.casos_de_uso",
+        "app.seguranca",
+        "app.seguranca.oidc",
+        "app.api.score",
+    ):
+        assert esperado in achados, (esperado, sorted(achados))
+
+    #: E o pacote raiz sozinho NÃO entra — ele não diz camada nenhuma.
+    assert "app" not in achados
 
 
 def test_nenhuma_camada_importa_o_que_nao_pode():

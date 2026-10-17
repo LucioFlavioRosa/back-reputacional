@@ -22,7 +22,7 @@ inferido. Onde há opinião, ela está marcada como opinião.
 app/api/           23 módulos   rotas, esquemas de entrada e saída
 app/casos_de_uso/  28 módulos   o que o sistema FAZ
 app/dominio/       24 módulos   regra pura, sem banco e sem HTTP
-app/banco/         33 módulos   tabelas, repositórios, consultas
+app/banco/         33 módulos   tabelas, repositórios, consultas  ← HOJE SÃO 23
 app/seguranca/      8 módulos   identidade, sessão, limites
 app/armazenamento/  2 módulos   blob
 app/esquemas/       2 módulos
@@ -30,6 +30,18 @@ app/esquemas/       2 módulos
 ```
 
 **123 módulos**, e a varredura de inventário não achou **nenhum órfão**.
+
+> **ESTE QUADRO É DA DATA DO DOCUMENTO, e uma linha dele já mudou no mesmo dia:**
+> `app/banco/` tem **23** módulos, não 33 — os 10 scripts de linha de comando
+> saíram para `app/comandos/` (§6.2). A revisão do Codex pegou o número
+> desatualizado aqui, e pegou bem: quem lê a seção 1 de cima para baixo encontra
+> "33" antes de chegar ao §6, e acredita. Pelo mesmo motivo a tabela de arquivos
+> grandes mais abaixo ainda diz `banco/semear_enredos.py`, cujo caminho hoje é
+> `comandos/semear_enredos.py`.
+>
+> Os números desta seção ficam como MEDIÇÃO DAQUELE DIA — reescrevê-los apagaria
+> o antes de que o §6.4 depende para comparar. O que não pode é o leitor não
+> saber disso, e é o que esta nota resolve.
 
 **O DOMÍNIO É PURO DE VERDADE, e isso é o ativo.** `app/dominio/` não importa
 banco, FastAPI nem infraestrutura, e não há ciclo de import em lugar nenhum —
@@ -75,8 +87,8 @@ src/componentes/  28 arquivos
 
 | back | | front | |
 |---|---|---|---|
-| `casos_de_uso/importar_agendas.py` | 152 KB | `api/cliente.ts` | 100 KB |
-| `banco/semear_enredos.py` | 141 KB | `paginas/Painel.tsx` | 82 KB |
+| `casos_de_uso/importar_agendas.py` | 152 KB | `api/cliente.ts` (hoje dividido, §6.1) | 100 KB |
+| `banco/semear_enredos.py` (hoje `comandos/`) | 141 KB | `paginas/Painel.tsx` | 82 KB |
 | `api/lentes.py` | 103 KB | `paginas/Cadastro.tsx` | 69 KB |
 | `api/score.py` | 74 KB | `dominio/derivacoes.ts` | 63 KB |
 
@@ -469,3 +481,148 @@ nova e recusa também uma que deixou de acontecer, para não virar cemitério.
   alcançado.
 - **`importar_agendas.py` (3.258 linhas) e `Painel.tsx`**: deliberadamente não
   tocados, pelos motivos da §5.
+
+---
+
+## 7. Crescer PARA ONDE — os três rumos, e o que cada um testa
+
+Este documento abriu perguntando se a estrutura aguenta crescer, sem saber em
+que direção. Em 17/10/2026 o dono do produto disse: **mais automações de leitura
+de dados, IA para geração de insights, e WhatsApp para interagir com a
+plataforma.** Pediu explicitamente para não construir nada disso ainda — só
+estar preparado.
+
+Isso muda o que vale medir, porque os três batem em lugares diferentes. Abaixo,
+o que foi medido para cada um.
+
+### 7.1 WhatsApp: uma SEGUNDA INTERFACE — e esta a estrutura já aguenta
+
+É o rumo mais duro dos três, porque não acrescenta uma tela: acrescenta uma
+porta. A pergunta é se a regra do produto é alcançável sem um pedido HTTP.
+
+**Medido: das 94 funções públicas de `app/casos_de_uso/`, ZERO** pedem
+`UploadFile`, `Request`, `Depends`, `BackgroundTasks` ou qualquer tipo que só
+existe dentro de um pedido. E nem `casos_de_uso/` nem `dominio/` importam
+`fastapi` ou `starlette` em linha nenhuma.
+
+**Toda operação do produto já é chamável de um job, de um comando ou de um
+webhook.** Os nove comandos da §6.2 são a prova viva: eles rodam a regra sem
+FastAPI nenhum, todos os dias.
+
+Isso não estava protegido por nada, e o jeito de perder é banal — um
+`UploadFile` na assinatura do caso de uso é o atalho de quem está escrevendo
+uma rota de upload. Virou teste
+(`tests/test_a_regra_nao_depende_de_http.py`, PR à parte).
+
+**MAS A SEGUNDA INTERFACE NÃO SAI DE GRAÇA, e aqui está o número que importa:**
+
+| onde | linhas em função auxiliar de rota |
+|---|---|
+| `api/lentes.py` | **1.344** (30 auxiliares; a maior, `_paineis`, tem 271) |
+| `api/dependencias.py` | 273 — legítimo, é autorização de pedido |
+| `api/importacoes.py` | 238 |
+| `api/score.py` | 230 |
+| `api/interacoes.py` | 170 (a maior é `obter_recorte`, 128) |
+| `api/referencias.py` | 165 |
+| `api/stakeholders.py` | 141 |
+| `api/erros.py` | 121 — legítimo, são tratadores HTTP |
+| outras 14 | 501 |
+| **total** | **3.183** |
+
+Tirando os ~394 que são legitimamente HTTP, sobram **~2.800 linhas de montagem
+de resposta e de regra dentro da camada de rota** — e mais da metade num
+arquivo só. Uma pergunta de WhatsApp como "como está a Imprensa este mês?"
+precisaria de `_paineis` (271 linhas), `_evolucao` (93) e `_onde_esta_a_causa`
+(110), todas privadas, todas dentro de `api/lentes.py`.
+
+**É a §3.4 deste documento com número e consequência.** Lá eu escrevi que
+`lentes.py` é "a camada de rota fazendo trabalho de três camadas" e deixei como
+observação. Com uma segunda interface no mapa, deixa de ser observação: é o
+único trabalho estrutural que o WhatsApp exige, e ele tem tamanho —
+**estimativa de 2 a 4 dias**, extraindo os 30 auxiliares para
+`casos_de_uso/leitura_das_lentes.py` (ou um módulo por bloco), com a suíte de
+`lentes` na frente. Não foi feito aqui de propósito: é mudança grande, e vale
+abrir sozinha.
+
+### 7.2 IA para insights: o lugar já existe, e o risco não é estrutural
+
+O produto já gera texto a partir de dado medido, e em quatro lugares puros:
+`dominio/frases_de_sinais.py`, `dominio/frases_da_consulta.py`,
+`dominio/tema_do_mes.py` no back, e `dominio/sinteseIA.ts`,
+`dominio/relatorioNarrativo.ts` no front. São funções puras, testadas, e já
+recebem o recorte pronto.
+
+**Um gerador por LLM entra como mais uma fonte de texto no mesmo lugar**, e a
+estrutura não atrapalha: a chamada ao modelo é um caso de uso (que, pela §7.1,
+já é chamável de qualquer porta), e o texto gerado é dado como qualquer outro.
+
+O que a estrutura NÃO resolve, e precisa de decisão quando chegar a hora: de
+onde o gerador lê o recorte inteiro. Hoje o front deriva KPI e série sobre no
+máximo 5.000 registros (§4.3) e as quatro rotas `/api/metricas/*` que fazem a
+conta sobre o recorte SQL inteiro não são chamadas. **Um insight gerado sobre
+número parcial é pior do que nenhum insight**, porque ele afirma com frase o que
+o número não sustenta. Isto é mais um motivo para a §4.3 sair do esquecimento.
+
+### 7.3 Mais automações de leitura: o custo é por fonte, e já é baixo
+
+A ingestão de hoje tem quatro caminhos (planilha de agendas, planilha do Score,
+pacote das lentes, cadastro externo em CSV), e eles compartilham o que importa:
+leitura por `openpyxl`/`csv`, conferência antes de gravar, sessão de upload em
+partes, e `importacao`/`importacao_linha` para a tela de conferência.
+
+**O teto de leitura é declarado e medido** — 80 MB de planilha, 1,2 MB por
+pedaço na subida em partes, com o motivo de cada número no código. Uma fonte
+nova entra por esse caminho; o que ela traz de próprio é o mapeamento de
+colunas, que é específico por definição.
+
+Nada estrutural a fazer. **O que vale lembrar é operacional:** fonte nova é
+tabela nova ou coluna nova, e migration que cria tabela nasce sem `delete` para
+`painel_app` — a suíte fica verde e só o ambiente implantado quebra.
+
+### 7.4 Gráficos e elementos: o que dá para reaproveitar, medido
+
+Pedido explícito: "estruturar para reaproveitar o máximo possível de gráficos e
+outros elementos". Medido no front em 17/10/2026, por quantas TELAS distintas
+consomem cada arquivo:
+
+| | arquivos | 1 tela | 2 ou mais | 4 ou mais |
+|---|---|---|---|---|
+| `src/componentes/` | 28 | 10 | **18** | 11 |
+| `src/graficos/` | 16 | **10** | 6 | 1 |
+
+`componentes/` está saudável (`basicos` serve 32 telas). Nada a fazer.
+
+`graficos/` parece ruim e o número engana. **Nenhum gráfico importa primitiva de
+desenho de outro** — os únicos imports entre eles são um controle
+(`SeletorDeJanela`) e um `.geo.json`. Mas **todos importam de `@/dominio/`**, e
+`@/dominio/formato` aparece em nove.
+
+**Então a CONTA já é compartilhada e o DESENHO é por gráfico — e isso está
+certo.** Não há biblioteca de gráficos no projeto (só `d3-scale` e `d3-geo`, que
+dão escala e projeção), e um gráfico específico servir uma tela só é normal.
+Montar um kit genérico agora seria abstração por adivinhação.
+
+**O que estava fora do padrão era uma exceção**, e foi corrigida em PR à parte:
+`GraficoDeLinha.tsx` calculava a régua do eixo Y dentro do componente. A conta
+foi para `dominio/eixoDaSerie`, ao lado da régua do índice, com o porquê de
+serem DUAS (o NSS é saldo e cruza o zero; o índice não) e com as três perguntas
+que a TERCEIRA — a aba de bonds, que plota preço e yield — terá de responder.
+
+Esse é o formato de "preparado para expandir" que a medição sustenta: **coletar
+as decisões onde a próxima pessoa as encontra, e não inventar a abstração antes
+do terceiro caso.**
+
+### 7.5 O que mudaria o veredito
+
+Tudo acima vale enquanto a resposta a estas perguntas não mudar. Se mudar, a
+§4.1 (módulo próprio por domínio) volta à mesa:
+
+- **o WhatsApp vai ESCREVER no painel, ou só ler?** Se escrever (confirmar uma
+  agenda, registrar uma interação), ele passa a precisar da autorização por
+  portal e por camada, e isso não é adaptador: é produto;
+- **a IA vai gerar texto SOB DEMANDA ou em lote?** Em lote é job, e job é
+  comando — a §6.2 já tem a pasta. Sob demanda num pedido HTTP é latência de
+  LLM dentro do teto de ~240 s do ingress, que não é configurável;
+- **as automações de leitura vão ser EMPURRADAS por terceiro** (webhook do
+  fornecedor) em vez de puxadas por planilha? Aí entra autenticação de máquina,
+  idempotência e repetição — e nenhuma das três existe hoje.
