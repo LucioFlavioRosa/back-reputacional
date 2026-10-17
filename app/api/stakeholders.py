@@ -7,7 +7,6 @@ poucas centenas de linhas e mudam raramente.
 
 from __future__ import annotations
 
-import unicodedata
 from typing import Annotated
 from uuid import UUID
 
@@ -41,6 +40,7 @@ from app.banco.tabelas_stakeholders import (
 from app.casos_de_uso.derivar_tipo import derivar_tipo
 from app.casos_de_uso.vinculos_de_risco import aplicar_riscos_do_tema
 from app.dominio.erros import NaoEncontrado, RegraViolada
+from app.dominio.texto import normalizar
 from app.dominio.vocabulario_de_temas import CAMADAS_DE_LSO, NIVEIS_DE_TEMA
 
 rotas = APIRouter(
@@ -283,16 +283,13 @@ class InterlocutorEntrada(BaseModel):
     ativo: bool = True
 
 
-def _normalizar(nome: str) -> str:
-    """A forma comparavel do nome, como a planilha ja gravava.
-
-    O indice unico e `(nome_normalizado, tipo)`: sem normalizar aqui, "Folha de
-    S.Paulo" e "FOLHA DE S.PAULO" entrariam como duas instituicoes, e a segunda
-    agenda apontaria para a duplicata sem ninguem notar.
-    """
-    return unicodedata.normalize("NFKD", nome.strip().lower()).encode(
-        "ascii", "ignore"
-    ).decode()
+#: A NORMALIZACAO E A DO DOMINIO, e nao uma propria.
+#:
+#: HAVIA UMA PROPRIA AQUI, e ela NAO colapsava espaco interno: a mesma
+#: instituicao criada pelo FORMULARIO com espaco duplo gerava
+#: `nome_normalizado` diferente do que a PLANILHA geraria, e entrava como
+#: segunda instituicao -- exatamente a duplicata que o comentario daquela
+#: funcao dizia existir para impedir. Ver `dominio/texto.py`.
 
 
 @rotas.post(
@@ -317,7 +314,7 @@ def criar_instituicao(
 
     registro = Instituicao(
         nome=entrada.nome.strip(),
-        nome_normalizado=_normalizar(entrada.nome),
+        nome_normalizado=normalizar(entrada.nome),
         tipo=tipo,
         nome_completo=entrada.nome_completo,
         #: NA CRIACAO TAMBEM, para a tela poder cadastrar o perfil ja dizendo
@@ -421,7 +418,7 @@ def editar_instituicao(
         sessao, entrada.categoria_publico_id, entrada.subcategoria_publico_id
     )
     registro.nome = entrada.nome.strip()
-    registro.nome_normalizado = _normalizar(entrada.nome)
+    registro.nome_normalizado = normalizar(entrada.nome)
     registro.tipo = derivar_tipo(
         sessao,
         tipo=entrada.tipo,
@@ -524,7 +521,7 @@ def criar_interlocutor(
 ) -> Interlocutor:
     registro = Interlocutor(
         nome=entrada.nome.strip(),
-        nome_normalizado=_normalizar(entrada.nome),
+        nome_normalizado=normalizar(entrada.nome),
         instituicao_id=entrada.instituicao_id,
         cargo=entrada.cargo,
         area=entrada.area,
@@ -558,7 +555,7 @@ def editar_interlocutor(
     if registro is None:
         raise NaoEncontrado("Pessoa nao encontrada.")
     registro.nome = entrada.nome.strip()
-    registro.nome_normalizado = _normalizar(entrada.nome)
+    registro.nome_normalizado = normalizar(entrada.nome)
     registro.instituicao_id = entrada.instituicao_id
     registro.cargo = entrada.cargo
     registro.area = entrada.area
@@ -716,7 +713,7 @@ def criar_pessoa_aegea(
     _conferir_area(sessao, entrada.area_id)
     registro = PessoaAegea(
         nome=entrada.nome.strip(),
-        nome_normalizado=_normalizar(entrada.nome),
+        nome_normalizado=normalizar(entrada.nome),
         cargo=entrada.cargo,
         email=entrada.email,
         eh_porta_voz=entrada.eh_porta_voz,
@@ -746,7 +743,7 @@ def editar_pessoa_aegea(
         raise NaoEncontrado("Pessoa nao encontrada.")
     _conferir_area(sessao, entrada.area_id)
     registro.nome = entrada.nome.strip()
-    registro.nome_normalizado = _normalizar(entrada.nome)
+    registro.nome_normalizado = normalizar(entrada.nome)
     registro.cargo = entrada.cargo
     registro.email = entrada.email
     registro.eh_porta_voz = entrada.eh_porta_voz
