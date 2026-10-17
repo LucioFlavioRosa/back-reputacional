@@ -11,7 +11,7 @@ inferido. Onde há opinião, ela está marcada como opinião.
 
 ## 1. O que existe hoje, medido
 
-### O back tem camadas de verdade, e elas são respeitadas
+### O back tem camadas de verdade, e o domínio é puro — o resto se cruza
 
 ```
 app/api/           23 módulos   rotas, esquemas de entrada e saída
@@ -26,8 +26,27 @@ app/esquemas/       2 módulos
 
 **123 módulos**, e a varredura de inventário não achou **nenhum órfão**.
 
-Isso não é pouco. A separação `dominio/` sem banco e sem HTTP é o que permite
-testar regra sem subir nada, e é de onde vem a maior parte dos 2.276 testes.
+**O DOMÍNIO É PURO DE VERDADE, e isso é o ativo.** `app/dominio/` não importa
+banco, FastAPI nem infraestrutura, e não há ciclo de import em lugar nenhum —
+conferido estaticamente. É o que permite testar regra sem subir nada, e é de
+onde vem a maior parte dos testes (2.276 numa execução registrada em 17/10/2026;
+o número é de execução, não dedutível do disco).
+
+**MAS AS OUTRAS TRÊS CAMADAS SE CRUZAM**, e a primeira versão deste documento
+dizia que "as camadas são respeitadas", o que é falso:
+
+```
+banco/importar_cadastro_externo.py:71   from app.api.stakeholders import (...)
+banco/importar_cadastro_externo.py:80   from app.casos_de_uso.derivar_tipo import ...
+banco/carregar_pacote_das_lentes.py:28  from app.casos_de_uso.carga_do_pacote... import ...
+api/lentes.py:34                        from app.api.score import _formula, _mes_de
+api/consulta_profundidade.py:26         from app.api.score import _mes_de
+```
+
+A camada de baixo importa a de cima, e dois módulos de rota importam **funções
+privadas** de um terceiro. Não há ciclo, mas há costura frouxa — e `_mes_de` com
+dois consumidores externos não é mais privado, é uma função de domínio morando
+no lugar errado.
 
 ### O front é meio organizado por domínio, e meio não
 
@@ -55,21 +74,42 @@ src/componentes/  28 arquivos
 
 ## 2. O que está funcionando, com evidência
 
-### Mudança incremental é barata
+### As entregas recentes tiveram superfície pequena — e isso prova menos do que parece
 
-Arquivos tocados pelas últimas oito entregas de cada repositório:
+Arquivos por commit, últimos oito sem merge, medido em 17/10/2026:
 
-```
-back:   3, 6, 7, 2, 5, 2, 4, 3      mediana 3,5
-front:  1, 2, 2, 4, 10, 2, 2, 3     mediana 2
-```
+| | em `origin/main` | em `HEAD` (inclui o não mesclado) |
+|---|---|---|
+| back | `3, 6, 7, 2, 5, 2, 4, 3` — mediana **3,5** | `1, 3, 10, 15, 3, 6, 7, 2` — mediana **4,5** |
+| front | `1, 2, 2, 4, 10, 2, 2, 3` — mediana **2** | `4, 3, 8, 1, 2, 2, 4, 10` — mediana **3,5** |
 
-**Isso contradiz a hipótese de que a estrutura está emperrando.** Para mexer no
-que existe, o acoplamento é baixo e o caminho é curto. Uma correção de
-comportamento custa dois ou três arquivos.
+**A PRIMEIRA VERSÃO DESTE DOCUMENTO DAVA SÓ A COLUNA DA ESQUERDA, sem dizer que
+era `origin/main`** — e a revisão, medindo em `HEAD`, achou outros números e
+concluiu, com razão, que a amostra estava mal descrita. Os dois são
+reprodutíveis; o que faltava era a referência.
 
-A única entrega de dez arquivos foi a que atravessou três níveis de taxonomia na
-tela — e dez para isso é razoável.
+**E O QUE ISTO SUSTENTA É MENOS DO QUE EU ESCREVI.** A primeira versão dizia que
+"isso contradiz a hipótese de que a estrutura está emperrando". Não contradiz.
+O que os números sustentam é:
+
+> As entregas recentes, feitas por quem conhece bem o código, tiveram superfície
+> de alteração pequena.
+
+Três vieses impedem ir além disso:
+
+1. **quem mexeu sabia onde mexer.** Isso encurta a navegação, não o acoplamento;
+2. **quem mexeu também escolheu e dividiu as tarefas** — um autor experiente
+   quebra mudança difícil em commits pequenos, ou evita a área ruim;
+3. **contar arquivos mede superfície, não dificuldade.** Mudar duas funções
+   dentro de `lentes.py` pode custar mais compreensão do que mudar dez arquivos
+   coesos.
+
+**A medida que responderia de verdade** é outra: tempo até a mudança certa,
+idas e voltas de revisão, defeitos depois da mudança, e — a mais honesta —
+alguém que não conhece o código executando uma tarefa e sendo cronometrado.
+
+A mediana fica aqui como **observação histórica**, não como prova de
+manutenibilidade.
 
 ### A camada de domínio paga
 
@@ -130,15 +170,30 @@ que fazem a mesma conta sobre o recorte SQL inteiro — `/api/metricas/kpis`,
 Acima de 5.000 interações o painel mostra número parcial. O front avisa
 (`Painel.tsx:631`) e exibe assim mesmo.
 
-**Este é o único achado desta revisão que entrega número errado a quem usa.** E
-é decisão de arquitetura, não sujeira: onde a conta deve morar.
+**Este é o único achado desta revisão com efeito no que a pessoa lê.** E o
+enquadramento certo é: acima de 5.000 o número é PARCIAL, e a tela avisa. Se o
+produto exige o recorte inteiro, é defeito; se o teto é decisão, é limitação
+declarada — e hoje não é nem uma coisa nem outra, é esquecimento. A decisão
+ainda precisa ser tomada.
 
-### 3.4 Dois arquivos passaram do ponto
+### 3.4 Os arquivos que passaram do ponto — e os piores não são os maiores
 
-`casos_de_uso/importar_agendas.py` com 152 KB e `paginas/Painel.tsx` com 82 KB
-não cabem na cabeça de ninguém de uma vez. Não estão quebrados — a suíte os
-cobre —, mas são onde uma mudança leva mais tempo para ser entendida do que para
-ser feita.
+`casos_de_uso/importar_agendas.py` (152 KB, 3.258 linhas) e `paginas/Painel.tsx`
+(82 KB) não cabem na cabeça de ninguém de uma vez. Não estão quebrados — a suíte
+os cobre.
+
+**MAS O PROBLEMA ESTRUTURAL MAIOR ESTÁ EM OUTROS DOIS, que a primeira versão
+deste documento não citou:**
+
+| | tamanho | o que acumula |
+|---|---|---|
+| `api/lentes.py` | 103 KB, 2.403 linhas | três rotas + montagem de resposta + KPIs + consulta + regra de CRM e de Score |
+| `api/score.py` | 74 KB, 1.853 linhas | 17 funções de rota + modelos + auxiliares |
+
+A diferença em relação ao `importar_agendas` é que estes dois **são a camada de
+rota fazendo trabalho de três camadas** — e são eles que exportam as funções
+privadas que `lentes.py` e `consulta_profundidade.py` importam de volta (§1).
+Tamanho ali é sintoma; a causa é responsabilidade acumulada.
 
 ---
 
@@ -154,16 +209,42 @@ navegação seria pagar caro por pouco, e com risco.
 **O que:** a Inteligência de Mercado nasce em `app/inteligencia_de_mercado/`,
 com as suas próprias `api/`, `casos_de_uso/`, `dominio/` e `banco/` dentro.
 
-**Por quê:** é o único momento em que isso custa zero. O módulo não existe; pôr
-os arquivos dele numa pasta própria em vez de espalhá-los não dá trabalho nenhum
-a mais — e dá, de graça, a resposta para "onde mora a Inteligência de Mercado".
+**"CUSTA ZERO" ESTAVA ERRADO, e era o que a primeira versão dizia.** Criar a
+pasta custa quase nada; **integrá-la não**. O que a revisão levantou, conferido:
 
-**E vira o laboratório.** Se depois de um ou dois meses a navegação por domínio
-se mostrar melhor, há um exemplo funcionando no mesmo repositório para migrar o
-Score e o CRM — e, se não se mostrar, o custo de desfazer é uma pasta.
+| custo | onde |
+|---|---|
+| rota não é descoberta sozinha: precisa ser importada e registrada | `main.py:154` |
+| o teste de segurança mantém lista de prefixos de rota | `protecao_http.py` |
+| base declarativa é ÚNICA — a tabela nova entra no mesmo `Tabela.metadata` e precisa ser importada para mapear | `banco/sessao.py:16` |
+| migrations são uma coleção PLANA, montada por Docker, pipeline e script | `app/banco/migrations/` |
+| o pytest do back só procura em `tests/` | — |
+| autorização é compartilhada: o portal novo passa pelas dependências globais | `dependencias.py` |
 
-**O que NÃO muda:** as camadas. `api → casos_de_uso → dominio → banco` continua
-valendo dentro da pasta do módulo. A mudança é de agrupamento, não de desenho.
+Estimativa da revisão: **1 a 3 dias de integração** antes de qualquer lógica do
+módulo. E o repositório passa a ter duas convenções convivendo, o que tem custo
+recorrente de navegação e de revisão.
+
+**POR QUE EU AINDA RECOMENDO, com a condição abaixo:** o módulo é novo, e é o
+único momento em que a escolha é livre. Mas só vale como laboratório **se tiver
+critério de saída** — senão não é experimento, é uma segunda convenção
+permanente, que é pior do que qualquer uma das duas sozinha.
+
+**AS CONDIÇÕES, e elas não são opcionais:**
+
+- base `Tabela` única, migrations na pasta plana de sempre, registro explícito
+  de rota e autorização compartilhada — **a pasta agrupa código, não duplica
+  infraestrutura**;
+- declarar de quê o módulo pode depender para fora dele;
+- **medir em um ou dois meses**: tempo para localizar, pastas tocadas por
+  entrega, quantas vezes foi preciso sair da pasta.
+
+**E UMA RESSALVA QUE MUDA A DECISÃO:** se a Inteligência de Mercado depender
+muito do Score (e a aba de bonds depende — menção, taxonomia, lente, impacto no
+score), ela **não é um módulo de fronteira independente**. Nesse caso o
+agrupamento rende pouco e o certo é pôr o código específico nas camadas
+existentes, com nome claro. Isso se decide ao escrever a primeira fatia, não
+agora.
 
 ### 4.2 Quebrar o `cliente.ts` por domínio
 
@@ -199,19 +280,36 @@ a mesma divisão por domínio que `paginas/` já tem.
 
 ## 5. O que eu NÃO mudaria
 
-**As camadas do back.** Elas funcionam, são respeitadas, e são de onde vem a
-testabilidade. A crítica da seção 3.1 é de agrupamento, não de camada.
+**O domínio puro e a ausência de ciclos.** São o ativo real, e qualquer
+reorganização tem de preservá-los.
 
-**Os comentários longos.** Eles são densos e explicam o porquê, não o quê — e
-nesta sessão eles pagaram três vezes: o comentário de `acesso.py` previu a
-remoção da senha e pôs a conferência no lugar certo; o de `test_recusa_de_login`
-disse qual teste sairia junto; o de `GraficoDeLinha` já tinha decidido que
-ausência não é zero, que é exatamente a regra que a base de bonds vai precisar.
-O custo deles é real, e o retorno também.
+Mas NÃO pelo motivo que a primeira versão deu ("as camadas são respeitadas") —
+elas não são, e os cinco imports cruzados da §1 provam. Os crossings entre api,
+casos de uso e banco são dívida localizada, a tratar quando se tocar na área, e
+não justificativa para deixar tudo como está.
+
+**Os comentários que registram DECISÃO.** Nesta sessão eles pagaram três vezes:
+o de `acesso.py` previu a remoção da senha e pôs a conferência no lugar certo; o
+de `test_recusa_de_login` disse qual teste sairia junto; o de `GraficoDeLinha` já
+tinha decidido que ausência não é zero — a regra exata que a base de bonds vai
+precisar.
+
+MANTER NÃO É ABSOLUTO, e a primeira versão deixou soar assim. Vale manter o que
+registra invariante, motivo de decisão, consequência de mudar, limite de
+segurança ou de desempenho. Não vale manter o que narra o código, repete
+histórico ou descreve implementação que já mudou — comentário longo também
+envelhece e vira uma segunda arquitetura falsa. Esta sessão achou quatro desses
+(a senha na 0003, a importação na 0008, as rotas no handoff, os números do
+README).
 
 **Quebrar `importar_agendas.py` agora.** Ele é grande e incomoda, mas está
-coberto e estável. Quebrá-lo sem uma mudança de produto que justifique é mexer
-em código que funciona.
+coberto e estável, e não é necessário para a Inteligência de Mercado. Quebrá-lo
+sem uma mudança de produto que justifique é mexer em código que funciona.
+
+Isso não quer dizer que esteja saudável: são 3.258 linhas concentrando leitura,
+mapeamento, validação, resolução de conflito, criação e confirmação. Quando uma
+mudança tocar esse fluxo, vale dividir pelos seams que já existem conceitualmente
+— estimativa de 1 a 3 dias, com teste.
 
 **Fazer tudo de uma vez.** A medição diz que a manutenção está barata. Uma
 reorganização geral trocaria um custo pequeno e conhecido por um risco grande e
