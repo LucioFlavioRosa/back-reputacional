@@ -119,7 +119,7 @@ class TestVirada:
         sinais = na_serie(serie((60, 0, 40), (40, 0, 60)))
         virada = next(sinal for sinal in sinais if sinal.tipo == "Virada")
         assert virada.frase == (
-            "A nota caiu 20 pontos em fevereiro: o negativo foi de 40% para 60%."
+            "A nota caiu 20 pontos em fevereiro: o reativo foi de 40% para 60%."
         )
         assert virada.evidencia == "-20 pts"
         assert virada.tom is Tom.NEGATIVO
@@ -136,7 +136,7 @@ class TestVirada:
         sinais = na_serie(serie((501, 0, 499), (499, 0, 501)))
         virada = next(sinal for sinal in sinais if sinal.tipo == "Virada")
         assert virada.frase == (
-            "O saldo virou para o negativo em fevereiro: o negativo foi de 50% para 50%."
+            "O saldo virou para o negativo em fevereiro: o reativo foi de 50% para 50%."
         )
 
     def test_a_troca_para_o_positivo_diz_isso(self):
@@ -173,39 +173,39 @@ class TestAltaDoNegativo:
     def test_dispara_quando_nao_houve_virada(self):
         """A nota anda 8 pontos (abaixo do limite), a fatia negativa anda 16."""
         sinais = na_serie(serie((20, 60, 20), (20, 44, 36)))
-        alta = next(sinal for sinal in sinais if sinal.tipo == "Alta do negativo")
-        assert alta.frase == ("O negativo subiu de 20% em janeiro para 36% em fevereiro.")
+        alta = next(sinal for sinal in sinais if sinal.tipo == "Alta do reativo")
+        assert alta.frase == ("O reativo subiu de 20% em janeiro para 36% em fevereiro.")
         assert alta.evidencia == "+16 p.p."
 
     def test_se_cala_quando_a_virada_ja_contou_a_mesma_noticia(self):
         sinais = na_serie(serie((60, 0, 40), (40, 0, 60)))
         assert "Virada" in tipos_de(sinais)
-        assert "Alta do negativo" not in tipos_de(sinais)
+        assert "Alta do reativo" not in tipos_de(sinais)
 
     def test_nao_dispara_abaixo_do_limite(self):
         sinais = na_serie(serie((20, 60, 20), (20, 55, 25)))
-        assert "Alta do negativo" not in tipos_de(sinais)
+        assert "Alta do reativo" not in tipos_de(sinais)
 
     def test_pula_o_mes_sem_leitura_no_meio(self):
         """O mês sem base não é um mês parado: é um mês sem dado, e tratá-lo
         como leitura faria a comparação sair contra zero."""
         sinais = na_serie(serie((20, 60, 20), None, (20, 44, 36)))
-        alta = next(sinal for sinal in sinais if sinal.tipo == "Alta do negativo")
-        assert alta.frase == ("O negativo subiu de 20% em janeiro para 36% em março.")
+        alta = next(sinal for sinal in sinais if sinal.tipo == "Alta do reativo")
+        assert alta.frase == ("O reativo subiu de 20% em janeiro para 36% em março.")
 
     def test_se_cala_quando_so_um_mes_tem_leitura(self):
         pontos = [
             Ponto(mes=mes(1), pos=20, neu=60, neg=20),
             Ponto(mes=mes(2), sem_classificacao=900),
         ]
-        assert "Alta do negativo" not in tipos_de(na_serie(pontos))
+        assert "Alta do reativo" not in tipos_de(na_serie(pontos))
 
 
 class TestTendencia:
     def test_dispara_em_tres_meses_na_mesma_direcao(self):
         sinais = na_serie(serie((70, 0, 30), (75, 0, 25), (80, 0, 20)))
         tendencia = next(sinal for sinal in sinais if sinal.tipo == "Tendência")
-        assert tendencia.frase == ("O negativo cai há 3 meses seguidos: 30% → 25% → 20%.")
+        assert tendencia.frase == ("O reativo cai há 3 meses seguidos: 30% → 25% → 20%.")
         assert tendencia.tom is Tom.POSITIVO
 
     def test_nao_dispara_com_um_mes_fora_da_direcao(self):
@@ -243,7 +243,7 @@ class TestDeslocamento:
     def test_dispara_quando_o_negativo_recuou_do_pico(self):
         sinais = na_serie(serie((40, 0, 60), (60, 0, 40), (70, 0, 30)))
         deslocamento = next(sinal for sinal in sinais if sinal.tipo == "Deslocamento")
-        assert deslocamento.frase == ("O negativo recuou de 60% em janeiro para 30% em março.")
+        assert deslocamento.frase == ("O reativo recuou de 60% em janeiro para 30% em março.")
         assert deslocamento.evidencia == "−30 p.p."
 
     def test_nao_dispara_quando_o_ultimo_mes_piorou(self):
@@ -315,7 +315,7 @@ class TestItens:
             secao=Secao.PAINEL_A,
             rotulo_do_negativo="Tier",
         )
-        assert frases_de(sinais)[0] == ("Relevante concentra o maior negativo: 30% (geral 15%).")
+        assert frases_de(sinais)[0] == ("Relevante concentra o maior reativo: 30% (geral 15%).")
         assert tipos_de(sinais)[0] == "Tier"
 
     def test_sem_geral_quando_cada_linha_ja_e_percentual(self):
@@ -326,7 +326,7 @@ class TestItens:
             secao=Secao.PAINEL_A,
             percentual=True,
         )
-        assert frases_de(sinais)[0] == "Privatização concentra o maior negativo: 80%."
+        assert frases_de(sinais)[0] == "Privatização concentra o maior reativo: 80%."
 
     def test_sustenta_sai_quando_o_melhor_e_o_pior_sao_o_mesmo_item(self):
         sinais = detectar_nos_itens([Item("Único", 50, 0, 50)], secao=Secao.PAINEL_A)
@@ -337,7 +337,7 @@ class TestItens:
 
     def test_o_item_sem_volume_nao_vira_leitura(self):
         """Sem denominador não há fatia. `fatia_negativa` devolve 0 para não
-        estourar, e esse 0 viraria "concentra o maior negativo: 0%" sobre um
+        estourar, e esse 0 viraria "concentra o maior reativo: 0%" sobre um
         item por onde não passou nada."""
         assert detectar_nos_itens([Item("Vazio", 0, 0, 0)], secao=Secao.PAINEL_A) == []
 
@@ -346,7 +346,7 @@ class TestItens:
             [Item("Vazio", 0, 0, 0), Item("Privatização", 5, 5, 90)],
             secao=Secao.PAINEL_A,
         )
-        assert frases_de(sinais) == ["Privatização concentra o maior negativo: 90% (geral 90%)."]
+        assert frases_de(sinais) == ["Privatização concentra o maior reativo: 90% (geral 90%)."]
 
 
 # =============================================================================
@@ -784,7 +784,7 @@ class TestEscolha:
             secao=Secao.PAINEL_A,
         )
         leitura = self._escolher(sinais)
-        assert leitura.manchete == ("Privatização concentra o maior negativo: 90% (geral 48%).")
+        assert leitura.manchete == ("Privatização concentra o maior reativo: 90% (geral 48%).")
 
     def test_o_titulo_da_secao_tambem_poe_movimento_antes_de_intensidade(self):
         """Uma Recuperação forte não passa na frente de uma Virada: o título
@@ -912,7 +912,7 @@ class TestFrasesDaImprensa:
 
     def test_a_manchete(self):
         assert escolha(self.SINAIS).manchete == (
-            "O negativo subiu de 10% em julho para 23% em agosto."
+            "O reativo subiu de 10% em julho para 23% em agosto."
         )
 
     def test_o_pico_de_junho(self):
@@ -922,7 +922,7 @@ class TestFrasesDaImprensa:
         )
 
     def test_o_tier_que_concentra_o_negativo(self):
-        assert "Relevante concentra o maior negativo: 30% (geral 15%)." in frases_de(self.SINAIS)
+        assert "Relevante concentra o maior reativo: 30% (geral 15%)." in frases_de(self.SINAIS)
 
     def test_nao_gera_deslocamento_porque_agosto_piorou(self):
         assert "Deslocamento" not in tipos_de(self.SINAIS)
@@ -963,7 +963,7 @@ class TestFrasesDaSociedade:
 
     NÃO É DESCUIDO, E A DIFERENÇA É DE FONTE. A planilha da Approach entrega os
     temas já normalizados linha a linha, e é dela que a §7 tirou "Privatização
-    concentra o maior negativo: 80%." — sem "geral", porque somar percentuais de
+    concentra o maior reativo: 80%." — sem "geral", porque somar percentuais de
     linhas diferentes não produz número nenhum. A nossa base guarda menção a
     menção, então `temas_por_sentimento` devolve contagens e a frase real ganha
     o "(geral X%)" que aqui não existe.
@@ -997,7 +997,7 @@ class TestFrasesDaSociedade:
 
     def test_a_manchete(self):
         assert escolha(self.SINAIS).manchete == (
-            "A nota caiu 10 pontos em junho: o negativo foi de 45% para 57%."
+            "A nota caiu 10 pontos em junho: o reativo foi de 45% para 57%."
         )
 
     def test_a_concentracao_por_unidade(self):
@@ -1006,7 +1006,7 @@ class TestFrasesDaSociedade:
         )
 
     def test_o_tema_que_concentra_o_negativo(self):
-        assert "Privatização concentra o maior negativo: 80%." in frases_de(self.SINAIS)
+        assert "Privatização concentra o maior reativo: 80%." in frases_de(self.SINAIS)
 
     def test_a_lacuna_separa_julho_de_agosto(self):
         assert "Sentimento de julho ainda não integrado. Agosto sem base." in frases_de(self.SINAIS)
@@ -1038,11 +1038,11 @@ class TestFrasesDosClientes:
 
     def test_a_manchete(self):
         assert escolha(self.SINAIS).manchete == (
-            "A nota subiu 11 pontos em agosto: o negativo foi de 35% para 29%."
+            "A nota subiu 11 pontos em agosto: o reativo foi de 35% para 29%."
         )
 
     def test_o_deslocamento_desde_fevereiro(self):
-        assert "O negativo recuou de 60% em fevereiro para 29% em agosto." in frases_de(self.SINAIS)
+        assert "O reativo recuou de 60% em fevereiro para 29% em agosto." in frases_de(self.SINAIS)
 
     def test_o_teor_de_reclamacao(self):
         assert (
@@ -1087,12 +1087,12 @@ class TestFrasesDoInstitucional:
     ]
 
     def test_o_tema_que_concentra_o_negativo(self):
-        assert "Copasa / ALMG concentra o maior negativo: 60% (geral 21%)." in frases_de(
+        assert "Copasa / ALMG concentra o maior reativo: 60% (geral 21%)." in frases_de(
             self.SINAIS
         )
 
     def test_a_tendencia_de_tres_meses(self):
-        assert "O negativo cai há 3 meses seguidos: 21% → 18% → 17%." in frases_de(self.SINAIS)
+        assert "O reativo cai há 3 meses seguidos: 21% → 18% → 17%." in frases_de(self.SINAIS)
 
 
 # =============================================================================

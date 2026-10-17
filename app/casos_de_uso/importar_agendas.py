@@ -142,6 +142,15 @@ NO_CODIGO: dict[str, tuple[str, ...]] = {
     "abrangencias": (*sorted(UFS), NACIONAL, INTERNACIONAL),
 }
 
+#: Nomes antigos do termômetro → `codigo` do clima. O rótulo mudou três vezes
+#: (Proativo na 0030, Positivo/Negativo na 0047, Propositivo/Reativo na 0097), e
+#: planilhas preenchidas com os nomes de antes ainda circulam.
+APELIDOS_DO_CLIMA: dict[str, str] = {
+    "positivo": "propositivo",
+    "proativo": "propositivo",
+    "negativo": "tenso",
+}
+
 #: As colunas numeradas que montam cada lista de `InteracaoEntrada`.
 #:
 #: TUDO NUMA ABA SÓ. Antes eram três abas filhas ligadas pelo `Código`; agora cada
@@ -295,6 +304,15 @@ def _indice(sessao: Session) -> dict[str, dict[str, object]]:
         indice[chave] = por_nome
     for chave, codigos in NO_CODIGO.items():
         indice[chave] = {normalizar(codigo): codigo for codigo in codigos}
+    # OS NOMES ANTIGOS DO TERMÔMETRO CONTINUAM VALENDO: sem o apelido, toda linha
+    # com "Positivo", "Negativo" ou "Proativo" viraria divergência depois da troca
+    # de rótulo. `setdefault` não passa por cima de um nome que o cadastro use de
+    # verdade, e o apelido só vale para um clima ativo.
+    climas = indice.get("climas", {})
+    ativos = set(climas.values())
+    for antigo, codigo in APELIDOS_DO_CLIMA.items():
+        if codigo in ativos:
+            climas.setdefault(normalizar(antigo), codigo)
     # O ÍNDICE QUE DESFAZ O HOMÔNIMO. "Assessoria da liderança" é cargo, não nome
     # próprio, e existe em vários órgãos — o banco permite, porque `interlocutor` é
     # único por `(nome_normalizado, instituicao_id)`. Pelo nome sozinho a

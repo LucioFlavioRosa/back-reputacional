@@ -487,3 +487,53 @@ def test_escolher_um_atributo_tira_a_aba_n1_e_a_trilha_o_nomeia(sessao):
     assert recorte.trilha[0].valor == "Governança"
     # O filtro pelo nome limpo alcança as duas grafias: as duas menções de Governança.
     assert recorte.itens == 2
+
+
+def _explorador(sessao, **filtro):
+    from app.api.lentes import obter_explorador
+
+    parametros = dict(
+        tier=None, veiculo=None, atributo=None, tema=None, perfil_autor=None, uf=None,
+        subtema=None, autor=None, empresa=None, tema_n1=None, tema_n2=None, tema_n3=None,
+        sentimento=None,
+    )
+    parametros.update(filtro)
+    return obter_explorador(
+        sessao=sessao, usuario=_QuemOlha(), codigo="imprensa", mes=TEXTO_DO_MES, **parametros
+    )
+
+
+def test_o_explorador_fecha_com_o_impacto_do_mes_e_o_denominador(sessao):
+    """Os gráficos N1 › N2 › N3 e o mapa somam estes grupos na tela: a soma dos
+    pesos tem de ser o denominador do mês, e o saldo, o impacto do mês inteiro."""
+    linhas = _linhas_da_imprensa(sessao)
+    for linha, uf in zip(linhas, ["RJ", "RJ", "SP", "SP", None, "MT"], strict=True):
+        linha["uf"] = uf
+    _gravar(sessao, "clipei", linhas)
+    saida = _explorador(sessao)
+    lente = _lente(sessao, "imprensa")
+    calibracao = repositorio_score.calibracao_vigente(sessao)
+
+    pesos = sum(g.peso_positivo + g.peso_neutro + g.peso_negativo for g in saida.grupos)
+    assert pesos == pytest.approx(saida.denominador)
+    saldo = 50 * sum(g.peso_positivo - g.peso_negativo for g in saida.grupos) / saida.denominador
+    assert saldo == pytest.approx(
+        repositorio_score.impacto_do_recorte(sessao, lente.id, MES, calibracao)
+    )
+    assert sum(g.positivo + g.neutro + g.negativo for g in saida.grupos) == len(linhas)
+
+    # N1 SEM O PREFIXO, como no popup; N2/N3 pelo vínculo do cadastro; UF crua.
+    por_n1 = Counter()
+    for g in saida.grupos:
+        por_n1[g.n1] += g.positivo + g.neutro + g.negativo
+    assert por_n1["Governança"] == 2 and "1. Governança" not in por_n1
+    com_n3 = [g for g in saida.grupos if g.n3]
+    assert [g.n3 for g in com_n3] == ["Atendimento ao cliente"] and com_n3[0].n2
+    assert {g.uf for g in saida.grupos} == {"RJ", "SP", "MT", None}
+
+
+def test_o_explorador_segue_o_filtro_da_tela(sessao):
+    _gravar(sessao, "clipei", _linhas_da_imprensa(sessao))
+    saida = _explorador(sessao, sentimento="neg")
+    assert sum(g.negativo for g in saida.grupos) == 3
+    assert all(g.positivo == 0 and g.neutro == 0 for g in saida.grupos)

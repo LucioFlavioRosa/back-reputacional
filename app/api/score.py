@@ -287,7 +287,7 @@ LIMITES_DOS_SINAIS: tuple[tuple[str, str, str, str, str | None], ...] = (
     (
         "deslocamento_pp",
         "Deslocamento · pontos percentuais",
-        "Quanto a fatia negativa precisa recuar, ou subir, para virar sinal.",
+        "Quanto a fatia reativa precisa recuar, ou subir, para virar sinal.",
         "decimal",
         "p.p.",
     ),
@@ -800,7 +800,7 @@ def _formula(lente: str, calibracao: Calibracao) -> str:
     GERADA, e não fixa: ela muda com a régua, e um texto escrito à mão
     passaria a mentir no primeiro ajuste da calibração.
     """
-    base = "NS = (positivas − negativas) ÷ total; score = (NS + 1) ÷ 2 × 100."
+    base = "NS = (propositivas − reativas) ÷ total; score = (NS + 1) ÷ 2 × 100."
     if lente in ("imprensa", "mercado"):
         pesos = REGUAS_DE_TIER[calibracao.regua_tier]
         return (

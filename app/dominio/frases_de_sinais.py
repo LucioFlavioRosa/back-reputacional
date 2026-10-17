@@ -102,22 +102,22 @@ def virada(delta: int, quando: date, antes: float, depois: float) -> str:
     """
     if not delta:
         return (
-            f"O saldo virou para o negativo em {mes_de(quando)}: o negativo foi de "
+            f"O saldo virou para o negativo em {mes_de(quando)}: o reativo foi de "
             f"{porcento(antes)} para {porcento(depois)}."
             if depois > antes
-            else f"O saldo virou para o positivo em {mes_de(quando)}: o negativo "
+            else f"O saldo virou para o positivo em {mes_de(quando)}: o reativo "
             f"foi de {porcento(antes)} para {porcento(depois)}."
         )
     verbo = "subiu" if delta > 0 else "caiu"
     return (
         f"A nota {verbo} {abs(delta)} {plural(abs(delta), 'ponto', 'pontos')} em "
-        f"{mes_de(quando)}: o negativo foi de {porcento(antes)} para {porcento(depois)}."
+        f"{mes_de(quando)}: o reativo foi de {porcento(antes)} para {porcento(depois)}."
     )
 
 
 def alta_do_negativo(antes: float, quando_antes: date, depois: float, quando: date) -> str:
     return (
-        f"O negativo subiu de {porcento(antes)} em {mes_de(quando_antes)} para "
+        f"O reativo subiu de {porcento(antes)} em {mes_de(quando_antes)} para "
         f"{porcento(depois)} em {mes_de(quando)}."
     )
 
@@ -125,7 +125,7 @@ def alta_do_negativo(antes: float, quando_antes: date, depois: float, quando: da
 def tendencia(caindo: bool, fatias: list[float]) -> str:
     verbo = "cai" if caindo else "sobe"
     return (
-        f"O negativo {verbo} há {len(fatias)} meses seguidos: "
+        f"O reativo {verbo} há {len(fatias)} meses seguidos: "
         + " → ".join(porcento(fatia) for fatia in fatias)
         + "."
     )
@@ -133,7 +133,7 @@ def tendencia(caindo: bool, fatias: list[float]) -> str:
 
 def deslocamento(pico_fatia: float, quando_pico: date, ultima: float, quando: date) -> str:
     return (
-        f"O negativo recuou de {porcento(pico_fatia)} em {mes_de(quando_pico)} para "
+        f"O reativo recuou de {porcento(pico_fatia)} em {mes_de(quando_pico)} para "
         f"{porcento(ultima)} em {mes_de(quando)}."
     )
 
@@ -153,9 +153,9 @@ def volume_de_materias(pos: int, neu: int, neg: int, sem_classificacao: int, qua
         return f"Nenhuma matéria classificada em {mes_de(quando)}."
     materias = f"{inteiro(classificadas)} {plural(classificadas, 'matéria', 'matérias')}"
     divisao = (
-        f"{porcento(pos / classificadas)} positivas, "
+        f"{porcento(pos / classificadas)} propositivas, "
         f"{porcento(neu / classificadas)} neutras, "
-        f"{porcento(neg / classificadas)} negativas"
+        f"{porcento(neg / classificadas)} reativas"
     )
     if sem_classificacao:
         return (
@@ -178,11 +178,11 @@ def lacuna_de_dado(sem_sentimento: list[date], sem_base: list[date]) -> str:
 
 def tema_dominante(item: str, fatia: float, geral: float | None) -> str:
     sufixo = f" (geral {porcento(geral)})." if geral is not None else "."
-    return f"{item} concentra o maior negativo: {porcento(fatia)}{sufixo}"
+    return f"{item} concentra o maior reativo: {porcento(fatia)}{sufixo}"
 
 
 def sustenta(item: str, fatia: float) -> str:
-    return f"{item} é o mais favorável: {porcento(fatia)} positivo."
+    return f"{item} é o mais favorável: {porcento(fatia)} propositivo."
 
 
 def concentracao_por_razao(

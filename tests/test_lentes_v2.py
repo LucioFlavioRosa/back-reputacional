@@ -271,9 +271,9 @@ def test_os_kpis_sao_os_da_especificacao_em_cada_lente(sessao):
     # A SOCIEDADE PERGUNTA "DE QUEM" E "ONDE": numa lente de rede aberta, o
     # volume diz pouco e a voz diz tudo. São os `kpis[]` que o pacote de
     # produção nomeia para ela.
-    assert "Autor mais negativo" in rotulos["sociedade"]
+    assert "Autor mais reativo" in rotulos["sociedade"]
     assert "Figuras públicas" in rotulos["sociedade"]
-    assert "UF mais negativa" in rotulos["sociedade"]
+    assert "UF mais reativa" in rotulos["sociedade"]
 
 
 def test_todo_bloco_de_informacao_tem_ficha(sessao):
@@ -310,7 +310,7 @@ def test_a_legenda_e_a_cor_da_institucional_vem_do_dicionario_de_clima(sessao):
     fixo, tem de ler o dicionário a cada vez, a mesma fonte que pinta o Painel
     (`clima.cor_hex`)."""
     institucional = _dossie(sessao, "institucional")
-    assert institucional.evolucao.legenda == ["Positivo", "Neutro", "Negativo"]
+    assert institucional.evolucao.legenda == ["Propositivo", "Neutro", "Reativo"]
     assert institucional.evolucao.cores == ["#17E3CB", "#8C91A4", "#FF5C60"]
 
     # A imprensa mede sentimento de mídia, não clima — mesma palavra hoje
@@ -319,7 +319,7 @@ def test_a_legenda_e_a_cor_da_institucional_vem_do_dicionario_de_clima(sessao):
     # não muda por isso. Só que fixa (CORES_DO_SENTIMENTO), e não lida de um
     # dicionário — não existe uma tabela "sentimento" como existe "clima".
     imprensa = _dossie(sessao, "imprensa")
-    assert imprensa.evolucao.legenda == ["Positivo", "Neutro", "Negativo"]
+    assert imprensa.evolucao.legenda == ["Propositivo", "Neutro", "Reativo"]
     assert imprensa.evolucao.cores == ["#17E3CB", "#8C91A4", "#FF5C60"]
 
 
@@ -1145,9 +1145,9 @@ class TestIndicadoresDaSociedade:
         dossie = _dossie(sessao, "sociedade")
 
         rotulos = [kpi.rotulo for kpi in dossie.kpis]
-        assert "Autor mais negativo" in rotulos
+        assert "Autor mais reativo" in rotulos
         assert "Figuras públicas" in rotulos
-        assert "UF mais negativa" in rotulos
+        assert "UF mais reativa" in rotulos
 
     def test_figuras_publicas_conta_o_PERFIL_e_nao_o_cargo(self, sessao):
         """O cargo do autor chega em 5 itens de 14.855; o perfil, em todos.
@@ -1168,7 +1168,7 @@ class TestIndicadoresDaSociedade:
         _social(sessao, uf="SP", sentimento="pos")
 
         dossie = _dossie(sessao, "sociedade")
-        kpi = next(k for k in dossie.kpis if k.rotulo == "UF mais negativa")
+        kpi = next(k for k in dossie.kpis if k.rotulo == "UF mais reativa")
 
         assert kpi.valor == "RJ"
 
@@ -1392,7 +1392,7 @@ class TestAchadosDaRevisaoDosIndicadores:
             _social(sessao, uf="RJ", sentimento="neg")
 
         dossie = _dossie(sessao, "sociedade")
-        kpi = next(k for k in dossie.kpis if k.rotulo == "UF mais negativa")
+        kpi = next(k for k in dossie.kpis if k.rotulo == "UF mais reativa")
 
         assert kpi.valor == "RJ"
 

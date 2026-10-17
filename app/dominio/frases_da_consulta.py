@@ -452,13 +452,13 @@ def titulo_do_destaque_do_subtema(
         )
     return (
         f"{subtema}: {plural(volume, 'matéria', 'matérias')}, "
-        f"{plural(negativas, 'negativa', 'negativas')}"
+        f"{plural(negativas, 'reativa', 'reativas')}"
     )
 
 
 def subtitulo_do_destaque_do_subtema(volume: int, negativas: int, lente_contraida: str) -> str:
     return (
-        f"{plural(volume, 'matéria', 'matérias')}, {plural(negativas, 'negativa', 'negativas')}. "
+        f"{plural(volume, 'matéria', 'matérias')}, {plural(negativas, 'reativa', 'reativas')}. "
         f"Impacto em pontos na nota {lente_contraida}."
     )
 
@@ -530,7 +530,7 @@ def titulo_dos_jornalistas(
         k = len(com_negativa)
         assinaturas = "Uma assinatura responde" if k == 1 else f"{k} assinaturas respondem"
         return (
-            f"{assinaturas} por {sum(com_negativa)} das {negativas_do_subtema} matérias negativas"
+            f"{assinaturas} por {sum(com_negativa)} das {negativas_do_subtema} matérias reativas"
         )
     return "Jornalistas de maior impacto no subtema"
 
@@ -555,7 +555,7 @@ def leitura_das_materias(
         frases.append(f"As {tier1_no_topo} de maior impacto são de grande imprensa (Tier 1).")
     if positiva_de_maior_impacto is not None:
         frases.append(
-            f"A positiva de maior impacto saiu em {data_curta(positiva_de_maior_impacto)}."
+            f"A propositiva de maior impacto saiu em {data_curta(positiva_de_maior_impacto)}."
         )
     return " ".join(frases)
 
@@ -574,7 +574,7 @@ def titulo_da_lista(
     if negativas > 0 and negativa_de_maior_impacto is not None:
         return (
             f"{negativas} de {plural(volume, 'matéria', 'matérias')} "
-            f"{'é negativa' if negativas == 1 else 'são negativas'}; a de maior impacto saiu "
+            f"{'é reativa' if negativas == 1 else 'são reativas'}; a de maior impacto saiu "
             f"em {data_curta(negativa_de_maior_impacto)}"
         )
     return f"Matérias de {subtema} em {mes}"
@@ -598,7 +598,7 @@ def subtitulo_da_lista(
         u = numero(abs(valor_tier1), 2)
         texto = (
             f"Impacto de cada matéria na nota {lente_contraida}, em pontos: Tier 1 vale "
-            f"{MENOS}{u} quando negativa e +{u} quando positiva."
+            f"{MENOS}{u} quando reativa e +{u} quando propositiva."
         )
     if mostradas < volume:
         texto += f" A lista mostra as {mostradas} de maior impacto de {volume}."
