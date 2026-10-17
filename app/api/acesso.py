@@ -563,7 +563,7 @@ class PapelSaida(BaseModel):
     #: com o resto do papel, e buscá-los à parte criaria um instante em que a
     #: pessoa está identificada mas a capa ainda não sabe o que mostrar.
     acessa_crm: bool
-    acessa_sintese: bool
+    acessa_inteligencia_de_mercado: bool
     acessa_score: bool
 
 
@@ -588,8 +588,9 @@ class EuSaida(BaseModel):
     ve_campos_sensiveis: bool
     #: O "Painel de Inteligência de Mercado" está no ar?
     #:
-    #: É O PORTAL `sintese`, e não um quarto portal: o rótulo da capa mudou e o
-    #: nome interno não. Ver `Portal`, no domínio, e `Inicio.tsx`, no front.
+    #: É O PORTAL `inteligencia_de_mercado`, e não um quarto portal. Ele se
+    #: chamava `sintese` até a migration 0095 — ver `Portal`, no domínio, e
+    #: `Inicio.tsx`, no front.
     #:
     #: Não é sobre "eu", e vem aqui mesmo: é a rota que a capa carrega para
     #: montar a navegação, e sem o valor junto haveria um instante em que a
@@ -597,7 +598,7 @@ class EuSaida(BaseModel):
     #: Mesma razão de `acessa_*` virem no papel em vez de numa rota própria.
     #:
     #: ALCANCE E PORTA SÃO COISAS DIFERENTES: alguém pode ter
-    #: `papel.acessa_sintese` e ver o cartão como "em construção". É o que a
+    #: `papel.acessa_inteligencia_de_mercado` e ver o cartão como "em construção". É o que a
     #: tela de perfis usa para não prometer uma tela que não abre.
     mercado_lancado: bool
     #: O front guarda e devolve em `X-CSRF-Token` a cada escrita.
@@ -823,7 +824,7 @@ class PapelDisponivel(BaseModel):
     pode_exportar: bool
     #: ONDE ela entra — é daqui que sai o nível.
     acessa_crm: bool
-    acessa_sintese: bool
+    acessa_inteligencia_de_mercado: bool
     acessa_score: bool
 
 
@@ -878,7 +879,7 @@ def listar_papeis(sessao: Sessao, usuario: UsuarioLogado) -> list[PapelDisponive
             pode_editar_tudo=p.pode_editar_tudo,
             pode_exportar=p.pode_exportar,
             acessa_crm=p.acessa_crm,
-            acessa_sintese=p.acessa_sintese,
+            acessa_inteligencia_de_mercado=p.acessa_inteligencia_de_mercado,
             acessa_score=p.acessa_score,
         )
         for p in papeis

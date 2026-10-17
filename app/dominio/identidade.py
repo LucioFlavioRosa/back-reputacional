@@ -25,25 +25,33 @@ from uuid import UUID
 class Portal(StrEnum):
     """As três divisões da plataforma, como a capa as oferece.
 
-    O NOME INTERNO E O RÓTULO NÃO SE CORRESPONDEM, e vale saber antes de mexer:
+        CRM                      "CRM dos Stakeholders"
+        SCORE                    "KPIs Reputacionais"
+        INTELIGENCIA_DE_MERCADO  "Painel de Inteligência de Mercado" — EM CONSTRUÇÃO
 
-        CRM      "CRM dos Stakeholders"
-        SCORE    "KPIs Reputacionais"
-        SINTESE  "Painel de Inteligência de Mercado" — EM CONSTRUÇÃO
+    O NOME INTERNO SEGUE O RÓTULO desde a migration 0095. Até ela, este portal
+    se chamava `sintese` — nasceu assim na 0003, quando a capa o chamava de
+    "Síntese", e o rótulo mudou sozinho. A divergência custou caro uma vez: a
+    primeira versão da 0088 criou um QUARTO portal para um painel que já tinha o
+    seu, porque quem procurou "mercado" no código não achou nada.
 
-    `SINTESE` é o portal do painel que a capa chama de Inteligência de Mercado;
-    o rótulo mudou e o nome interno não (ver `front/src/paginas/Inicio.tsx`).
-    Quem ler o descritivo de perfis e procurar um portal "mercado" não vai achar
-    — e já aconteceu: a primeira versão de 0088 criou um quarto portal para um
-    painel que já tinha o seu. Se ele RESPONDE é outra pergunta, da bandeira
-    `mercado_lancado` na configuração.
+    NÃO É A LENTE `mercado`. Aquela vive dentro do Score, recorta veículos de
+    mercado financeiro e responde a `acessa_score`. Foi por isso que o nome novo
+    ficou longo em vez de ser só "mercado": duas permissões com o mesmo nome
+    custariam acesso em produção.
+
+    SE ELE RESPONDE é outra pergunta, da bandeira `mercado_lancado` na
+    configuração — que continua com o nome antigo porque é variável de ambiente,
+    e trocá-la exige mexer no env do contêiner no mesmo instante do deploy.
 
     A "Síntese Executiva" que aparece DENTRO do Painel do CRM é outra coisa
-    ainda, e não tem portal: é um bloco que lê a base do CRM.
+    ainda, e não tem portal: é um bloco que lê a base do CRM. Ela NÃO foi
+    renomeada pela 0095, e é a razão de aquele rename ter sido por lista
+    explícita em vez de busca por "sintese".
     """
 
     CRM = "crm"
-    SINTESE = "sintese"
+    INTELIGENCIA_DE_MERCADO = "inteligencia_de_mercado"
     SCORE = "score"
 
 
@@ -65,8 +73,8 @@ class Perfil(StrEnum):
     PLATAFORMA_EDICAO = "plataforma_edicao"
     CRM_LEITURA = "crm_leitura"
     CRM_EDICAO = "crm_edicao"
-    SINTESE_LEITURA = "sintese_leitura"
-    SINTESE_EDICAO = "sintese_edicao"
+    INTELIGENCIA_DE_MERCADO_LEITURA = "inteligencia_de_mercado_leitura"
+    INTELIGENCIA_DE_MERCADO_EDICAO = "inteligencia_de_mercado_edicao"
     SCORE_LEITURA = "score_leitura"
     SCORE_EDICAO = "score_edicao"
 
@@ -98,7 +106,7 @@ class Papel:
     #: decida nada não abre porta nenhuma.
     acessa_crm: bool = False
     #: O portal do "Painel de Inteligência de Mercado" — ver `Portal`.
-    acessa_sintese: bool = False
+    acessa_inteligencia_de_mercado: bool = False
     acessa_score: bool = False
 
     @property
@@ -115,8 +123,8 @@ class Papel:
         match portal:
             case Portal.CRM:
                 return self.acessa_crm
-            case Portal.SINTESE:
-                return self.acessa_sintese
+            case Portal.INTELIGENCIA_DE_MERCADO:
+                return self.acessa_inteligencia_de_mercado
             case Portal.SCORE:
                 return self.acessa_score
 

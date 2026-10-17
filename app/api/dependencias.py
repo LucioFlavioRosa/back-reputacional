@@ -363,27 +363,33 @@ def exigir_portal_score(usuario: UsuarioLogado) -> UsuarioAtual:
     return usuario
 
 
-# NÃO existe `exigir_portal_sintese` aqui, e a ausência é deliberada — mesma
-# razão de `exigir_exportacao`, logo abaixo.
+# NÃO existe `exigir_portal_de_inteligencia_de_mercado` aqui, e a ausência é
+# deliberada — mesma razão de `exigir_exportacao`, logo abaixo.
 #
-# `acessa_sintese` é o portal do "Painel de Inteligência de Mercado" (o rótulo
-# da capa mudou, o nome interno não — ver `Portal`, no domínio). O painel está
-# EM CONSTRUÇÃO: não existe rota dele para proteger, e o nível correspondente na
-# tela de perfis é concedível e inerte até ele abrir. É o que
-# `configuracao.mercado_lancado` diz, e é por isso que `/api/eu` o devolve — a
-# tela mostra o módulo como "Liberado ao lançar" em vez de prometer uma tela que
-# não abre.
+# `acessa_inteligencia_de_mercado` é o portal do "Painel de Inteligência de
+# Mercado". O painel está EM CONSTRUÇÃO: não existe rota dele para proteger, e o
+# nível correspondente na tela de perfis é concedível e inerte até ele abrir. É
+# o que `configuracao.mercado_lancado` diz, e é por isso que `/api/eu` o devolve
+# — a tela mostra o módulo como "Liberado ao lançar" em vez de prometer uma tela
+# que não abre.
+#
+# ATÉ A 0095 ESTE PORTAL SE CHAMAVA `sintese`, e este comentário dizia "o rótulo
+# da capa mudou, o nome interno não". Mudou agora, junto com a decisão de
+# construir o painel: escrever tabela, rota e tela com um nome que a tela não usa
+# multiplicaria a divergência.
 #
 # NÃO CONFUNDIR COM A LENTE `mercado`, que existe hoje e vive DENTRO do Score —
 # ela recorta a lista de veículos da aba Classificação. Essa lente é do Score,
-# está protegida por `exigir_portal_score`, e apontá-la para `acessa_sintese`
-# tiraria-a de todo mundo que tem Score hoje. Duas coisas com nomes parecidos, e
-# trocá-las custaria acesso em produção.
+# está protegida por `exigir_portal_score`, e apontá-la para
+# `acessa_inteligencia_de_mercado` tiraria-a de todo mundo que tem Score hoje.
+# É exatamente por isso que o nome novo é longo: `acessa_mercado` foi cogitado e
+# recusado, porque deixaria as duas com o mesmo nome.
 #
 # QUEM FOR CONSTRUIR O PAINEL escreve a dependência aqui, exigindo as DUAS
-# coisas — `papel.acessa_sintese` e `configuracao.mercado_lancado` —, e aí ela
-# nasce com rota. Escrevê-la antes seria um controle que parece existir e não
-# roda, que é o que o bloco abaixo explica ser pior do que não ter.
+# coisas — `papel.acessa_inteligencia_de_mercado` e
+# `configuracao.mercado_lancado` —, e aí ela nasce com rota. Escrevê-la antes
+# seria um controle que parece existir e não roda, que é o que o bloco abaixo
+# explica ser pior do que não ter.
 
 
 # NÃO existe `exigir_exportacao` aqui, e a ausência é deliberada.

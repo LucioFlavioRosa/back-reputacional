@@ -66,6 +66,24 @@ CLAUSULA_DE_COLUNA = re.compile(
     re.IGNORECASE,
 )
 
+#: `alter table X rename column A to B`, dentro daquele mesmo corpo.
+#:
+#: A 0095 renomeou `papel.acessa_sintese` para `acessa_inteligencia_de_mercado`,
+#: e o parser cego para renomeacao de COLUNA acusou as duas pontas ao mesmo
+#: tempo: a nova como "no ORM e ausente no DDL" e a antiga como "no DDL e
+#: ausente no ORM". Duas divergencias inventadas, num schema correto.
+#:
+#: E A MESMA LACUNA QUE `RENOMEIA_TABELA` fechou na 0025, um nivel abaixo. O
+#: comentario de la ja avisava: "a proxima migration usa o que o baseline nao
+#: usava". Usou.
+#:
+#: NAO CASA `alter table X rename to Y` (renomeacao de TABELA): falta a palavra
+#: `column`, e e por isso que os dois padroes convivem sem se atrapalhar.
+RENOMEIA_COLUNA = re.compile(
+    r"\brename\s+column\s+(?:if\s+exists\s+)?(\w+)\s+to\s+(\w+)",
+    re.IGNORECASE,
+)
+
 
 def _definicoes_por_tabela(sql: str) -> list[tuple[str, list[str]]]:
     """Quebra o corpo de cada `create table` nas suas definições.
@@ -185,6 +203,19 @@ def _colunas_do_sql(sql: str) -> dict[str, set[str]]:
             else:
                 tabelas.get(tabela.lower(), set()).discard(coluna.lower())
 
+        # A RENOMEAÇÃO DE COLUNA vem depois do `add`/`drop` do MESMO corpo, e na
+        # prática isso basta: ninguém acrescenta e renomeia a mesma coluna no
+        # mesmo `alter table`. Se um dia alguém o fizer, o Postgres é quem diz —
+        # a suíte aplica as migrations de verdade antes de comparar.
+        for antiga, nova in RENOMEIA_COLUNA.findall(corpo):
+            colunas = tabelas.setdefault(tabela.lower(), set())
+            colunas.discard(antiga.lower())
+            # ACRESCENTA MESMO SE A ANTIGA NÃO ESTAVA no retrato: é o efeito que
+            # o banco terá. Condicionar ao "antiga existe" esconderia um buraco
+            # do parser como se fosse coluna inexistente, que é justamente o
+            # tipo de divergência inventada que este padrão veio fechar.
+            colunas.add(nova.lower())
+
     # Sem tratar `drop table`, o retrato guardaria uma tabela que uma migration
     # posterior removeu — e o teste que confere "tabela do DDL existe no ORM" a
     # ignoraria em silêncio, porque tabela sem mapeamento é caso esperado.
@@ -243,13 +274,16 @@ create table batizada (
 
 alter table exemplo add column nova text;
 alter table exemplo drop column antiga;
+alter table exemplo rename column nova to renomeada;
 alter table if exists batizada rename to rebatizada;
 alter table rebatizada drop column if exists sobra;
 drop table descartavel;
 """
     )
 
-    assert tabelas["exemplo"] == {"id", "nova"}, "add/drop column não foi aplicado"
+    assert tabelas["exemplo"] == {"id", "renomeada"}, (
+        "add/drop column não foi aplicado, ou o rename column não trocou o nome"
+    )
     # Sem o `if not exists` opcional no padrão, o parser leria `if` como nome da
     # tabela e a tabela inteira sumiria do retrato — em silêncio.
     assert tabelas["opcional"] == {"codigo"}, "create table if not exists não foi lido"
@@ -260,6 +294,16 @@ drop table descartavel;
     assert tabelas["rebatizada"] == {"id"}, (
         "rename to não levou as colunas, ou o drop column pelo nome NOVO não foi aplicado"
     )
+    # O NOME ANTIGO DA COLUNA NÃO SOBRA, e é o outro lado do mesmo defeito: um
+    # retrato com os dois acusaria a antiga como "existe no DDL e não no ORM" ao
+    # mesmo tempo em que acusaria a nova como "existe no ORM e não no DDL" —
+    # duas divergências inventadas de uma vez, que foi o que a 0095 produziu.
+    assert "nova" not in tabelas["exemplo"], (
+        "rename column deixou o nome antigo no retrato"
+    )
+    # E `rename to` de TABELA não pode ser lido como rename de COLUNA: os dois
+    # padrões convivem no mesmo corpo, e a diferença é só a palavra `column`.
+    assert "rebatizada" in tabelas, "rename to de tabela foi comido pelo rename column"
 
 
 def test_o_retrato_das_migrations_reais_e_utilizavel():
