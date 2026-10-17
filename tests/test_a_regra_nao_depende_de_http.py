@@ -22,15 +22,19 @@ dia seguinte a segunda interface não alcança mais aquela operação, e ningué
 liga uma coisa à outra. Então virou teste.
 
 O QUE ESTE ARQUIVO **NÃO** AFIRMA. Ele não diz que a segunda interface sai de
-graça. Medido no mesmo dia: `app/api/` guarda **3.183 linhas em funções
-auxiliares de rota**, e **1.344 delas num módulo só** (`lentes.py`, 30
-auxiliares, a maior com 271 linhas, todas privadas). Tudo o que mora ali uma
-segunda interface tem de duplicar ou importar de um módulo de rota — uma
-pergunta como "como está a Imprensa este mês?" precisaria de `_paineis` (271
-linhas), `_evolucao` (93) e `_onde_esta_a_causa` (110).
+graça. Quando este teste foi escrito, `app/api/` guardava **3.183 linhas em
+funções auxiliares de rota**, e **1.344 delas num módulo só** (`lentes.py`, 30
+auxiliares privadas) — e tudo o que mora ali uma segunda interface tem de
+duplicar ou importar de um módulo de rota.
 
-Esse é o trabalho que falta, e é mudança à parte. Este teste protege o que já
-está certo, e não finge que o resto está.
+**AQUELE MÓDULO FOI EXTRAÍDO no mesmo dia** (para
+`casos_de_uso/leitura_das_lentes.py` e `esquemas/lentes.py`), e o total caiu
+para **1.839 linhas**. Metade do que sobra é legitimamente HTTP
+(`dependencias.py`, `erros.py`); o resto está espalhado, sem concentração, e
+nenhum pedaço é exigido pelos rumos de hoje.
+
+Este teste protege o que já está certo, e não finge que o resto está. Ver
+`docs/ESTRUTURA_E_EXPANSAO.md` §7.1.
 
 NÃO PRECISA DE BANCO: é leitura de fonte com `ast`.
 """

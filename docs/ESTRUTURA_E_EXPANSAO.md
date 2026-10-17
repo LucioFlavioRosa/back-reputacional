@@ -525,7 +525,7 @@ uma rota de upload. Virou teste
 
 | onde | linhas em função auxiliar de rota |
 |---|---|
-| `api/lentes.py` | **1.344** (30 auxiliares; a maior, `_paineis`, tem 271) |
+| `api/lentes.py` | **1.344** (30 auxiliares; a maior, `_paineis`, tem 271) — **ZERO depois da extração, ver o fim desta seção** |
 | `api/dependencias.py` | 273 — legítimo, é autorização de pedido |
 | `api/importacoes.py` | 238 |
 | `api/score.py` | 230 |
@@ -536,20 +536,65 @@ uma rota de upload. Virou teste
 | outras 14 | 501 |
 | **total** | **3.183** |
 
-Tirando os ~394 que são legitimamente HTTP, sobram **~2.800 linhas de montagem
-de resposta e de regra dentro da camada de rota** — e mais da metade num
-arquivo só. Uma pergunta de WhatsApp como "como está a Imprensa este mês?"
-precisaria de `_paineis` (271 linhas), `_evolucao` (93) e `_onde_esta_a_causa`
-(110), todas privadas, todas dentro de `api/lentes.py`.
+Tirando os ~394 que eram legitimamente HTTP, sobravam **~2.800 linhas de
+montagem de resposta e de regra dentro da camada de rota** — e mais da metade
+num arquivo só. Uma pergunta de WhatsApp como "como está a Imprensa este mês?"
+precisaria, naquele estado, de `_paineis` (271 linhas), `_evolucao` (93) e
+`_onde_esta_a_causa` (110), todas privadas, todas dentro de `api/lentes.py`.
+(Hoje são `paineis`, `evolucao` e `onde_esta_a_causa`, públicas, em
+`casos_de_uso/leitura_das_lentes.py`.)
 
 **É a §3.4 deste documento com número e consequência.** Lá eu escrevi que
 `lentes.py` é "a camada de rota fazendo trabalho de três camadas" e deixei como
-observação. Com uma segunda interface no mapa, deixa de ser observação: é o
-único trabalho estrutural que o WhatsApp exige, e ele tem tamanho —
-**estimativa de 2 a 4 dias**, extraindo os 30 auxiliares para
-`casos_de_uso/leitura_das_lentes.py` (ou um módulo por bloco), com a suíte de
-`lentes` na frente. Não foi feito aqui de propósito: é mudança grande, e vale
-abrir sozinha.
+observação. Com uma segunda interface no mapa, deixou de ser observação: era o
+único trabalho estrutural que o WhatsApp exige.
+
+#### FEITO em 17/10/2026 — e os números acima são o "antes"
+
+A extração aconteceu no mesmo dia, e os três arquivos são:
+
+```
+app/esquemas/lentes.py                    239 linhas   11 classes `*Saida`
+app/casos_de_uso/leitura_das_lentes.py  1.508 linhas   30 funções + 18 constantes
+app/api/lentes.py                         540 linhas   as 3 rotas, e só
+```
+
+**O que o diagnóstico não tinha visto, e que a medição antes de mexer mostrou:**
+nenhuma das 30 funções tocava o pedido HTTP. Zero `HTTPException`, zero
+`Request`, zero `Depends` — e `sessao` não era nem anotada. Elas já estavam
+prontas para sair; estavam só no lugar errado. A estimativa de 2 a 4 dias era
+generosa por isso.
+
+**As 14 que a rota chama perderam o `_`**, e não por estilo: se ficassem
+privadas, a rota importaria nome privado de outro módulo, e
+`tests/test_as_camadas_sao_respeitadas.py` recusa isso. As 16 internas seguem
+privadas, e agora a superfície do caso de uso é explícita.
+
+**A promoção quebrou três coisas, que o `ruff` pegou antes de qualquer teste:**
+`obter_dossie` tinha locais chamados `evolucao`, `paineis` e `volume_por_tier`
+— exatamente os nomes das funções sem o `_`. `evolucao = evolucao(...)` passou
+a sombrear o import, o que dá `UnboundLocalError` (F823, três vezes).
+
+| | antes | depois |
+|---|---|---|
+| linhas em auxiliar de rota, em todo `app/api/` | **3.183** | **1.839** |
+| auxiliares de rota com mais de 25 linhas | 40 | **22** |
+| `api/lentes.py`: auxiliares | 30 | **0** |
+| funções públicas em `casos_de_uso/` | 94 | **108** |
+| dessas, presas ao HTTP | 0 | **0** |
+
+Nada se perdeu, e isso foi provado por AST contra o estado anterior: 66 nomes de
+topo antes, 66 depois, nenhum duplicado, e um único corpo diferente
+(`obter_dossie`, pelos três locais). A revisão confirmou por método próprio,
+inclusive que as 11 classes Pydantic mantiveram ordem de definição e `Field(...)`
+— a ordem importa na resposta JSON.
+
+**O que sobra em `app/api/` são 1.839 linhas**, metade legitimamente HTTP
+(`dependencias.py` 273, `erros.py` 121) e o resto espalhado por
+`importacoes.py` (238), `score.py` (230), `interacoes.py` (170),
+`referencias.py` (165) e `stakeholders.py` (141). Nenhum deles concentra como
+`lentes.py` concentrava, e nenhum é exigido pelos três rumos — ficam para
+quando uma mudança de produto tocar a área.
 
 ### 7.2 IA para insights: o lugar já existe, e o risco não é estrutural
 

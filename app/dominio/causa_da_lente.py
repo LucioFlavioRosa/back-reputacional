@@ -75,7 +75,8 @@ class Dimensao:
     #:
     #: POR DIMENSÃO E POR LENTE, portanto, e não pelo nome da coluna: gatilhar
     #: pelo nome esconderia da Sociedade um dado que é dela, ou publicaria o da
-    #: Imprensa. É a mesma pergunta que `_nomeia_o_diretorio` faz dos painéis.
+    #: Imprensa. É a mesma pergunta que `nomeia_o_diretorio` faz dos painéis
+    #: (em `casos_de_uso/leitura_das_lentes`).
     nomeia_o_diretorio: bool = False
     #: TODOS OS VALORES, sem o corte dos seis maiores. Para a taxonomia da Aegea
     #: (7 atributos, ~41 temas estratégicos, 104 subtemas): é um vocabulário
