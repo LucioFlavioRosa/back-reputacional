@@ -34,7 +34,7 @@ from app.banco.tabelas_referencias import (
     ReferenciaTema,
     ReferenciaVersao,
 )
-from app.banco.temas_de_demonstracao import id_de_tema_por_nome_antigo
+from app.comandos.temas_de_demonstracao import id_de_tema_por_nome_antigo
 
 #: (título, tipo, resumo, assuntos, última atualização do arquivo)
 #:

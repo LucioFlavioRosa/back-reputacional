@@ -31,7 +31,6 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from app.api.dependencias import UsuarioLogado, exigir_portal_score
-from app.api.score import _formula, _mes_de
 from app.banco import repositorio_lentes, repositorio_score
 from app.banco.sessao import SessaoDoPedido
 
@@ -54,7 +53,8 @@ from app.dominio.lentes import (
     TaxaDeResposta,
     prioridade_do_jornalista,
 )
-from app.dominio.score import Calibracao, FiltroDeMencoes
+from app.dominio.periodo import mes_de
+from app.dominio.score import Calibracao, FiltroDeMencoes, formula_aplicada
 from app.dominio.sinais_da_lente import Secao
 
 rotas = APIRouter(
@@ -1911,7 +1911,7 @@ def obter_dossie(
     painéis sobre o subconjunto de menções que casa com ele — mas NUNCA entra
     no ISR nem é comparado com o mês anterior como se fosse a nota oficial.
     """
-    alvo = _mes_de(mes)
+    alvo = mes_de(mes)
     lente = repositorio_lentes.lente_por_codigo(sessao, codigo)
     if lente is None:
         raise NaoEncontrado("Lente não encontrada.")
@@ -2035,7 +2035,7 @@ def obter_dossie(
         estimado=medida.estimado,
         ausencia=medida.ausencia,
         fontes=list(medida.fontes),
-        formula=_formula(lente.codigo, calibracao),
+        formula=formula_aplicada(lente.codigo, calibracao),
         kpis=_kpis(sessao, lente, alvo, meses, calibracao, medida, filtro),
         ficha_do_destaque=_saida_da_ficha(FICHA_DO_DESTAQUE),
         manchete=leitura.manchete,
@@ -2182,7 +2182,7 @@ def obter_recorte(
     faz um link reproduzir o ponto exato do caminho, e o que permite a mesma
     barra de filtros e o mesmo clique levarem ao mesmo lugar.
     """
-    alvo = _mes_de(mes)
+    alvo = mes_de(mes)
     lente = repositorio_lentes.lente_por_codigo(sessao, codigo)
     if lente is None:
         raise NaoEncontrado("Lente não encontrada.")
@@ -2396,7 +2396,7 @@ def obter_opcoes_de_filtro(
     NÃO É DICIONÁRIO: tier é fechado, mas veículo/atributo/tema são texto
     livre de cada fornecedor — ver `repositorio_lentes.opcoes_de_filtro`.
     """
-    alvo = _mes_de(mes)
+    alvo = mes_de(mes)
     lente = repositorio_lentes.lente_por_codigo(sessao, codigo)
     if lente is None:
         raise NaoEncontrado("Lente não encontrada.")

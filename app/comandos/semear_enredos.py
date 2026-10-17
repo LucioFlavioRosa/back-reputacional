@@ -72,7 +72,7 @@ from app.banco.tabelas_stakeholders import (
     PessoaAegea,
     PessoaAegeaTema,
 )
-from app.banco.temas_de_demonstracao import id_de_tema_por_nome_antigo
+from app.comandos.temas_de_demonstracao import id_de_tema_por_nome_antigo
 from app.dominio.frentes import (
     TIPO_DE_INSTITUICAO,
     Frente,

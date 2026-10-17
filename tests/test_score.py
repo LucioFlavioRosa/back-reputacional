@@ -18,6 +18,7 @@ import pytest
 
 from app.dominio.erros import RegraViolada
 from app.dominio.score import (
+    REGUAS_DE_ENGAJAMENTO,
     Calibracao,
     Contagem,
     Indice,
@@ -25,6 +26,7 @@ from app.dominio.score import (
     SomasDaFonte,
     calcular_indice,
     faixa_de,
+    formula_aplicada,
     medir_lente,
     ns,
     para_score,
@@ -248,6 +250,70 @@ def test_a_regua_de_engajamento_muda_a_sociedade():
     )[2].score
 
     assert por_contagem != por_engajamento
+
+
+# -- e a régua se explica na tela ----------------------------------------------
+#
+# `formula_aplicada` morava em `api/score.py` como `_formula`, e NÃO TINHA TESTE
+# NENHUM — nem direto nem por HTTP. É o texto que a tela mostra ao lado do
+# número para dizer como ele foi feito, e o risco dele é específico: não quebra
+# quando erra, só descreve uma régua que não é a que rodou.
+
+
+def test_a_frase_da_imprensa_traz_os_pesos_DA_REGUA_EM_VIGOR():
+    """O QUE ESTE TESTE DEFENDE: que a frase seja GERADA. Um texto escrito à mão
+    passaria a mentir no primeiro ajuste da calibração, e ninguém perceberia —
+    o número ao lado continuaria certo."""
+    assert "vale 10 (Tier 1), 5 (Tier 2) ou 1 (Tier 3)" in formula_aplicada("imprensa", PADRAO)
+
+    suave = Calibracao(pesos=PADRAO.pesos, regua_tier="suave")
+    assert "vale 5 (Tier 1), 3 (Tier 2) ou 1 (Tier 3)" in formula_aplicada("imprensa", suave)
+
+
+def test_o_mercado_le_a_mesma_regua_de_tier_da_imprensa():
+    """As duas lentes vêm de veículo com tier, e a frase é a mesma."""
+    assert formula_aplicada("mercado", PADRAO) == formula_aplicada("imprensa", PADRAO)
+
+
+@pytest.mark.parametrize(
+    ("regua", "pedaco"),
+    [
+        ("n", "Cada menção vale 1"),
+        ("log", "log₁₀(1 + engajamento)"),
+        ("bruto", "o seu engajamento"),
+        ("cargo", "o peso do cargo de quem postou"),
+    ],
+)
+def test_a_frase_da_sociedade_diz_qual_regua_de_engajamento_rodou(regua, pedaco):
+    frase = formula_aplicada("sociedade", Calibracao(pesos=PADRAO.pesos, regua_engajamento=regua))
+    assert pedaco in frase
+    #: O DENOMINADOR ÚNICO é a parte contraintuitiva, e por isso está escrita:
+    #: com duas fontes na lente, as menções das duas entram na mesma conta.
+    assert "um denominador só" in frase
+
+
+def test_toda_regua_de_engajamento_tem_frase():
+    """SE UMA RÉGUA NOVA ENTRAR em `REGUAS_DE_ENGAJAMENTO` sem frase, a função
+    estoura com KeyError na tela da lente — não devolve texto pela metade."""
+    for regua in REGUAS_DE_ENGAJAMENTO:
+        assert formula_aplicada("sociedade", Calibracao(regua_engajamento=regua))
+
+
+def test_a_lente_sem_fornecedor_diz_que_vem_do_clima_registrado():
+    """Institucional e poder público não têm menção de fornecedor: a nota vem do
+    clima das interações deste painel, e a frase não pode prometer tier."""
+    frase = formula_aplicada("institucional", PADRAO)
+    assert "clima das interações registradas neste painel" in frase
+    assert "Tier" not in frase
+
+
+def test_toda_frase_abre_com_a_formula_do_indice():
+    """As três formas começam pela mesma conta — o que muda é o que se soma
+    antes dela. A frase precisa dizer as duas coisas, nessa ordem."""
+    for lente in ("imprensa", "mercado", "sociedade", "clientes", "institucional"):
+        assert formula_aplicada(lente, PADRAO).startswith(
+            "NS = (positivas − negativas) ÷ total; score = (NS + 1) ÷ 2 × 100."
+        )
 
 
 def test_desligar_as_duas_fontes_tira_a_sociedade_e_redistribui_os_pesos():

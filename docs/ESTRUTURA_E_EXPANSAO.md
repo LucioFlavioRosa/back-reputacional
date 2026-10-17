@@ -7,6 +7,11 @@ facilita ou atrapalha manter o que existe e acrescentar o que vem?
 **O método.** Tudo abaixo foi medido nos dois repositórios em 17/10/2026, não
 inferido. Onde há opinião, ela está marcada como opinião.
 
+> **O QUE JÁ FOI FEITO DEPOIS DESTE DOCUMENTO** — ver §6, no fim, para o que
+> mudou, o que a medição derrubou de novo e o que virou teste em vez de
+> afirmação. Duas recomendações daqui (§4.2 e a dívida da §1/§5) estão
+> aplicadas; as outras duas continuam abertas.
+
 ---
 
 ## 1. O que existe hoje, medido
@@ -39,14 +44,19 @@ dizia que "as camadas são respeitadas", o que é falso:
 banco/importar_cadastro_externo.py:71   from app.api.stakeholders import (...)
 banco/importar_cadastro_externo.py:80   from app.casos_de_uso.derivar_tipo import ...
 banco/carregar_pacote_das_lentes.py:28  from app.casos_de_uso.carga_do_pacote... import ...
+banco/semear_referencias.py:29          from app.armazenamento import ...
 api/lentes.py:34                        from app.api.score import _formula, _mes_de
 api/consulta_profundidade.py:26         from app.api.score import _mes_de
 ```
 
 A camada de baixo importa a de cima, e dois módulos de rota importam **funções
-privadas** de um terceiro. Não há ciclo, mas há costura frouxa — e `_mes_de` com
-dois consumidores externos não é mais privado, é uma função de domínio morando
-no lugar errado.
+privadas** de um terceiro. Há costura frouxa — e `_mes_de` com dois consumidores
+externos não é mais privado, é uma função de domínio morando no lugar errado.
+
+> **ESTA LISTA FOI CORRIGIDA DEPOIS.** Ela tinha cinco linhas e a quarta acima
+> (`semear_referencias`) faltava — a verificação que eu rodei à mão não a pegou.
+> E o enquadramento das três primeiras estava errado: os três arquivos são
+> COMANDOS de linha, não camada de banco. Ver §6.
 
 ### O front é meio organizado por domínio, e meio não
 
@@ -280,13 +290,21 @@ a mesma divisão por domínio que `paginas/` já tem.
 
 ## 5. O que eu NÃO mudaria
 
-**O domínio puro e a ausência de ciclos.** São o ativo real, e qualquer
-reorganização tem de preservá-los.
+**O domínio puro e a ausência de ciclos.** O domínio puro é o ativo real, e
+qualquer reorganização tem de preservá-lo.
 
-Mas NÃO pelo motivo que a primeira versão deu ("as camadas são respeitadas") —
-elas não são, e os cinco imports cruzados da §1 provam. Os crossings entre api,
-casos de uso e banco são dívida localizada, a tratar quando se tocar na área, e
-não justificativa para deixar tudo como está.
+**"A AUSÊNCIA DE CICLOS" ERA FALSA TAMBÉM, e só se descobriu quando a
+verificação virou teste (§6):** existe um ciclo, `tabelas_interacoes` ↔
+`tabelas_referencias`, deliberado e documentado no próprio arquivo — quem
+declara a chave estrangeira traz o alvo junto, senão um processo que importe só
+um dos dois quebra na primeira consulta com `NoReferencedTableError`. O import
+mora no fim do arquivo com `noqa: E402`, que é o que o resolve. É dívida de
+mapeamento ORM, não de arquitetura — mas eu afirmei "nenhum ciclo em lugar
+nenhum", e não era verdade.
+
+E NÃO pelo motivo que a primeira versão deu ("as camadas são respeitadas") —
+na data deste documento elas não eram, e os imports cruzados da §1 provam. Hoje
+são, por mudança e por teste; ver §6.
 
 **Os comentários que registram DECISÃO.** Nesta sessão eles pagaram três vezes:
 o de `acesso.py` previu a remoção da senha e pôs a conferência no lugar certo; o
@@ -314,3 +332,140 @@ mudança tocar esse fluxo, vale dividir pelos seams que já existem conceitualme
 **Fazer tudo de uma vez.** A medição diz que a manutenção está barata. Uma
 reorganização geral trocaria um custo pequeno e conhecido por um risco grande e
 desconhecido.
+
+---
+
+## 6. O que foi feito, e o que a medição derrubou de novo
+
+Tudo nesta seção é de 17/10/2026, depois do documento acima.
+
+### 6.1 Feito: o `cliente.ts` se dividiu (§4.2)
+
+`src/api/cliente.ts` — 90 funções, 2.481 linhas — virou cinco arquivos por
+domínio (`nucleo`, `acesso`, `crm`, `score`, `importacao`), com `cliente.ts`
+como barril de reexportação. Os 66 arquivos que importam de `@/api/cliente`
+não mudaram. A revisão comparou AST contra AST: **162 declarações antes, 162
+depois**, zero diferença de assinatura, corpo ou valor.
+
+Ela também achou dois buracos que eu havia aberto, e os dois estão fechados: a
+varredura aceitava `requisitar` renomeada no import (deixando chamadas sem
+varredura nenhuma) e a lista de arquivos varridos era escrita à mão (um sexto
+arquivo em `src/api/` escaparia em silêncio; agora é `import.meta.glob`).
+
+### 6.2 Feito: os comandos saíram de `app/banco/`, e três "violações" eram diagnóstico errado meu
+
+**O QUE A MEDIÇÃO MOSTROU.** `app/banco/` tinha 33 módulos, e **10 deles eram
+script de linha de comando** (`python -m …`, com `__main__`). As outras seis
+pastas de `app/` tinham **zero**. A pasta significava duas coisas: a camada que
+fala SQL e os scripts que a operam.
+
+**E ISSO DERRUBA TRÊS DAS QUATRO VIOLAÇÕES DA §1.** `importar_cadastro_externo`,
+`carregar_pacote_das_lentes` e `semear_referencias` não eram dívida de camada:
+um PONTO DE ENTRADA pode importar qualquer camada — é o que `main.py` faz. O
+problema era a pasta, não o import. Eu os listei como costura frouxa porque
+olhei o import e não o arquivo.
+
+Nove saíram para `app/comandos/`, com o ajudante que só eles usam
+(`temas_de_demonstracao.py`). Dois ficaram, cada um com motivo:
+
+| fica em `app/banco/` | por quê |
+|---|---|
+| `sugerir_categoria_de_publico.py` | tem `__main__`, mas `derivados.py` usa as funções dele: é camada com CLI colado, não comando |
+| `derivados.py` | é o espelho em Python das migrations 0043/0044, que moram em `app/banco/migrations/`, e `test_derivados` confere que os dois dizem a mesma coisa. Separar o par seria pior do que o cheiro de ser usado só por semeador |
+
+**O risco real da mudança não era o import, era a string.** Caminho de módulo
+escrito em prosa — um `python -m` apontando para a pasta antiga — não é
+conferido por compilador nenhum: mover o arquivo deixa 26 instruções quebradas
+em README, compose e docstrings, esperando a próxima pessoa que for semear um
+banco. E duas delas tinham alcance pior. A primeira: `tests/test_semeadores.py`
+usava `from app.banco import semear_desenvolvimento, …` — a forma em que o nome
+do submódulo está em `names` e não no nó do import, que a minha varredura de
+substituição não cobria. Ela passou, e **a suíte a pegou**. É o MESMO ponto cego
+que já tinha me enganado meia hora antes, numa análise de dependência que
+mostrou um módulo usado como se fosse órfão. A segunda, essa a suíte **não**
+pegaria: `amostra_de_desenvolvimento.json` é carregado por
+`Path(__file__).with_name(...)` e estava declarado como dado do pacote
+`app.banco` no `pyproject.toml` — deixar a declaração para trás instalaria o
+wheel sem o arquivo, e o semeador quebraria **só numa instalação real**, nunca
+na suíte nem no container.
+
+Por isso a mudança trouxe `test_os_comandos_sao_pontos_de_entrada.py`, que
+confere que todo `python -m` documentado aponta para um módulo que existe.
+
+**E ELE PEGOU DUAS COISAS NA PRIMEIRA EXECUÇÃO.** A primeira foi este próprio
+documento: uma versão anterior deste parágrafo citava, como exemplo de caminho
+morto, o `python -m` que `infra-reputacional/ajustes/back/AJUSTES.md` documenta
+para o migrador — e que aponta para `app.banco.migrar`, um módulo que não
+existe, porque `migrar.py` mora em `infra-reputacional/scripts/`. O exemplo
+literal virou, ele mesmo, um caminho quebrado dentro do alcance da varredura.
+Está descrito em prosa por isso. **No repositório de infra o teste não alcança,
+e aquele caminho continua errado lá** — é a demonstração mais barata de por que
+a verificação precisa ser executável.
+
+A segunda foi `tests/test_informacao_sensivel_por_pessoa.py`, que mantém uma
+lista de exceção **por caminho** dos módulos que leem `interacao` sem decidir
+sobre a marca de restrição. Os três semeadores caíram fora dela ao mudar de
+pasta, e a suíte falhou — o comportamento certo. Uma lista de exceção de
+segurança que seguisse valendo depois de o arquivo mudar de lugar seria pior do
+que não existir.
+
+### 6.3 Feito: `_mes_de` e `_formula` saíram da rota (§1, §5)
+
+As duas violações que eram violações de verdade. `_mes_de` virou
+`dominio.periodo.mes_de`; `_formula` virou `dominio.score.formula_aplicada`, no
+módulo onde `REGUAS_DE_TIER` e `Calibracao` já moravam — a mudança **tirou** um
+import em vez de acrescentar.
+
+E rendeu cobertura que não existia: `formula_aplicada` **não tinha teste nenhum**,
+nem direto nem por HTTP, e é o texto que explica na tela como o número foi
+feito — o risco dele é não quebrar quando erra, só descrever uma régua que não
+rodou. Os casos de recusa de `mes_de` só eram exercitados por rota, em teste que
+precisa de Postgres; agora se provam puros, e um deles mudou de lugar com
+motivo: `99999-01` passa do ano máximo do próprio `date` (9999), morre no parse
+e devolve a mensagem de FORMATO, não a de faixa. O teste por HTTP agrupava os
+cinco casos e conferia só o 422, então não distinguia as duas mensagens.
+
+### 6.4 Medido depois: antes e depois, no mesmo script
+
+| | antes (`origin/main`) | depois |
+|---|---|---|
+| violações de camada | **4** | **0** |
+| imports de nome privado entre arquivos | 5 | **3** |
+| ciclos de import | **1** (eu afirmei 0) | 1, nomeado e explicado |
+| módulos em `app/banco/` | 33 (10 eram script) | 23, só camada |
+
+Os três cruzamentos privados que sobraram estão nomeados um por um em
+`CRUZAMENTOS_CONHECIDOS`. O maior deles — `importar_cadastro_externo` usando
+`_conferir_area`, `_conferir_categoria_publico` e `_conferir_tier` de
+`api/stakeholders.py` — **não** é o caso do `_mes_de`: as três recebem `Sessao` e
+consultam o catálogo, então não são domínio puro. A casa certa delas (`banco`
+ou `casos_de_uso`) é outra mudança, com os testes de erro na frente.
+
+### 6.5 O que mudou de método: a afirmação virou teste
+
+**É o item mais importante desta seção.** Duas afirmações de arquitetura deste
+documento eram falsas — "as camadas são respeitadas" e "não há ciclo em lugar
+nenhum" —, e as duas foram escritas por mim depois de uma verificação à mão que
+eu achei suficiente. A primeira foi corrigida por uma revisão; a segunda só
+caiu quando a verificação virou código.
+
+`tests/test_as_camadas_sao_respeitadas.py` agora mede a cada execução: a tabela
+de quem pode importar quem, o domínio não conhecendo ninguém, nenhum ciclo
+novo, nenhum nome privado novo atravessando arquivo. As exceções são nomeadas
+uma a uma com o motivo, e são **teto, não piso** — a lista recusa uma entrada
+nova e recusa também uma que deixou de acontecer, para não virar cemitério.
+
+### 6.6 O que continua aberto
+
+- **§4.1, o módulo novo por domínio**: continua sendo decisão da primeira fatia
+  da Inteligência de Mercado, e a ressalva do documento segue valendo — se a aba
+  de bonds depender muito do Score, agrupar rende pouco. `app/comandos/` não é
+  precedente para isso: é pasta de pontos de entrada, não módulo de produto.
+- **§4.3, onde a conta mora**: nada mudou. Acima de 5.000 interações o painel
+  mostra número parcial e avisa; as quatro rotas `/api/metricas/*` continuam
+  sem ser chamadas. **É o único achado desta revisão com efeito no que a pessoa
+  lê**, e espera decisão de produto.
+- **§4.4, agrupar `src/dominio/`**: 37 arquivos planos, limiar de 40 não
+  alcançado.
+- **`importar_agendas.py` (3.258 linhas) e `Painel.tsx`**: deliberadamente não
+  tocados, pelos motivos da §5.

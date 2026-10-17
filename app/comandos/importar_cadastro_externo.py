@@ -1,6 +1,6 @@
 """Importa o cadastro externo de Instituições, Contatos e Representantes Aegea.
 
-    python -m app.banco.importar_cadastro_externo <pasta_com_os_csvs> [--confirmar]
+    python -m app.comandos.importar_cadastro_externo <pasta_com_os_csvs> [--confirmar]
 
 A pasta precisa ter `instituicoes.csv`, `contatos.csv` e
 `representantes_aegea.csv`, no formato descrito no README do dataset

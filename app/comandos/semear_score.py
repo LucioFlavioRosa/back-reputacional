@@ -18,7 +18,7 @@ A lente institucional não é semeada nunca: ela é o clima das interações des
 banco, contado na hora.
 
 Rodar:
-    python -m app.banco.semear_score
+    python -m app.comandos.semear_score
 """
 
 from __future__ import annotations

@@ -356,9 +356,15 @@ LEITURAS_SEM_FILTRO = {
     #: Só o mapeamento ORM.
     "banco/tabelas_interacoes.py",
     #: Semeadores: populam o banco em desenvolvimento, não servem requisição.
-    "banco/semear_desenvolvimento.py",
-    "banco/semear_enredos.py",
-    "banco/semear_taxonomia_de_temas.py",
+    #:
+    #: O CAMINHO MUDOU EM 17/10/2026 — eles saíram de `banco/` para `comandos/`,
+    #: e esta lista é por caminho: os três caíram fora dela na mudança e o teste
+    #: falhou, que é o comportamento certo. Uma lista de exceção de SEGURANÇA
+    #: que seguisse valendo depois de o arquivo mudar de lugar seria pior do que
+    #: não existir.
+    "comandos/semear_desenvolvimento.py",
+    "comandos/semear_enredos.py",
+    "comandos/semear_taxonomia_de_temas.py",
     #: Rotinas de MANUTENÇÃO, chamadas por comando e não por rota. Preenchem
     #: campo de cadastro a partir do acervo (`Instituicao.tier`, categoria de
     #: público sugerida). Excluir a agenda sensível aqui faria um campo

@@ -20,13 +20,13 @@ cd back-reputacional
 
 docker compose -f docker-compose.pilha.yml up -d --build
 
-docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_desenvolvimento
-docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_referencias
-docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_enredos
-docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_taxonomia_de_temas
-docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_lentes
-docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_mencoes
-docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_score
+docker compose -f docker-compose.pilha.yml exec api python -m app.comandos.semear_desenvolvimento
+docker compose -f docker-compose.pilha.yml exec api python -m app.comandos.semear_referencias
+docker compose -f docker-compose.pilha.yml exec api python -m app.comandos.semear_enredos
+docker compose -f docker-compose.pilha.yml exec api python -m app.comandos.semear_taxonomia_de_temas
+docker compose -f docker-compose.pilha.yml exec api python -m app.comandos.semear_lentes
+docker compose -f docker-compose.pilha.yml exec api python -m app.comandos.semear_mencoes
+docker compose -f docker-compose.pilha.yml exec api python -m app.comandos.semear_score
 ```
 
 SÃO SETE, E A ORDEM IMPORTA. Até 08/10/2026 o README listava três e o
@@ -125,7 +125,7 @@ Com `AUTH_MOCK=true` (o padrão do `.env.example`) um usuário fixo é provision
 pelo mesmo caminho do SSO real, para desenvolver sem depender do tenant.
 
 ```bash
-python -m app.banco.semear_desenvolvimento   # 60 registros sintéticos
+python -m app.comandos.semear_desenvolvimento   # 60 registros sintéticos
 ```
 
 ## Como o repositório é organizado
@@ -152,6 +152,10 @@ app/
 ├── dominio/               entidades, regras e vocabulário. Sem SQL, sem FastAPI
 ├── casos_de_uso/          o que a aplicação faz, um arquivo por operação
 ├── banco/                 ORM, consultas, sessão e migrations
+├── comandos/              o que uma PESSOA roda: `python -m app.comandos.<nome>`
+│                          semeadores de desenvolvimento e as cargas únicas.
+│                          São pontos de entrada, como `main.py`: podem importar
+│                          qualquer camada — e nenhuma camada os importa
 ├── armazenamento/         o Blob: caminho, upload e download dos arquivos
 │                          três árvores, e cada uma responde a uma pergunta:
 │                          `interacoes/<id>/<momento>/` — o material da agenda,
@@ -168,6 +172,14 @@ tests/
 A dependência corre em um sentido só: `api` conhece `casos_de_uso`, que conhece
 `dominio`. **`dominio` não conhece ninguém** — é o que permite testá-lo sem
 banco e sem HTTP.
+
+**E ISSO É CONFERIDO, NÃO PROMETIDO.** `tests/test_as_camadas_sao_respeitadas.py`
+mede a cada execução: quem cada camada pode importar, que o domínio não conhece
+ninguém, que não há ciclo novo, e que nenhum nome privado novo atravessa
+arquivo. O teste nasceu porque a frase acima já foi **falsa**: havia quatro
+imports de baixo para cima e um ciclo, e um documento afirmando o contrário.
+Transversais (`configuracao`, `observabilidade`) e a dívida conhecida estão
+nomeadas uma por uma lá dentro, com o motivo de cada exceção.
 
 Cada pacote tem um `__init__.py` com uma descrição do que mora ali. Comece por
 `app/__init__.py`.
@@ -422,7 +434,7 @@ oferece do que só se lê.
 ## Testes e qualidade
 
 ```bash
-python -m pytest        # 709 testes; precisa do Postgres no ar
+python -m pytest        # 919 passam, 63 pulam; precisa do Postgres no ar
 ruff check .            # linter, com as regras FastAPI (FAST); passa limpo
 ```
 

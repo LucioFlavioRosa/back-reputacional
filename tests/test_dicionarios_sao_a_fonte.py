@@ -268,7 +268,7 @@ def test_toda_area_do_seed_existe_no_dicionario(sessao):
     """`AREA_POR_FRENTE` (semeador) liga frente a área PELO NOME; um nome que
     o dicionário não tenha faria o seed quebrar em `KeyError` — ou, pior,
     ligar a agenda a área nenhuma."""
-    from app.banco.semear_enredos import AREA_POR_FRENTE
+    from app.comandos.semear_enredos import AREA_POR_FRENTE
 
     nomes = set(sessao.execute(text("select nome from area_pessoa")).scalars())
     assert set(AREA_POR_FRENTE.values()) <= nomes
