@@ -482,8 +482,10 @@ nova e recusa também uma que deixou de acontecer, para não virar cemitério.
   mostra número parcial e avisa; as quatro rotas `/api/metricas/*` continuam
   sem ser chamadas. **É o único achado desta revisão com efeito no que a pessoa
   lê**, e espera decisão de produto.
-- **§4.4, agrupar `src/dominio/`**: 37 arquivos planos, limiar de 40 não
-  alcançado.
+- **§4.4, agrupar `src/dominio/`**: ~~37 arquivos planos, limiar de 40 não
+  alcançado.~~ **O limiar FOI alcançado no mesmo dia, e a recomendação está
+  retirada** — contar arquivos era a medida errada: 27 dos 40 são um componente
+  conexo só. Ver §7.6. (Achado da revisão: esta linha contradizia a retirada.)
 - **`importar_agendas.py` (3.258 linhas) e `Painel.tsx`**: deliberadamente não
   tocados, pelos motivos da §5.
 
