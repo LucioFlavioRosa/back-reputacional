@@ -477,6 +477,26 @@ class InteracaoPessoaAegea(Tabela):
 
 
 class Comentario(Tabela):
+    """Comentário de uma pessoa numa agenda. **DESENHADO E NÃO CONSTRUÍDO.**
+
+    NADA NO CÓDIGO LÊ OU ESCREVE ESTA TABELA — conferido em 16/10/2026, por
+    ORM e por SQL cru. Ela e este modelo existem desde a `0004`.
+
+    NÃO É CÓDIGO MORTO, e a diferença importa para quem for limpar: o mockup de
+    handoff (`docs/handoff/Painel Reputacional Aegea.dc.html`) traz a interface
+    inteira — lista de comentários por registro, campo "Escreva um comentário" e
+    botão "Comentar". A tabela nasceu do desenho; o que faltou foi a rota, o
+    caso de uso e a tela.
+
+    QUEM FOR IMPLEMENTAR encontra o esquema pronto, com `ondelete="CASCADE"` na
+    agenda e o autor em dois campos — `autor` em texto livre, para quem comentou
+    e não é usuário da plataforma, e `usuario_id` para quem é.
+
+    QUEM FOR REMOVER precisa decidir antes que o produto não quer comentários,
+    porque é isso que estaria sendo jogado fora — e aí a remoção é migration,
+    modelo e a linha correspondente no README.
+    """
+
     __tablename__ = "comentario"
 
     id: Mapped[uuid.UUID] = mapped_column(
