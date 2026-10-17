@@ -43,14 +43,13 @@ from app.casos_de_uso import (
     administrar_acessos,
     registrar_acesso,
 )
-from app.casos_de_uso.provisionar_usuario import carregar, provisionar
+from app.casos_de_uso.provisionar_usuario import provisionar
 from app.configuracao import Configuracao, obter_configuracao
 from app.dominio.erros import NaoAutorizado
 from app.dominio.identidade import UsuarioAtual
 from app.observabilidade import obter_logger
 from app.seguranca import sessao_assinada
 from app.seguranca.limite_de_taxa import (
-    ExcessoDeRequisicoes,
     ip_do_cliente,
 )
 from app.seguranca.oidc import (

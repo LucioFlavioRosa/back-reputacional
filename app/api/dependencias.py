@@ -38,6 +38,7 @@ from app.seguranca.limite_de_taxa import (
     custo_da_requisicao,
 )
 
+
 #: `oid` sintético do usuário de desenvolvimento. Estável, para que o mesmo
 #: registro seja reaproveitado entre execuções.
 #:
