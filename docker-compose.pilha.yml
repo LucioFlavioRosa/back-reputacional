@@ -10,13 +10,13 @@
 #
 # Depois, para povoar o banco. SÃO SETE, E A ORDEM IMPORTA:
 #
-#   docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_desenvolvimento
-#   docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_referencias
-#   docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_enredos
-#   docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_taxonomia_de_temas
-#   docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_lentes
-#   docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_mencoes
-#   docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_score
+#   docker compose -f docker-compose.pilha.yml exec api python -m app.comandos.semear_desenvolvimento
+#   docker compose -f docker-compose.pilha.yml exec api python -m app.comandos.semear_referencias
+#   docker compose -f docker-compose.pilha.yml exec api python -m app.comandos.semear_enredos
+#   docker compose -f docker-compose.pilha.yml exec api python -m app.comandos.semear_taxonomia_de_temas
+#   docker compose -f docker-compose.pilha.yml exec api python -m app.comandos.semear_lentes
+#   docker compose -f docker-compose.pilha.yml exec api python -m app.comandos.semear_mencoes
+#   docker compose -f docker-compose.pilha.yml exec api python -m app.comandos.semear_score
 #
 # ESTE BLOCO LISTAVA TRÊS, E EM OUTRA ORDEM que a do README — `enredos` antes de
 # `referencias`, quando é `enredos` que deriva do acervo. Os outros quatro não

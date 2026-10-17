@@ -43,9 +43,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.banco.repositorio_interacoes import RepositorioSQL
-from app.banco.semear_enredos import _autor, _elenco, _uma_solta
 from app.banco.tabelas_catalogo import Tema
 from app.banco.tabelas_interacoes import InteracaoRegistro
+from app.comandos.semear_enredos import _autor, _elenco, _uma_solta
 from app.dominio.frentes import Frente
 
 ORIGEM = "demonstracao-taxonomia-v1.3"
@@ -122,8 +122,8 @@ def semear(sessao: Session) -> int:
 
 def principal() -> None:
     from app.banco.derivados import derivar_o_que_falta
-    from app.banco.semear_enredos import vincular_areas
     from app.banco.sessao import obter_fabrica_de_sessao
+    from app.comandos.semear_enredos import vincular_areas
 
     sessao = obter_fabrica_de_sessao()()
     try:

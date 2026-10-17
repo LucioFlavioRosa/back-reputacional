@@ -1,11 +1,11 @@
 """Semeia o banco local com a amostra sintética do handoff.
 
-    python -m app.banco.semear_desenvolvimento
+    python -m app.comandos.semear_desenvolvimento
 
 Cria também as oito contas de desenvolvimento, uma por papel. Entra-se
 nelas pelo `AUTH_MOCK` — ver `_semear_usuarios`.
 
-    python -m app.banco.semear_desenvolvimento
+    python -m app.comandos.semear_desenvolvimento
 
 São 60 registros **sintéticos**, derivados da planilha real mas sem ser dado de
 produção — servem para ver as telas funcionando antes da importação de verdade.
@@ -47,7 +47,7 @@ from app.banco.tabelas_stakeholders import (
     Interlocutor,
     PessoaAegea,
 )
-from app.banco.temas_de_demonstracao import id_de_tema_por_nome_antigo
+from app.comandos.temas_de_demonstracao import id_de_tema_por_nome_antigo
 from app.dominio.frentes import (
     TIPO_DE_INSTITUICAO as _TIPO_DE_INSTITUICAO,
 )

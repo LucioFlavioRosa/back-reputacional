@@ -17,8 +17,8 @@ from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.orm import Session
 
 from app.armazenamento import blob
-from app.banco import semear_desenvolvimento, semear_enredos, semear_referencias
 from app.banco.tabelas_interacoes import InteracaoRegistro
+from app.comandos import semear_desenvolvimento, semear_enredos, semear_referencias
 
 # Reaproveita o banco de teste que `test_e2e_postgres` cria e migra.
 from tests.test_e2e_postgres import URL

@@ -79,8 +79,14 @@ include = ["app*"]
 [tool.setuptools.package-data]
 # As migrations e a amostra são DADOS que o código lê em tempo de execução, e
 # `packages.find` só recolhe `.py`. Sem esta declaração o wheel instala sem elas,
-# e `python -m app.banco.semear_desenvolvimento` quebra numa instalação real.
-"app.banco" = ["migrations/*.sql", "amostra_de_desenvolvimento.json"]
+# e `python -m app.comandos.semear_desenvolvimento` quebra numa instalação real.
+#
+# A AMOSTRA MUDOU DE PACOTE JUNTO COM QUEM A LÊ. `semear_desenvolvimento` a
+# carrega por `Path(__file__).with_name(...)`, então ela acompanha o módulo —
+# deixar a declaração em `app.banco` instalaria o wheel sem o arquivo, e o
+# semeador quebraria SÓ numa instalação real, nunca na suíte nem no container.
+"app.banco" = ["migrations/*.sql"]
+"app.comandos" = ["amostra_de_desenvolvimento.json"]
 
 [tool.fastapi]
 # Permite `fastapi dev` e `fastapi run` sem passar o caminho do módulo.

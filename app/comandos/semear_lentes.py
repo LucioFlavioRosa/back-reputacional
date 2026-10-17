@@ -35,7 +35,7 @@ de relatório, e quebrá-lo em constantes menores só afastaria a frase do lugar
 onde ela é usada.
 
 Rodar:
-    python -m app.banco.semear_lentes
+    python -m app.comandos.semear_lentes
 """
 
 from __future__ import annotations
