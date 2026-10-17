@@ -27,18 +27,20 @@ from __future__ import annotations
 
 from datetime import date
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy import func, or_, select
 
-from app.api.dependencias import UsuarioLogado, exigir_portal_score
+from app.api.dependencias import UsuarioLogado, UsuarioQueEscreve, exigir_portal_score
 from app.banco import repositorio_lentes, repositorio_score
 from app.banco.sessao import SessaoDoPedido
 from app.banco.tabelas_catalogo import BlocoTema, MacroTema, Tema
 from app.banco.tabelas_score import Mencao, ScoreFonte
+from app.banco.tabelas_stakeholders import Interlocutor
 from app.dominio.causa_da_lente import nomeia_o_diretorio
-from app.dominio.erros import NaoEncontrado, RegraViolada
+from app.dominio.erros import NaoAutorizado, NaoEncontrado, RegraViolada
 from app.dominio.score import FiltroDeMencoes
 from app.dominio.texto import normalizar
 
@@ -76,6 +78,12 @@ class MencaoDaBase(BaseModel):
     fonte: str
     fonte_no_calculo: bool
     veiculo: str | None
+    #: O VEÍCULO NO CADASTRO COMPARTILHADO, pelo id — não pelo nome, que pode
+    #: divergir do `veiculo` acima (o texto cru da fonte). É o que permite a
+    #: tela oferecer só os jornalistas cadastrados NESTA instituição (edição do
+    #: autor, ver `editar_jornalista` abaixo). Nulo quando a menção não bateu
+    #: com nenhum veículo do cadastro — e aí não há o que oferecer.
+    instituicao_id: str | None
     tier: str | None
     sentimento: str | None
     atributo: str | None
@@ -118,6 +126,16 @@ class OpcoesDaBase(BaseModel):
     ufs: list[str]
     autores: list[str]
     perfis: list[str]
+
+
+class EdicaoDoJornalista(BaseModel):
+    #: `None` desvincula — a matéria some da lista de "jornalista escolhido" e
+    #: volta a precisar de uma escolha.
+    interlocutor_id: UUID | None
+
+
+class JornalistaDaMencao(BaseModel):
+    autor: str | None
 
 
 def _lente(sessao, codigo: str):
@@ -270,6 +288,7 @@ def listar_mencoes(
             fonte=nome_da_fonte,
             fonte_no_calculo=codigo_da_fonte not in desligadas,
             veiculo=m.veiculo,
+            instituicao_id=str(m.instituicao_id) if m.instituicao_id else None,
             tier=m.tier,
             sentimento=m.sentimento,
             atributo=m.atributo,
@@ -344,3 +363,54 @@ def opcoes_da_base(
         autores=[] if esconde_autor else distintos(Mencao.autor, 100),
         perfis=distintos(Mencao.perfil_autor),
     )
+
+
+@rotas.patch("/mencoes/{id}/jornalista")
+def editar_jornalista(
+    sessao: Sessao,
+    usuario: UsuarioQueEscreve,
+    id: UUID,
+    edicao: EdicaoDoJornalista,
+) -> JornalistaDaMencao:
+    """Vincula — ou desvincula — o jornalista da menção a um interlocutor do
+    cadastro compartilhado.
+
+    SÓ QUEM VÊ O DIRETÓRIO EDITA, a mesma regra que esconde a coluna e o filtro
+    na leitura (`nomeia_o_diretorio` por trás de `ve_diretorio`). Sem isto, a
+    edição vazaria por outra porta o nome que a leitura nega.
+
+    O SERVIDOR CONFERE O VÍNCULO, e não confia no que a tela mandou: um
+    interlocutor só entra se pertencer À MESMA INSTITUIÇÃO da matéria — a regra
+    de produto ("só jornalista cadastrado no veículo") só vale de verdade
+    cercada aqui; só na tela, um cliente direto da API a ignoraria.
+
+    `autor` CONTINUA TEXTO LIVRE NO BANCO: a escolha veio de uma lista fechada
+    (o interlocutor existe e pertence à instituição certa), mas o que fica
+    gravado é o nome dele, não um vínculo. Mudar o cadastro do interlocutor
+    depois não atualiza matérias já vinculadas — o mesmo compromisso que o
+    resto da Base já faz com dado de fonte externa.
+    """
+    if not usuario.ve_diretorio:
+        raise NaoAutorizado("Seu perfil não tem acesso aos cadastros de stakeholders.")
+    if usuario.papel is None or not usuario.papel.pode_editar_tudo:
+        nome = usuario.papel.nome if usuario.papel else "sem papel"
+        raise NaoAutorizado(f"Perfil {nome} não edita a Base do Score.")
+
+    mencao = sessao.get(Mencao, id)
+    if mencao is None:
+        raise NaoEncontrado("Menção não encontrada.")
+
+    if edicao.interlocutor_id is None:
+        mencao.autor = None
+    else:
+        interlocutor = sessao.get(Interlocutor, edicao.interlocutor_id)
+        if interlocutor is None:
+            raise NaoEncontrado("Interlocutor não encontrado.")
+        if mencao.instituicao_id is None or interlocutor.instituicao_id != mencao.instituicao_id:
+            raise RegraViolada(
+                "Este interlocutor não está cadastrado na instituição desta matéria."
+            )
+        mencao.autor = interlocutor.nome
+
+    sessao.flush()
+    return JornalistaDaMencao(autor=mencao.autor)

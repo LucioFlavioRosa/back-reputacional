@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, field
 from datetime import date
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
-from app.api.base_das_lentes import listar_mencoes, opcoes_da_base
+from app.api.base_das_lentes import EdicaoDoJornalista, editar_jornalista, listar_mencoes, opcoes_da_base
 from app.banco.tabelas_score import Mencao, ScoreFonte
+from app.banco.tabelas_stakeholders import Instituicao, Interlocutor
 from app.dominio.causa_da_lente import DIMENSOES_POR_LENTE, nomeia_o_diretorio
-from app.dominio.erros import NaoEncontrado, RegraViolada
+from app.dominio.erros import NaoAutorizado, NaoEncontrado, RegraViolada
+from app.dominio.identidade import Papel
+from app.dominio.texto import normalizar
 from tests.test_e2e_postgres import URL
 
 _engine = create_engine(URL, pool_pre_ping=True)
@@ -34,6 +38,10 @@ def sessao():
 @dataclass
 class _QuemOlha:
     ve_diretorio: bool = True
+    #: Só usado por quem edita (`editar_jornalista`) — a leitura nem olha.
+    papel: Papel | None = field(
+        default_factory=lambda: Papel(codigo="score_edicao", nome="Score · edição", pode_editar_tudo=True)
+    )
 
 
 @pytest.fixture
@@ -280,3 +288,125 @@ def test_a_base_e_o_cartao_perguntam_a_mesma_coisa():
     assert all(
         dimensao.campo != "autor" for dimensao in DIMENSOES_POR_LENTE["clientes"]
     )
+
+
+# =============================================================================
+# `editar_jornalista` — vincular o autor da menção a um interlocutor cadastrado
+# =============================================================================
+
+
+@pytest.fixture
+def materia_do_globo(sessao):
+    """Uma menção da Imprensa já ligada ao veículo "O Globo" no cadastro, mais
+    um interlocutor cadastrado nele e outro numa instituição diferente."""
+    clipei = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "clipei")).one()
+    globo = Instituicao(nome="O Globo", nome_normalizado=normalizar("O Globo"), tipo="veiculo")
+    folha = Instituicao(nome="Folha de S.Paulo", nome_normalizado=normalizar("Folha de S.Paulo"), tipo="veiculo")
+    sessao.add_all([globo, folha])
+    sessao.flush()
+
+    jornalista_do_globo = Interlocutor(
+        nome="Dani Souza", nome_normalizado=normalizar("Dani Souza"), instituicao_id=globo.id
+    )
+    jornalista_da_folha = Interlocutor(
+        nome="Ana Lima", nome_normalizado=normalizar("Ana Lima"), instituicao_id=folha.id
+    )
+    sessao.add_all([jornalista_do_globo, jornalista_da_folha])
+
+    materia = Mencao(
+        fonte_id=clipei.id,
+        mes=date(2026, 8, 1),
+        data=date(2026, 8, 5),
+        veiculo="O Globo",
+        instituicao_id=globo.id,
+        tier="relevante",
+        sentimento="neg",
+        titulo_texto="Falta d'água no Rio",
+    )
+    sessao.add(materia)
+    sessao.flush()
+    return materia, jornalista_do_globo, jornalista_da_folha
+
+
+def _editar(sessao, mencao_id, interlocutor_id, *, usuario=None):
+    return editar_jornalista(
+        sessao=sessao,
+        usuario=usuario or _QuemOlha(),
+        id=mencao_id,
+        edicao=EdicaoDoJornalista(interlocutor_id=interlocutor_id),
+    )
+
+
+def test_vincula_um_interlocutor_da_mesma_instituicao(sessao, materia_do_globo):
+    materia, jornalista_do_globo, _ = materia_do_globo
+    resultado = _editar(sessao, materia.id, jornalista_do_globo.id)
+    assert resultado.autor == "Dani Souza"
+    assert materia.autor == "Dani Souza"
+
+
+def test_recusa_interlocutor_de_outra_instituicao(sessao, materia_do_globo):
+    materia, _, jornalista_da_folha = materia_do_globo
+    with pytest.raises(RegraViolada):
+        _editar(sessao, materia.id, jornalista_da_folha.id)
+    assert materia.autor is None
+
+
+def test_recusa_vincular_sem_veiculo_no_cadastro(sessao, materia_do_globo):
+    """Menção sem `instituicao_id`: não há instituição a conferir, então não
+    há como a regra "mesmo veículo" valer — a edição é recusada, não ignorada."""
+    materia, jornalista_do_globo, _ = materia_do_globo
+    materia.instituicao_id = None
+    sessao.flush()
+    with pytest.raises(RegraViolada):
+        _editar(sessao, materia.id, jornalista_do_globo.id)
+
+
+def test_desvincula_passando_none(sessao, materia_do_globo):
+    materia, jornalista_do_globo, _ = materia_do_globo
+    _editar(sessao, materia.id, jornalista_do_globo.id)
+    resultado = _editar(sessao, materia.id, None)
+    assert resultado.autor is None
+    assert materia.autor is None
+
+
+def test_menção_e_interlocutor_inexistentes_sao_recusados(sessao, materia_do_globo):
+    materia, jornalista_do_globo, _ = materia_do_globo
+    with pytest.raises(NaoEncontrado):
+        _editar(sessao, uuid.uuid4(), jornalista_do_globo.id)
+    with pytest.raises(NaoEncontrado):
+        _editar(sessao, materia.id, uuid.uuid4())
+
+
+def test_so_quem_ve_o_diretorio_edita(sessao, materia_do_globo):
+    materia, jornalista_do_globo, _ = materia_do_globo
+    with pytest.raises(NaoAutorizado):
+        _editar(sessao, materia.id, jornalista_do_globo.id, usuario=_QuemOlha(ve_diretorio=False))
+
+
+def test_so_quem_pode_editar_tudo_edita(sessao, materia_do_globo):
+    materia, jornalista_do_globo, _ = materia_do_globo
+    leitor = _QuemOlha(papel=Papel(codigo="score_leitura", nome="Score · leitura", ve_diretorio=True))
+    with pytest.raises(NaoAutorizado):
+        _editar(sessao, materia.id, jornalista_do_globo.id, usuario=leitor)
+    sem_papel = _QuemOlha(papel=None)
+    with pytest.raises(NaoAutorizado):
+        _editar(sessao, materia.id, jornalista_do_globo.id, usuario=sem_papel)
+
+
+def test_a_edicao_fica_na_trilha_de_auditoria(sessao, materia_do_globo):
+    """O gatilho roda junto do UPDATE (`flush`), não precisa de commit — e o
+    teste não pode commitar: quebraria o rollback de isolamento da fixture
+    `sessao`."""
+    materia, jornalista_do_globo, _ = materia_do_globo
+    _editar(sessao, materia.id, jornalista_do_globo.id)
+
+    linha = sessao.execute(
+        text(
+            "select campo, valor_anterior, valor_novo from mencao_auditoria "
+            "where mencao_id = :id order by id desc limit 1"
+        ),
+        {"id": str(materia.id)},
+    ).one()
+    assert linha.campo == "autor"
+    assert linha.valor_anterior is None
+    assert linha.valor_novo == "Dani Souza"
