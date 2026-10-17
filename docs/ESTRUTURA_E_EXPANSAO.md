@@ -298,6 +298,11 @@ a mesma divisão por domínio que `paginas/` já tem.
 
 **Por quê:** não é urgente. Está aqui para não ser esquecido.
 
+> **ESTA RECOMENDAÇÃO ESTÁ RETIRADA, e o motivo é medição — ver §7.6.** O limiar
+> foi alcançado (40 arquivos em 17/10/2026) e aí eu medi o GRAFO DE IMPORTS em
+> vez da contagem: **27 dos 40 formam um único componente conexo**. Não há
+> costura. A contagem de arquivos era a medida errada.
+
 ---
 
 ## 5. O que eu NÃO mudaria
@@ -477,8 +482,10 @@ nova e recusa também uma que deixou de acontecer, para não virar cemitério.
   mostra número parcial e avisa; as quatro rotas `/api/metricas/*` continuam
   sem ser chamadas. **É o único achado desta revisão com efeito no que a pessoa
   lê**, e espera decisão de produto.
-- **§4.4, agrupar `src/dominio/`**: 37 arquivos planos, limiar de 40 não
-  alcançado.
+- **§4.4, agrupar `src/dominio/`**: ~~37 arquivos planos, limiar de 40 não
+  alcançado.~~ **O limiar FOI alcançado no mesmo dia, e a recomendação está
+  retirada** — contar arquivos era a medida errada: 27 dos 40 são um componente
+  conexo só. Ver §7.6. (Achado da revisão: esta linha contradizia a retirada.)
 - **`importar_agendas.py` (3.258 linhas) e `Painel.tsx`**: deliberadamente não
   tocados, pelos motivos da §5.
 
@@ -626,3 +633,50 @@ Tudo acima vale enquanto a resposta a estas perguntas não mudar. Se mudar, a
 - **as automações de leitura vão ser EMPURRADAS por terceiro** (webhook do
   fornecedor) em vez de puxadas por planilha? Aí entra autenticação de máquina,
   idempotência e repetição — e nenhuma das três existe hoje.
+
+### 7.6 A §4.4 está RETIRADA: contar arquivos era a medida errada
+
+A §4.4 dizia para agrupar `src/dominio/` por domínio quando passasse de 40
+arquivos. O limiar foi alcançado em 17/10/2026 — e então eu medi o que devia
+ter medido antes: **o grafo de imports**, em vez da contagem.
+
+```
+40 arquivos em src/dominio/, 14 componentes conexos
+
+  27 arquivos, 8.907 linhas  <- UM componente só
+   1 arquivo cada             <- as outras 13 folhas (34 a 355 linhas)
+```
+
+**VINTE E SETE DOS QUARENTA SÃO UM BLOCO.** `tipos`, `recorte`, `formato`,
+`derivacoes`, `frentes`, `score`, `dossie`, `riscos`, `jornadaDoIndice`,
+`janelaDaJornada`, `sinais`, `sinteseIA`, `relatorioNarrativo`… todos se
+importam. Não existe costura entre "o domínio do Score" e "o domínio do CRM" ali
+— existe um núcleo coeso que as duas telas usam.
+
+**O QUE ACONTECERIA SE EU AGRUPASSE.** Cortar um componente conexo em subpastas
+produz subpastas que se importam constantemente. O resultado é a aparência de
+estrutura sem a substância: mais caminho para escrever em cada import, nenhuma
+fronteira nova, e a navegação PIORA porque o arquivo que você procura passa a
+depender de adivinhar em que grupo alguém o pôs.
+
+**E O CUSTO É MEDIDO:** 448 linhas de import em 185 arquivos citam
+`@/dominio/…`. É um churn que colide com qualquer outro trabalho no front, que
+só o `tsc` consegue atestar (ninguém revisa 448 renomeações lendo), e que
+compraria navegação — não capacidade.
+
+**AS 13 FOLHAS têm família**, e esta é a parte aproveitável da ideia original:
+quatro delas são `guiaDaCalibracao`, `guiaDoCadastro`, `guiaDoDossie` e
+`guiaDoRecorte` (671 linhas), que são texto de ajuda e não falam com o núcleo.
+Um `dominio/guias/` seria honesto e custaria ~8 imports. **Não foi feito** por
+ser cosmético: tira 4 de 40 e não muda o que alguém consegue fazer.
+
+**O QUE REABRIRIA A DECISÃO:** a fatia de bonds, que vai acrescentar arquivos de
+domínio. Se eles formarem um componente PRÓPRIO — sem importar o núcleo dos 27 —,
+existe fronteira de verdade e aí vale uma pasta. Se importarem o núcleo, a
+resposta é a mesma de agora, e a §4.1 (módulo próprio por domínio) também fica
+respondida pela mesma medição.
+
+**A lição de método, que vale além deste item:** eu escrevi um limiar de
+contagem porque contar é fácil. Contagem de arquivo não mede acoplamento, e foi
+preciso alcançar o limiar para descobrir que ele não respondia nada. O número que
+decide agrupamento é o tamanho do maior componente conexo.
