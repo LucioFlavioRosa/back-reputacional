@@ -1,8 +1,15 @@
-"""Períodos e janelas de comparação.
+"""Períodos, meses e janelas de comparação.
 
 O painel oferece atalhos de período ("últimos 90 dias") e janelas de comparação
 entre recortes de tempo (semestre, trimestre, 90 dias). Ambos resolvem para um
 par de datas — quem consulta o banco nunca vê o atalho, só o intervalo.
+
+E O MÊS, que o Score pede por `AAAA-MM`. `mes_de` morava em `api/score.py` como
+`_mes_de`, privada, e era importada de volta por `api/lentes.py` e
+`api/consulta_profundidade.py` — duas rotas puxando a função privada de uma
+terceira. Uma função com dois consumidores de fora não é privada; e parse de
+data com faixa válida é regra, não transporte. Ver `docs/ESTRUTURA_E_EXPANSAO.md`
+§1.
 """
 
 from __future__ import annotations
@@ -12,6 +19,25 @@ from datetime import date, timedelta
 from enum import StrEnum
 
 from app.dominio.erros import RegraViolada
+
+#: A FAIXA DE ANOS QUE O PRODUTO ACEITA. `date` aceita o ano 1, mas as telas
+#: voltam meses a partir do pedido (`meses_ate`), e aritmética a partir de
+#: "0001-02" estourava lá dentro como 500. Fora de 2000–2100 não há dado
+#: nenhum, e a resposta certa é recusar na entrada.
+ANO_MINIMO = 2000
+ANO_MAXIMO = 2100
+
+
+def mes_de(texto: str) -> date:
+    """`2026-06` vira o primeiro dia do mês. Fora da faixa de anos, recusa."""
+    try:
+        ano, mes = texto.split("-")
+        valor = date(int(ano), int(mes), 1)
+    except (ValueError, TypeError) as erro:
+        raise RegraViolada(f"Mês inválido: {texto!r}. Use o formato AAAA-MM.") from erro
+    if not ANO_MINIMO <= valor.year <= ANO_MAXIMO:
+        raise RegraViolada(f"Mês inválido: {texto!r}. O ano vai de {ANO_MINIMO} a {ANO_MAXIMO}.")
+    return valor
 
 
 class AtalhoDePeriodo(StrEnum):

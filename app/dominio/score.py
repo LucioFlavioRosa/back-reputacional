@@ -255,6 +255,38 @@ class Calibracao:
         return self.pesos.get(lente, padrao)
 
 
+def formula_aplicada(lente: str, calibracao: Calibracao) -> str:
+    """A fórmula aplicada, escrita — é a explicação que a tela mostra.
+
+    GERADA, E NÃO FIXA: ela muda com a régua, e um texto escrito à mão passaria
+    a mentir no primeiro ajuste da calibração.
+
+    MORAVA EM `api/score.py` COMO `_formula`, privada, e `api/lentes.py` a
+    importava de lá. Está aqui porque é a régua se explicando: lê
+    `REGUAS_DE_TIER` e `REGUAS_DE_ENGAJAMENTO`, que já moram neste módulo — a
+    mudança TIROU um import em vez de acrescentar.
+    """
+    base = "NS = (positivas − negativas) ÷ total; score = (NS + 1) ÷ 2 × 100."
+    if lente in ("imprensa", "mercado"):
+        pesos = REGUAS_DE_TIER[calibracao.regua_tier]
+        return (
+            f"{base} Cada matéria vale {pesos['muito_relevante']:g} (Tier 1), "
+            f"{pesos['relevante']:g} (Tier 2) ou {pesos['menos_relevante']:g} (Tier 3)."
+        )
+    if lente in ("sociedade", "clientes"):
+        comoR = {
+            "n": "cada menção vale 1",
+            "log": "cada menção vale 1 + log₁₀(1 + engajamento)",
+            "bruto": "cada menção vale o seu engajamento",
+            "cargo": "cada menção vale o peso do cargo de quem postou",
+        }[calibracao.regua_engajamento]
+        return (
+            f"{base} {comoR[0].upper() + comoR[1:]}. Com mais de uma fonte, "
+            "as menções das duas entram na mesma conta — um denominador só."
+        )
+    return f"{base} Vem do clima das interações registradas neste painel."
+
+
 @dataclass(frozen=True, slots=True)
 class FiltroDeMencoes:
     """O recorte de uma lente na tela, por qualquer dimensão da menção.
