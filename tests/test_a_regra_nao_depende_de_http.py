@@ -10,6 +10,11 @@ funções públicas de `app/casos_de_uso/`, ZERO** pedem `UploadFile`, `Request`
 pedido. Toda operação do produto é chamável de um job, de um comando de linha
 ou de um webhook.
 
+E A CONFERÊNCIA É MAIS LARGA DO QUE AQUELE NÚMERO: ela passa por **492
+funções** (209 em `casos_de_uso/`, 283 em `dominio/`) — toda função, em
+qualquer profundidade, pública ou privada, com parâmetro de qualquer espécie e
+anotação de retorno. Ver `_funcoes`.
+
 ISSO NÃO ESTAVA PROTEGIDO POR NADA. Um `UploadFile` numa assinatura de caso de
 uso é o atalho natural de quem está escrevendo uma rota de upload — é mais
 curto, funciona, e passa em toda revisão que não esteja olhando para isto. No
@@ -60,6 +65,8 @@ TIPOS_DE_PEDIDO = frozenset(
         "Request",
         "Response",
         "BackgroundTasks",
+        #: No singular, de `starlette.background`.
+        "BackgroundTask",
         "Depends",
         "File",
         "Form",
@@ -69,11 +76,29 @@ TIPOS_DE_PEDIDO = frozenset(
         "Body",
         "HTTPException",
         "APIRouter",
+        #: Os quatro abaixo entraram por achado de revisão. Nenhum aparece no
+        #: código hoje, e nenhum colide com nome de biblioteca padrão.
+        "Security",
+        "SecurityScopes",
+        "WebSocket",
+        "HTTPConnection",
         "UsuarioLogado",
         "SessaoDoPedido",
         "UsuarioQueAdministraCadastros",
     }
 )
+
+#: `Path` FICOU DE FORA DE PROPÓSITO, contra a sugestão da revisão.
+#:
+#: `fastapi.Path` e `pathlib.Path` são indistinguíveis dentro de uma anotação —
+#: a varredura vê o nome, não a origem. E `pathlib.Path` é usado em código
+#: legítimo destas camadas (`casos_de_uso/ingerir_mencoes.py` o importa), então
+#: incluí-lo faria o teste ACUSAR código correto. Um guarda que acusa o certo é
+#: desligado na primeira semana, e aí ele deixa de pegar o errado também.
+#:
+#: Quem protege contra `fastapi.Path` é o outro teste do par, que proíbe
+#: importar `fastapi` nestas camadas — e é por isso que os dois existem juntos.
+FORA_POR_COLISAO_DE_NOME = frozenset({"Path"})
 
 #: Pacotes que não podem ser importados pelas camadas livres. Uma função pode
 #: ter assinatura limpa e ainda levantar `HTTPException` no meio do corpo, e aí
@@ -92,21 +117,38 @@ def _anotacao(no: ast.AST | None) -> str:
     return ast.unparse(no) if no is not None else ""
 
 
-def _funcoes_publicas(caminho: Path) -> list[tuple[str, int, list[str]]]:
-    """(nome, linha, anotações dos parâmetros) de cada função pública de topo.
+def _funcoes(caminho: Path) -> list[tuple[str, int, list[str]]]:
+    """(nome, linha, todas as anotações) de CADA função do arquivo.
 
-    SÓ AS DE TOPO E SÓ AS PÚBLICAS: método de dataclass e `_auxiliar` não são
-    a superfície que uma segunda interface chama.
+    A REGRA FORTE SUBSTITUIU QUATRO EXCEÇÕES. A primeira versão olhava só
+    funções PÚBLICAS de TOPO e só anotações de PARÂMETRO POSICIONAL, e a
+    revisão listou o que escapava: método de classe, função aninhada, `*args`/
+    `**kwargs`, anotação de RETORNO (`-> Response`) e alias de módulo
+    (`processar = _fazer`, que torna pública uma privada).
+
+    Enumerar os cinco seria a mesma lista que envelhece. A regra larga cobre
+    todos de uma vez: TODA função, em qualquer profundidade, pública ou
+    privada, e TODA anotação — parâmetros de qualquer espécie e o retorno.
+
+    E ELA NÃO CUSTA FALSO POSITIVO: medido antes de adotar, são 494 funções em
+    `casos_de_uso/` + `dominio/` (contra 236 públicas de topo), e nenhuma delas
+    menciona um tipo de pedido. Afinal, não existe motivo legítimo para uma
+    função DESTAS camadas pedir um `UploadFile`, nem em auxiliar privado.
     """
     arvore = ast.parse(caminho.read_text(encoding="utf-8"))
     saida = []
-    for no in arvore.body:
+    for no in ast.walk(arvore):
         if not isinstance(no, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        if no.name.startswith("_"):
-            continue
-        argumentos = [*no.args.posonlyargs, *no.args.args, *no.args.kwonlyargs]
-        saida.append((no.name, no.lineno, [_anotacao(a.annotation) for a in argumentos]))
+        a = no.args
+        argumentos = [*a.posonlyargs, *a.args, *a.kwonlyargs]
+        if a.vararg:
+            argumentos.append(a.vararg)
+        if a.kwarg:
+            argumentos.append(a.kwarg)
+        anotacoes = [_anotacao(x.annotation) for x in argumentos]
+        anotacoes.append(_anotacao(no.returns))
+        saida.append((no.name, no.lineno, anotacoes))
     return saida
 
 
@@ -114,23 +156,52 @@ def _nomes_na_anotacao(texto: str) -> set[str]:
     """Os identificadores de uma anotação, sem casar por substring.
 
     `"Annotated[Session, ...]"` tem de dar {Annotated, Session}, e um tipo
-    chamado `RequestoDeAlgo` NÃO pode casar com `Request` — por isso é tokenização
-    por `ast`, e não `in`.
+    chamado `RequestoDeAlgo` NÃO pode casar com `Request` — por isso é
+    tokenização por `ast`, e não `in`.
+
+    FORWARD-REF ENTRE ASPAS É REPARSEADO, e isso era um furo: `anexo:
+    "UploadFile"` chega como `ast.Constant` de string, e a primeira versão
+    devolvia conjunto VAZIO em silêncio — o lugar exato em que um guarda para
+    de pegar sem avisar. Achado da revisão.
     """
     try:
         arvore = ast.parse(texto, mode="eval")
     except SyntaxError:
+        #: `_anotacao_ilegivel` conta estes, e um teste exige que sejam ZERO —
+        #: senão este `except` viraria o buraco silencioso de novo.
         return set()
-    return {n.id for n in ast.walk(arvore) if isinstance(n, ast.Name)} | {
-        n.attr for n in ast.walk(arvore) if isinstance(n, ast.Attribute)
-    }
+    saida: set[str] = set()
+    for n in ast.walk(arvore):
+        if isinstance(n, ast.Name):
+            saida.add(n.id)
+        elif isinstance(n, ast.Attribute):
+            saida.add(n.attr)
+        elif isinstance(n, ast.Constant) and isinstance(n.value, str):
+            saida |= _nomes_na_anotacao(n.value)
+    return saida
+
+
+def _ilegivel(texto: str) -> bool:
+    """A anotação não parseia como expressão?
+
+    Existe para que o `except SyntaxError` acima seja CONTADO, e não apenas
+    engolido: se alguma anotação real do projeto cair ali, o guarda deixou de
+    olhar para ela, e isso tem de aparecer como falha e não como silêncio.
+    """
+    if not texto:
+        return False
+    try:
+        ast.parse(texto, mode="eval")
+    except SyntaxError:
+        return True
+    return False
 
 
 @pytest.mark.parametrize("camada", LIVRES_DE_HTTP)
-def test_nenhuma_funcao_publica_pede_um_tipo_de_pedido_http(camada):
+def test_nenhuma_funcao_pede_um_tipo_de_pedido_http(camada):
     presas: list[str] = []
     for p in _modulos(camada):
-        for nome, linha, anotacoes in _funcoes_publicas(p):
+        for nome, linha, anotacoes in _funcoes(p):
             achados = sorted(
                 {
                     t
@@ -172,16 +243,42 @@ def test_as_camadas_livres_nao_importam_fastapi_nem_starlette(camada):
     )
 
 
-def test_a_varredura_esta_olhando_para_funcoes_de_verdade():
+#: O PISO É POR CAMADA, E NÃO NA SOMA — achado da revisão, e a aritmética dele
+#: estava certa: `casos_de_uso/` tem 94 funções públicas de topo e `dominio/`
+#: tem 142. Com um piso único de 80 na SOMA, apagar `casos_de_uso/` inteira
+#: ainda deixava 142 e o fio de alarme passava — justamente no caso que ele
+#: existe para pegar.
+#:
+#: Os valores são folgados de propósito: servem para pegar varredura VAZIA ou
+#: pasta desaparecida, não para travar o número. Medidos em 17/10/2026 com a
+#: regra larga (toda função, qualquer profundidade): 209 e 283.
+PISO_POR_CAMADA = {"casos_de_uso": 120, "dominio": 200}
+
+
+@pytest.mark.parametrize("camada", LIVRES_DE_HTTP)
+def test_a_varredura_esta_olhando_para_funcoes_de_verdade(camada):
     """SEM ESTE CASO os dois acima passam por vazio no dia em que uma pasta for
     renomeada — e a garantia fica falsa sem ninguém notar."""
-    quantas = sum(
-        len(_funcoes_publicas(p)) for camada in LIVRES_DE_HTTP for p in _modulos(camada)
-    )
-    #: Eram 94 em `casos_de_uso/` em 17/10/2026, mais as de `dominio/`. O piso é
-    #: folgado de propósito: ele existe para pegar varredura vazia, não para
-    #: travar o número.
-    assert quantas > 80, quantas
+    modulos = _modulos(camada)
+    assert modulos, f"app/{camada}/ não tem módulo nenhum — a pasta mudou de nome?"
+    quantas = sum(len(_funcoes(p)) for p in modulos)
+    assert quantas > PISO_POR_CAMADA[camada], (camada, quantas)
+
+
+@pytest.mark.parametrize("camada", LIVRES_DE_HTTP)
+def test_nenhuma_anotacao_destas_camadas_e_ilegivel_para_a_varredura(camada):
+    """O `except SyntaxError` de `_nomes_na_anotacao` é o lugar onde o guarda
+    pararia de pegar EM SILÊNCIO. Este caso exige que ele nunca seja usado em
+    anotação de verdade do projeto — se alguma cair ali, isto falha dizendo
+    qual, em vez de a anotação passar sem ser olhada."""
+    ilegiveis = [
+        f"{p.relative_to(RAIZ)}:{linha} {nome} → {a!r}"
+        for p in _modulos(camada)
+        for nome, linha, anotacoes in _funcoes(p)
+        for a in anotacoes
+        if _ilegivel(a)
+    ]
+    assert not ilegiveis, "\n  ".join(ilegiveis)
 
 
 def test_a_varredura_reconhece_o_que_ela_existe_para_pegar():
@@ -197,5 +294,19 @@ def test_a_varredura_reconhece_o_que_ela_existe_para_pegar():
         "Depends"
     }
     assert _nomes_na_anotacao("list[UploadFile]") & TIPOS_DE_PEDIDO == {"UploadFile"}
+    assert _nomes_na_anotacao("fastapi.UploadFile") & TIPOS_DE_PEDIDO == {"UploadFile"}
+    #: FORWARD-REF ENTRE ASPAS, nas três formas em que aparece. Era conjunto
+    #: vazio em silêncio.
+    assert _nomes_na_anotacao('"UploadFile"') & TIPOS_DE_PEDIDO == {"UploadFile"}
+    assert _nomes_na_anotacao('"UploadFile | None"') & TIPOS_DE_PEDIDO == {"UploadFile"}
+    assert _nomes_na_anotacao('list["UploadFile"]') & TIPOS_DE_PEDIDO == {"UploadFile"}
     assert not _nomes_na_anotacao("RequestoDeConsulta") & TIPOS_DE_PEDIDO
     assert not _nomes_na_anotacao("Session") & TIPOS_DE_PEDIDO
+    #: `Path` NÃO É ACUSADO, e é decisão: `pathlib.Path` é legítimo nestas
+    #: camadas e indistinguível de `fastapi.Path` dentro de uma anotação.
+    assert not _nomes_na_anotacao("Path") & TIPOS_DE_PEDIDO
+    assert FORA_POR_COLISAO_DE_NOME.isdisjoint(TIPOS_DE_PEDIDO)
+    #: E `_ilegivel` reconhece o que não parseia, para o `except` ser contado.
+    assert _ilegivel("list[")
+    assert not _ilegivel("list[int]")
+    assert not _ilegivel("")
