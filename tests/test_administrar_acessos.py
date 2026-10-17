@@ -439,7 +439,11 @@ def test_historico_pela_http(cliente, sessao):
     cliente.put(
         f"/api/acessos/{alvo.id}",
         headers={"X-CSRF-Token": token},
-        json={"papel": "inteligencia_de_mercado_leitura", "acesso_irrestrito": True, "versao_vista": None},
+        json={
+            "papel": "inteligencia_de_mercado_leitura",
+            "acesso_irrestrito": True,
+            "versao_vista": None,
+        },
     )
     corpo = cliente.get(f"/api/acessos/{alvo.id}/historico").json()
 
@@ -755,7 +759,13 @@ def test_duas_concessoes_simultaneas_nao_se_atropelam(dois_usuarios_comitados):
 
     primeira = _engine.connect()
     primeira.begin()
-    _conceder(primeira, alvo=alvo, quem=admin, papel="inteligencia_de_mercado_leitura", versao=versao)
+    _conceder(
+        primeira,
+        alvo=alvo,
+        quem=admin,
+        papel="inteligencia_de_mercado_leitura",
+        versao=versao,
+    )
     ja_comitou = False
 
     def segunda_concessao() -> None:
