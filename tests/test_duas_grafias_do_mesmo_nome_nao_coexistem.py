@@ -27,6 +27,9 @@ PRECISA DE BANCO: é sobre índice único e sobre o que o backfill gravou.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
@@ -55,42 +58,116 @@ def sessao():
 
 
 # ====================================================== o backfill da migration
-#: O BACKFILL É A ÚNICA VEZ QUE A REGRA APARECE EM SQL, e é de uso único: a
-#: `0097` usa `translate()` com os acentos do português, porque `unaccent` é
-#: extensão e o CI roda com conta comum. `translate` NÃO É a mesma coisa que o
-#: NFKD + ascii do `normalizar` — perde `ß`, `œ`, `ﬁ` —, então o backfill não
-#: pode ficar no escuro: estes casos recalculam TODA linha com a função canônica
-#: e falham se divergir em um caractere.
-@pytest.mark.parametrize(
-    "tabela, origem, destino",
-    [
-        (Referencia, "titulo", "titulo_normalizado"),
-        (JornalistaMatriz, "nome", "nome_normalizado"),
-    ],
+MIGRACAO = (
+    Path(__file__).resolve().parents[1]
+    / "app"
+    / "banco"
+    / "migrations"
+    / "0097_duas_grafias_do_mesmo_nome_nao_coexistem.sql"
 )
-def test_o_backfill_bate_com_a_funcao_canonica(sessao, tabela, origem, destino):
-    divergentes = [
-        (getattr(linha, origem), getattr(linha, destino))
-        for linha in sessao.scalars(select(tabela))
-        if getattr(linha, destino) != normalizar(getattr(linha, origem))
-    ]
-    assert not divergentes, (
-        f"{tabela.__tablename__}.{destino} não é `normalizar({origem})` em "
-        f"{len(divergentes)} linha(s): {divergentes[:5]}\n\n"
-        "O `translate()` do backfill da `0097` não cobriu algum caractere. "
-        "Quem corrigir recalcula a coluna, e não afrouxa este teste."
+
+#: O CORPUS. Cada entrada está aqui porque exercita uma parte diferente da regra,
+#: e a primeira é a que de fato quebrou: o travessão colado de um documento.
+CORPUS = [
+    ("Posicionamento — Metas", "O TRAVESSÃO: era ele. 67 dos 87 valores reais"),
+    ("Relatório  Anual", "acento mais espaço interno duplo"),
+    ("  Taís Hirata  ", "espaço nas pontas"),
+    ("Valor Econômico", "espaço NÃO SEPARÁVEL, que o NFKD vira espaço"),
+    ("Release do 2º trimestre", "`º`, cuja decomposição é a LETRA `o`"),
+    ("1ª Via do contrato", "`ª`, idem"),
+    ("Área de 12,5 m²", "`²`, cuja decomposição é o DÍGITO 2"),
+    ("Tarifa ½ cheia", "`½`, que decompõe em MAIS DE UM caractere"),
+    ("Nota “técnica” — v2", "aspas curvas, que as duas regras descartam"),
+    ("Temp. 20°C", "`°`, descartado pelas duas"),
+    ("Lucro ± 3% em €", "símbolos que as duas descartam"),
+    ("Straße", "`ß`, que NÃO decompõe — as duas descartam"),
+    ("Œuvre", "`Œ`, idem"),
+    ("Dvořák", "`ř`, acento de fora do português"),
+    ("Marca™ registrada", "`™`, que o `replace` trata porque viraria `TM`"),
+    ("Banco № 1", "`№`, idem — viraria `No`"),
+    ("ﬁm do ciclo", "a ligadura `ﬁ`, que viraria `fi`"),
+    ("Ação & Reação: o caso", "pontuação ASCII, que sobrevive às duas"),
+    ("© 2026 Aegea", "`©`, descartado"),
+]
+
+
+def _expressao_do_backfill(coluna: str) -> str:
+    """A expressão que a `0097` EMBARCA, recortada do próprio arquivo.
+
+    POR QUE RECORTAR, E NÃO COPIAR. A primeira versão deste teste comparava as
+    COLUNAS do banco de teste com `normalizar` — e o banco de teste nasce vazio,
+    então ele percorria ZERO linhas e passava por vácuo. Era justamente o teste
+    que devia ter pegado o travessão, e ele não pegou nada.
+
+    Recortando do arquivo, o que se testa é o SQL que vai rodar no banco de
+    verdade, com o corpus que este teste monta.
+    """
+    sql = MIGRACAO.read_text(encoding="utf-8")
+    inicio = sql.index(f"set {coluna}_normalizado = ") + len(
+        f"set {coluna}_normalizado = "
+    )
+    fim = sql.index("\n where", inicio)
+    return sql[inicio:fim].rstrip().rstrip(",")
+
+
+@pytest.mark.parametrize("valor, por_que", CORPUS, ids=[c[0][:22] for c in CORPUS])
+def test_a_expressao_do_backfill_bate_com_a_funcao_canonica(sessao, valor, por_que):
+    """A REGRA EM SQL E A REGRA EM PYTHON TÊM DE DAR A MESMA CHAVE.
+
+    Se não derem, uma referência que veio do backfill deixa de colidir com uma
+    criada pela tela — o defeito que a `0097` existe para consertar, feito pela
+    própria `0097`. Foi exatamente o que aconteceu na primeira versão dela.
+    """
+    expressao = _expressao_do_backfill("titulo").replace("titulo", ":valor")
+    do_sql = sessao.execute(text(f"select {expressao}"), {"valor": valor}).scalar_one()
+    assert do_sql == normalizar(valor), por_que
+
+
+def _guarda_da_migration() -> re.Pattern[str]:
+    sql = MIGRACAO.read_text(encoding="utf-8")
+    assert "raise exception" in sql, "a guarda saiu da migration"
+    inicio = sql.index("where titulo ~ '") + len("where titulo ~ '")
+    return re.compile(sql[inicio : sql.index("'", inicio)])
+
+
+#: AS TRÊS CATEGORIAS DE CARACTERE NÃO-ASCII, e a guarda tem de separar as três.
+#: Errar para qualquer lado custa: recusar à toa trava um deploy, deixar passar
+#: grava chave errada — que é o defeito que esta migration existe para consertar.
+TRATADOS = "ºª²½№™ﬁçã "
+DESCARTADOS_PELAS_DUAS = "—°€©ßœ“±"
+DIVERGENTES_SEM_TRATAMENTO = "①Ａ㍱ǅẛͺℂ"
+
+
+@pytest.mark.parametrize("caractere", list(DIVERGENTES_SEM_TRATAMENTO))
+def test_a_guarda_recusa_o_que_o_sql_nao_sabe_normalizar(caractere):
+    """O SQL NÃO TEM NFKD. Para `①`, `Ａ`, `㍱` e companhia, o `normalizar`
+    produz ASCII (`1`, `A`, `hpa`) e o SQL só saberia descartar — chave
+    diferente, e a referência migrada deixaria de colidir com a criada na tela.
+
+    Para esses a `0097` PARA, com a linha na mensagem, em vez de adivinhar. A
+    faixa de recusa foi DERIVADA varrendo os 1.114.112 codepoints: são 1.982 que
+    divergiriam, e nenhum escapa.
+    """
+    assert _guarda_da_migration().search(caractere), (
+        f"U+{ord(caractere):04X} divergiria e a guarda deixou passar"
     )
 
 
-def test_o_veiculo_da_matriz_tambem_esta_normalizado(sessao):
-    """`veiculo` ENTRAVA CRU no índice antigo, e é metade da chave."""
-    divergentes = [
-        (linha.veiculo, linha.veiculo_normalizado)
-        for linha in sessao.scalars(select(JornalistaMatriz))
-        if linha.veiculo_normalizado
-        != (normalizar(linha.veiculo) if linha.veiculo else None)
-    ]
-    assert not divergentes, divergentes[:5]
+@pytest.mark.parametrize("caractere", list(TRATADOS + DESCARTADOS_PELAS_DUAS))
+def test_a_guarda_nao_recusa_a_toa(caractere):
+    """O OUTRO LADO, e ele custa igual: estes a regra sabe tratar — por
+    `replace`, por `translate`, ou porque as duas regras os descartam. Recusar
+    um deles trava um deploy por nada."""
+    assert not _guarda_da_migration().search(caractere), (
+        f"U+{ord(caractere):04X} a guarda recusou, e não precisava"
+    )
+
+
+#: NÃO HÁ TESTE AQUI sobre a coluna já gravada no banco. Ele existia, e saiu:
+#: `test_referencias.test_a_chave_do_titulo_e_a_canonica` já faz o caminho
+#: inteiro pela API e lê a coluna de volta, com o usuário e o assunto que a
+#: tabela exige. Um terceiro teste sobre o mesmo fato custaria uma fixture de
+#: usuário para não afirmar nada novo.
 
 
 # ============================================= o índice recusa a segunda grafia

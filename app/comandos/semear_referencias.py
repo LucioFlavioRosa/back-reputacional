@@ -35,6 +35,7 @@ from app.banco.tabelas_referencias import (
     ReferenciaVersao,
 )
 from app.comandos.temas_de_demonstracao import id_de_tema_por_nome_antigo
+from app.dominio.texto import normalizar
 
 #: (título, tipo, resumo, assuntos, última atualização do arquivo)
 #:
@@ -664,14 +665,18 @@ def semear(sessao: Session) -> dict[str, int]:
     autor = _autor(sessao)
     id_do_tema = id_de_tema_por_nome_antigo(sessao)
 
-    ja_existem = {
-        titulo.strip().lower()
-        for titulo in sessao.scalars(select(Referencia.titulo)).all()
-    }
+    #: PELA CHAVE QUE O BANCO USA, e não por um `strip().lower()` próprio.
+    #:
+    #: Era `strip().lower()` até a `0097`, e isso parou de corresponder ao índice
+    #: único no dia em que a chave passou a ignorar acento: "Relatório Anual" no
+    #: banco não seria reconhecido ao semear "Relatorio Anual", o semeador
+    #: tentaria criar, e o `flush()` levantaria `IntegrityError` em vez de pular
+    #: a linha — a rodada repetida quebraria em vez de não fazer nada.
+    ja_existem = set(sessao.scalars(select(Referencia.titulo_normalizado)).all())
 
     criadas = 0
     for titulo, tipo, resumo, assuntos, atualizado in ACERVO:
-        if titulo.strip().lower() in ja_existem:
+        if normalizar(titulo) in ja_existem:
             continue
 
         desconhecidos = [nome for nome in assuntos if nome not in id_do_tema]
