@@ -1,5 +1,24 @@
 # Três fornecedores, uma tabela: o que a medição mostra
 
+> ## ⚠️ CONCLUSÃO, 18/10/2026: NÃO SEPARAR AS TABELAS
+>
+> Este documento propõe, da seção 4 em diante, um núcleo conformado com uma
+> tabela de extensão por fornecedor. **A recomendação foi retirada**, e por
+> medição, não por mudança de ideia. A seção 8 tem os números.
+>
+> Em resumo: dos quatro ganhos que a seção 4 prometia, **o mais forte não
+> existe** (a deduplicação por fornecedor não é implementável nem necessária), o
+> segundo **já está resolvido** por outro mecanismo (`quem_fala` +
+> `instituicao.tipo`), e os dois que restam são pequenos o bastante para não
+> pagarem uma migration de 100 mil linhas em 10 arquivos.
+>
+> O que o dono do produto pediu — *"isolar os problemas de dados"* — **já está
+> atendido pelo upload por fornecedor**, como a seção 1 já dizia e a seção 8
+> confirma com número.
+>
+> O resto do documento fica como está, porque a medição dele continua válida e é
+> ela que sustenta a retirada. Ler a seção 4 sem a 8 leva à conclusão errada.
+
 > **Pedido do dono do produto (18/10/2026):** *"como são fornecedores diferentes
 > o formato da tabela é diferente, mas as informações básicas devem ter em
 > todas, e por isso gostaria que fossem salvas em tabelas distintas para
@@ -329,3 +348,103 @@ unificada"* — as três chaves de taxonomia são esse core.
 | nenhuma leitura usa `bloco_tema_id`/`macro_tema_id` | filtros derivam de `tema_id`; menção só-N1 não entra no recorte por pilar | PR próprio, muda números em tela |
 | `unidade_negocio_id` | **0 de 104.670** | o fornecedor diz `Águas do Pará`, o cadastro tem 4 blocos — decisão de produto |
 | `subtema` | 0 de 104.670 | só a Approach mapeia, e nunca subiu |
+
+## 8. Por que a separação foi retirada
+
+> **Esclarecimento do dono do produto (18/10/2026):** *"não é para ter tela por
+> fornecedor, apenas o upload que será específico — e hoje já temos."*
+
+Com isso, a pergunta deixou de ser "como separar" e passou a ser "o que a
+separação ainda compra". Medi os quatro ganhos que a seção 4 prometia.
+
+### 8.1 Chave de deduplicação por fornecedor — **o ganho não existe**
+
+Era o argumento mais forte da seção 4: *"Bites e Approach caem fora do índice
+único, e a proteção delas é só a substituição do mês"*. A medição derruba por
+dois lados.
+
+**Não há o que deduplicar.** Duplicatas por `(fonte, mes, link)`:
+
+| fonte | grupos | linhas a mais | e com `titulo_texto` junto |
+|---|---|---|---|
+| bites | 32 | 46 | **0 — some** |
+| clipei | 3.468 | 6.858 | 3.273 / 6.580 |
+| clipei_investidores | 133 | 183 | 110 / 152 |
+
+As 46 linhas da Bites que compartilham link **têm texto diferente**: são
+comentários distintos no mesmo post, que é exatamente o que social listening
+coleta. Deduplicar por link as apagaria. Não sobra nenhuma duplicata de verdade.
+
+**E não há chave para declarar.** A Bites manda `id_fonte` em **0 de 2.842**
+linhas. Qualquer chave derivada do conteúdo erra para um dos dois lados — e a
+Clipei prova: mesmo COM o índice único em `id_fonte`, ela tem 6.858 linhas
+compartilhando `(fonte, mes, link)`, porque são itens diferentes no sistema do
+fornecedor. **Link nunca foi chave.**
+
+A proteção que existe — apagar e regravar o mês inteiro — cobre o reenvio, que
+é como o arquivo chega. O risco residual (a mesma publicação duas vezes DENTRO
+de um arquivo) não se materializou em 104.670 linhas.
+
+### 8.2 `veiculo` da Bites se disfarçando de veículo — **já resolvido**
+
+A seção 2.2(b) está certa sobre a coluna, e errada sobre a consequência: o
+cadastro **já** distingue, por `quem_fala` no mapeamento e `instituicao.tipo` no
+destino.
+
+| o que a Bites criou no cadastro | quantas |
+|---|---|
+| `perfil_rede` | **1.050** |
+| `veiculo` | 36 |
+
+Nenhum perfil de rede virou veículo de imprensa. Uma tabela separada não
+melhoraria isto — `tipo` já faz o trabalho.
+
+### 8.3 `uf` com dois significados — **real, e pequeno**
+
+| | Clipei (estado do veículo) | Bites (estado do autor) |
+|---|---|---|
+| linhas com `uf` | 25.784 | **1.396** |
+
+A Bites é **5%** do `uf` preenchido. No maior estado, Rio Grande do Sul: 5.034
+do veículo contra 966 do autor. A conflação existe e é mensurável, mas separar
+tabelas é caro demais para ela — se incomodar, o conserto é **uma coluna**
+(`uf_do_autor`), não três tabelas.
+
+### 8.4 `not null` por fornecedor — **real, e cosmético**
+
+`mencao_clipei.tier not null` passaria a ser possível (a Bites tem 0 de 2.842).
+O ganho é pegar um arquivo torto na subida em vez de na tela. É verdadeiro, e
+sozinho não paga a mudança.
+
+### 8.5 O que o upload por fornecedor já isola, com número
+
+```python
+delete(Mencao).where(Mencao.fonte_id == fonte.id, Mencao.mes.in_(meses))
+```
+
+* **o dado**: refazer a Clipei de setembro não toca uma linha da Bites;
+* **o formato**: `mapeamento_colunas` é por fonte — a Approach mudar o layout
+  dela não passa perto da Clipei. É onde moram `prefixo_a_remover`, `apelidos`,
+  `quem_fala`, `aba`, `arquivo`, `filtros`, `colunas_opcionais`;
+* **o momento**: cada fonte sobe quando o fornecedor entrega.
+
+Era isto o pedido — *"eventuais mudanças não afetarem a todas, e assim podermos
+isolar os problemas de dados"*. Está atendido.
+
+### 8.6 O que vale fazer no lugar
+
+O que de fato faltava ao núcleo não eram tabelas, eram **chaves** — e essa parte
+foi feita (seção 7, migration `0098` + o filtro):
+
+| | antes | depois |
+|---|---|---|
+| menções com N1 | 29.701 | **102.715** |
+| o recorte por pilar alcançava | 29.701 | **102.715** |
+
+O que continua aberto é **decisão de produto, não schema**:
+
+| pendência | medida |
+|---|---|
+| `unidade_negocio_id` | **0 de 104.670** — o fornecedor diz `Águas do Pará`, o cadastro tem 4 blocos |
+| gráfico de N1 agrupa por texto | 15 grafias para 7 pilares |
+| `uf` do autor x do veículo | 5% de contaminação, uma coluna resolve |
