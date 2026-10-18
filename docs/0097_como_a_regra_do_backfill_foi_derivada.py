@@ -166,6 +166,9 @@ MODELO = """\
 begin;
 
 -- ================================================================ a guarda
+-- UMA CONFERENCIA POR COLUNA, e a mensagem diz QUAL. A primeira versao juntava
+-- `nome` e `veiculo` num `or` e imprimia sempre o `nome` -- recusava certo, mas
+-- mandava a pessoa olhar a coluna errada.
 do $$
 declare
   achado text;
@@ -179,10 +182,17 @@ begin
   end if;
 
   select nome into achado from jornalista_matriz
-   where nome ~ '{GUARDA}' or coalesce(veiculo,'') ~ '{GUARDA}' limit 1;
+   where nome ~ '{GUARDA}' limit 1;
   if achado is not null then
-    raise exception 'jornalista_matriz contem caractere que o backfill nao sabe '
-      'normalizar: %. Mesma coisa.', achado;
+    raise exception 'jornalista_matriz.nome contem caractere que o backfill nao '
+      'sabe normalizar: %. Mesma coisa.', achado;
+  end if;
+
+  select veiculo into achado from jornalista_matriz
+   where veiculo ~ '{GUARDA}' limit 1;
+  if achado is not null then
+    raise exception 'jornalista_matriz.veiculo contem caractere que o backfill '
+      'nao sabe normalizar: %. Mesma coisa.', achado;
   end if;
 end $$;
 

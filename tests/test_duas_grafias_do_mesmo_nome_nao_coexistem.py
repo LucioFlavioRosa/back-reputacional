@@ -91,23 +91,56 @@ CORPUS = [
 ]
 
 
-def _expressao_do_backfill(coluna: str) -> str:
-    """A expressão que a `0097` EMBARCA, recortada do próprio arquivo.
+#: A expressão inteira, do `lower(btrim(` até o fecho do colapso de espaço.
+_EXPRESSAO = re.compile(r"lower\(btrim\(.*?'\\s\+', ' ', 'g'\)\)\)", re.S)
 
-    POR QUE RECORTAR, E NÃO COPIAR. A primeira versão deste teste comparava as
-    COLUNAS do banco de teste com `normalizar` — e o banco de teste nasce vazio,
-    então ele percorria ZERO linhas e passava por vácuo. Era justamente o teste
-    que devia ter pegado o travessão, e ele não pegou nada.
 
-    Recortando do arquivo, o que se testa é o SQL que vai rodar no banco de
-    verdade, com o corpus que este teste monta.
-    """
+def _corpo() -> str:
+    """O SQL que executa, sem o cabeçalho de comentário."""
     sql = MIGRACAO.read_text(encoding="utf-8")
-    inicio = sql.index(f"set {coluna}_normalizado = ") + len(
-        f"set {coluna}_normalizado = "
+    return sql[sql.index("\nbegin;") :]
+
+
+def _expressoes_do_backfill() -> list[str]:
+    """As expressões que a `0097` EMBARCA, recortadas do próprio arquivo.
+
+    POR QUE RECORTAR, E NÃO COPIAR PARA O TESTE. A primeira versão deste teste
+    comparava as COLUNAS do banco de teste com `normalizar` — e o banco de teste
+    nasce vazio, então ele percorria ZERO linhas e passava por vácuo. Era
+    justamente o teste que devia ter pegado o travessão, e não pegou nada.
+    """
+    #: SÓ O CORPO, a partir do `begin;`. O cabeçalho CITA a regra antiga
+    #: (`lower(btrim(titulo))`) para explicar o defeito, e o recorte pegava
+    #: aquela citação como se fosse a expressão — levando o teste a comparar
+    #: comentário com `normalizar`.
+    return _EXPRESSAO.findall(_corpo())
+
+
+def test_as_tres_expressoes_do_backfill_sao_a_mesma_regra():
+    """A MIGRATION ESCREVE A MESMA REGRA TRÊS VEZES — `titulo`, `nome`,
+    `veiculo`. Este PR inteiro é sobre cópia que diverge, então conferir só uma
+    delas seria supor que as outras duas acompanharam: a suposição que criou o
+    defeito. Aqui as três têm de ser o MESMO texto, trocado só o nome da coluna.
+    """
+    achadas = _expressoes_do_backfill()
+    assert len(achadas) == 3, f"esperava 3 expressões, achei {len(achadas)}"
+    sem_coluna = {
+        re.sub(r"\b(titulo|nome|veiculo)\b", "COLUNA", e, count=1) for e in achadas
+    }
+    assert len(sem_coluna) == 1, (
+        "as três cópias da regra do backfill DIVERGIRAM entre si:\n"
+        + "\n\n".join(sorted(sem_coluna))
     )
-    fim = sql.index("\n where", inicio)
-    return sql[inicio:fim].rstrip().rstrip(",")
+
+
+def _como_parametro() -> str:
+    """A expressão com a coluna trocada por um parâmetro, para rodar solta.
+
+    As três são o mesmo texto — `test_as_tres_expressoes_do_backfill_sao_a_mesma_regra`
+    exige isso —, então exercitar uma exercita as três.
+    """
+    primeira = _expressoes_do_backfill()[0]
+    return re.sub(r"\b(titulo|nome|veiculo)\b", ":valor", primeira, count=1)
 
 
 @pytest.mark.parametrize("valor, por_que", CORPUS, ids=[c[0][:22] for c in CORPUS])
@@ -118,16 +151,49 @@ def test_a_expressao_do_backfill_bate_com_a_funcao_canonica(sessao, valor, por_q
     criada pela tela — o defeito que a `0097` existe para consertar, feito pela
     própria `0097`. Foi exatamente o que aconteceu na primeira versão dela.
     """
-    expressao = _expressao_do_backfill("titulo").replace("titulo", ":valor")
-    do_sql = sessao.execute(text(f"select {expressao}"), {"valor": valor}).scalar_one()
+    do_sql = sessao.execute(
+        text(f"select {_como_parametro()}"), {"valor": valor}
+    ).scalar_one()
     assert do_sql == normalizar(valor), por_que
 
 
-def _guarda_da_migration() -> re.Pattern[str]:
+def test_o_veiculo_nulo_continua_nulo(sessao):
+    """O RAMO QUE O CORPUS NÃO ALCANÇA: `veiculo` é anulável, e o backfill o
+    trata num `case when veiculo is null`. Chave de `null` tem de ser `null`, e
+    não string vazia — senão duas pessoas sem veículo colidiriam entre si."""
+    sql = MIGRACAO.read_text(encoding="utf-8")
+    assert "when veiculo is null then null" in sql, (
+        "o ramo nulo saiu do backfill: `veiculo` é anulável e chave de nulo tem "
+        "de ser nula, senão duas pessoas sem veículo colidem entre si"
+    )
+    valor = sessao.execute(
+        text(f"select case when :valor is null then null else {_como_parametro()} end"),
+        {"valor": None},
+    ).scalar_one()
+    assert valor is None
+
+
+def _classe_da_guarda() -> str:
     sql = MIGRACAO.read_text(encoding="utf-8")
     assert "raise exception" in sql, "a guarda saiu da migration"
     inicio = sql.index("where titulo ~ '") + len("where titulo ~ '")
-    return re.compile(sql[inicio : sql.index("'", inicio)])
+    return sql[inicio : sql.index("'", inicio)]
+
+
+def _a_guarda_recusa(sessao, caractere: str) -> bool:
+    """A GUARDA RODANDO NO POSTGRES, e não no `re` do Python.
+
+    POR QUE ISTO IMPORTA. A primeira versão deste teste compilava a classe com o
+    `re` do Python — mas quem a executa é o Postgres, e as duas engenhas não
+    precisam concordar sobre `\\uXXXX` dentro de classe de caractere. O teste
+    podia estar provando a coisa errada: verde aqui, guarda cega no banco.
+    """
+    return bool(
+        sessao.execute(
+            text("select :valor ~ :classe"),
+            {"valor": caractere, "classe": _classe_da_guarda()},
+        ).scalar_one()
+    )
 
 
 #: AS TRÊS CATEGORIAS DE CARACTERE NÃO-ASCII, e a guarda tem de separar as três.
@@ -139,7 +205,7 @@ DIVERGENTES_SEM_TRATAMENTO = "①Ａ㍱ǅẛͺℂ"
 
 
 @pytest.mark.parametrize("caractere", list(DIVERGENTES_SEM_TRATAMENTO))
-def test_a_guarda_recusa_o_que_o_sql_nao_sabe_normalizar(caractere):
+def test_a_guarda_recusa_o_que_o_sql_nao_sabe_normalizar(sessao, caractere):
     """O SQL NÃO TEM NFKD. Para `①`, `Ａ`, `㍱` e companhia, o `normalizar`
     produz ASCII (`1`, `A`, `hpa`) e o SQL só saberia descartar — chave
     diferente, e a referência migrada deixaria de colidir com a criada na tela.
@@ -148,19 +214,32 @@ def test_a_guarda_recusa_o_que_o_sql_nao_sabe_normalizar(caractere):
     faixa de recusa foi DERIVADA varrendo os 1.114.112 codepoints: são 1.982 que
     divergiriam, e nenhum escapa.
     """
-    assert _guarda_da_migration().search(caractere), (
+    assert _a_guarda_recusa(sessao, caractere), (
         f"U+{ord(caractere):04X} divergiria e a guarda deixou passar"
     )
 
 
 @pytest.mark.parametrize("caractere", list(TRATADOS + DESCARTADOS_PELAS_DUAS))
-def test_a_guarda_nao_recusa_a_toa(caractere):
+def test_a_guarda_nao_recusa_a_toa(sessao, caractere):
     """O OUTRO LADO, e ele custa igual: estes a regra sabe tratar — por
     `replace`, por `translate`, ou porque as duas regras os descartam. Recusar
     um deles trava um deploy por nada."""
-    assert not _guarda_da_migration().search(caractere), (
+    assert not _a_guarda_recusa(sessao, caractere), (
         f"U+{ord(caractere):04X} a guarda recusou, e não precisava"
     )
+
+
+def test_a_guarda_diz_qual_coluna(sessao):
+    """A MENSAGEM TEM DE MANDAR A PESSOA PARA A COLUNA CERTA.
+
+    A primeira versão juntava `nome` e `veiculo` num `or` e imprimia sempre o
+    `nome`: recusava certo, e mandava olhar a coluna errada. São três
+    conferências, uma por coluna, cada uma com o seu nome na mensagem.
+    """
+    sql = MIGRACAO.read_text(encoding="utf-8")
+    for coluna in ("referencia.titulo", "jornalista_matriz.nome", "jornalista_matriz.veiculo"):
+        assert coluna in sql, f"a guarda não nomeia {coluna}"
+    assert sql.count("raise exception") == 3
 
 
 #: NÃO HÁ TESTE AQUI sobre a coluna já gravada no banco. Ele existia, e saiu:
