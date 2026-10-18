@@ -31,13 +31,20 @@ from sqlalchemy.orm import Session
 
 from app.banco.repositorio_score import (
     ATRIBUTO_SEM_PREFIXO,
+    CONCESSIONARIA,
     SENTIMENTO_DO_CLIMA,
     condicoes_do_filtro,
     primeiro_dia,
     so_fontes_ligadas,
     so_interacoes_visiveis,
 )
-from app.banco.tabelas_catalogo import BlocoTema, Clima, MacroTema, Tema
+from app.banco.tabelas_catalogo import (
+    BlocoTema,
+    Clima,
+    MacroTema,
+    Tema,
+    UnidadeNegocio,
+)
 from app.banco.tabelas_interacoes import InteracaoRegistro, InteracaoTema
 from app.banco.tabelas_lentes import (
     CmRespostaMes,
@@ -404,6 +411,44 @@ def opcoes_de_filtro(sessao: Session, lente_id: int, mes: date) -> dict[str, lis
         )
         return [valor for valor, _ in sessao.execute(consulta) if valor]
 
+    def _concessionarias(quantos: int) -> list[str]:
+        """As concessionárias do mês, PELO NOME DO CADASTRO quando ele resolve.
+
+        É `_mais_presentes` com uma junção a mais, e a junção é a razão de esta
+        função existir em vez de um parâmetro: sem ela, a Corsan aparece DUAS
+        vezes na lista — "Corsan" (1.111 menções) e "Companhia Riograndense de
+        Saneamento (Corsan)" (15.019) —, e escolher uma perde a outra. A
+        holding aparecia três vezes.
+
+        `coalesce` E `outerjoin`, e não um `join`: a menção que o cadastro não
+        resolve — "Águas do Rio" (9.411), que são dois blocos — continua na
+        lista com a palavra do fornecedor. Um `join` a sumiria do seletor, que
+        é o oposto de normalizar.
+
+        AGRUPA PELA MESMA EXPRESSÃO QUE O FILTRO RECORTA (`condicoes_do_filtro`
+        casa o nome do cadastro OU o texto cru). Agrupar por um caminho e
+        filtrar por outro faria a opção escolhida devolver menos linhas do que
+        a lista prometia — foi exatamente o que aconteceu com a barra do N2 na
+        `0098`, e o conserto está no `_por_taxonomia`.
+        """
+        consulta = (
+            select(CONCESSIONARIA, func.count().label("total"))
+            .select_from(Mencao)
+            .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+            .outerjoin(
+                UnidadeNegocio, UnidadeNegocio.id == Mencao.unidade_negocio_id
+            )
+            .where(
+                ScoreFonte.lente_id == lente_id,
+                Mencao.mes == primeiro_dia(mes),
+                CONCESSIONARIA.is_not(None),
+            )
+            .group_by(CONCESSIONARIA)
+            .order_by(func.count().desc(), CONCESSIONARIA.asc())
+            .limit(quantos)
+        )
+        return [valor for valor, _ in sessao.execute(consulta) if valor]
+
     return {
         "tiers": _distintos(Mencao.tier),
         "veiculos": _distintos(Mencao.veiculo),
@@ -436,7 +481,7 @@ def opcoes_de_filtro(sessao: Session, lente_id: int, mes: date) -> dict[str, lis
         #: A concessionária citada. Cortada como o autor, pelo mesmo motivo: numa
         #: base nacional são dezenas, e a lista por volume responde "quem está
         #: aparecendo este mês".
-        "empresas": _mais_presentes(Mencao.unidade_texto, 20),
+        "empresas": _concessionarias(20),
         # -- a taxonomia de temas do CRM, pelas menções ligadas a ela ----------
         #
         # SÓ O QUE APARECE NO MÊS, como as outras: os nomes dos pilares, temas

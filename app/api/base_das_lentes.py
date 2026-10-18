@@ -35,8 +35,9 @@ from sqlalchemy.orm import aliased
 
 from app.api.dependencias import UsuarioLogado, exigir_portal_score
 from app.banco import repositorio_lentes, repositorio_score
+from app.banco.repositorio_score import CONCESSIONARIA
 from app.banco.sessao import SessaoDoPedido
-from app.banco.tabelas_catalogo import BlocoTema, MacroTema, Tema
+from app.banco.tabelas_catalogo import BlocoTema, MacroTema, Tema, UnidadeNegocio
 from app.banco.tabelas_score import Mencao, ScoreFonte
 from app.dominio.causa_da_lente import nomeia_o_diretorio
 from app.dominio.erros import NaoEncontrado, RegraViolada
@@ -64,7 +65,11 @@ ORDENAVEIS = {
     "engajamento": Mencao.engajamento,
     "uf": Mencao.uf,
     "autor": Mencao.autor,
-    "empresa": Mencao.unidade_texto,
+    #: PELO NOME QUE A COLUNA MOSTRA, e não pelo texto cru: a lista exibe
+    #: `CONCESSIONARIA` desde a `0099`, e ordenar pela outra faria "Companhia
+    #: Riograndense de Saneamento (Corsan)" cair no C enquanto a tela mostra
+    #: "Corsan". A junção que ela exige está na consulta de `listar_mencoes`.
+    "empresa": CONCESSIONARIA,
 }
 
 TAMANHO_MAXIMO = 500
@@ -260,12 +265,17 @@ def listar_mencoes(
             BlocoTema.nome,
             PilarDaMencao.nome,
             TemaEstrategicoDaMencao.nome,
+            CONCESSIONARIA,
         )
         .select_from(Mencao)
         .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
         .outerjoin(Tema, Tema.id == Mencao.tema_id)
         .outerjoin(MacroTema, MacroTema.id == Tema.macro_tema_id)
         .outerjoin(BlocoTema, BlocoTema.id == MacroTema.bloco_tema_id)
+        #: A CONCESSIONÁRIA DO CADASTRO (`0099`). `outerjoin` porque 28.549
+        #: menções nomeiam operação que o cadastro não resolve, e elas têm de
+        #: continuar na lista com o texto do fornecedor.
+        .outerjoin(UnidadeNegocio, UnidadeNegocio.id == Mencao.unidade_negocio_id)
         .outerjoin(PilarDaMencao, PilarDaMencao.id == Mencao.bloco_tema_id)
         .outerjoin(
             TemaEstrategicoDaMencao,
@@ -313,7 +323,10 @@ def listar_mencoes(
             tema_n2=n2 or n2_da_mencao,
             tema_n3=n3,
             subtema=m.subtema,
-            empresa=m.unidade_texto,
+            #: A CONCESSIONÁRIA COMO O CADASTRO A CHAMA, com o texto do
+            #: fornecedor como reserva — a mesma expressão por que a lista
+            #: ordena e por que o seletor agrupa. Ver `CONCESSIONARIA`.
+            empresa=concessionaria,
             uf=m.uf,
             autor=None if esconde_autor else m.autor,
             perfil_autor=m.perfil_autor,
@@ -332,6 +345,7 @@ def listar_mencoes(
             n1,
             n1_da_mencao,
             n2_da_mencao,
+            concessionaria,
         ) in sessao.execute(consulta)
     ]
     return PaginaDaBase(itens=itens, total=total, pagina=pagina, tamanho=tamanho)
@@ -357,6 +371,11 @@ def opcoes_da_base(
             .outerjoin(Tema, Tema.id == Mencao.tema_id)
             .outerjoin(MacroTema, MacroTema.id == Tema.macro_tema_id)
             .outerjoin(BlocoTema, BlocoTema.id == MacroTema.bloco_tema_id)
+            #: PARA `CONCESSIONARIA` PODER SER UMA DAS COLUNAS. Sai barato (29
+            #: linhas, chave indexada) e evita uma segunda função só para ela —
+            #: o que importa é a lista agrupar pela MESMA expressão que a
+            #: coluna da tabela mostra e que o filtro recorta.
+            .outerjoin(UnidadeNegocio, UnidadeNegocio.id == Mencao.unidade_negocio_id)
             .where(*onde, coluna.is_not(None))
             .group_by(coluna)
         )
@@ -382,7 +401,7 @@ def opcoes_da_base(
         **repositorio_lentes.taxonomia_n1_n2(sessao, distintos(Mencao.tema_texto)),
         temas_n3=distintos(Tema.nome),
         subtemas=distintos(Mencao.subtema),
-        empresas=distintos(Mencao.unidade_texto, 100),
+        empresas=distintos(CONCESSIONARIA, 100),
         ufs=distintos(Mencao.uf),
         autores=[] if esconde_autor else distintos(Mencao.autor, 100),
         perfis=distintos(Mencao.perfil_autor),
