@@ -31,6 +31,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy import func, or_, select
+from sqlalchemy.orm import aliased
 
 from app.api.dependencias import UsuarioLogado, exigir_portal_score
 from app.banco import repositorio_lentes, repositorio_score
@@ -240,6 +241,14 @@ def listar_mencoes(
     coluna = ORDENAVEIS[campo]
     ordem = coluna.desc().nulls_last() if ordenacao.startswith("-") else coluna.asc().nulls_last()
 
+    #: O PILAR E O TEMA ESTRATÉGICO GRAVADOS NA PRÓPRIA MENÇÃO (`0098`), em
+    #: ALIAS próprio: `BlocoTema` e `MacroTema` já entram nesta consulta pela
+    #: CADEIA (`Tema -> MacroTema -> BlocoTema`), e reusar o mesmo nome para uma
+    #: segunda junção faria as duas virarem a mesma — a linha ligada só pelo
+    #: pilar sumiria do `join` da cadeia e levaria a menção com ela.
+    PilarDaMencao = aliased(BlocoTema)
+    TemaEstrategicoDaMencao = aliased(MacroTema)
+
     consulta = (
         select(
             Mencao,
@@ -249,12 +258,19 @@ def listar_mencoes(
             Tema.nome,
             MacroTema.nome,
             BlocoTema.nome,
+            PilarDaMencao.nome,
+            TemaEstrategicoDaMencao.nome,
         )
         .select_from(Mencao)
         .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
         .outerjoin(Tema, Tema.id == Mencao.tema_id)
         .outerjoin(MacroTema, MacroTema.id == Tema.macro_tema_id)
         .outerjoin(BlocoTema, BlocoTema.id == MacroTema.bloco_tema_id)
+        .outerjoin(PilarDaMencao, PilarDaMencao.id == Mencao.bloco_tema_id)
+        .outerjoin(
+            TemaEstrategicoDaMencao,
+            TemaEstrategicoDaMencao.id == Mencao.macro_tema_id,
+        )
         .where(*onde)
         .order_by(ordem, Mencao.criado_em.desc(), Mencao.id)
         .offset((pagina - 1) * tamanho)
@@ -274,10 +290,27 @@ def listar_mencoes(
             sentimento=m.sentimento,
             atributo=m.atributo,
             tema=tema_mostrado,
-            #: O PILAR DA LINHA: o do tema do cadastro, ou — o mais comum hoje —
-            #: o tema que o fornecedor escreveu, que é o N1.
-            tema_n1=n1 or m.tema_texto,
-            tema_n2=n2,
+            #: O PILAR DA LINHA, em três tentativas e nesta ordem:
+            #:
+            #:   1. o derivado do tema do cadastro (`tema_id -> N2 -> N1`)
+            #:   2. o GRAVADO na menção pela `0098` (`mencao.bloco_tema_id`)
+            #:   3. o tema que o fornecedor escreveu
+            #:
+            #: O DERIVADO PRIMEIRO, de propósito: onde ele existia, a coluna
+            #: continua mostrando exatamente o que mostrava. O passo 2 só
+            #: preenche o que estava caindo no passo 3.
+            #:
+            #: E O PASSO 3 ERA UM RÓTULO ERRADO para 73.014 linhas (71% da base
+            #: da Clipei): `tema_texto` ali é a `Subcategoria` do fornecedor — um
+            #: ASSUNTO —, e a coluna que o exibia se chama "Pilar (N1)". A pessoa
+            #: lia "Falta de água" como se fosse um dos 7 pilares. Com a `0098`
+            #: existe o pilar de verdade dessas linhas, e é ele que aparece.
+            #:
+            #: O passo 3 fica para as 1.955 que não têm nível nenhum — nelas a
+            #: coluna segue mostrando o que o fornecedor disse, que é mais útil
+            #: que vazio e é o comportamento de hoje.
+            tema_n1=n1 or n1_da_mencao or m.tema_texto,
+            tema_n2=n2 or n2_da_mencao,
             tema_n3=n3,
             subtema=m.subtema,
             empresa=m.unidade_texto,
@@ -289,7 +322,17 @@ def listar_mencoes(
             titulo=m.titulo_texto,
             link=m.link,
         )
-        for m, nome_da_fonte, codigo_da_fonte, tema_mostrado, n3, n2, n1 in sessao.execute(consulta)
+        for (
+            m,
+            nome_da_fonte,
+            codigo_da_fonte,
+            tema_mostrado,
+            n3,
+            n2,
+            n1,
+            n1_da_mencao,
+            n2_da_mencao,
+        ) in sessao.execute(consulta)
     ]
     return PaginaDaBase(itens=itens, total=total, pagina=pagina, tamanho=tamanho)
 

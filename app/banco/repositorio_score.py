@@ -419,19 +419,61 @@ def condicoes_do_filtro(filtro: FiltroDeMencoes | None) -> list:
         )
     if filtro.tema_n2:
         condicoes.append(
-            Mencao.tema_id.in_(
-                select(Tema.id)
-                .join(MacroTema, MacroTema.id == Tema.macro_tema_id)
-                .where(MacroTema.nome == filtro.tema_n2)
-                .scalar_subquery()
+            or_(
+                #: A CHAVE DA `0098` PRIMEIRO, e a derivação por `tema_id` depois.
+                Mencao.macro_tema_id.in_(
+                    select(MacroTema.id)
+                    .where(MacroTema.nome == filtro.tema_n2)
+                    .scalar_subquery()
+                ),
+                Mencao.tema_id.in_(
+                    select(Tema.id)
+                    .join(MacroTema, MacroTema.id == Tema.macro_tema_id)
+                    .where(MacroTema.nome == filtro.tema_n2)
+                    .scalar_subquery()
+                ),
             )
         )
     if filtro.tema_n1:
-        #: O TEMA DO FORNECEDOR É O PILAR (N1) — definição do dono do produto.
-        #: A menção entra pelo tema que o fornecedor escreveu OU pelo pilar do
-        #: tema do cadastro a que está ligada, quando estiver.
+        #: O FORNECEDOR TRAZ UM NÍVEL E O CADASTRO DERIVA O RESTO (decisão do
+        #: dono do produto, 18/10/2026) — e a `0098` gravou o resultado em
+        #: `mencao.bloco_tema_id`. É por ELE que o recorte por pilar passa a
+        #: entrar, e era o que faltava para este filtro contar a verdade.
+        #:
+        #: MEDIDO ANTES DE MUDAR (base local, 104.670 menções): o recorte por
+        #: pilar alcançava 29.701 linhas e passa a alcançar 102.715. Por pilar:
+        #:
+        #:     Eficiência Operacional e Qualidade   12.386 -> 60.114
+        #:     Prosperidade Compartilhada            3.614 -> 13.281
+        #:     Governança                            5.537 -> 10.336
+        #:     Responsabilidade Social               5.548 ->  8.687
+        #:     Crescimento e Solidez Financeira      1.131 ->  6.763
+        #:     Responsabilidade Ambiental              839 ->  2.888
+        #:     Inovação e Tecnologia                   646 ->    646
+        #:
+        #: Filtrar por "Eficiência Operacional e Qualidade" devolvia 12.386 de
+        #: 60.114 — escondia quatro de cada cinco, com a conta certa na tela.
+        #:
+        #: AS DUAS CONDIÇÕES ANTIGAS FICAM, e isso é deliberado: com um `or`, o
+        #: conjunto novo é SUPERCONJUNTO do antigo. Nenhuma menção que o filtro
+        #: achava hoje deixa de ser achada — a mudança só pode ganhar linhas,
+        #: nunca perder. É o que torna "mantém tudo funcionando" verificável em
+        #: vez de prometido (`test_o_filtro_por_pilar_e_superconjunto_do_antigo`).
+        #:
+        #: E A COLUNA NÃO DEPENDE DE REGRA DE PREFIXO. O `atributo` tem 15
+        #: grafias para 7 pilares porque metade do volume vem numerado, e há
+        #: DUAS regras de recorte diferentes no repo — a de
+        #: `dominio/niveis_de_taxonomia` (separador opcional) e a
+        #: `ATRIBUTO_SEM_PREFIXO` daqui (separador obrigatório, escolhida com
+        #: medição em 16/10/2026). Comparar `bloco_tema_id` não passa por
+        #: nenhuma das duas: a normalização aconteceu uma vez, na gravação.
         condicoes.append(
             or_(
+                Mencao.bloco_tema_id.in_(
+                    select(BlocoTema.id)
+                    .where(BlocoTema.nome == filtro.tema_n1)
+                    .scalar_subquery()
+                ),
                 Mencao.tema_texto == filtro.tema_n1,
                 Mencao.tema_id.in_(
                     select(Tema.id)

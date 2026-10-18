@@ -10,6 +10,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.api.base_das_lentes import listar_mencoes, opcoes_da_base
+from app.banco.tabelas_catalogo import BlocoTema
 from app.banco.tabelas_score import Mencao, ScoreFonte
 from app.dominio.causa_da_lente import DIMENSOES_POR_LENTE, nomeia_o_diretorio
 from app.dominio.erros import NaoEncontrado, RegraViolada
@@ -280,3 +281,67 @@ def test_a_base_e_o_cartao_perguntam_a_mesma_coisa():
     assert all(
         dimensao.campo != "autor" for dimensao in DIMENSOES_POR_LENTE["clientes"]
     )
+
+
+# -- o rótulo do pilar depois da 0098 -----------------------------------------
+
+
+def test_o_pilar_da_linha_vem_da_coluna_quando_nao_ha_tema_do_cadastro(sessao) -> None:
+    """A coluna "Pilar (N1)" mostra o PILAR, e não a Subcategoria do fornecedor.
+
+    O QUE ESTAVA ERRADO. O rótulo era `n1 or m.tema_texto`: sem tema do cadastro
+    para derivar, caía no texto do fornecedor — que na Clipei é a `Subcategoria`,
+    um ASSUNTO, exibido numa coluna chamada "Pilar (N1)". Eram 73.014 linhas
+    (71% da base da Clipei) lendo "Falta de água" como se fosse um dos 7
+    pilares.
+
+    Com a `0098` a menção tem o pilar de verdade em `mencao.bloco_tema_id`, e é
+    ele que aparece. O texto do fornecedor fica como último recurso, para a
+    linha que não tem nível nenhum.
+    """
+    clipei = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "clipei")).one()
+    pilar = sessao.execute(
+        select(BlocoTema.id, BlocoTema.nome)
+        .where(BlocoTema.ativo.is_(True))
+        .order_by(BlocoTema.id)
+        .limit(1)
+    ).one()
+    sessao.add(
+        Mencao(
+            fonte_id=clipei.id,
+            mes=date(2026, 8, 1),
+            data=date(2026, 8, 5),
+            sentimento="neg",
+            titulo_texto="Ligada só pelo pilar",
+            #: O QUE A CLIPEI MANDA: um assunto, não o nome de um pilar.
+            tema_texto="Falta de água",
+            bloco_tema_id=pilar.id,
+        )
+    )
+    sessao.flush()
+
+    achada = next(
+        item
+        for item in _listar(sessao).itens
+        if item.titulo == "Ligada só pelo pilar"
+    )
+    assert achada.tema_n1 == pilar.nome, (
+        f"a coluna Pilar mostrou {achada.tema_n1!r}; devia mostrar o pilar "
+        f"gravado ({pilar.nome!r}), e não a Subcategoria do fornecedor."
+    )
+
+
+def test_o_pilar_derivado_continua_vencendo(sessao, imprensa) -> None:
+    """Onde o rótulo já tinha valor, ele NÃO muda — a mudança só preenche vazio.
+
+    As menções do fixture não têm `tema_id` nem `bloco_tema_id`, então caem no
+    último recurso e seguem mostrando o texto do fornecedor (nulo aqui). O que
+    este teste prende é que a ordem das três tentativas não inverteu: nenhuma
+    linha que mostrava um valor passou a mostrar outro.
+    """
+    for item in _listar(sessao).itens:
+        assert item.tema_n1 == item.tema or item.tema_n1 is None, (
+            f"o rótulo do pilar mudou para {item.tema_n1!r} numa linha sem "
+            "nível nenhum; o último recurso tem de seguir sendo o tema do "
+            "fornecedor."
+        )

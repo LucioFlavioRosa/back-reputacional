@@ -51,13 +51,13 @@ from __future__ import annotations
 
 import calendar
 import math
-import re
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 
 from app.dominio import frases_da_consulta as frases
+from app.dominio.niveis_de_taxonomia import sem_numeracao
 from app.dominio.score import (
     FAIXAS,
     REGUA_DE_CONTAGEM,
@@ -142,9 +142,13 @@ _CORES_DAS_FAIXAS: dict[str, tuple[str, str, str, str]] = {
     "Crítico": ("critico", "#FFE7E8", "#B32328", "#FFEDEE"),
 }
 
-#: "7. X", "7) X", "7 - X", "7 – X": o número do pilar com qualquer separador
-#: que um export à mão costuma ter, com ou sem espaço antes dele.
-_PREFIXO_NUMERICO = re.compile(r"^\s*[0-9]+\s*[.)\-–]?\s*")
+#: O prefixo numerado do pilar MUDOU DE CASA para `dominio/niveis_de_taxonomia`,
+#: e com ele o `sem_prefixo` abaixo — ver o alias logo depois de `Taxonomia`.
+#:
+#: POR QUE: com a `0098` a mesma regra passou a decidir o que é GRAVADO em
+#: `mencao.bloco_tema_id`, e não só o que a tela mostra. Duas cópias de uma regra
+#: de chave derivada de nome é o defeito que o PR #91 e o #92 removeram de quatro
+#: lugares; abrir o quinto na mesma semana seria difícil de defender.
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,15 +308,12 @@ class Vinculo:
         return tuple(parte for parte in (self.pilar, self.tema, self.subtema) if parte)
 
 
-def sem_prefixo(texto: str) -> str:
-    """'7. Prosperidade Compartilhada' vira 'Prosperidade Compartilhada'.
-
-    O EXPORT REAL NUMERA O PILAR (ingerir_mencoes, linha de marcadores N1/N2/N3),
-    e o mock não. Sem tirar o número, nenhum atributo real casaria com o
-    cadastro — e todo o mês cairia em "sem pilar" com a conta certa e a árvore
-    vazia, o pior jeito de errar porque parece funcionar.
-    """
-    return _PREFIXO_NUMERICO.sub("", texto)
+#: O NOME ANTIGO DA MESMA FUNÇÃO, que agora mora no domínio dos níveis.
+#:
+#: Fica como alias porque três testes e `causa_da_lente` o importam deste
+#: módulo, e renomear chamador não é o assunto da `0098`. É a mesma função, não
+#: uma cópia — `sem_prefixo is sem_numeracao`.
+sem_prefixo = sem_numeracao
 
 
 class Taxonomia:

@@ -728,11 +728,28 @@ def _por_taxonomia(
     """O corte do mês pelo N2 (tema estratégico) ou pelo N3 (subtema) do
     cadastro, contado por sentimento.
 
-    PELO `tema_id` DA MENÇÃO, e só por ele — o mesmo caminho dos filtros
-    `tema_n2`/`tema_n3` (`condicoes_do_filtro`). Agrupar por outro caminho (o
-    texto do fornecedor, por exemplo) faria a coluna contar menções que o
-    clique nela não recorta. Menção sem vínculo fica fora, como o nulo das
-    outras abas; quanto falta vai na ficha.
+    PELO MESMO CAMINHO DO FILTRO, sempre — é esta a regra, e ela é mais forte
+    que "pelo `tema_id`". Agrupar por um caminho e recortar por outro faria a
+    coluna contar menções que o clique nela não recorta. Menção que o caminho
+    não alcança fica fora, como o nulo das outras abas; quanto falta vai na
+    ficha.
+
+    E O CAMINHO DO N2 MUDOU NA `0098`: `condicoes_do_filtro` passou a aceitar
+    `Mencao.macro_tema_id` (a chave gravada) ALÉM da derivação por `tema_id`,
+    porque o fornecedor que fala N2 não tem N3 para derivar. Então o
+    agrupamento tem de aceitar as duas também — senão o filtro alcança 30.932
+    menções e a barra conta 29.701, e as 1.231 de diferença são exatamente as
+    que só têm N2.
+
+    `coalesce(Mencao.macro_tema_id, Tema.macro_tema_id)`: a chave gravada
+    primeiro, a derivada depois. Elas concordam onde as duas existem — a
+    gravação deriva uma da outra (ver `temas_da_mencao.Arvore`) —, então a ordem
+    só decide quem responde quando a outra é nula.
+
+    E O `Tema` VIRA `outerjoin` NO N2, por consequência: a menção com N2 e sem
+    N3 não tem linha em `Tema`, e o join interno a descartaria antes do
+    `coalesce` ter chance. O N3 segue com join INTERNO, porque lá não há o que
+    aceitar além do `tema_id` — o filtro `tema_n3` também só usa ele.
     """
     nome = MacroTema.nome if nivel == "tema_n2" else Tema.nome
     consulta = (
@@ -744,10 +761,14 @@ def _por_taxonomia(
         )
         .select_from(Mencao)
         .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
-        .join(Tema, Tema.id == Mencao.tema_id)
     )
     if nivel == "tema_n2":
-        consulta = consulta.join(MacroTema, MacroTema.id == Tema.macro_tema_id)
+        consulta = consulta.outerjoin(Tema, Tema.id == Mencao.tema_id).join(
+            MacroTema,
+            MacroTema.id == func.coalesce(Mencao.macro_tema_id, Tema.macro_tema_id),
+        )
+    else:
+        consulta = consulta.join(Tema, Tema.id == Mencao.tema_id)
     consulta = (
         consulta.where(
             ScoreFonte.lente_id == lente_id,
@@ -794,16 +815,26 @@ def _presenca_da_taxonomia(
     O `count()` SEM COLUNA depois de joins internos já é "quantas menções a aba
     alcança": o join é o filtro. E `distintas` conta o nível certo — macro tema
     no N2, tema no N3 —, não `tema_id` nos dois.
+
+    OS JOINS SÃO OS MESMOS DE `_por_taxonomia`, E TÊM DE SER: esta função existe
+    para dizer quanto AQUELA aba alcança. Depois da `0098` o N2 entra também por
+    `Mencao.macro_tema_id`, então aqui entra igual — senão a ficha diria "vem em
+    29.701 menções" sobre barras que somam 30.932, e seria ela mentindo, que é
+    exatamente o que este docstring diz que ela existe para impedir.
     """
     alvo = MacroTema.id if nivel == "tema_n2" else Tema.id
     consulta = (
         select(func.count(), func.count(alvo.distinct()))
         .select_from(Mencao)
         .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
-        .join(Tema, Tema.id == Mencao.tema_id)
     )
     if nivel == "tema_n2":
-        consulta = consulta.join(MacroTema, MacroTema.id == Tema.macro_tema_id)
+        consulta = consulta.outerjoin(Tema, Tema.id == Mencao.tema_id).join(
+            MacroTema,
+            MacroTema.id == func.coalesce(Mencao.macro_tema_id, Tema.macro_tema_id),
+        )
+    else:
+        consulta = consulta.join(Tema, Tema.id == Mencao.tema_id)
     consulta = consulta.where(
         ScoreFonte.lente_id == lente_id,
         Mencao.mes == primeiro_dia(mes),
