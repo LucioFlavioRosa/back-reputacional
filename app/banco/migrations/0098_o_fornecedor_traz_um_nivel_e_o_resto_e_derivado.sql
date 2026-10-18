@@ -1,0 +1,139 @@
+-- O FORNECEDOR TRAZ UM NÍVEL DA ÁRVORE; O RESTO É DERIVADO DO CADASTRO.
+--
+-- Decisão do dono do produto, 18/10/2026, nas palavras dele: "o fornecedor vai
+-- trazer o N1 ou N2 ou N3; se trazer N3, N2 e N1 serão derivados do cadastro;
+-- se trazer N2, o N1 vai ser derivado do cadastro".
+--
+-- `mencao` tinha UM nível só: `tema_id`, o N3. O N2 e o N1 eram alcançados por
+-- `join` a partir dele (`tema -> macro_tema -> bloco_tema`), o que funciona para
+-- a menção que TEM N3 e deixa sem nível NENHUM a que o fornecedor descreveu só
+-- no topo. Esta migration dá ao núcleo as outras duas chaves, para que toda
+-- menção — de qualquer fornecedor, em qualquer nível — possa ser filtrada e
+-- somada junto com as outras.
+--
+-- == A MEDIÇÃO QUE DESTRAVOU ISSO (base local, 104.670 menções, 18/10/2026) ==
+--
+-- `test_niveis_do_fornecedor.py` guardava a pergunta com a frase certa: "se este
+-- teste quebrar, há uma decisão a tomar, não um número a atualizar". A decisão
+-- estava travada porque a `0079` mediu, na consolidada da Bites, o `Atributo`
+-- CONTRADIZENDO o `N1` em 1.418 das 2.842 linhas — metade. A `0069` então tirou
+-- `atributo` do mapeamento da Bites, e a Clipei ficou como "exceção pendente".
+--
+-- O QUE FALTAVA ERA MEDIR A CLIPEI, e o resultado é o oposto do da Bites:
+--
+--     onde a menção tem OS DOIS N1 (o derivado do N3 e o do `Atributo`)
+--         clipei                27.315 concordam,  2 discordam    99,993%
+--         clipei_investidores      330 concordam,  0 discordam
+--
+--     onde tem SÓ o N1 do fornecedor (o N3 dela não casa no cadastro)
+--         clipei                72.590 menções
+--         clipei_investidores     1.338 menções
+--
+-- O `Atributo` da Clipei não é um segundo N1 que contradiz o derivado: é o
+-- ÚNICO N1 de 73.928 menções, 71% da base. A Clipei não fala o vocabulário do
+-- N3 (71 dos 326 assuntos distintos dela casam no cadastro); a Bites fala (92
+-- de 92) e por isso não precisa declarar N1. São dois fornecedores diferentes,
+-- não a mesma decisão duas vezes.
+--
+-- O DEFEITO DA 0079 CONTINUA IMPOSSÍVEL, e agora por construção em vez de por
+-- vigilância: um nível por fornecedor entra como afirmação e os de cima saem da
+-- árvore, então dois valores do MESMO nível nunca coexistem. Onde o derivado e o
+-- declarado se encontram, o derivado ganha — o cadastro é a autoridade sobre
+-- quem é pai de quem — e o declarado não se perde, fica em `mencao.atributo`.
+--
+-- == E AS 26.603 MENÇÕES QUE UM "2. " DEIXAVA DE FORA ==
+--
+-- `mencao.atributo` tem 15 grafias para os 7 N1 do cadastro, porque metade do
+-- volume vem numerada pelo export:
+--
+--     Eficiência Operacional e Qualidade      47.872   casa no cadastro
+--     2. Eficiência Operacional e Qualidade   11.591   NÃO casa
+--     Governança                               4.799   casa
+--     1. Governança                            4.602   NÃO casa
+--                                             (mais 5 pares)
+--
+-- É a mesma falha de classe da `0097` — duas grafias do mesmo nome coexistindo,
+-- uma barra virando duas em todo gráfico e todo filtro —, no eixo do N1 e com
+-- 100 mil linhas atrás. Tirando o prefixo, 100.331 das 101.245 casam (99,1%).
+-- As 914 que sobram são `Marca empregadora` (733) e `Outros` (181): não são
+-- grafia errada de um N1, são valores que o cadastro não tem. Ficam sem N1, que
+-- é o certo — inventar um pilar para elas seria afirmar o que ninguém afirmou.
+--
+-- == POR QUE O BACKFILL NÃO ESTÁ NESTE ARQUIVO ==
+--
+-- Porque ele precisaria reimplementar em SQL DUAS regras que já existem em
+-- Python: o `normalizar` (NFKD -> ascii -> colapsa -> trim -> lower) e a
+-- precedência de seis passos entre os níveis. A `0097` tentou exatamente isso
+-- com a primeira e o preço está medido no cabeçalho dela: a versão SQL divergia
+-- da Python em 67 de 87 valores reais, todos pelo travessão, e reintroduzia o
+-- defeito que a migration existia para consertar. Repetir o padrão sabendo o
+-- preço seria difícil de defender.
+--
+-- Então o backfill é um COMANDO, que usa a regra de verdade:
+--
+--     python -m app.comandos.ligar_mencoes_a_taxonomia
+--
+-- Ele é idempotente (só mexe em linha com os três níveis nulos), roda em lotes,
+-- e imprime quantas ligou em cada nível. AS COLUNAS NASCEM NULAS E ISSO É
+-- SEGURO: nulo já é o estado de 73% da base hoje, nenhuma leitura exige a
+-- coluna, e `consulta_profundidade` continua resolvendo o nível ao vivo como
+-- sempre fez. A ingestão mensal preenche o mês que ela sobe.
+--
+-- == ESTA MIGRATION É ADITIVA, E ISSO FOI MEDIDO ANTES DE ESCREVÊ-LA ==
+--
+-- O arquivo só faz `add column if not exists` (nulável) e dois `create index`
+-- com nome novo. Não apaga, não altera coluna existente, não toca uma linha de
+-- dado. Aplicá-la não muda NADA do que funciona hoje.
+--
+-- MAS A MUDANÇA DE CÓDIGO QUE VEM COM ELA PODIA MUDAR, e esse era o risco real:
+-- a resolução do `tema_id` passou de `normalizar(tema_texto)` para
+-- `normalizar(sem_numeracao(tema_texto))`, e para um nome COM prefixo numerado
+-- as duas dão chaves diferentes — `tema_id` de 26.987 menções podia trocar de
+-- dono sem ninguém pedir. Medido na base local antes de gravar:
+--
+--     350 `tema_texto` distintos na base ....... 0 mudam de chave
+--     104 N3 ativos do cadastro ................ 0 mudam de chave
+--     104.670 menções .......................... 0 teriam `tema_id` diferente
+--                                                (0 ganhariam, 0 perderiam)
+--
+-- `test_niveis_da_mencao.py::test_o_tema_id_de_hoje_nao_muda_com_a_regra_nova`
+-- prende a metade que o schema não garante: que nenhum nome do CADASTRO comece
+-- com número. No dia em que alguém cadastrar "7. Qualquer Coisa", as duas regras
+-- divergem e o teste falha — antes de a subida seguinte remapear em silêncio.
+--
+-- O OUTRO PASSO NOVO — procurar o `subtema` como N3 — também não alcança nada
+-- gravado: `subtema` é mapeado por uma fonte só (`approach_sl`, migration 0091)
+-- e a Approach nunca foi carregada. Medido: nulo em 104.670 de 104.670 linhas.
+-- Ele só tem efeito na primeira subida daquela fonte.
+--
+-- NENHUM GRANT NOVO: permissão no Postgres é por tabela, não por coluna, e
+-- `mencao` já tem os de `painel_app`. (A armadilha de tabela nova nascer sem
+-- `delete` — ver `0055` — não se aplica a `alter table add column`.)
+
+begin;
+
+alter table mencao add column if not exists bloco_tema_id smallint
+  references bloco_tema (id);
+alter table mencao add column if not exists macro_tema_id smallint
+  references macro_tema (id);
+
+-- SEM `on delete`, como `tema_id` já era: apagar um nível da taxonomia com
+-- menção pendurada tem de FALHAR, e não virar nulo calado nem levar a menção. A
+-- menção é fato do mês; a taxonomia é cadastro, e reorganizá-la é trabalho com
+-- decisão — `SET NULL` aqui desligaria 100 mil linhas de um recorte sem avisar
+-- ninguém. (É o oposto de `instituicao_id`, que É `SET NULL` de propósito: lá o
+-- vínculo é enriquecimento e o veículo é fato do mundo.)
+
+-- OS DOIS ÍNDICES NO FORMATO DOS VIZINHOS: `(mes, nivel)` parcial, como
+-- `mencao_por_atributo` e `mencao_por_unidade` — todo recorte da lente filtra
+-- por mês primeiro, e a coluna é nula na maioria das linhas até o backfill.
+--
+-- NOMES NOVOS, e conferidos contra os 14 índices que `mencao` já tem: um
+-- `create ... if not exists` com nome já usado é NO-OP SILENCIOSO, e foi assim
+-- que a `0052` pediu um índice que nunca nasceu.
+create index if not exists mencao_por_pilar
+  on mencao (mes, bloco_tema_id) where bloco_tema_id is not null;
+create index if not exists mencao_por_tema_estrategico
+  on mencao (mes, macro_tema_id) where macro_tema_id is not null;
+
+commit;

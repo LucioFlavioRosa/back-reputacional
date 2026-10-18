@@ -805,10 +805,14 @@ def regravar(
     #: os DOIS caminhos de escrita, inclusive a `carga_do_pacote_das_lentes`,
     #: que monta a `Leitura` à mão e chama esta função direto.
     #:
-    #: UMA CONSULTA por gravação, e são 104 temas: o conjunto cabe na memória e
-    #: a comparação é O(1). Perguntar ao banco por linha faria da subida de
-    #: 25.597 linhas um problema de rede.
-    de_temas = temas_da_mencao.por_nome(sessao)
+    #: UMA CONSULTA POR NÍVEL por gravação, e são 7 N1 + 41 N2 + 104 N3: o
+    #: conjunto cabe na memória e a comparação é O(1). Perguntar ao banco por
+    #: linha faria da subida de 25.597 linhas um problema de rede.
+    #:
+    #: A ÁRVORE INTEIRA, e não só o mapa do N3 (`por_nome`), desde a `0098`: o
+    #: fornecedor traz um nível e os de cima são derivados daqui. Ver
+    #: `dominio/niveis_de_taxonomia.py`.
+    arvore_de_temas = temas_da_mencao.arvore(sessao)
     #: OS MESES DO ARQUIVO para quem recorta por lista — ver
     #: `Leitura.meses_a_substituir`. Apagar por `meses` deixaria o mês sem
     #: veículo da lista com o que o critério anterior gravou.
@@ -834,6 +838,24 @@ def regravar(
     #: de volta (esta função não devolve nada, e quem conta usa a `leitura`).
     #: O `id` continua vindo do default da coluna, aplicado pelo próprio
     #: `insert()`.
+    #: ONDE O CADASTRO PÕE CADA MENÇÃO, resolvido ANTES de montar os valores.
+    #:
+    #: Um passo à parte porque `resolver` devolve os TRÊS níveis de uma vez, e
+    #: chamá-lo três vezes dentro do dicionário resolveria a árvore três vezes
+    #: por linha — 75 mil buscas a mais numa subida de 25 mil linhas, com a
+    #: chance de as três discordarem se alguém mexer numa só.
+    #: OS MESMOS QUATRO CAMPOS QUE A LEITURA USA (`consulta_profundidade`), e
+    #: na mesma ordem de precedência — é o que torna a coluna gravada igual ao
+    #: que a tela calcula ao vivo. `tema_id` não entra porque é o que estamos
+    #: resolvendo: na subida mensal ninguém conferiu nível nenhum ainda.
+    niveis_por_linha = [
+        arvore_de_temas.resolver(
+            tema_texto=mencao.tema_texto,
+            subtema=mencao.subtema,
+            atributo=mencao.atributo,
+        )
+        for mencao in leitura.mencoes
+    ]
     valores = [
         {
             "fonte_id": fonte.id,
@@ -851,11 +873,17 @@ def regravar(
             # começou com 39. A cada subida com criação a cobertura sobe.
             "instituicao_id": de_cadastro.get(normalizar(mencao.veiculo or "")),
             # O ASSUNTO DO CADASTRO, quando o nome casa. Nulo é o normal
-            # enquanto o fornecedor não fala o vocabulário do N3 — e é o que a
-            # conferência mostra antes de gravar. Com o vínculo, o dossiê filtra
-            # por Pilar (N1), Tema estratégico (N2) e Subtema (N3) sem o
-            # fornecedor mandar nada além do N3.
-            "tema_id": de_temas.get(normalizar(mencao.tema_texto or "")),
+            # enquanto o fornecedor não fala o vocabulário do nível — e é o que
+            # a conferência mostra antes de gravar. Com o vínculo, o dossiê
+            # filtra por Pilar (N1), Tema estratégico (N2) e Subtema (N3).
+            #
+            # OS TRÊS GRAVADOS, e não só o N3 com o resto por `join`: o
+            # fornecedor que descreve a menção só no topo (a Clipei, em 71% do
+            # volume) tem N1 e não tem N3, e um `join` a partir de `tema_id`
+            # nunca o alcançaria. Ver a `0098`.
+            "bloco_tema_id": niveis.n1_id,
+            "macro_tema_id": niveis.n2_id,
+            "tema_id": niveis.n3_id,
             "tema_texto": mencao.tema_texto,
             "unidade_texto": mencao.unidade_texto,
             "teor": mencao.teor,
@@ -872,7 +900,11 @@ def regravar(
             "link": mencao.link,
             "peso_tier": mencao.peso_tier,
         }
-        for mencao in leitura.mencoes
+        #: `zip` com `strict=True`: as duas listas saem da MESMA `leitura.mencoes`
+        #: e têm de ter o mesmo tamanho. Se um dia alguém filtrar uma e não a
+        #: outra, isto estoura aqui em vez de deslocar os níveis em uma linha e
+        #: gravar 25 mil menções com o pilar da vizinha.
+        for mencao, niveis in zip(leitura.mencoes, niveis_por_linha, strict=True)
     ]
     #: PLANILHA VAZIA NÃO VIRA `insert` VAZIO: o SQLAlchemy recusaria a lista
     #: sem linhas, e mês sem menção é caso legítimo — é o que acontece quando o
