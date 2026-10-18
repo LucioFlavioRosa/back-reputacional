@@ -8,6 +8,23 @@ usuário encontrar o registro digitando sem acento, sem custo adicional: o
 Se a carga e a busca normalizassem de formas diferentes, a busca deixaria de
 encontrar exatamente os nomes que a carga uniu — por isso mora aqui, e não
 duplicada nos dois lados.
+
+E ESTAVA DUPLICADA ASSIM MESMO, com regra diferente, até 17/10/2026.
+`api/stakeholders.py` tinha o seu próprio `_normalizar` e **não colapsava
+espaço interno**: a mesma instituição criada pelo FORMULÁRIO com espaço duplo
+gerava `nome_normalizado` diferente do que a PLANILHA geraria, e entrava como
+segunda instituição — exatamente a duplicata que aquela função dizia existir
+para impedir. Ninguém tinha digitado espaço duplo ainda (medido: zero linhas
+divergentes em 4.419 cadastros), então o defeito era latente.
+
+AS TRÊS CHAVES QUE SAEM DE UM NOME moram aqui, e as três são diferentes DE
+PROPÓSITO. Quem precisar de uma quarta acrescenta nesta lista, e não no módulo
+onde está trabalhando — é o que `test_a_chave_do_nome_sai_de_um_lugar_so.py`
+exige:
+
+    normalizar             a chave de GRAVAÇÃO (unicidade do cadastro)
+    achatar_para_comparar  a chave de SEMELHANÇA (busca, fila de duplicados)
+    codigo_estavel         o CÓDIGO de um item de dicionário (chave de API)
 """
 
 from __future__ import annotations
@@ -51,6 +68,41 @@ def achatar_para_comparar(nome: str) -> str:
     `perfil_rede`+`veiculo`. Ela fabricava exatamente o que a fila perguntava.
     """
     return _SO_ALFANUMERICO.sub("", normalizar(nome))
+
+
+_NAO_ALFANUMERICO = re.compile(r"[^a-z0-9]+")
+
+
+def codigo_estavel(nome: str) -> str:
+    """O `codigo` de um item de dicionário: `Muito relevante` → `muito_relevante`.
+
+    É A TERCEIRA CHAVE, e a diferença das outras duas é o que ela serve: este
+    código vai para a URL, para o SQL e para o front, e por isso só pode ter
+    `[a-z0-9_]` — um acento ou um espaço ali quebraria o caminho.
+
+    NÃO É `achatar_para_comparar`, que REMOVE o que não é alfanumérico
+    (`valor_economico` viraria `valoreconomico` e perderia a legibilidade do
+    código); aqui o que não é alfanumérico vira `_`, um por corrida.
+
+    MORAVA EM `api/dicionarios.py` como `_codigo`, repetindo a linha de NFKD de
+    `normalizar`. Está aqui pelo mesmo motivo que as outras duas: chave derivada
+    de nome é regra, e regra que mora em dois lugares divergente em um deles.
+
+    E NÃO É IDÊNTICA À `_codigo` ANTIGA, ao contrário do que eu afirmei quando
+    a mudei de casa. A antiga fazia `lower()` ANTES de decompor, e por isso a
+    letra ASCII MAIÚSCULA que o NFKD produz (`№` → `No`, `™` → `TM`) era vista
+    como não alfanumérica e trocada por `_`: `№` dava `o`, `™` dava string
+    vazia. Aqui dão `no` e `tm`. São cinco entradas conhecidas, estão em
+    `test_a_chave_do_nome_sai_de_um_lugar_so.py`, e a nova é melhor em todas.
+
+    SÓ RODA NA CRIAÇÃO de um item (`api/dicionarios.acrescentar`): o código é
+    gravado uma vez e nunca recalculado. DE 256 ITENS GRAVADOS, 91 TÊM CÓDIGO
+    QUE ESTA FUNÇÃO NÃO PRODUZ — são as sementes, escritas à mão e mais curtas
+    (`relacoes_investidores`, não `relacoes_com_investidores`), e em `clima` de
+    propósito outra palavra (`Positivo` → `propositivo`). Quem for "padronizar"
+    recalculando os códigos troca o endereço de 91 itens que o front referencia.
+    """
+    return _NAO_ALFANUMERICO.sub("_", normalizar(nome)).strip("_")
 
 
 #: QUÃO PARECIDAS DUAS CHAVES PRECISAM SER PARA ALGUÉM SER PERGUNTADO.

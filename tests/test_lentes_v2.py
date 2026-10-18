@@ -26,6 +26,7 @@ from app.banco.tabelas_lentes import (
     JornalistaMatriz,
 )
 from app.dominio.ingestao_score import Mapeamento, MencaoLida, ler_linha
+from app.dominio.texto import normalizar
 from tests.test_e2e_postgres import URL
 
 _engine = create_engine(URL, pool_pre_ping=True)
@@ -828,7 +829,8 @@ def _agenda_do_crm(sessao, *, instituicao: str, sensivel: bool, mes: str = "2026
     )
     orgao = Instituicao(
         nome=instituicao,
-        nome_normalizado=instituicao.lower(),
+        #: `normalizar`, e não `.lower()`: a mesma chave que a gravação grava.
+        nome_normalizado=normalizar(instituicao),
         tipo="entidade",
         uf="SP",
     )

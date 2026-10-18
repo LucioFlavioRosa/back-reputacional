@@ -27,6 +27,7 @@ from app.banco.tabelas_interacoes import InteracaoRegistro
 from app.banco.tabelas_stakeholders import Instituicao
 from app.dominio.frentes import FORMATO_PADRAO_DA_FRENTE, Frente
 from app.dominio.interacao import Interacao
+from app.dominio.texto import normalizar
 
 # Reaproveita o banco de teste que `test_e2e_postgres` cria e migra.
 from tests.test_e2e_postgres import URL
@@ -63,7 +64,12 @@ def autor(sessao):
 
 
 def _instituicao(sessao, nome: str, tipo: str, tier: int | None = None) -> Instituicao:
-    registro = Instituicao(nome=nome, nome_normalizado=nome.lower(), tipo=tipo, tier=tier)
+    #: `normalizar`, E NÃO `nome.lower()`: a fixture tem de gravar a MESMA
+    #: chave que a gravação de verdade grava, senão o teste exercita um
+    #: registro que produção não produz.
+    registro = Instituicao(
+        nome=nome, nome_normalizado=normalizar(nome), tipo=tipo, tier=tier
+    )
     sessao.add(registro)
     sessao.flush()
     return registro

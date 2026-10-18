@@ -25,8 +25,6 @@ dicionário do registro está em exatamente um desses grupos.
 
 from __future__ import annotations
 
-import re
-import unicodedata
 from typing import Any
 
 from fastapi import APIRouter, Depends, status
@@ -53,6 +51,7 @@ from app.banco.tabelas_catalogo import (
     UnidadeNegocio,
 )
 from app.dominio.erros import NaoEncontrado, RegraViolada
+from app.dominio.texto import codigo_estavel
 
 rotas = APIRouter(
     prefix="/api/dicionarios",
@@ -223,11 +222,8 @@ def _tabela_aberta(nome: str) -> type:
     return tabela
 
 
-def _codigo(nome: str) -> str:
-    """`codigo` estável a partir do nome: sem acento, minúsculo, `_` no lugar
-    do resto. É o que o front e o SQL usam para se referir ao valor."""
-    base = unicodedata.normalize("NFKD", nome.strip().lower()).encode("ascii", "ignore").decode()
-    return re.sub(r"[^a-z0-9]+", "_", base).strip("_")
+#: O codigo estavel sai de dominio/texto.codigo_estavel -- a terceira das
+#: tres chaves que o produto deriva de um nome, e todas moram la.
 
 
 @rotas.post("/{nome}", response_model=ItemSaida, status_code=status.HTTP_201_CREATED)
@@ -251,7 +247,7 @@ def acrescentar(
         "ordem": (sessao.scalar(select(func.max(tabela.ordem))) or 0) + 1,
     }
     if hasattr(tabela, "codigo"):
-        codigo = _codigo(valor)
+        codigo = codigo_estavel(valor)
         if sessao.scalar(select(tabela).where(tabela.codigo == codigo)) is not None:
             raise RegraViolada(f"Já existe um valor com o código {codigo!r} em {ROTULOS[nome]}.")
         campos["codigo"] = codigo
