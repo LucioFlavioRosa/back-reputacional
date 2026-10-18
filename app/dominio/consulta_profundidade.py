@@ -208,12 +208,33 @@ class MencaoDaConsulta:
     subtema: str | None = None
     atributo: str | None = None
     veiculo: str | None = None
+    #: A concessionária COMO O FORNECEDOR A ESCREVEU.
     unidade_texto: str | None = None
+    #: E COMO O CADASTRO A CHAMA, quando ele a resolve (`0099`). Nulo nas
+    #: 28.549 menções que o cadastro não resolve — as ambíguas ("Águas do Rio",
+    #: que são dois blocos) e as que nomeiam operação que ele não tem.
+    unidade_cadastrada: str | None = None
     uf: str | None = None
     autor: str | None = None
     titulo_texto: str | None = None
     link: str | None = None
     id_fonte: str | None = None
+
+    @property
+    def concessionaria(self) -> str | None:
+        """O nome por que o drill agrupa: o do cadastro, e o do fornecedor como
+        reserva.
+
+        É O MESMO `coalesce` DA LEITURA DAS LENTES (`repositorio_score.
+        CONCESSIONARIA`), aqui em Python porque este drill agrupa em Python. Sem
+        ele a Corsan vira DUAS fatias nesta tela — "Corsan" e a razão social
+        dela — enquanto o seletor das lentes já mostra uma. Duas telas
+        discordando sobre quantas empresas existem.
+
+        PROPRIEDADE, E NÃO CAMPO: os dois nomes ficam guardados, e quem precisar
+        do texto cru do fornecedor (a auditoria da carga) continua tendo.
+        """
+        return self.unidade_cadastrada or self.unidade_texto
 
 
 @dataclass(frozen=True, slots=True)
@@ -842,7 +863,7 @@ class _Contexto:
             "jornalista": (mencao.autor or "") if self.ve_diretorio else "",
             "tier": tier,
             "sentimento": SENTIMENTO_DA_TELA.get(mencao.sentimento, "neutro"),
-            "concessionaria": mencao.unidade_texto or NAO_INFORMADA,
+            "concessionaria": mencao.concessionaria or NAO_INFORMADA,
             "uf": mencao.uf or NAO_INFORMADA,
             "titulo": mencao.titulo_texto or SEM_TITULO,
             "trecho": "",
@@ -952,7 +973,9 @@ def _nivel3(ctx: _Contexto, caminho: tuple[str, str], tema_no: No, tema_saida: d
     pesos = REGUAS_DE_TIER[ctx.calibracao.regua_tier]
 
     # -- concessionárias: o par (concessionária, UF), topo 4 + Outras.
-    pares = _agrupar(mencoes, lambda m: (m.unidade_texto or NAO_INFORMADA, m.uf or NAO_INFORMADA))
+    pares = _agrupar(
+        mencoes, lambda m: (m.concessionaria or NAO_INFORMADA, m.uf or NAO_INFORMADA)
+    )
     linhas_conc = _topo_com_outras(
         pares,
         d,
@@ -1122,7 +1145,7 @@ def _nivel2(ctx: _Contexto, pilar: str, pilar_no: No, pilar_saida: dict) -> dict
     d = ctx.denominador
     tema_imp = destaque["impacto"]
 
-    por_conc = _agrupar(tema_no.mencoes, lambda m: m.unidade_texto or NAO_INFORMADA)
+    por_conc = _agrupar(tema_no.mencoes, lambda m: m.concessionaria or NAO_INFORMADA)
     por_uf = _agrupar(tema_no.mencoes, lambda m: m.uf or NAO_INFORMADA)
     concessionarias = _topo_com_outras(por_conc, d, tema_imp, OUTRAS, lambda k: {"nome": k})
     ufs = _topo_com_outras(por_uf, d, tema_imp, OUTRAS_UFS, lambda k: {"nome": k})

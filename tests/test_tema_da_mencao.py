@@ -223,7 +223,7 @@ def test_a_conferencia_mostra_o_que_NAO_CASOU_antes_de_gravar(sessao, bites, um_
         ]
     )
 
-    _previsao, _veiculos, assuntos = ingerir_mencoes.conferir(sessao, bites, conteudo)
+    _previsao, _veiculos, assuntos, _unidades = ingerir_mencoes.conferir(sessao, bites, conteudo)
 
     assert assuntos.ligadas == 1
     assert assuntos.sem_assunto == 1
@@ -240,7 +240,7 @@ def test_a_conferencia_separa_o_tema_DESATIVADO_do_nome_errado(sessao, bites):
     desativado = sessao.scalar(select(Tema).where(Tema.ativo.is_(False)).limit(1))
     conteudo = _planilha(bites, [_linha(desativado.nome, 3), _linha("Nome errado zz4", 4)])
 
-    _previsao, _veiculos, assuntos = ingerir_mencoes.conferir(sessao, bites, conteudo)
+    _previsao, _veiculos, assuntos, _unidades = ingerir_mencoes.conferir(sessao, bites, conteudo)
 
     por_nome = {i.nome: i for i in assuntos.nao_ligados}
     assert por_nome[desativado.nome].desativado is True
@@ -253,7 +253,7 @@ def test_a_lista_do_que_nao_casou_vem_ORDENADA_POR_VOLUME(sessao, bites):
         [_linha("Pouco zz5", 3)] + [_linha("Muito zz5", 4) for _ in range(3)]
     )
 
-    _previsao, _veiculos, assuntos = ingerir_mencoes.conferir(sessao, bites, conteudo)
+    _previsao, _veiculos, assuntos, _unidades = ingerir_mencoes.conferir(sessao, bites, conteudo)
 
     #: O nome errado que aparece 300 vezes importa mais que o que aparece uma.
     assert [i.nome for i in assuntos.nao_ligados] == ["Muito zz5", "Pouco zz5"]
@@ -278,7 +278,7 @@ def test_a_conferencia_NAO_CONTA_a_linha_que_a_subida_descarta(sessao, bites, um
         ]
     )
 
-    _previsao, _veiculos, assuntos = ingerir_mencoes.conferir(sessao, bites, conteudo)
+    _previsao, _veiculos, assuntos, _unidades = ingerir_mencoes.conferir(sessao, bites, conteudo)
 
     assert assuntos.ligadas == 1
 

@@ -228,7 +228,7 @@ def test_a_conferencia_MOSTRA_O_CARGO_antes_de_criar(sessao, bites):
     #: Vereador", e não só o nome: é o cargo que decide onde ele entra.
     conteudo = _planilha_com_cargo([("Iriel Sachet zz12", "Vereadora")])
 
-    _previsao, veiculos, _assuntos = ingerir_mencoes.conferir(sessao, bites, conteudo)
+    _previsao, veiculos, _assuntos, _unidades = ingerir_mencoes.conferir(sessao, bites, conteudo)
 
     assert veiculos.novos[0].cargo == "vereador"
 
@@ -277,7 +277,7 @@ def test_a_conferencia_nao_oferece_criar_quem_JA_EXISTE_em_outro_tipo(sessao, bi
     )
     sessao.flush()
 
-    _previsao, veiculos, _assuntos = ingerir_mencoes.conferir(
+    _previsao, veiculos, _assuntos, _unidades = ingerir_mencoes.conferir(
         sessao, bites, _planilha(["InfoMoney zz21"])
     )
 
@@ -391,7 +391,7 @@ def test_o_perfil_JA_CADASTRADO_e_reconhecido_e_nao_recriado(sessao, bites):
         sessao, bites, conteudo, veiculos_a_criar=("deolhoemesteio zz4",)
     )
 
-    previsao, veiculos, _assuntos = ingerir_mencoes.conferir(sessao, bites, conteudo)
+    previsao, veiculos, _assuntos, _unidades = ingerir_mencoes.conferir(sessao, bites, conteudo)
 
     assert [novo.nome for novo in veiculos.novos] == []
     assert normalizar("deolhoemesteio zz4") in veiculos.cadastrados
@@ -415,7 +415,7 @@ def test_sem_autorizacao_nada_nasce(sessao, bites):
 def test_a_conferencia_lista_os_perfis_que_nasceriam(sessao, bites):
     conteudo = _planilha(["um zz6", "outro zz6", "um zz6"])
 
-    _previsao, veiculos, _assuntos = ingerir_mencoes.conferir(sessao, bites, conteudo)
+    _previsao, veiculos, _assuntos, _unidades = ingerir_mencoes.conferir(sessao, bites, conteudo)
 
     por_nome = {novo.nome: novo for novo in veiculos.novos}
     assert por_nome["um zz6"].mencoes == 2

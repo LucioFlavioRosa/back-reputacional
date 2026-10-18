@@ -1128,6 +1128,24 @@ class AssuntoNaoReconhecidoSaida(BaseModel):
     desativado: bool
 
 
+class ConcessionariaNaoReconhecidaSaida(BaseModel):
+    """Uma concessionária que a planilha traz e o cadastro não resolve."""
+
+    #: O texto como o fornecedor o escreveu — é o que se procura na planilha.
+    nome: str
+    #: Quantas linhas a citam. A lista ordena por aqui.
+    mencoes: int
+    #: AS UNIDADES DO CADASTRO QUE ESTE NOME PODE SER, quando são mais de uma.
+    #:
+    #: LISTA CHEIA E LISTA VAZIA SÃO PROBLEMAS DIFERENTES, e é por isso que o
+    #: campo existe em vez de um booleano. Cheia: o nome está CERTO e mesmo
+    #: assim não liga — "Águas do Pará" são quatro blocos no cadastro, e o
+    #: conserto é o fornecedor informar qual (ou alguém declarar o apelido).
+    #: Vazia: o cadastro não tem nada parecido, e o conserto é cadastrar a
+    #: unidade — ou aceitar que aquela operação não é da Aegea.
+    opcoes: list[str] = []
+
+
 class ConferenciaSaida(BaseModel):
     """O que a subida FARIA, antes de gravar.
 
@@ -1156,6 +1174,19 @@ class ConferenciaSaida(BaseModel):
     #: pessoa leva para o fornecedor — ou para o cadastro, quando o tema existe
     #: e está desativado.
     assuntos_nao_reconhecidos: list[AssuntoNaoReconhecidoSaida] = []
+    #: Quantas linhas achariam concessionária no cadastro central.
+    #:
+    #: POR QUE ESTE NÚMERO APARECE AQUI. É a mesma razão dos assuntos, e tem um
+    #: segundo lado: sem o vínculo, a dimensão "Concessionária" agrupa pelo
+    #: texto do fornecedor, e a mesma operação em duas grafias vira duas barras
+    #: no gráfico — a Corsan chega como "Corsan" e como "Companhia Riograndense
+    #: de Saneamento (Corsan)". Ver a `0099`.
+    mencoes_com_concessionaria: int = 0
+    #: Quantas vieram SEM concessionária. Hoje são 37 em 104.670 — mas o número
+    #: aparece porque um export que a perca não deve passar em silêncio.
+    mencoes_sem_concessionaria: int = 0
+    #: OS NOMES QUE O CADASTRO NÃO RESOLVE, por volume.
+    concessionarias_nao_reconhecidas: list[ConcessionariaNaoReconhecidaSaida] = []
     #: O ARQUIVO JÁ ESTÁ GUARDADO, e a confirmação pode mandar este id em vez
     #: dos bytes de novo. Nulo quando o ambiente não tem armazenamento — e aí a
     #: tela manda o arquivo, como sempre fez. Ver `casos_de_uso/planilha_do_score`.
@@ -1365,7 +1396,9 @@ def conferir_planilha(
         raise NaoEncontrado("Fonte não encontrada.")
 
     conteudo = arquivo.file.read()
-    previsao, reconhecimento, assuntos = ingerir_mencoes.conferir(sessao, fonte, conteudo)
+    previsao, reconhecimento, assuntos, concessionarias = ingerir_mencoes.conferir(
+        sessao, fonte, conteudo
+    )
     guardada = planilha_do_score.guardar(
         sessao,
         fonte=fonte,
@@ -1377,11 +1410,13 @@ def conferir_planilha(
     #: transação deixaria a linha dela ressuscitada apontando para o vazio se
     #: algo voltasse atrás. Ver `planilha_do_score.Guardada`.
     tarefas.add_task(planilha_do_score.apagar_byte, guardada.caminho_substituido)
-    return _saida_da_conferencia(guardada.id, previsao, reconhecimento, assuntos)
+    return _saida_da_conferencia(
+        guardada.id, previsao, reconhecimento, assuntos, concessionarias
+    )
 
 
 def _saida_da_conferencia(
-    planilha_id: UUID | None, previsao, reconhecimento, assuntos
+    planilha_id: UUID | None, previsao, reconhecimento, assuntos, concessionarias
 ) -> ConferenciaSaida:
     """A resposta da conferência, montada num lugar só.
 
@@ -1422,6 +1457,17 @@ def _saida_da_conferencia(
             #: centenas. Quem corrige a planilha ataca por volume, e a lista
             #: ordenada já põe o que importa no topo.
             for item in assuntos.nao_ligados[:30]
+        ],
+        mencoes_com_concessionaria=concessionarias.ligadas,
+        mencoes_sem_concessionaria=concessionarias.sem_unidade,
+        concessionarias_nao_reconhecidas=[
+            ConcessionariaNaoReconhecidaSaida(
+                nome=item.nome, mencoes=item.mencoes, opcoes=list(item.opcoes)
+            )
+            #: OS TRINTA MAIORES, pelo mesmo motivo dos assuntos: a base inteira
+            #: tem 65 grafias distintas de concessionária, e quem corrige ataca
+            #: por volume.
+            for item in concessionarias.nao_ligados[:30]
         ],
     )
 
@@ -1588,7 +1634,7 @@ def conferir_planilha_em_partes(
             partes=partes,
         )
         ingerir_mencoes.recusar_o_que_nao_entra(fonte, conteudo)
-        previsao, reconhecimento, assuntos = ingerir_mencoes.conferir(
+        previsao, reconhecimento, assuntos, concessionarias = ingerir_mencoes.conferir(
             sessao, fonte, conteudo
         )
         planilha_do_score.concluir(subida, tamanho=len(conteudo))
@@ -1598,7 +1644,9 @@ def conferir_planilha_em_partes(
         planilha_do_score.descartar_montagem(fonte=fonte, planilha_id=planilha_id)
         raise
 
-    return _saida_da_conferencia(planilha_id, previsao, reconhecimento, assuntos)
+    return _saida_da_conferencia(
+        planilha_id, previsao, reconhecimento, assuntos, concessionarias
+    )
 
 
 @rotas.post("/fontes/{codigo}/planilha", status_code=status.HTTP_201_CREATED)

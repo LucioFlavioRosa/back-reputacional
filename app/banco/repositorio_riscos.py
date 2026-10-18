@@ -32,8 +32,10 @@ from datetime import date
 
 from sqlalchemy import Select, Text, cast, func, literal, or_, select, union_all
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.banco.filtros_sql import condicoes_de_escopo
+from app.banco.repositorio_score import CONCESSIONARIA
 from app.banco.tabelas_catalogo import (
     BlocoTema,
     Clima,
@@ -42,6 +44,7 @@ from app.banco.tabelas_catalogo import (
     RiskCluster,
     Tema,
     TemaRisco,
+    UnidadeNegocio,
 )
 from app.banco.tabelas_interacoes import InteracaoRegistro, InteracaoTema
 from app.banco.tabelas_score import Lente, Mencao, ScoreFonte
@@ -223,7 +226,11 @@ def mencoes_de_incidente(filtro: FiltroDeRisco, riscos: list[int] | None) -> Sel
             #: Cada fonte preenche as suas: tier e público-alvo na imprensa,
             #: cargo e autor nas redes, praça e concessionária nas duas.
             Mencao.uf.label("uf"),
-            Mencao.unidade_texto.label("unidade_texto"),
+            #: A CONCESSIONÁRIA PELO NOME DO CADASTRO, com o texto do
+            #: fornecedor como reserva (`0099`). Sem isto a Corsan é DUAS
+            #: opções no seletor desta aba — "Corsan" e a razão social dela —,
+            #: e escolher uma recorta metade das 16.130 menções.
+            CONCESSIONARIA.label("unidade_texto"),
             Mencao.publico_alvo.label("publico_alvo"),
             Mencao.cargo.label("cargo"),
             Mencao.autor.label("autor"),
@@ -244,6 +251,10 @@ def mencoes_de_incidente(filtro: FiltroDeRisco, riscos: list[int] | None) -> Sel
         .join(Tema, Tema.id == Mencao.tema_id)
         .join(TemaRisco, TemaRisco.tema_id == Mencao.tema_id)
         .join(Risco, Risco.id == TemaRisco.risco_id)
+        #: `outerjoin` PARA `CONCESSIONARIA`: a menção que o cadastro não
+        #: resolve tem de continuar na tabela com o nome do fornecedor. Um
+        #: `join` a sumiria do incidente, que é perda de dado, não normalização.
+        .outerjoin(UnidadeNegocio, UnidadeNegocio.id == Mencao.unidade_negocio_id)
         .where(
             Mencao.sentimento == SENTIMENTO_DO_INCIDENTE,
             Risco.ativo.is_(True),
@@ -291,9 +302,9 @@ def mencoes_de_incidente(filtro: FiltroDeRisco, riscos: list[int] | None) -> Sel
     #: oferece — uma cópia da lista aqui seria a chance de oferecer uma coisa e
     #: filtrar outra. Achado de revisão.
     for chave, valor in filtro.dimensoes.items():
-        coluna = _COLUNA_DA_DIMENSAO.get(chave)
-        if coluna is not None:
-            consulta = consulta.where(getattr(Mencao, coluna) == valor)
+        condicao = condicao_da_dimensao(chave, valor)
+        if condicao is not None:
+            consulta = consulta.where(condicao)
     return consulta
 
 
@@ -1064,6 +1075,40 @@ DIMENSOES: tuple[tuple[str, str, str], ...] = (
 #: A CHAVE -> COLUNA, derivado de `DIMENSOES`: é o que garante que o filtro
 #: recorta pela MESMA coluna que a opção ofereceu.
 _COLUNA_DA_DIMENSAO: dict[str, str] = {chave: coluna for chave, _rotulo, coluna in DIMENSOES}
+
+
+def condicao_da_dimensao(chave: str, valor: str) -> ColumnElement[bool] | None:
+    """Como se recorta por uma dimensão. `None` quando a chave não existe.
+
+    POR QUE NÃO É MAIS `getattr(Mencao, coluna) == valor`. A coluna que a opção
+    OFERECE e a coluna por que o filtro RECORTA têm de ser a mesma — é um achado
+    de revisão, e `_COLUNA_DA_DIMENSAO` existe exatamente para isso. Desde a
+    `0099` a opção de concessionária não sai mais de `Mencao.unidade_texto`: ela
+    sai de `CONCESSIONARIA`, o nome do cadastro com o texto do fornecedor como
+    reserva, porque a Corsan chega em duas grafias e eram duas opções para a
+    mesma empresa.
+
+    Mantida a igualdade simples, o seletor ofereceria "Corsan" (16.130) e o
+    clique recortaria 1.111 — a mesma dessincronia que a barra do N2 teve na
+    `0098`, e que custou um segundo PR para consertar.
+
+    AS DUAS CONDIÇÕES, e não só a chave: a menção que o cadastro não resolve
+    ("Águas do Rio", 9.411) é oferecida pelo texto do fornecedor e tem de ser
+    recortada por ele.
+    """
+    coluna = _COLUNA_DA_DIMENSAO.get(chave)
+    if coluna is None:
+        return None
+    if chave == "unidade":
+        return or_(
+            Mencao.unidade_texto == valor,
+            Mencao.unidade_negocio_id.in_(
+                select(UnidadeNegocio.id)
+                .where(UnidadeNegocio.nome == valor)
+                .scalar_subquery()
+            ),
+        )
+    return getattr(Mencao, coluna) == valor
 
 #: AS DIMENSÕES QUE NOMEIAM PESSOA, e que só quem vê o diretório pode listar.
 #:

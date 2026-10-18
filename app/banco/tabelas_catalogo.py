@@ -138,6 +138,35 @@ class UnidadeNegocio(Tabela):
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class UnidadeNegocioApelido(Tabela):
+    """Como o FORNECEDOR chama uma unidade que o cadastro já tem (`0099`).
+
+    É DADO E NÃO CÓDIGO porque a lista cresce a cada fornecedor e a cada
+    reorganização societária, e um deploy por grafia seria o custo errado.
+
+    NÃO É UMA 30ª UNIDADE: "Companhia Riograndense de Saneamento (Corsan)"
+    duplicaria a Corsan no cadastro que o CRM usa e que concede alcance por
+    nome. E não é o `apelidos` do `mapeamento_colunas`, que é POR FONTE — o
+    mesmo nome chega pela `clipei` e pela `clipei_investidores` — e que
+    REESCREVE `unidade_texto`, apagando a palavra do fornecedor.
+
+    A CHAVE É `normalizar(nome)`, a mesma com que `unidade_da_mencao` procura.
+    Guardá-la já normalizada é o que torna a busca um `dict.get` em vez de uma
+    função sobre cada linha do cadastro — e é por isso que ela é a primária:
+    duas grafias que normalizam igual são a mesma entrada, não duas.
+    """
+
+    __tablename__ = "unidade_negocio_apelido"
+
+    nome_normalizado: Mapped[str] = mapped_column(Text, primary_key=True)
+    #: A grafia como o fornecedor a escreve, para a tela poder mostrar o que
+    #: foi declarado sem devolver a chave achatada a quem lê.
+    nome: Mapped[str] = mapped_column(Text)
+    unidade_negocio_id: Mapped[int] = mapped_column(
+        SmallInteger, ForeignKey("unidade_negocio.id")
+    )
+
+
 class Tema(Tabela):
     __tablename__ = "tema"
 
