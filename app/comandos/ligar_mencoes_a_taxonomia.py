@@ -34,6 +34,13 @@ custa um `index scan` e nada mais.
 EM LOTES, com `commit` por lote: são 104.670 menções na base local e o volume
 cresce todo mês. Um `update` só manteria a tabela inteira travada para a escrita
 durante a subida do mês seguinte.
+
+O QUE ELE NÃO GARANTE, e é honesto dizer: "toda menção com N3 tem N2 e N1" vale
+para o que a INGESTÃO grava, porque lá os três saem juntos do resolver. Aqui
+pode sobrar a linha com `tema_id` de tema desativado — ela conserva o `tema_id`
+(este comando não o toca, ver o `values()`) e pode ganhar um N1 pelo atributo
+sem ganhar N2. São 0 linhas hoje; se passarem de 0, o conserto é no CADASTRO
+(reativar o tema ou dar-lhe um N2), não aqui.
 """
 
 from __future__ import annotations
@@ -140,10 +147,31 @@ def executar(*, lote: int = LOTE_PADRAO, simular: bool = False) -> Counter[str]:
                     sessao.execute(
                         update(Mencao)
                         .where(Mencao.id == ident)
+                        #: SÓ AS DUAS COLUNAS NOVAS. `tema_id` NÃO É TOCADO.
+                        #:
+                        #: Era o terceiro `values()` aqui e seria perda de dado:
+                        #: a linha cujo `tema_id` aponta para um tema DESATIVADO
+                        #: (ou ativo e órfão de N2) não passa pelo passo 1 do
+                        #: resolver — `n2_do_n3` só tem ativo com N2 —, cai para
+                        #: os passos de texto e volta com `n3_id=None`. Gravar
+                        #: isso APAGARIA o `tema_id` que a linha tinha.
+                        #:
+                        #: Hoje são 0 linhas (medido: nenhuma menção aponta para
+                        #: os 45 temas que a taxonomia v4 desativou), e é
+                        #: exatamente por isso que valia consertar agora: o dia
+                        #: em que alguém desativar um tema com menção
+                        #: pendurada, este comando apagaria a ligação histórica
+                        #: dela sem nada acusar.
+                        #:
+                        #: E O BACKFILL NÃO TEM NADA A DIZER SOBRE `tema_id`:
+                        #: ele existe para ACRESCENTAR as duas chaves que a 0098
+                        #: criou. O `tema_id` já está lá, gravado pela regra
+                        #: anterior, e não tocá-lo é o que torna "a migration
+                        #: mantém tudo funcionando" uma garantia e não uma
+                        #: medição que vale só para a base de hoje.
                         .values(
                             bloco_tema_id=niveis.n1_id,
                             macro_tema_id=niveis.n2_id,
-                            tema_id=niveis.n3_id,
                         )
                     )
 
