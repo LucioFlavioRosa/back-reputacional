@@ -240,30 +240,120 @@ def test_o_recorte_por_pilar_e_superconjunto_do_antigo(sessao, fonte, arvore) ->
     propósito: é o registro do que existia, e se a condição nova deixar de ser
     superconjunto o teste diz exatamente em qual combinação.
     """
-    n1_id, n1_nome, _n2_id, _n2_nome, n3_id = arvore
-    combinacoes = [
-        {},
+    n1_id, n1_nome, _n2_id, _n2_nome, _n3_id = arvore
+
+    #: TODOS OS N3 DAQUELE PILAR, e não um escolhido — achado da revisão, e
+    #: procedente: a regra antiga era `tema_id IN (todos os N3 do pilar)`, e um
+    #: teste com um único N3 passaria mesmo que a condição nova só reconhecesse
+    #: aquele. Com os irmãos, cada um é um caso.
+    irmaos = list(
+        sessao.scalars(
+            select(Tema.id)
+            .join(MacroTema, MacroTema.id == Tema.macro_tema_id)
+            .where(MacroTema.bloco_tema_id == n1_id, Tema.ativo.is_(True))
+            .order_by(Tema.id)
+        )
+    )
+    assert irmaos, f"o pilar {n1_nome!r} não tem subtema ativo nenhum"
+
+    combinacoes: list[dict[str, object]] = [{}, {"tema_texto": n1_nome}]
+    for n3 in irmaos:
+        combinacoes += [
+            {"tema_id": n3},
+            {"bloco_tema_id": n1_id, "tema_id": n3},
+            {"tema_id": n3, "tema_texto": n1_nome},
+        ]
+    combinacoes += [
         {"bloco_tema_id": n1_id},
-        {"tema_id": n3_id},
-        {"tema_texto": n1_nome},
-        {"bloco_tema_id": n1_id, "tema_id": n3_id},
         {"bloco_tema_id": n1_id, "tema_texto": n1_nome},
-        {"tema_id": n3_id, "tema_texto": n1_nome},
-        {"bloco_tema_id": n1_id, "tema_id": n3_id, "tema_texto": n1_nome},
     ]
+
     perdidas = []
     for campos in combinacoes:
         ident = _mencao(sessao, fonte, **campos)
-        #: A REGRA ANTIGA, escrita à mão: `tema_texto == nome` OU o pilar
-        #: derivado de `tema_id`. Não olhava `bloco_tema_id`, que nem existia.
+        #: A REGRA ANTIGA, escrita à mão: `tema_texto == nome do pilar` OU
+        #: `tema_id` entre os N3 daquele pilar. Não olhava `bloco_tema_id`, que
+        #: nem existia.
         achava_antes = campos.get("tema_texto") == n1_nome or (
-            campos.get("tema_id") == n3_id
+            campos.get("tema_id") in irmaos
         )
         acha_agora = _acha(sessao, FiltroDeMencoes(tema_n1=n1_nome), ident)
         if achava_antes and not acha_agora:
             perdidas.append(campos)
 
     assert not perdidas, (
-        "o recorte novo PERDEU menções que o antigo achava: "
-        f"{perdidas}. A condição tem de ser superconjunto."
+        f"o recorte novo PERDEU menções que o antigo achava, em {len(perdidas)} "
+        f"de {len(combinacoes)} combinações: {perdidas[:5]}. "
+        "A condição tem de ser superconjunto."
+    )
+
+
+# -- a barra e o clique contam o mesmo ----------------------------------------
+
+
+def test_a_barra_do_n2_conta_o_que_o_clique_nela_recorta(sessao, fonte, arvore) -> None:
+    """A invariante que `_por_taxonomia` declara, e que a 0098 quase quebrou.
+
+    O docstring de `_por_taxonomia` diz: "agrupar por outro caminho faria a
+    coluna contar menções que o clique nela não recorta". Ao fazer o FILTRO por
+    N2 aceitar `Mencao.macro_tema_id`, o filtro passou a alcançar 1.231 menções
+    (as que só têm N2) que a BARRA, agrupando só por `tema_id`, não contava.
+
+    Este teste monta o caso mínimo — uma menção com `macro_tema_id` e sem
+    `tema_id` — e exige que a barra a conte E que o recorte por aquela barra a
+    ache. Se os dois caminhos divergirem de novo, ele falha em um dos dois.
+    """
+    from app.banco.repositorio_lentes import _por_taxonomia, _presenca_da_taxonomia
+    from app.banco.tabelas_score import ScoreFonte as Fonte
+    from app.dominio.score import Calibracao
+
+    _n1_id, _n1_nome, n2_id, n2_nome, _n3_id = arvore
+    lente_id = sessao.scalar(select(Fonte.lente_id).where(Fonte.id == fonte))
+    ident = _mencao(sessao, fonte, macro_tema_id=n2_id, tema_texto="Só tem N2")
+
+    calibracao = Calibracao(pesos={}, regua_tier="aegea", regua_engajamento="n")
+
+    #: OS DOIS LADOS CONTADOS, E EXIGIDOS IGUAIS — e não "a barra tem o
+    #: rótulo". `rotulo is not None` passaria mesmo com a menção nova fora da
+    #: conta, porque outras menções do mês já põem aquele N2 na barra. O que
+    #: prova a invariante é o NÚMERO: quantas a barra conta sob aquele rótulo
+    #: contra quantas o recorte por aquele rótulo acha.
+    linhas = _por_taxonomia(sessao, "tema_n2", lente_id, MES, calibracao, None)
+    da_barra = next((linha for linha in linhas if linha["rotulo"] == n2_nome), None)
+    assert da_barra is not None, (
+        f"a barra do N2 não tem {n2_nome!r}: a menção ligada só por "
+        "`macro_tema_id` não entrou no agrupamento."
+    )
+    conta_da_barra = da_barra["positivo"] + da_barra["neutro"] + da_barra["negativo"]
+
+    conta_do_recorte = sessao.scalar(
+        select(func.count())
+        .select_from(Mencao)
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .where(
+            ScoreFonte.lente_id == lente_id,
+            Mencao.mes == MES,
+            *condicoes_do_filtro(FiltroDeMencoes(tema_n2=n2_nome)),
+        )
+    )
+    assert conta_da_barra == conta_do_recorte, (
+        f"a barra de {n2_nome!r} conta {conta_da_barra} menções e o recorte por "
+        f"ela acha {conta_do_recorte}. Agrupar por um caminho e recortar por "
+        "outro é o que o docstring de `_por_taxonomia` existe para impedir."
+    )
+
+    #: E a menção nova é uma das duas pontas — se não fosse, os números acima
+    #: poderiam concordar sem ela e o teste não provaria nada sobre a `0098`.
+    assert _acha(sessao, FiltroDeMencoes(tema_n2=n2_nome), ident), (
+        "o recorte não acha a menção ligada só por `macro_tema_id`."
+    )
+
+    #: E A FICHA ("vem em N menções do mês") alcança o mesmo conjunto.
+    presenca = _presenca_da_taxonomia(
+        sessao, "tema_n2", lente_id, MES, calibracao, None
+    )
+    total_das_barras = sum(x["positivo"] + x["neutro"] + x["negativo"] for x in linhas)
+    assert presenca.preenchidas == total_das_barras, (
+        f"a ficha diz {presenca.preenchidas} e as barras somam "
+        f"{total_das_barras}. As duas leem a mesma aba e têm de concordar."
     )
