@@ -53,7 +53,20 @@ from collections import Counter
 from sqlalchemy import select, update
 
 from app.banco.sessao import obter_fabrica_de_sessao
+
+#: AS TABELAS QUE `mencao` REFERENCIA, importadas só para existirem no metadata.
+#:
+#: Mesmo idioma de `semear_score.py`. O `update` em lote passa pelo caminho de
+#: ORM do SQLAlchemy, que configura o mapper inteiro e exige RESOLVER toda chave
+#: estrangeira de `Mencao` — inclusive `instituicao_id` e `unidade_negocio_id`,
+#: cujas tabelas moram noutro módulo. Sem estes imports o comando morre com
+#: `NoReferencedTableError: ... could not find table 'instituicao'`, e morre na
+#: PRIMEIRA gravação, não no import: foi o que aconteceu ao trocar o `update`
+#: por linha pelo `executemany`.
+from app.banco.tabelas_acesso import Usuario  # noqa: F401
+from app.banco.tabelas_catalogo import UnidadeNegocio  # noqa: F401
 from app.banco.tabelas_score import Mencao
+from app.banco.tabelas_stakeholders import Instituicao  # noqa: F401
 from app.casos_de_uso import temas_da_mencao
 
 #: Quantas menções por transação. 5.000 é ~1s de `update` e um lote que cabe
@@ -123,6 +136,7 @@ def executar(*, lote: int = LOTE_PADRAO, simular: bool = False) -> Counter[str]:
             ultimo = linhas[-1][0]
 
             ligadas = 0
+            alteracoes: list[dict[str, object]] = []
             for ident, tema_id, tema_texto, subtema, atributo in linhas:
                 niveis = arvore.resolver(
                     #: O `tema_id` QUE A LINHA JÁ TEM ENTRA NA RESOLUÇÃO, e foi
@@ -143,37 +157,49 @@ def executar(*, lote: int = LOTE_PADRAO, simular: bool = False) -> Counter[str]:
                     #: tem. Ficam nulas de propósito.
                     continue
                 ligadas += 1
-                if not simular:
-                    sessao.execute(
-                        update(Mencao)
-                        .where(Mencao.id == ident)
-                        #: SÓ AS DUAS COLUNAS NOVAS. `tema_id` NÃO É TOCADO.
-                        #:
-                        #: Era o terceiro `values()` aqui e seria perda de dado:
-                        #: a linha cujo `tema_id` aponta para um tema DESATIVADO
-                        #: (ou ativo e órfão de N2) não passa pelo passo 1 do
-                        #: resolver — `n2_do_n3` só tem ativo com N2 —, cai para
-                        #: os passos de texto e volta com `n3_id=None`. Gravar
-                        #: isso APAGARIA o `tema_id` que a linha tinha.
-                        #:
-                        #: Hoje são 0 linhas (medido: nenhuma menção aponta para
-                        #: os 45 temas que a taxonomia v4 desativou), e é
-                        #: exatamente por isso que valia consertar agora: o dia
-                        #: em que alguém desativar um tema com menção
-                        #: pendurada, este comando apagaria a ligação histórica
-                        #: dela sem nada acusar.
-                        #:
-                        #: E O BACKFILL NÃO TEM NADA A DIZER SOBRE `tema_id`:
-                        #: ele existe para ACRESCENTAR as duas chaves que a 0098
-                        #: criou. O `tema_id` já está lá, gravado pela regra
-                        #: anterior, e não tocá-lo é o que torna "a migration
-                        #: mantém tudo funcionando" uma garantia e não uma
-                        #: medição que vale só para a base de hoje.
-                        .values(
-                            bloco_tema_id=niveis.n1_id,
-                            macro_tema_id=niveis.n2_id,
-                        )
-                    )
+                #: SÓ AS DUAS COLUNAS NOVAS. `tema_id` NÃO ENTRA AQUI.
+                #:
+                #: Era uma terceira chave neste dicionário e seria perda de dado:
+                #: a linha cujo `tema_id` aponta para um tema DESATIVADO (ou
+                #: ativo e órfão de N2) não passa pelo passo 1 do resolver —
+                #: `n2_do_n3` só tem ativo com N2 —, cai para os passos de texto
+                #: e volta com `n3_id=None`. Gravar isso APAGARIA a ligação que
+                #: a linha tinha.
+                #:
+                #: Hoje são 0 linhas (medido: nenhuma menção aponta para os 45
+                #: temas que a taxonomia v4 desativou), e é por isso mesmo que
+                #: valia consertar: o dia em que alguém desativar um tema com
+                #: menção pendurada, este comando apagaria o histórico dela sem
+                #: nada acusar.
+                #:
+                #: E O BACKFILL NÃO TEM NADA A DIZER SOBRE `tema_id`: ele existe
+                #: para ACRESCENTAR as duas chaves que a 0098 criou. Não tocá-lo
+                #: é o que torna "a migration mantém tudo funcionando" uma
+                #: garantia, e não uma medição que vale só para a base de hoje.
+                alteracoes.append(
+                    {
+                        #: A CHAVE PRIMÁRIA VAI NO DICIONÁRIO e não num `where`.
+                        #: É o que o "ORM Bulk UPDATE by Primary Key" do
+                        #: SQLAlchemy espera: `id` vira o `where`, o resto vira
+                        #: o `set`. Tentei primeiro um `where` explícito com
+                        #: `bindparam("ident")` e ele recusou duas vezes, cada
+                        #: uma com uma razão diferente ("bulk synchronize of
+                        #: persistent objects not supported", depois "no primary
+                        #: key value supplied") — eu estava brigando com o
+                        #: caminho em vez de usá-lo.
+                        "id": ident,
+                        "bloco_tema_id": niveis.n1_id,
+                        "macro_tema_id": niveis.n2_id,
+                    }
+                )
+
+            #: UM `executemany` POR LOTE, e não um `update` por linha.
+            #:
+            #: Achado da revisão, e procedente: o lote já limitava o tamanho da
+            #: transação, mas não o número de idas ao banco — eram até 104 mil
+            #: comandos, um por menção. Agora são ~21, uma por lote de 5.000.
+            if alteracoes and not simular:
+                sessao.execute(update(Mencao), alteracoes)
 
             if simular:
                 print(

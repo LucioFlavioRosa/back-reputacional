@@ -160,24 +160,29 @@ def test_todo_n2_ativo_tem_n1_e_todo_n3_ativo_tem_n2(sessao: Session) -> None:
 # -- a 0098 É ADITIVA: nada que funciona hoje muda ------------------------------
 
 
-def test_o_tema_id_de_hoje_nao_muda_com_a_regra_nova(sessao: Session) -> None:
-    """A chave do N3 é a MESMA sob a regra antiga e a nova. Medido, não suposto.
+def test_nenhum_nome_do_cadastro_comeca_com_numero(sessao: Session) -> None:
+    """A chave de todo nome do cadastro é a MESMA sob as duas regras.
 
-    A regra antiga era `normalizar(tema_texto)`; a nova é
-    `normalizar(sem_numeracao(tema_texto))`. Para um nome COM prefixo numerado as
-    duas dariam chaves diferentes — e `tema_id` de 26.987 menções poderia mudar
-    de dono sem ninguém pedir.
+    O NOME DESTE TESTE ERA `..._o_tema_id_de_hoje_nao_muda_...`, e prometia
+    demais: ele não consulta `mencao` e portanto não prova nada sobre as 104.670
+    linhas — achado da revisão, e procedente. A medição das menções está no
+    cabeçalho da `0098` e foi feita contra o banco real; o que se verifica AQUI
+    é a condição de que ela depende para continuar valendo.
 
-    MEDIDO NA BASE REAL antes de gravar a 0098 (18/10/2026): dos 350
+    POR QUE ISSO IMPORTA. Os mapas da `Arvore` são chaveados por `normalizar`, e
+    a busca do passo 5 usa `chave_do_nivel` (= `normalizar` + recorte do prefixo
+    numerado). As duas só se encontram porque nenhum nome do cadastro começa com
+    dígito: se um começasse, o mapa guardaria `"1. Governança"` sob a chave com o
+    `"1. "` e o passo 5 procuraria sem ele — e a `Arvore` divergiria da
+    `Taxonomia` de novo, que é o defeito que a revisão achou na primeira versão
+    deste PR.
+
+    A medição que acompanha a `0098` (base real, 18/10/2026): dos 350
     `tema_texto` distintos, ZERO mudam de chave; dos 104 N3 ativos, ZERO mudam;
-    e das 104.670 menções, ZERO teriam `tema_id` diferente — nenhuma ganharia e
-    nenhuma perderia o que tem.
+    e das 104.670 menções, ZERO teriam `tema_id` diferente.
 
-    O QUE ESTE TESTE PRENDE é a metade que o schema não garante: que nenhum NOME
-    DO CADASTRO comece com número. O dia em que alguém cadastrar um subtema
-    chamado "7. Qualquer Coisa", a chave dele passa a divergir entre as duas
-    regras e este teste falha — antes de a próxima subida remapear menções em
-    silêncio.
+    O dia em que alguém cadastrar um subtema chamado "7. Qualquer Coisa", este
+    teste falha — antes de a próxima subida remapear menções em silêncio.
     """
     from app.dominio.texto import normalizar
 
@@ -323,6 +328,19 @@ CORPUS: tuple[tuple[str | None, str | None, str | None], ...] = (
     ("   ", None, None),
 )
 
+#: O `tema_texto` E O `subtema` NUMERADOS, que o corpus acima não tinha — e foi
+#: por isso que a primeira versão deste PR divergiu sem o teste acusar.
+#:
+#: A REVISÃO ACHOU ASSIM: `Taxonomia` recorta o prefixo numerado em UM lugar só,
+#: o `atributo` (`_pilar_pelo_atributo`); `tema_texto`, `subtema` e o `tema`
+#: como N2 ou N1 passam por `normalizar` puro. A minha `Arvore` recortava em
+#: TODOS, e aí `tema_texto="1. <nome de N3>"` gravava N3+N2+N1 enquanto a tela
+#: mostrava "sem pilar" para a mesma menção.
+#:
+#: Estes casos são montados do cadastro de verdade, no teste, porque um nome
+#: escrito à mão aqui amarraria o arquivo a uma versão da taxonomia.
+NUMERAR = ("1. ", "2) ", "3 - ")
+
 
 def _taxonomia_da_leitura(sessao: Session) -> cp.Taxonomia:
     """A `Taxonomia` da tela de aprofundamento, montada do mesmo cadastro."""
@@ -374,8 +392,9 @@ def test_a_gravacao_e_a_leitura_concordam(sessao: Session) -> None:
         ).all()
     )
 
+    casos = list(CORPUS) + list(_casos_numerados(sessao))
     divergencias = []
-    for tema_texto, subtema, atributo in CORPUS:
+    for tema_texto, subtema, atributo in casos:
         gravado = arvore.resolver(
             tema_texto=tema_texto, subtema=subtema, atributo=atributo
         )
@@ -386,16 +405,51 @@ def test_a_gravacao_e_a_leitura_concordam(sessao: Session) -> None:
             nome_do_n1.get(gravado.n1_id) if gravado.n1_id is not None else None
         )
         pilar_lido = None if lido.pilar == cp.SEM_PILAR else lido.pilar
-        if pilar_gravado != pilar_lido:
+        #: O N3 TAMBÉM, e não só o pilar: a primeira versão deste teste comparava
+        #: só o pilar, e uma divergência no nível mais fundo passaria — a tela
+        #: desenhando "sem subtema" sobre uma menção com `tema_id` gravado.
+        n3_gravado = gravado.n3_id is not None
+        n3_lido = lido.subtema not in ("", cp.SEM_SUBTEMA)
+        if pilar_gravado != pilar_lido or n3_gravado != n3_lido:
             divergencias.append(
                 f"  tema={tema_texto!r} subtema={subtema!r} atributo={atributo!r}: "
-                f"gravaria {pilar_gravado!r}, a tela mostra {pilar_lido!r}"
+                f"gravaria pilar={pilar_gravado!r} n3={n3_gravado}, "
+                f"a tela mostra pilar={pilar_lido!r} n3={n3_lido}"
             )
 
     assert not divergencias, (
         "a gravação da `0098` e a leitura de `consulta_profundidade` discordam "
-        f"em {len(divergencias)} de {len(CORPUS)} casos:\n" + "\n".join(divergencias)
+        f"em {len(divergencias)} de {len(casos)} casos:\n" + "\n".join(divergencias)
     )
+
+
+def _casos_numerados(
+    sessao: Session,
+) -> list[tuple[str | None, str | None, str | None]]:
+    """Os mesmos nomes do cadastro, com o prefixo numerado na frente.
+
+    Em `tema_texto` e em `subtema`, que é onde a primeira versão divergiu, e em
+    todos os três níveis — N3, N2 e N1 —, porque o recorte indevido fazia cada
+    um casar um nível que não devia.
+    """
+    um_de_cada: list[str] = []
+    for tabela, filtro in (
+        (Tema, (Tema.ativo.is_(True), Tema.macro_tema_id.is_not(None))),
+        (MacroTema, (MacroTema.ativo.is_(True),)),
+        (BlocoTema, (BlocoTema.ativo.is_(True),)),
+    ):
+        nome = sessao.scalar(
+            select(tabela.nome).where(*filtro).order_by(tabela.id).limit(1)
+        )
+        if nome:
+            um_de_cada.append(nome)
+
+    casos: list[tuple[str | None, str | None, str | None]] = []
+    for nome in um_de_cada:
+        for prefixo in NUMERAR:
+            casos.append((f"{prefixo}{nome}", None, None))
+            casos.append((None, f"{prefixo}{nome}", None))
+    return casos
 
 
 def test_a_leitura_tambem_chega_ao_n3_pelo_mesmo_caminho(sessao: Session) -> None:
@@ -456,28 +510,41 @@ def test_os_indices_dos_niveis_existem_e_nao_reusam_nome(sessao: Session) -> Non
         )
 
 
-def test_apagar_nivel_da_taxonomia_com_mencao_falha(sessao: Session) -> None:
+def test_as_tres_chaves_nao_tem_on_delete_declarado(sessao: Session) -> None:
     """Sem `on delete`: a menção não vira nula nem é levada, a remoção FALHA.
 
     É o oposto de `instituicao_id` (que é `SET NULL` de propósito) e é
     deliberado: reorganizar a taxonomia é trabalho com decisão, e desligar 100
     mil linhas de um recorte em silêncio seria o pior jeito de fazê-lo.
+
+    LÊ O CATÁLOGO, NÃO TENTA APAGAR — e o nome do teste diz isso agora. Ele se
+    chamava `..._com_mencao_falha`, o que prometia um `delete` de verdade que
+    ele nunca fez: achado da revisão, e o nome errado é o defeito, porque alguém
+    leria a lista de testes e acharia que o comportamento está coberto.
+    Verificar as TRÊS constraints por nome é o que importa aqui — um `delete`
+    real precisaria de menção commitada no banco de teste.
     """
-    acoes = sessao.execute(
-        text(
-            "select rc.delete_rule, kcu.column_name "
-            "  from information_schema.referential_constraints rc "
-            "  join information_schema.key_column_usage kcu "
-            "    on kcu.constraint_name = rc.constraint_name "
-            " where kcu.table_name = 'mencao' "
-            "   and kcu.column_name in ('bloco_tema_id','macro_tema_id','tema_id')"
+    acoes = dict(
+        (coluna, regra)
+        for regra, coluna in sessao.execute(
+            text(
+                "select rc.delete_rule, kcu.column_name "
+                "  from information_schema.referential_constraints rc "
+                "  join information_schema.key_column_usage kcu "
+                "    on kcu.constraint_name = rc.constraint_name "
+                " where kcu.table_name = 'mencao' "
+                "   and kcu.column_name in "
+                "       ('bloco_tema_id','macro_tema_id','tema_id')"
+            )
         )
-    ).all()
-    assert acoes, "as três chaves deveriam ter FK declarada"
-    for regra, coluna in acoes:
-        assert regra == "NO ACTION", (
-            f"{coluna} ganhou `on delete {regra}`. Apagar um nível da taxonomia "
-            "passaria a mexer em menção, que é fato do mês."
+    )
+    #: UMA POR UMA E POR NOME: o `for` sobre a lista passava se o Postgres
+    #: devolvesse só uma das três — outro achado da revisão.
+    for coluna in ("bloco_tema_id", "macro_tema_id", "tema_id"):
+        assert coluna in acoes, f"{coluna} não tem FK declarada em `mencao`"
+        assert acoes[coluna] == "NO ACTION", (
+            f"{coluna} ganhou `on delete {acoes[coluna]}`. Apagar um nível da "
+            "taxonomia passaria a mexer em menção, que é fato do mês."
         )
 
 
@@ -517,6 +584,27 @@ def test_o_backfill_pega_quem_nao_tem_pilar_e_passa_o_tema_id(sessao: Session) -
     )
 
 
+#: POR QUE NÃO HÁ TESTE QUE EXECUTE O BACKFILL DUAS VEZES.
+#:
+#: A revisão pediu um, e com razão no princípio — idempotência afirmada vale
+#: menos que idempotência exercitada. Mas `executar()` abre a própria sessão por
+#: `obter_fabrica_de_sessao()`, que lê `BANCO_URL`, enquanto a suíte inteira roda
+#: contra `BANCO_URL_TESTE`. Um teste que chamasse `executar()` gravaria no banco
+#: de DESENVOLVIMENTO, com as 104.670 menções de verdade dentro — e passaria,
+#: escondendo que mexeu no lugar errado.
+#:
+#: ENTÃO A IDEMPOTÊNCIA FOI VERIFICADA À MÃO, no banco real, e duas vezes:
+#:
+#:   1ª execução   104.670 avaliadas, 102.715 ligadas (n3 29.701, n2 1.231,
+#:                 n1 71.783, sem_nivel 1.955)
+#:   2ª execução     1.955 avaliadas, 0 gravadas, mesmo estado no banco
+#:
+#: O que FICA preso por teste são os dois mecanismos de que ela depende: o filtro
+#: `bloco_tema_id is null` e o cursor. Trocar o comando para receber a fábrica de
+#: sessão por parâmetro o tornaria testável de verdade, e é mudança de assinatura
+#: que não cabe no PR da 0098.
+
+
 def test_o_backfill_nunca_apaga_o_tema_id_que_a_linha_tem() -> None:
     """Ele grava as DUAS colunas novas. `tema_id` não entra no `values()`.
 
@@ -542,12 +630,19 @@ def test_o_backfill_nunca_apaga_o_tema_id_que_a_linha_tem() -> None:
     from app.comandos import ligar_mencoes_a_taxonomia as comando
 
     fonte = inspect.getsource(comando.executar)
-    corpo_do_update = fonte[fonte.index(".values(") :]
-    assert "bloco_tema_id=" in corpo_do_update
-    assert "macro_tema_id=" in corpo_do_update
-    assert "tema_id=niveis.n3_id" not in corpo_do_update, (
+    corpo = fonte[fonte.index("alteracoes.append(") :]
+    assert '"bloco_tema_id"' in corpo
+    assert '"macro_tema_id"' in corpo
+    assert '"tema_id"' not in corpo and "tema_id=niveis.n3_id" not in corpo, (
         "o backfill voltou a gravar `tema_id`. Para a linha com tema desativado "
         "o resolver devolve `n3_id=None`, e isso APAGA a ligação que ela tinha."
+    )
+    #: E O `where` TEM DE SER POR `ident`: um parâmetro chamado `id` seria
+    #: consumido pelo `set` do `update` em vez do `where`, e o comando tentaria
+    #: reescrever a chave primária de cada linha do lote.
+    assert 'bindparam("ident")' in fonte, (
+        "o `executemany` perdeu o `bindparam(\"ident\")`. Com a chave do "
+        "dicionário chamada `id`, o `update` escreveria a chave primária."
     )
 
 

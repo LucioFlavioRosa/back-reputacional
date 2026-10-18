@@ -189,22 +189,28 @@ class Arvore:
         for texto in (tema_texto, subtema):
             if not texto:
                 continue
-            achado = self.n3.get(chave_do_nivel(texto))
+            achado = self.n3.get(normalizar(str(texto)))
             if achado is not None:
                 return self._subindo_do_n3(achado)
 
         #: 4. O `tema` COMO N2, para o fornecedor cujo "tema" é o nível do meio.
         #: O N3 fica nulo: descer seria sortear um filho entre 2,5.
-        n2_id = self.n2.get(chave_do_nivel(tema_texto)) if tema_texto else None
+        n2_id = self.n2.get(normalizar(str(tema_texto))) if tema_texto else None
         if n2_id is not None:
             return Niveis(n1_id=self.n1_do_n2.get(n2_id), n2_id=n2_id)
 
-        #: 5 e 6. O N1, do `atributo` (a Clipei) ou do próprio `tema` — é aqui
-        #: que entram as 73.928 menções que antes não tinham ligação nenhuma.
-        for texto in (atributo, tema_texto):
-            if not texto:
-                continue
-            achado = self.n1.get(chave_do_nivel(texto))
+        #: 5. O N1 PELO `atributo` (a Clipei) — e é o ÚNICO passo que recorta o
+        #: prefixo numerado. É aqui que entram as 73.928 menções que antes não
+        #: tinham ligação nenhuma, e as 26.603 que um `"2. "` deixava de fora.
+        if atributo:
+            achado = self.n1.get(chave_do_nivel(atributo))
+            if achado is not None:
+                return Niveis(n1_id=achado)
+
+        #: 6. O `tema` COMO N1, sem recorte, para o fornecedor cujo "tema" é o
+        #: próprio pilar.
+        if tema_texto:
+            achado = self.n1.get(normalizar(str(tema_texto)))
             if achado is not None:
                 return Niveis(n1_id=achado)
 
@@ -214,6 +220,18 @@ class Arvore:
 def arvore(sessao: Session) -> Arvore:
     """A árvore ativa do cadastro, em quatro consultas.
 
+    OS TRÊS MAPAS SÃO CHAVEADOS POR `normalizar`, o mesmo de `por_nome` e o
+    mesmo que `consulta_profundidade.Taxonomia` usa nos índices dela. Quem
+    recorta o prefixo numerado é a BUSCA do passo 5 (`chave_do_nivel(atributo)`),
+    não a chave do mapa — exatamente como `Taxonomia._pilar_pelo_atributo` faz
+    contra um `_pilar_por_nome` chaveado pelo normalizar puro.
+
+    DAVA NA MESMA HOJE e não dá na mesma sempre: nenhum nome do cadastro começa
+    com dígito, então chavear por um ou por outro produz as mesmas chaves (o
+    `test_o_tema_id_de_hoje_nao_muda_com_a_regra_nova` prende isso). Mas
+    chavear pelo recorte faria o mapa aceitar como "Governança" um cadastro
+    chamado `"1. Governança"`, e aí as duas engenhas divergiriam de novo.
+
     `BlocoTema` e `MacroTema` não têm índice único no nome (só no `codigo`),
     diferente de `Tema` — então duas linhas poderiam normalizar para a mesma
     chave e uma sumiria do mapa em silêncio. Medido hoje: 7 N1 dão 7 chaves e 41
@@ -222,19 +240,19 @@ def arvore(sessao: Session) -> Arvore:
     """
     return Arvore(
         n1={
-            chave_do_nivel(nome): ident
+            normalizar(nome): ident
             for ident, nome in sessao.execute(
                 select(BlocoTema.id, BlocoTema.nome).where(BlocoTema.ativo.is_(True))
             )
         },
         n2={
-            chave_do_nivel(nome): ident
+            normalizar(nome): ident
             for ident, nome in sessao.execute(
                 select(MacroTema.id, MacroTema.nome).where(MacroTema.ativo.is_(True))
             )
         },
         n3={
-            chave_do_nivel(nome): ident
+            normalizar(nome): ident
             for ident, nome in sessao.execute(
                 select(Tema.id, Tema.nome).where(Tema.ativo.is_(True))
             )

@@ -106,6 +106,28 @@
 -- e a Approach nunca foi carregada. Medido: nulo em 104.670 de 104.670 linhas.
 -- Ele só tem efeito na primeira subida daquela fonte.
 --
+-- == O QUE ESTA MIGRATION AINDA NÃO FAZ, e é preciso dizer ==
+--
+-- 1. NENHUMA LEITURA USA AS COLUNAS AINDA. `repositorio_score`,
+--    `repositorio_lentes` e `filtros_sql` continuam chegando ao N2 e ao N1 por
+--    `join` a partir de `mencao.tema_id` (`Tema -> MacroTema -> BlocoTema`).
+--    Consequência: a menção resolvida SÓ em N1 tem `bloco_tema_id` preenchido e
+--    `tema_id` nulo, e por isso ainda NÃO entra no filtro por pilar. As 73.014
+--    ligações novas são chave gravada, não recorte funcionando.
+--
+--    É deliberado que fique assim neste arquivo — trocar a origem dos filtros
+--    muda números em tela e é PR com a sua própria medição —, mas quem ler "98%
+--    com N1" sem ler isto vai concluir coisa errada. Achado da revisão do
+--    Codex, e procedente.
+--
+-- 2. ELAS SÃO MATERIALIZADAS, E PODEM FICAR OBSOLETAS. A importação de subtemas
+--    (`casos_de_uso/importar_subtemas.py`) pode mudar o `macro_tema_id` de um
+--    tema, e as menções já gravadas continuam com o caminho antigo. Enquanto os
+--    filtros derivarem de `tema_id`, isso é inofensivo; no dia em que passarem a
+--    ler estas colunas, uma reclassificação exige rodar
+--    `ligar_mencoes_a_taxonomia` de novo — e aí o comando precisa de um modo que
+--    RECALCULE em vez de só preencher o nulo. Também achado da revisão.
+--
 -- NENHUM GRANT NOVO: permissão no Postgres é por tabela, não por coluna, e
 -- `mencao` já tem os de `painel_app`. (A armadilha de tabela nova nascer sem
 -- `delete` — ver `0055` — não se aplica a `alter table add column`.)
