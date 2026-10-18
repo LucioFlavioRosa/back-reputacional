@@ -31,9 +31,10 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, validates
 
 from app.banco.sessao import Tabela
+from app.dominio.texto import normalizar
 
 
 class EventoMercado(Tabela):
@@ -107,6 +108,29 @@ class JornalistaMatriz(Tabela):
     )
     nome: Mapped[str] = mapped_column(Text)
     veiculo: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: A CHAVE DE UNICIDADE do par (jornalista, veículo), e ela é DERIVADA:
+    #: ninguém a atribui, o gancho abaixo a escreve.
+    #:
+    #: Até a `0097` o índice único era a expressão da `0049`, que colapsava
+    #: espaço mas NÃO TIRAVA ACENTO — "Taís Hirata" e "Tais Hirata" coexistiam,
+    #: contra o que o comentário daquela migration promete — e não normalizava
+    #: `veiculo` de jeito nenhum.
+    nome_normalizado: Mapped[str] = mapped_column(Text)
+    veiculo_normalizado: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    @validates("nome", "veiculo")
+    def _derivar_a_chave(self, campo: str, valor: str | None) -> str | None:
+        """As duas chaves saem do nome e do veículo SOZINHAS.
+
+        POR QUE AQUI: ver o gancho igual em `tabelas_referencias.Referencia` —
+        a suíte provou que havia pontos de escrita que eu não conhecia, e coluna
+        derivada que depende de alguém lembrar dela não é derivada.
+        """
+        if campo == "nome":
+            self.nome_normalizado = normalizar(valor)
+        else:
+            self.veiculo_normalizado = normalizar(valor) if valor else None
+        return valor
     relevancia: Mapped[int] = mapped_column(SmallInteger)
     exposicao: Mapped[int] = mapped_column(SmallInteger)
     proximidade: Mapped[int] = mapped_column(SmallInteger)
