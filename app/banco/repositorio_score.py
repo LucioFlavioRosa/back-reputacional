@@ -900,6 +900,11 @@ def mencoes_da_consulta(
             Mencao.atributo,
             Mencao.veiculo,
             Mencao.unidade_texto,
+            #: O NOME DO CADASTRO, para o drill agrupar por ele (`0099`). O
+            #: texto do fornecedor vai junto: quem agrupa é
+            #: `MencaoDaConsulta.concessionaria`, que prefere este e cai
+            #: naquele — o mesmo `coalesce` que as lentes fazem em SQL.
+            UnidadeNegocio.nome.label("unidade_cadastrada"),
             Mencao.uf,
             Mencao.autor,
             Mencao.titulo_texto,
@@ -907,6 +912,9 @@ def mencoes_da_consulta(
             Mencao.id_fonte,
         )
         .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        #: `outerjoin`: a menção sem chave continua vindo, com o nome do
+        #: fornecedor. Um `join` a tiraria do drill inteiro.
+        .outerjoin(UnidadeNegocio, UnidadeNegocio.id == Mencao.unidade_negocio_id)
         .where(
             ScoreFonte.lente_id == lente_id,
             Mencao.mes == primeiro_dia(mes),
@@ -931,6 +939,7 @@ def mencoes_da_consulta(
             atributo=linha.atributo,
             veiculo=linha.veiculo,
             unidade_texto=linha.unidade_texto,
+            unidade_cadastrada=linha.unidade_cadastrada,
             uf=linha.uf,
             autor=linha.autor,
             titulo_texto=linha.titulo_texto,

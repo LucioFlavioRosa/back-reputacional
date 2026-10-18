@@ -265,3 +265,69 @@ def test_o_rotulo_e_o_recorte_contam_O_MESMO(sessao, fonte, corsan):
             f"o rótulo {rotulo!r} conta {quantas} e o clique nele alcança "
             f"{do_recorte}"
         )
+
+
+# -- 4. as outras duas telas que mostram concessionária ------------------------
+
+
+def test_o_drill_agrupa_pelo_NOME_DO_CADASTRO():
+    """A tela de aprofundamento agrupa em Python, e tem de concordar com as
+    lentes sobre quantas empresas existem.
+
+    SEM ISTO a Corsan vira duas fatias aqui e uma no seletor das lentes — duas
+    telas discordando, que é pior que as duas erradas do mesmo jeito.
+    """
+    from app.dominio.consulta_profundidade import MencaoDaConsulta
+
+    def mencao(**campos) -> MencaoDaConsulta:
+        return MencaoDaConsulta(id="x", mes=MES, sentimento="neg", **campos)
+
+    pela_razao_social = mencao(
+        unidade_texto=RAZAO_SOCIAL, unidade_cadastrada=NOME_DO_CADASTRO
+    )
+    pelo_nome = mencao(unidade_texto=NOME_DO_CADASTRO, unidade_cadastrada=NOME_DO_CADASTRO)
+    assert pela_razao_social.concessionaria == pelo_nome.concessionaria == NOME_DO_CADASTRO
+
+    #: E A SEM CHAVE CAI NO TEXTO DO FORNECEDOR, em vez de virar "Não
+    #: informada": o nome que ela tem é melhor que nenhum.
+    sem_chave = mencao(unidade_texto=SEM_CHAVE)
+    assert sem_chave.concessionaria == SEM_CHAVE
+    #: E O TEXTO CRU CONTINUA ALCANÇÁVEL, que é o motivo de ser propriedade e
+    #: não renomear o campo.
+    assert pela_razao_social.unidade_texto == RAZAO_SOCIAL
+
+
+def test_a_dimensao_de_risco_oferece_UM_nome_e_o_recorte_acha_as_duas(
+    sessao, fonte, corsan
+):
+    """A aba de riscos: a opção que ela oferece e o recorte que ela aplica.
+
+    O RECORTE DELA É OUTRA FUNÇÃO (`repositorio_riscos.condicao_da_dimensao`), e
+    por isso tem teste próprio: ela recortava por `getattr(Mencao,
+    'unidade_texto')`, então ofereceria "Corsan" (as duas grafias somadas) e
+    recortaria só a grafia curta. É a mesma dessincronia da barra do N2 na
+    `0098`.
+    """
+    from app.banco.repositorio_riscos import condicao_da_dimensao
+
+    pela_razao_social = _mencao(
+        sessao, fonte, unidade_texto=RAZAO_SOCIAL, unidade_negocio_id=corsan
+    )
+    pelo_nome = _mencao(
+        sessao, fonte, unidade_texto=NOME_DO_CADASTRO, unidade_negocio_id=corsan
+    )
+
+    condicao = condicao_da_dimensao("unidade", NOME_DO_CADASTRO)
+    assert condicao is not None
+    achadas = set(
+        sessao.scalars(
+            select(Mencao.id).where(
+                Mencao.id.in_([pela_razao_social, pelo_nome]), condicao
+            )
+        )
+    )
+    assert achadas == {pela_razao_social, pelo_nome}
+
+    #: E A DIMENSÃO DESCONHECIDA CONTINUA DEVOLVENDO `None`, que é como o laço
+    #: do filtro sabe ignorá-la.
+    assert condicao_da_dimensao("nao_existe", "x") is None
