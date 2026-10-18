@@ -734,6 +734,10 @@ def _por_coluna_de_texto(
         )
         .select_from(Mencao)
         .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        #: PARA `CONCESSIONARIA` PODER SER A COLUNA. Sai barato (29 linhas,
+        #: chave indexada) e vale para toda dimensão: o que importa é a aba
+        #: agrupar pelo mesmo nome que o seletor oferece e o filtro recorta.
+        .outerjoin(UnidadeNegocio, UnidadeNegocio.id == Mencao.unidade_negocio_id)
         .where(
             ScoreFonte.lente_id == lente_id,
             Mencao.mes == primeiro_dia(mes),
@@ -759,6 +763,26 @@ def _por_coluna_de_texto(
 #: a saída da consulta única —, e três literais `("tema_n2", "tema_n3")` divergem
 #: na primeira dimensão nova.
 _DIMENSOES_DA_TAXONOMIA = frozenset({"tema_n2", "tema_n3"})
+
+
+def coluna_da_dimensao(campo: str):
+    """A coluna por que uma dimensão da aba "Onde está a causa" agrupa e conta.
+
+    QUASE SEMPRE É O ATRIBUTO DE `Mencao` DE MESMO NOME — `causa_da_lente.
+    Dimensao.campo` guarda o nome e diz que "o repositório resolve". A exceção é
+    a CONCESSIONÁRIA, e a razão é a mesma que o caso do `tema` logo acima
+    registra como achado de revisão: a aba agrupava pelo texto cru enquanto o
+    painel ao lado agrupava pelo nome do cadastro, e aí os dois ficam na mesma
+    tela com rótulos diferentes para o mesmo mês — e o clique no rótulo manda ao
+    servidor uma grafia que o dado não tem.
+
+    Para a concessionária isso é visível: a Corsan seria duas fatias de 1.111 e
+    15.019 aqui, e uma de 16.130 no seletor. Quem usa a função tem de ter
+    `outerjoin(UnidadeNegocio, ...)` na consulta.
+    """
+    if campo == "unidade_texto":
+        return CONCESSIONARIA
+    return getattr(Mencao, campo)
 
 
 def _por_taxonomia(
@@ -911,13 +935,18 @@ def presenca_das_dimensoes(
     """
     medidas: list = [func.count()]
     for campo in campos:
-        coluna = getattr(Mencao, campo)
+        #: PELA MESMA COLUNA QUE O CORTE AGRUPA (`coluna_da_dimensao`), e não
+        #: por `getattr` direto: a ficha da aba publica "vem em N menções, em M
+        #: valores", e M tem de ser o número de rótulos que a aba desenha. Com
+        #: o texto cru, a concessionária diria 65 valores e a aba mostraria 62.
+        coluna = coluna_da_dimensao(campo)
         medidas.append(func.count(coluna))
         medidas.append(func.count(coluna.distinct()))
     consulta = (
         select(*medidas)
         .select_from(Mencao)
         .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .outerjoin(UnidadeNegocio, UnidadeNegocio.id == Mencao.unidade_negocio_id)
         .where(
             ScoreFonte.lente_id == lente_id,
             Mencao.mes == primeiro_dia(mes),
@@ -1045,7 +1074,9 @@ def cortes_da_causa(
                 #: para a planilha real, e o clique filtra pelo mesmo rótulo.
                 ATRIBUTO_SEM_PREFIXO
                 if dimensao.chave == "atributo"
-                else getattr(Mencao, dimensao.campo),
+                #: E A CONCESSIONÁRIA PELO NOME DO CADASTRO — ver
+                #: `coluna_da_dimensao`, que registra por que.
+                else coluna_da_dimensao(dimensao.campo),
                 "rotulo",
                 lente_id,
                 mes,

@@ -331,3 +331,31 @@ def test_a_dimensao_de_risco_oferece_UM_nome_e_o_recorte_acha_as_duas(
     #: E A DIMENSÃO DESCONHECIDA CONTINUA DEVOLVENDO `None`, que é como o laço
     #: do filtro sabe ignorá-la.
     assert condicao_da_dimensao("nao_existe", "x") is None
+
+
+def test_a_aba_DA_CAUSA_agrupa_a_concessionaria_pelo_cadastro():
+    """A quinta leitura, e a que eu tinha esquecido.
+
+    A aba "Onde está a causa" declara as dimensões em `causa_da_lente` por NOME
+    DE CAMPO, e o repositório resolvia com `getattr(Mencao, campo)` — texto cru.
+    O painel ao lado já mostrava o nome do cadastro, e o comentário do caso
+    `tema`, logo acima no mesmo arquivo, descreve exatamente o estrago: "os dois
+    ficam lado a lado na mesma tela: rótulos diferentes para o mesmo mês, e um
+    clique no rótulo do painel mandando ao servidor uma grafia que o dado não
+    tem".
+
+    ESTE TESTE PRENDE A FIAÇÃO, e não o `if`: ele parte da dimensão DECLARADA,
+    então renomear o campo em `causa_da_lente` sem atualizar o mapa falha aqui.
+    """
+    from app.banco.repositorio_lentes import coluna_da_dimensao
+    from app.dominio.causa_da_lente import DIMENSOES_POR_LENTE
+
+    declaradas = [
+        dim for dim in DIMENSOES_POR_LENTE["sociedade"] if dim.chave == "empresa"
+    ]
+    assert declaradas, "a lente Sociedade declara a dimensão 'empresa'"
+    assert coluna_da_dimensao(declaradas[0].campo) is CONCESSIONARIA
+
+    #: E AS OUTRAS NÃO MUDAM: é uma exceção nomeada, não um desvio geral.
+    assert coluna_da_dimensao("uf") is Mencao.uf
+    assert coluna_da_dimensao("perfil_autor") is Mencao.perfil_autor
