@@ -328,6 +328,11 @@ def criar(
     _conferir_temas(sessao, outros | {tema_principal_id})
 
     registro = Referencia(
+        #: `titulo_normalizado` NÃO ENTRA AQUI: ele é derivado do título pelo
+        #: gancho em `tabelas_referencias.Referencia`, para que nenhum ponto de
+        #: escrita possa esquecê-lo. Era a expressão em SQL da `0026` que
+        #: decidia a unicidade, e ela não tirava acento — "Relatório Anual" e
+        #: "Relatorio Anual" entravam como duas referências.
         titulo=titulo.strip(),
         tipo=tipo,
         resumo=resumo,
@@ -371,6 +376,7 @@ def editar(
     desejados = set(entrada.temas) | {entrada.tema_principal_id}
     _conferir_temas(sessao, desejados)
 
+    #: A chave acompanha o título sozinha — ver o gancho no modelo.
     registro.titulo = entrada.titulo.strip()
     registro.tipo = entrada.tipo
     registro.resumo = entrada.resumo
