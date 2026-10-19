@@ -33,8 +33,9 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.banco.repositorio_score import so_interacoes_visiveis
 from app.banco.tabelas_interacoes import InteracaoRegistro
-from app.banco.tabelas_score import Mencao
+from app.banco.tabelas_score import Lente, Mencao, ScoreFonte
 from app.banco.tabelas_stakeholders import AtorDistinto, Instituicao, Interlocutor
 from app.dominio.erros import NaoEncontrado, RegraViolada
 from app.dominio.texto import (
@@ -88,6 +89,17 @@ CAMPOS_QUE_O_SOBREVIVENTE_HERDA = (
 )
 
 
+#: A ORIGEM DE UM CADASTRO QUE NÃO É MENÇÃO: o relacionamento registrado no CRM.
+#:
+#: As outras origens são códigos de LENTE (`imprensa`, `mercado`, `sociedade`,
+#: `clientes`, `institucional`), que saem de `mencao -> score_fonte -> lente`. A
+#: interação do CRM mora em `interacao_registro` e não em `mencao`, então ela não
+#: tem lente para dizer — e dizer `institucional` aqui misturaria "tem interação
+#: registrada" com "tem menção na lente institucional", que são coisas diferentes
+#: para quem decide se os dois cadastros são o mesmo ator.
+ORIGEM_DO_CRM = "crm"
+
+
 @dataclass(frozen=True)
 class Candidato:
     """Um cadastro que PODE ser o mesmo ator do perfil."""
@@ -96,6 +108,8 @@ class Candidato:
     nome: str
     tipo: str
     mencoes: int
+    #: DE ONDE VÊM OS REGISTROS DESTE CADASTRO — ver `_origens_por_instituicao`.
+    origens: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -116,6 +130,8 @@ class Duplicado:
     cargo: str | None
     mencoes: int
     candidatos: tuple[Candidato, ...]
+    #: DE ONDE VÊM OS REGISTROS DESTE CADASTRO — ver `_origens_por_instituicao`.
+    origens: tuple[str, ...] = ()
 
 
 def _mencoes_por_instituicao(sessao: Session) -> dict[uuid.UUID, int]:
@@ -125,6 +141,65 @@ def _mencoes_por_instituicao(sessao: Session) -> dict[uuid.UUID, int]:
         .group_by(Mencao.instituicao_id)
     )
     return {instituicao: quantas for instituicao, quantas in linhas}
+
+
+def _origens_por_instituicao(sessao: Session) -> dict[uuid.UUID, tuple[str, ...]]:
+    """De onde vêm os registros de cada cadastro: as lentes, e o CRM.
+
+    O PEDIDO DO DONO DO PRODUTO, na letra: "o Valor Econômico pode vir de vários
+    meios, pode vir do crm, pode vir de mídias sociais, pode vir de mercado,
+    enfim, pode ter várias fontes distintas, mas a instituição é a mesma. Então
+    isso deve ficar bem claro".
+
+    POR QUE NA FILA. Quem decide se dois cadastros são o mesmo ator está olhando
+    dois nomes parecidos e duas contagens. Faltava o que explica a duplicata: um
+    lado chegou pelo clipping e o outro pelo social listening — é por isso que o
+    MESMO Valor Econômico está cadastrado duas vezes. Com as origens na linha, a
+    pergunta "são o mesmo?" passa a ter a evidência ao lado dela.
+
+    DUAS LEITURAS, e não uma: a menção tem lente (por `score_fonte`) e a interação
+    do CRM não tem — ver `ORIGEM_DO_CRM`. Juntá-las num `union` daria uma coluna
+    que mente sobre o que mediu.
+
+    O CUSTO É RUÍDO AQUI. A fila leva 7,4 s na base real, e o próprio caso de uso
+    escreve que `ratio()` é caro: são ~3.800 nomes comparados par a par em
+    memória. Dois agregados sobre índice não mudam essa ordem de grandeza.
+    """
+    origens: dict[uuid.UUID, set[str]] = {}
+
+    das_mencoes = sessao.execute(
+        select(Mencao.instituicao_id, Lente.codigo)
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .join(Lente, Lente.id == ScoreFonte.lente_id)
+        .where(Mencao.instituicao_id.is_not(None))
+        .distinct()
+    )
+    for instituicao, lente in das_mencoes:
+        origens.setdefault(instituicao, set()).add(lente)
+
+    #: SÓ AS INTERAÇÕES QUE PODEM SER LIDAS, e isto é conserto de achado ALTA de
+    #: revisão. A primeira versão marcava `crm` para QUALQUER `interacao_registro`,
+    #: e esta listagem exige apenas `UsuarioQueVeDiretorio`: quem vê o diretório
+    #: passava a inferir que a Aegea tem relacionamento com uma instituição mesmo
+    #: quando a agenda foi tirada da vista, arquivada ou marcada como sensível.
+    #:
+    #: `so_interacoes_visiveis` É A REGRA DA CASA para isso, e o docstring dela diz
+    #: por quê: o nome da instituição de uma agenda é "a informação que o CRM
+    #: guarda com mais cuidado". Reescrever o filtro aqui seria a sétima cópia.
+    do_crm = sessao.execute(
+        select(InteracaoRegistro.instituicao_id)
+        .where(
+            InteracaoRegistro.instituicao_id.is_not(None),
+            *so_interacoes_visiveis(),
+        )
+        .distinct()
+    )
+    for (instituicao,) in do_crm:
+        origens.setdefault(instituicao, set()).add(ORIGEM_DO_CRM)
+
+    #: ORDENADAS, para a linha da tela não trocar de ordem entre duas aberturas —
+    #: a mesma razão do desempate por nome em `listar`.
+    return {quem: tuple(sorted(quais)) for quem, quais in origens.items()}
 
 
 def _vizinhos(cadastros: list[Instituicao]) -> dict[uuid.UUID, list[Instituicao]]:
@@ -221,6 +296,7 @@ def listar(sessao: Session) -> list[Duplicado]:
         (par.esquerda, par.direita) for par in sessao.scalars(select(AtorDistinto))
     }
     mencoes = _mencoes_por_instituicao(sessao)
+    origens = _origens_por_instituicao(sessao)
 
     fila: list[Duplicado] = []
     for perfil in cadastros:
@@ -235,6 +311,7 @@ def listar(sessao: Session) -> list[Duplicado]:
                 nome=outro.nome,
                 tipo=outro.tipo,
                 mencoes=mencoes.get(outro.id, 0),
+                origens=origens.get(outro.id, ()),
             )
             for outro in perto[perfil.id]
             if ordenar_o_par(perfil.id, outro.id) not in decididos
@@ -249,6 +326,7 @@ def listar(sessao: Session) -> list[Duplicado]:
                     cargo=perfil.cargo,
                     mencoes=mencoes.get(perfil.id, 0),
                     candidatos=tuple(sorted(candidatos, key=lambda c: -c.mencoes)),
+                    origens=origens.get(perfil.id, ()),
                 )
             )
     return sorted(fila, key=lambda d: d.nome.lower())
@@ -326,13 +404,36 @@ def _buscar(sessao: Session, qual: uuid.UUID) -> Instituicao:
 
 
 def fundir(
-    sessao: Session, *, que_sai_id: uuid.UUID, sobrevivente_id: uuid.UUID
+    sessao: Session,
+    *,
+    que_sai_id: uuid.UUID,
+    sobrevivente_id: uuid.UUID,
+    contra_a_proposta: bool = False,
 ) -> Instituicao:
     """Um cadastro entra no outro, com as menções dele.
 
     QUEM SOBREVIVE É ESCOLHA DE QUEM CHAMA, e a fila propõe: a regra dos três
     degraus de `_esta_do_lado_que_pergunta` ancora a pergunta em quem deve sair —
     o perfil de rede antes de um cadastro curado, depois quem tem menos menções.
+
+    `contra_a_proposta` É A ESCOLHA DE GENTE, e é o pedido do dono do produto:
+    "não basta termos uma opção de dizer se são ou não o mesmo, além de mostrar
+    quais podem se juntar temos que dizer qual é o real para ser considerado na
+    unificação".
+
+    POR QUE UM PARÂMETRO E NÃO TIRAR A GUARDA. A proposta da fila está certa quase
+    sempre — é ela que impede fundir a linha com história dentro da linha crua —, e
+    ela também protege o `curl` distraído, que continua levando 422. O que ela não
+    pode fazer é ter a última palavra: só quem conhece o ator sabe que o cadastro
+    certo é o do CRM, e não o que acumulou menções. Então a guarda passa a ser o
+    PADRÃO, e deixa de ser proibição.
+
+    O QUE A ESCOLHA CONTRÁRIA CUSTA, e a tela tem de dizer: o sobrevivente mantém o
+    NOME dele — `nome` e `tipo` não estão em `CAMPOS_QUE_O_SOBREVIVENTE_HERDA`,
+    porque trocá-los faria a fusão virar renomeação. Escolher o handle
+    `valoreconomico` como o real deixa o cadastro chamado `valoreconomico`, com as
+    menções do Valor Econômico dentro. A curadoria em si NÃO se perde: categoria,
+    subcategoria, tier, esfera e UF são herdados quando o sobrevivente não os tem.
 
     QUALQUER TIPO SAI, desde 11/10/2026, e isto é conserto de um achado ALTA: a
     fila passou a mostrar pares `veiculo`+`veiculo` e `entidade`+`orgao`, e esta
@@ -351,9 +452,25 @@ def fundir(
     até 11/10/2026: as chaves estrangeiras passavam e a linha era apagada, com a
     categoria de público e o tier dela dentro.
 
-    O QUE SE PERDE, dito em voz alta: o `cargo` de quem sai, se ele tiver — o CHECK
-    `instituicao_cargo_so_de_perfil` existe de propósito, e um jornal não tem
-    cargo. É o único campo que não viaja.
+    O QUE SE PERDE, dito em voz alta — e a lista ERRADA era mais curta (achado
+    ALTA de revisão, 19/10/2026; o docstring dizia "o cargo é o único campo que
+    não viaja"):
+
+    * o `cargo` de quem sai — o CHECK `instituicao_cargo_so_de_perfil` existe de
+      propósito, e um jornal não tem cargo;
+    * o `nome` e o `nome_normalizado`, que são a identidade do sobrevivente. ISTO
+      TEM CONSEQUÊNCIA ALÉM DA TELA: a ingestão casa menção com cadastro por
+      `nome_normalizado` exato (`veiculos_da_imprensa.reconhecer`), então o nome
+      que desaparece daqui volta a NÃO casar na próxima subida — e o veículo pode
+      nascer de novo, recriando a duplicata que alguém acabou de resolver. É um
+      buraco que não nasceu com a escolha de direção, mas que ela alcança mais
+      vezes. O conserto é apelido de instituição, como
+      `unidade_negocio_apelido` fez para a concessionária, e está fora desta
+      mudança;
+    * `criado_em`, que é a data da linha que sai e não diz nada sobre a que fica.
+
+    E DUAS COISAS QUE PASSARAM A NÃO SE PERDER, por este mesmo achado: a pendência
+    de revisão e o motivo dela. Ver abaixo.
     """
     if que_sai_id == sobrevivente_id:
         raise RegraViolada("Um cadastro nao funde com ele mesmo.")
@@ -379,18 +496,38 @@ def fundir(
     #:
     #: UMA FUNÇÃO DECIDE A ORDENAÇÃO e os dois lugares a consultam — a fila para
     #: ancorar a pergunta, a fusão para recusar o inverso. Não há como divergirem.
-    if _esta_do_lado_que_pergunta(
+    #: E A ESCOLHA DE GENTE PASSA POR CIMA DELA, desde 19/10/2026: a guarda é a
+    #: proposta, não a sentença. Ver o docstring.
+    if not contra_a_proposta and _esta_do_lado_que_pergunta(
         sobrevivente, perfil, _mencoes_por_instituicao(sessao)
     ):
         raise RegraViolada(
             f"{sobrevivente.nome!r} é a linha que deve sobreviver a "
             f"{perfil.nome!r} — tem mais menções, ou é o cadastro curado. Funda na "
-            "outra direção: quem sai vai na URL."
+            "outra direção: quem sai vai na URL. Se o cadastro certo é mesmo "
+            f"{sobrevivente.nome!r}, diga isso de propósito com "
+            "`contra_a_proposta`."
         )
     if perfil.interlocutor_id is not None:
         raise RegraViolada(
             "Este perfil esta ligado a uma pessoa do CRM. Desfaca a ligacao "
             "antes de fundir, ou funda no cadastro da pessoa."
+        )
+
+    #: FUNDIR DENTRO DE UM CADASTRO DESATIVADO ESCONDERIA O DADO ATIVO, e por isso
+    #: recusa em vez de herdar: `ativo=false` é alguém dizendo "este cadastro sai
+    #: do cadastro de agenda", e reativá-lo por efeito colateral de uma fusão é
+    #: decidir no lugar dessa pessoa — no sentido oposto.
+    #:
+    #: A FILA NÃO ALCANÇA ESTE CASO: `listar` só olha cadastro ativo, então os dois
+    #: lados de toda pergunta estão ativos. Esta guarda é para o caminho de fora da
+    #: tela, que é o mesmo motivo por que a guarda de direção vive aqui e não no
+    #: botão — um `curl` basta.
+    if not sobrevivente.ativo:
+        raise RegraViolada(
+            f"{sobrevivente.nome!r} está desativado, e fundir dentro dele "
+            "esconderia as menções que estão à vista. Reative o cadastro que "
+            "fica, ou funda na outra direção."
         )
 
     #: O CONFLITO RECUSA ANTES DE QUALQUER ESCRITA, e com os nomes dos campos.
@@ -420,6 +557,23 @@ def fundir(
     for campo in CAMPOS_QUE_O_SOBREVIVENTE_HERDA:
         if getattr(sobrevivente, campo) is None:
             setattr(sobrevivente, campo, getattr(perfil, campo))
+
+    #: A PENDÊNCIA DE REVISÃO VIAJA, e ela não cabia na regra acima porque não é
+    #: campo nulo: `pendente_de_revisao` é booleano com padrão `False`, então
+    #: "herda o que não tem" nunca a alcançaria. Pôr `ativo` e esta na tupla faria
+    #: toda fusão entre um cadastro pendente e um conferido RECUSAR com 422 — e
+    #: quase todo cadastro nascido de planilha nasce pendente.
+    #:
+    #: O QUE ISTO FECHA (achado ALTA de revisão): a linha que sai era a pendente na
+    #: maioria dos pares — ela nasce da subida —, e a fusão a apagava com a
+    #: pendência dentro. O item desaparecia de "Esperando conferência" sem ninguém
+    #: ter conferido nada: a fusão respondia, em silêncio, uma pergunta que ela não
+    #: responde. Unir dois cadastros não diz que o resultado está conferido.
+    if perfil.pendente_de_revisao and not sobrevivente.pendente_de_revisao:
+        sobrevivente.pendente_de_revisao = True
+        sobrevivente.motivo_da_revisao = (
+            sobrevivente.motivo_da_revisao or perfil.motivo_da_revisao
+        )
 
     #: AS MENÇÕES PASSAM: o dossiê do ator fica num só lugar.
     sessao.execute(
