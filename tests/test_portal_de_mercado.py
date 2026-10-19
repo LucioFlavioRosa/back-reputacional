@@ -198,3 +198,72 @@ def test_sem_cookie_nenhum_nao_entra(sessao):
     )
 
     assert resposta.status_code == 403
+
+
+# -- a rota de LEITURA também está atrás da bandeira ---------------------------
+#
+# O POST é o que muda dado, mas é o GET que SERVE dado — e o painel inteiro
+# existe para mostrar número. Uma rota de leitura aberta enquanto o módulo está
+# "em construção" entrega a série de cotações a quem o cartão da capa ainda diz
+# que não pode entrar. Esconder o cartão não fecha a rota: é a frase escrita na
+# própria `configuracao.mercado_lancado`.
+
+
+def test_a_serie_NAO_sai_com_a_bandeira_desligada(sessao):
+    usuario = _usuario(sessao, alcanca_mercado=True)
+    cliente, _ = _cliente(sessao, usuario, lancado=False)
+
+    resposta = cliente.get("/api/mercado/bonds/serie")
+
+    assert resposta.status_code == 403
+    assert "ainda não foi lançado" in resposta.json()["detalhe"]
+
+
+def test_a_serie_NAO_sai_para_quem_nao_tem_o_papel(sessao):
+    usuario = _usuario(sessao, alcanca_mercado=False)
+    cliente, _ = _cliente(sessao, usuario, lancado=True)
+
+    resposta = cliente.get("/api/mercado/bonds/serie")
+
+    assert resposta.status_code == 403
+    assert "não tem acesso ao Painel" in resposta.json()["detalhe"]
+
+
+def test_a_serie_sai_com_as_duas_condicoes_e_traz_o_catalogo(sessao):
+    """O controle positivo, e ele afirma mais que o status.
+
+    O CATÁLOGO VEM MESMO SEM COTAÇÃO: é a mesma lição da aba Base do Score — a
+    tela que cria o dado não pode exigir dado. Sem isto o seletor de papéis
+    nasceria vazio e ninguém saberia o que escolher.
+
+    E O `indice` VEM DAQUI, não de `/api/score/serie` — aquela rota exige o
+    portal do Score, e quem tem só o de mercado receberia 403 dela. A linha do
+    eixo direito sairia vazia por permissão e se leria como falta de dado.
+    """
+    usuario = _usuario(sessao, alcanca_mercado=True)
+    cliente, _ = _cliente(sessao, usuario, lancado=True)
+
+    resposta = cliente.get("/api/mercado/bonds/serie")
+
+    assert resposta.status_code == 200, resposta.text
+    corpo = resposta.json()
+    assert len(corpo["papeis"]) == 31
+    assert corpo["metrica"] == "preco"
+    #: As três séries da Aegea aparecem, mesmo vazias — é o que a legenda lista.
+    assert {s["ticker"] for s in corpo["bonds"]} == {
+        "AEGEBZ29",
+        "AEGEBZ31",
+        "AEGEBZ36",
+    }
+    assert "indice" in corpo
+
+
+def test_a_metrica_invalida_na_url_da_422_e_nao_403(sessao):
+    """Passou o guarda e chegou à regra — a recusa deixou de ser de acesso."""
+    usuario = _usuario(sessao, alcanca_mercado=True)
+    cliente, _ = _cliente(sessao, usuario, lancado=True)
+
+    resposta = cliente.get("/api/mercado/bonds/serie?metrica=spread")
+
+    assert resposta.status_code == 422, resposta.text
+    assert "não existe" in resposta.json()["detalhe"]
