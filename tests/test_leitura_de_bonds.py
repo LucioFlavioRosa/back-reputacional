@@ -30,7 +30,10 @@ from app.dominio.leitura_de_bonds import ler
 #: O cabeçalho mínimo que o formato exige, nas cinco primeiras linhas.
 #: Colunas: 0..4 catálogo, 5 vazia, 6 DATES, 7+ os pares.
 CABECALHO = [
-    ["Bond Description", None, None, "ID", "AMT_OUTSTANDING", None, None, "AAA29", "AAA29", "BBB31", "BBB31"],
+    # fmt: off
+    ["Bond Description", None, None, "ID", "AMT_OUTSTANDING",
+     None, None, "AAA29", "AAA29", "BBB31", "BBB31"],
+    # fmt: on
     [None, None, None, None, None, None, None, "Preço", "Yield", "Preço", "Yield"],
     [None, None, None, None, None, None, None, None, None, None, None],
     [None, None, None, None, None, None, None, "ID-A", "ID-A", "ID-B", "ID-B"],
@@ -40,7 +43,7 @@ CABECALHO = [
 
 def _com_catalogo(*papeis):
     """O cabeçalho com o catálogo `A..E` preenchido a partir da linha 2."""
-    linhas = [list(l) for l in CABECALHO]
+    linhas = [list(linha) for linha in CABECALHO]
     for posicao, (descricao, id_bb, ticker, amt) in enumerate(papeis, start=1):
         while len(linhas) <= posicao:
             linhas.append([None] * 11)
@@ -111,7 +114,7 @@ def test_preco_valido_proximo_de_zero_NAO_e_descartado():
 
 def test_a_coluna_das_datas_e_PROCURADA_e_nao_contada():
     """Uma coluna a mais à esquerda não pode deslocar preço para yield."""
-    linhas = [[None] + list(l) for l in CABECALHO]
+    linhas = [[None] + list(linha) for linha in CABECALHO]
     linhas[1][3] = "AAA29"  # o catálogo também andou uma casa
     linhas[1][1] = "AAA 1 01/01/29"
     serie = [None] * 8 + [95.5, 9.1, 80.0, 7.0]
