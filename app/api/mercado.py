@@ -183,6 +183,11 @@ class ImpactoNaJanelaSaida(BaseModel):
     dias: int
 
 
+def _pilar(p: impacto_por_n1_na_janela.ImpactoDoPilar) -> PilarNaJanelaSaida:
+    """Um pilar, campo por campo — ver o comentário em `impacto_por_n1`."""
+    return PilarNaJanelaSaida(n1=p.n1, impacto=p.impacto, mencoes=p.mencoes)
+
+
 @rotas.get("/impacto-por-n1")
 def impacto_por_n1(
     sessao: Sessao,
@@ -216,8 +221,19 @@ def impacto_por_n1(
         ate=lida.ate,
         mes=lida.mes,
         regua=lida.regua,
-        positivos=[PilarNaJanelaSaida(**vars(p)) for p in lida.positivos],
-        negativos=[PilarNaJanelaSaida(**vars(p)) for p in lida.negativos],
+        #: CAMPO POR CAMPO, e não `**vars(p)`: `ImpactoDoPilar` é
+        #: `@dataclass(frozen=True, slots=True)`, e dataclass com slots NÃO TEM
+        #: `__dict__` — `vars()` levanta `TypeError` ali mesmo. Foi 500 no
+        #: ambiente: clicar numa data SEM dado devolvia 200 (a compreensão de
+        #: lista não roda com lista vazia) e clicar numa data COM dado — o caso
+        #: que a funcionalidade existe para atender — devolvia "Erro interno".
+        #:
+        #: AS OUTRAS SAÍDAS DESTE MÓDULO usam `**vars(...)` e funcionam porque as
+        #: dataclasses delas não declaram `slots`. A divergência estava nas duas
+        #: minhas, e escrever os campos aqui é o que tira a saída da dependência
+        #: de um detalhe da declaração da dataclass.
+        positivos=[_pilar(p) for p in lida.positivos],
+        negativos=[_pilar(p) for p in lida.negativos],
         total_positivos=lida.total_positivos,
         total_negativos=lida.total_negativos,
         sem_n1=lida.sem_n1,
