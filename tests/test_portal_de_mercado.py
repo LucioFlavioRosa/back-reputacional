@@ -132,6 +132,43 @@ def _sem_sobrescritas():
     app.dependency_overrides.clear()
 
 
+def test_a_rota_de_impacto_por_n1_tambem_passa_pelo_guarda(sessao):
+    """A rota NOVA, e ela não está em `ROTAS` por um motivo: as duas de lá são
+    POST com arquivo, e esta é GET com parâmetro. O guarda é do `APIRouter`
+    inteiro, mas "é do roteador" é exatamente o tipo de afirmação que para de
+    valer quando alguém monta a rota em outro lugar — então ela tem a sua.
+
+    SEM A BANDEIRA, RECUSA. Com as duas, atende: `ate` é obrigatório, e a
+    resposta ecoa a lente e a janela (ver o docstring da rota).
+    """
+    usuario = _usuario(sessao, alcanca_mercado=True)
+
+    cliente, _ = _cliente(sessao, usuario, lancado=False)
+    recusada = cliente.get("/api/mercado/impacto-por-n1?ate=2026-05-20")
+    assert recusada.status_code == 403
+    assert "mercado" in recusada.json()["detalhe"].lower()
+
+    limpar_todos()
+    cliente, _ = _cliente(sessao, usuario, lancado=True)
+    atendida = cliente.get("/api/mercado/impacto-por-n1?ate=2026-05-20")
+    assert atendida.status_code == 200
+    corpo = atendida.json()
+    assert corpo["lente"] == "imprensa"
+    assert corpo["dias"] == 15
+    #: A JANELA VOLTA NA RESPOSTA, e tem quinze dias contados nas duas pontas.
+    assert corpo["ate"] == "2026-05-20"
+    assert corpo["de"] == "2026-05-06"
+
+
+def test_impacto_por_n1_SEM_a_data_e_recusado(sessao):
+    """`ate` é o dia que a pessoa clicou. Um padrão aqui faria a tela mostrar uma
+    janela que ninguém pediu quando o parâmetro se perdesse no caminho."""
+    usuario = _usuario(sessao, alcanca_mercado=True)
+    cliente, _ = _cliente(sessao, usuario, lancado=True)
+
+    assert cliente.get("/api/mercado/impacto-por-n1").status_code == 422
+
+
 @pytest.mark.parametrize("rota", ROTAS)
 def test_com_a_bandeira_DESLIGADA_recusa_ate_quem_tem_o_papel(sessao, rota):
     """O estado em que as rotas nascem.

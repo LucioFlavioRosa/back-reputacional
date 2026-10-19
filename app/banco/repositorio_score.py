@@ -586,6 +586,116 @@ def somas_da_lente_filtradas(
     return por_fonte
 
 
+@dataclass(frozen=True, slots=True)
+class SomasNaJanela:
+    """As somas de uma janela de dias, quebradas por N1.
+
+    `sem_n1` e `sem_data` NÃO SÃO DETALHE: são as duas formas de uma menção ficar
+    fora desta conta, e as duas têm de chegar à tela. A menção sem N1 existe e
+    pesa no índice, mas não pertence a nenhum pilar — somá-la a um seria inventar
+    vínculo. A menção sem `data` (a coluna é opcional) pertence ao mês e não a um
+    dia, então nenhuma janela a alcança.
+
+    Omitir as duas faria a soma dos impactos dos pilares não fechar com o impacto
+    do período, e a tela mostraria pedaços que não compõem o que dizem compor —
+    o mesmo defeito que `impacto_do_recorte` descreve sobre o denominador local.
+    """
+
+    por_n1: dict[str, dict[str, list[SomasDaFonte]]]
+    sem_n1: int
+    sem_data_no_mes: int
+
+
+def somas_por_n1_na_janela(
+    sessao: Session, lente_id: int, de: date, ate: date
+) -> SomasNaJanela:
+    """As somas da lente entre dois DIAS, agrupadas por pilar (N1).
+
+    MESMO MOLDE DE `somas_da_lente_filtradas`, e de propósito: ela agrega
+    `mencao` ao vivo porque `score_mes_fonte` só tem grão de (fonte, mês,
+    sentimento, tier) e não responde por dimensão nenhuma. Aqui o motivo é o
+    mesmo e mais um: aquele agregado não tem grão de DIA, então uma janela de
+    quinze dias não tem como sair dele.
+
+    AS FÓRMULAS SÃO AS DA INGESTÃO (`peso_do_engajamento`, `peso_do_cargo`) e a
+    ponderação é `ponderar`, do domínio. Reimplementar o peso aqui faria esta
+    tela discordar da nota que a tela do Score mostra ao lado — e a divergência
+    apareceria como "o impacto não fecha", sem ninguém saber de onde veio.
+
+    O FILTRO POR `mes` ENTRA JUNTO COM O DE `data`, e não é redundância: o índice
+    é `(mes, bloco_tema_id)`, e `data` não tem índice nenhum. Sem a coluna
+    indexada na cláusula, a janela varre a tabela inteira.
+
+    A FONTE INTERNA (CRM) FICA DE FORA, como em `somas_da_lente_filtradas`: ela
+    não vem de `mencao` e não tem dia nenhum. Para a lente de imprensa isso é
+    vazio — ela tem uma fonte só, a Clipei.
+    """
+    meses = sorted({primeiro_dia(de), primeiro_dia(ate)})
+    consulta = (
+        select(
+            BlocoTema.nome,
+            ScoreFonte.codigo,
+            Mencao.sentimento,
+            Mencao.tier,
+            Mencao.engajamento,
+            Mencao.cargo,
+        )
+        .select_from(Mencao)
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .outerjoin(BlocoTema, BlocoTema.id == Mencao.bloco_tema_id)
+        .where(
+            ScoreFonte.lente_id == lente_id,
+            Mencao.mes.in_(meses),
+            Mencao.data.is_not(None),
+            Mencao.data >= de,
+            Mencao.data <= ate,
+        )
+    )
+
+    sem_n1 = 0
+    agrupadas: dict[str, dict[tuple[str, str, str], list[tuple[int | None, str | None]]]] = {}
+    for nome_n1, fonte_codigo, sentimento, tier, engajamento, cargo in sessao.execute(consulta):
+        if nome_n1 is None:
+            sem_n1 += 1
+            continue
+        chave = (fonte_codigo, sentimento, tier or "")
+        agrupadas.setdefault(nome_n1, {}).setdefault(chave, []).append((engajamento, cargo))
+
+    por_n1: dict[str, dict[str, list[SomasDaFonte]]] = {}
+    for nome_n1, grupos in agrupadas.items():
+        por_fonte: dict[str, list[SomasDaFonte]] = {}
+        for (fonte_codigo, sentimento, tier), linhas in grupos.items():
+            por_fonte.setdefault(fonte_codigo, []).append(
+                SomasDaFonte(
+                    fonte=fonte_codigo,
+                    sentimento=sentimento,
+                    tier=tier,
+                    mencoes=len(linhas),
+                    soma_log=sum(peso_do_engajamento(engajamento) for engajamento, _ in linhas),
+                    soma_engajamento=sum(engajamento or 0 for engajamento, _ in linhas),
+                    soma_cargo=sum(peso_do_cargo(cargo) for _, cargo in linhas),
+                )
+            )
+        por_n1[nome_n1] = por_fonte
+
+    #: AS MENÇÕES DO MÊS SEM DIA, contadas no mês da ponta da janela: é o mês cuja
+    #: régua mede esta conta, e é dele que a pessoa está lendo o índice.
+    sem_data_no_mes = (
+        sessao.execute(
+            select(func.count())
+            .select_from(Mencao)
+            .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+            .where(
+                ScoreFonte.lente_id == lente_id,
+                Mencao.mes == primeiro_dia(ate),
+                Mencao.data.is_(None),
+            )
+        ).scalar()
+        or 0
+    )
+    return SomasNaJanela(por_n1=por_n1, sem_n1=sem_n1, sem_data_no_mes=sem_data_no_mes)
+
+
 def _somas_da_lente(
     sessao: Session, lente_id: int, mes: date, filtro: FiltroDeMencoes | None = None
 ) -> dict[str, list[SomasDaFonte]]:

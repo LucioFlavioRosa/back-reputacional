@@ -32,7 +32,7 @@ from app.api.dependencias import (
     exigir_portal_de_inteligencia_de_mercado,
 )
 from app.banco.sessao import SessaoDoPedido
-from app.casos_de_uso import ingerir_bonds, serie_de_mercado
+from app.casos_de_uso import impacto_por_n1_na_janela, ingerir_bonds, serie_de_mercado
 
 rotas = APIRouter(
     prefix="/api/mercado",
@@ -158,6 +158,73 @@ def serie_dos_bonds(
         ],
         indice=[PontoDoIndiceSaida(**vars(p)) for p in lida.indice],
         metrica=lida.metrica,
+    )
+
+
+class PilarNaJanelaSaida(BaseModel):
+    n1: str
+    impacto: float
+    mencoes: int
+
+
+class ImpactoNaJanelaSaida(BaseModel):
+    de: date
+    ate: date
+    mes: date
+    regua: str
+    positivos: list[PilarNaJanelaSaida]
+    negativos: list[PilarNaJanelaSaida]
+    total_positivos: int
+    total_negativos: int
+    sem_n1: int
+    sem_data_no_mes: int
+    mes_sem_base: bool
+    lente: str
+    dias: int
+
+
+@rotas.get("/impacto-por-n1")
+def impacto_por_n1(
+    sessao: Sessao,
+    usuario: UsuarioLogado,
+    ate: Annotated[date, Query()],
+    dias: Annotated[int, Query(ge=1, le=90)] = impacto_por_n1_na_janela.DIAS_DA_JANELA,
+) -> ImpactoNaJanelaSaida:
+    """Os pilares (N1) que mais empurraram a nota da imprensa na janela.
+
+    NESTE ROTEADOR, E NÃO NO DO SCORE, por causa do guarda: a pergunta nasce no
+    Painel de Inteligência de Mercado e quem pode fazê-la é quem tem o portal —
+    `exigir_portal_de_inteligencia_de_mercado`, que já cerca este `APIRouter`
+    inteiro. Pendurá-la no `score.py` a abriria para quem tem o Score e não tem
+    este painel.
+
+    `ate` É OBRIGATÓRIO de propósito: ele é o dia que a pessoa clicou no gráfico,
+    e um padrão aqui ("hoje", "o último dia com dado") faria a tela mostrar uma
+    janela que ninguém pediu quando o parâmetro se perdesse no caminho.
+
+    `dias` TEM TETO porque a janela existe para ser um recorte: noventa dias já
+    são três meses, e o denominador é de UM mês só — ver o cabeçalho do caso de
+    uso. O teto não é performance, é a conta parar de querer dizer o que diz.
+
+    A LENTE E A JANELA VOLTAM NA RESPOSTA, como `metrica` volta na série: é o que
+    permite a tela afirmar "imprensa, 27/08 a 10/09" com o dado que desenhou, e
+    não com o que ela pediu — os dois divergem enquanto a resposta não chega.
+    """
+    lida = impacto_por_n1_na_janela.ler(sessao, ate=ate, dias=dias)
+    return ImpactoNaJanelaSaida(
+        de=lida.de,
+        ate=lida.ate,
+        mes=lida.mes,
+        regua=lida.regua,
+        positivos=[PilarNaJanelaSaida(**vars(p)) for p in lida.positivos],
+        negativos=[PilarNaJanelaSaida(**vars(p)) for p in lida.negativos],
+        total_positivos=lida.total_positivos,
+        total_negativos=lida.total_negativos,
+        sem_n1=lida.sem_n1,
+        sem_data_no_mes=lida.sem_data_no_mes,
+        mes_sem_base=lida.mes_sem_base,
+        lente=impacto_por_n1_na_janela.LENTE,
+        dias=dias,
     )
 
 
