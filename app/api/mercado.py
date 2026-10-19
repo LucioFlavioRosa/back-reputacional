@@ -32,7 +32,7 @@ from app.api.dependencias import (
     exigir_portal_de_inteligencia_de_mercado,
 )
 from app.banco.sessao import SessaoDoPedido
-from app.casos_de_uso import impacto_por_n2_na_janela, ingerir_bonds, serie_de_mercado
+from app.casos_de_uso import impacto_na_janela, ingerir_bonds, serie_de_mercado
 
 rotas = APIRouter(
     prefix="/api/mercado",
@@ -161,12 +161,12 @@ def serie_dos_bonds(
     )
 
 
-class TemaNaJanelaSaida(BaseModel):
+class GrupoNaJanelaSaida(BaseModel):
     #: A CHAVE do cadastro. A tela desenha a lista por ela, e nao pelo nome:
     #: dois temas homonimos sob pilares diferentes sao duas linhas.
     id: int
-    n2: str
-    n1: str | None
+    rotulo: str
+    contexto: str | None
     impacto: float
     mencoes: int
 
@@ -176,30 +176,36 @@ class ImpactoNaJanelaSaida(BaseModel):
     ate: date
     mes: date
     regua: str
-    positivos: list[TemaNaJanelaSaida]
-    negativos: list[TemaNaJanelaSaida]
+    positivos: list[GrupoNaJanelaSaida]
+    negativos: list[GrupoNaJanelaSaida]
     total_positivos: int
     total_negativos: int
-    sem_n2: int
+    sem_grupo: int
+    nivel: str
     sem_data: int
     mes_sem_base: bool
     lente: str
     dias: int
 
 
-def _tema(p: impacto_por_n2_na_janela.ImpactoDoTema) -> TemaNaJanelaSaida:
+def _grupo(p: impacto_na_janela.ImpactoDoGrupo) -> GrupoNaJanelaSaida:
     """Um tema, campo por campo — ver o comentário em `impacto_por_n2`."""
-    return TemaNaJanelaSaida(
-        id=p.id, n2=p.n2, n1=p.n1, impacto=p.impacto, mencoes=p.mencoes
+    return GrupoNaJanelaSaida(
+        id=p.id,
+        rotulo=p.rotulo,
+        contexto=p.contexto,
+        impacto=p.impacto,
+        mencoes=p.mencoes,
     )
 
 
-@rotas.get("/impacto-por-n2")
-def impacto_por_n2(
+@rotas.get("/impacto-na-janela")
+def impacto_na_janela_(
     sessao: Sessao,
     usuario: UsuarioLogado,
     ate: Annotated[date, Query()],
-    dias: Annotated[int, Query(ge=1, le=90)] = impacto_por_n2_na_janela.DIAS_DA_JANELA,
+    dias: Annotated[int, Query(ge=1, le=90)] = impacto_na_janela.DIAS_DA_JANELA,
+    nivel: Annotated[str, Query(pattern="^(n1|n2)$")] = impacto_na_janela.NIVEL_PADRAO,
 ) -> ImpactoNaJanelaSaida:
     """Os temas estratégicos (N2) que mais empurraram a nota da imprensa na janela.
 
@@ -221,7 +227,7 @@ def impacto_por_n2(
     permite a tela afirmar "imprensa, 27/08 a 10/09" com o dado que desenhou, e
     não com o que ela pediu — os dois divergem enquanto a resposta não chega.
     """
-    lida = impacto_por_n2_na_janela.ler(sessao, ate=ate, dias=dias)
+    lida = impacto_na_janela.ler(sessao, ate=ate, dias=dias, nivel=nivel)
     return ImpactoNaJanelaSaida(
         de=lida.de,
         ate=lida.ate,
@@ -238,14 +244,15 @@ def impacto_por_n2(
         #: dataclasses delas não declaram `slots`. A divergência estava nas duas
         #: minhas, e escrever os campos aqui é o que tira a saída da dependência
         #: de um detalhe da declaração da dataclass.
-        positivos=[_tema(p) for p in lida.positivos],
-        negativos=[_tema(p) for p in lida.negativos],
+        positivos=[_grupo(p) for p in lida.positivos],
+        negativos=[_grupo(p) for p in lida.negativos],
         total_positivos=lida.total_positivos,
         total_negativos=lida.total_negativos,
-        sem_n2=lida.sem_n2,
+        sem_grupo=lida.sem_grupo,
+        nivel=lida.nivel,
         sem_data=lida.sem_data,
         mes_sem_base=lida.mes_sem_base,
-        lente=impacto_por_n2_na_janela.LENTE,
+        lente=impacto_na_janela.LENTE,
         dias=dias,
     )
 

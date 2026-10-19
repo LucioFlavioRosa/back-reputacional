@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from app.banco import repositorio_score
 from app.banco.tabelas_catalogo import BlocoTema, MacroTema
 from app.banco.tabelas_score import Mencao, ScoreFonte, ScoreMesFonte
-from app.casos_de_uso import impacto_por_n2_na_janela
+from app.casos_de_uso import impacto_na_janela
 from app.dominio.erros import RegraViolada
 from tests.test_e2e_postgres import URL
 
@@ -127,7 +127,20 @@ def _mencao(
     SEM ENGAJAMENTO E SEM TIER por padrão: é o caso da régua de contagem, em que
     cada menção vale 1 — o cenário em que a conta à mão dos testes fecha sem
     depender da régua do banco de teste.
+
+    O PILAR VEM DO TEMA, SOZINHO, e isto é conserto de uma infidelidade do
+    auxiliar: a produção grava os DOIS níveis quando resolve o tema (o resolvedor
+    devolve `Niveis(n1_id=…, n2_id=…)` e a ingestão escreve os dois), e este
+    auxiliar escrevia só o tema. Com isso, toda menção dos testes era invisível
+    no nível do PILAR — e o teste da chave falhou exatamente nisso, apontando o
+    dedo para a fixture em vez de para o código.
+
+    DERIVAR AQUI, em vez de pedir os dois a cada chamada, é o que garante que o
+    próximo teste também seja fiel sem ninguém se lembrar da regra.
     """
+    pai = None
+    if n2 is not None:
+        pai = sessao.scalars(select(MacroTema).where(MacroTema.id == n2)).one().bloco_tema_id
     sessao.add(
         Mencao(
             fonte_id=clipei.id,
@@ -136,6 +149,7 @@ def _mencao(
             sentimento=sentimento,
             tier=tier,
             macro_tema_id=n2,
+            bloco_tema_id=pai,
         )
     )
     sessao.flush()
@@ -146,7 +160,7 @@ def _mencao(
 
 def test_a_janela_tem_os_dias_pedidos_nas_DUAS_pontas(sessao, clipei):
     """`ate - 15` daria DEZESSEIS dias. Quinze dias contados, de 06/05 a 20/05."""
-    lida = impacto_por_n2_na_janela.ler(sessao, ate=CLICADO, dias=15)
+    lida = impacto_na_janela.ler(sessao, ate=CLICADO, dias=15)
 
     assert lida.ate == CLICADO
     assert lida.de == date(2026, 5, 6)
@@ -154,7 +168,7 @@ def test_a_janela_tem_os_dias_pedidos_nas_DUAS_pontas(sessao, clipei):
 
 
 def test_a_janela_de_um_dia_e_o_proprio_dia(sessao, clipei):
-    lida = impacto_por_n2_na_janela.ler(sessao, ate=CLICADO, dias=1)
+    lida = impacto_na_janela.ler(sessao, ate=CLICADO, dias=1)
 
     assert lida.de == CLICADO
     assert lida.ate == CLICADO
@@ -162,7 +176,7 @@ def test_a_janela_de_um_dia_e_o_proprio_dia(sessao, clipei):
 
 def test_janela_de_zero_dia_e_recusada(sessao, clipei):
     with pytest.raises(RegraViolada):
-        impacto_por_n2_na_janela.ler(sessao, ate=CLICADO, dias=0)
+        impacto_na_janela.ler(sessao, ate=CLICADO, dias=0)
 
 
 def test_o_mes_da_regua_e_o_do_dia_CLICADO(sessao, clipei):
@@ -172,7 +186,7 @@ def test_o_mes_da_regua_e_o_do_dia_CLICADO(sessao, clipei):
     régua". O que isso custa está dito na tela; o que não custa é a ordem — todos
     os temas dividem pelo mesmo denominador.
     """
-    lida = impacto_por_n2_na_janela.ler(sessao, ate=date(2026, 5, 3), dias=15)
+    lida = impacto_na_janela.ler(sessao, ate=date(2026, 5, 3), dias=15)
 
     assert lida.de == date(2026, 4, 19)  # atravessa a virada
     assert lida.mes == date(2026, 5, 1)  # e a régua é de MAIO
@@ -200,11 +214,11 @@ def test_o_impacto_usa_o_denominador_do_MES_e_nao_o_da_janela(
             sessao, clipei, sentimento="pos", n2=temas[governanca], dia=date(2026, 5, 1)
         )
 
-    lida = impacto_por_n2_na_janela.ler(sessao, ate=CLICADO, dias=15)
+    lida = impacto_na_janela.ler(sessao, ate=CLICADO, dias=15)
 
     total_do_mes = mes_com_base
     assert lida.positivos, "o tema da janela tem de aparecer"
-    assert lida.positivos[0].n2 == governanca
+    assert lida.positivos[0].rotulo == governanca
     assert lida.positivos[0].impacto == pytest.approx(50 * 1 / total_do_mes)
     #: E NÃO 50: é o que um denominador local daria.
     assert lida.positivos[0].impacto < 50
@@ -215,7 +229,7 @@ def test_a_mencao_FORA_da_janela_nao_entra_no_numerador(sessao, clipei, temas, m
     #: um dia antes do começo da janela de 15 dias que termina em 20/05
     _mencao(sessao, clipei, sentimento="neg", n2=temas[governanca], dia=date(2026, 5, 5))
 
-    lida = impacto_por_n2_na_janela.ler(sessao, ate=CLICADO, dias=15)
+    lida = impacto_na_janela.ler(sessao, ate=CLICADO, dias=15)
 
     assert lida.negativos == []
 
@@ -225,10 +239,10 @@ def test_positivo_e_negativo_vao_para_quadros_SEPARADOS(sessao, clipei, temas, m
     _mencao(sessao, clipei, sentimento="pos", n2=temas[nomes[0]], dia=CLICADO)
     _mencao(sessao, clipei, sentimento="neg", n2=temas[nomes[1]], dia=CLICADO)
 
-    lida = impacto_por_n2_na_janela.ler(sessao, ate=CLICADO, dias=15)
+    lida = impacto_na_janela.ler(sessao, ate=CLICADO, dias=15)
 
-    assert [p.n2 for p in lida.positivos] == [nomes[0]]
-    assert [p.n2 for p in lida.negativos] == [nomes[1]]
+    assert [p.rotulo for p in lida.positivos] == [nomes[0]]
+    assert [p.rotulo for p in lida.negativos] == [nomes[1]]
     assert lida.positivos[0].impacto > 0
     assert lida.negativos[0].impacto < 0
 
@@ -240,7 +254,7 @@ def test_o_neutro_nao_impacta_e_nao_aparece_em_quadro_nenhum(sessao, clipei, tem
     nomes = list(temas)
     _mencao(sessao, clipei, sentimento="neu", n2=temas[nomes[0]], dia=CLICADO)
 
-    lida = impacto_por_n2_na_janela.ler(sessao, ate=CLICADO, dias=15)
+    lida = impacto_na_janela.ler(sessao, ate=CLICADO, dias=15)
 
     assert lida.positivos == []
     assert lida.negativos == []
@@ -255,13 +269,13 @@ def test_a_ordem_e_por_IMPACTO_e_os_quadros_cortam_em_cinco(sessao, clipei, tema
         for _ in range(quantas):
             _mencao(sessao, clipei, sentimento="neg", n2=temas[nome], dia=CLICADO)
 
-    lida = impacto_por_n2_na_janela.ler(sessao, ate=CLICADO, dias=15)
+    lida = impacto_na_janela.ler(sessao, ate=CLICADO, dias=15)
 
     assert len(lida.negativos) == 5
     assert lida.total_negativos == 6
     #: o de seis menções é o mais negativo, e o de uma ficou fora
-    assert lida.negativos[0].n2 == nomes[5]
-    assert [p.n2 for p in lida.negativos] == list(reversed(nomes[1:]))
+    assert lida.negativos[0].rotulo == nomes[5]
+    assert [p.rotulo for p in lida.negativos] == list(reversed(nomes[1:]))
     assert all(
         lida.negativos[i].impacto <= lida.negativos[i + 1].impacto for i in range(4)
     )
@@ -275,7 +289,7 @@ def test_o_quadro_diz_o_tamanho_real_quando_tem_menos_de_cinco(
     for nome in nomes[:2]:
         _mencao(sessao, clipei, sentimento="pos", n2=temas[nome], dia=CLICADO)
 
-    lida = impacto_por_n2_na_janela.ler(sessao, ate=CLICADO, dias=15)
+    lida = impacto_na_janela.ler(sessao, ate=CLICADO, dias=15)
 
     assert len(lida.positivos) == 2
     assert lida.total_positivos == 2
@@ -294,10 +308,10 @@ def test_a_mencao_SEM_N1_e_contada_e_nao_entra_em_pilar_nenhum(
     _mencao(sessao, clipei, sentimento="neg", n2=temas[governanca], dia=CLICADO)
     _mencao(sessao, clipei, sentimento="neg", n2=None, dia=CLICADO)
 
-    lida = impacto_por_n2_na_janela.ler(sessao, ate=CLICADO, dias=15)
+    lida = impacto_na_janela.ler(sessao, ate=CLICADO, dias=15)
 
-    assert lida.sem_n2 == 1
-    assert [p.n2 for p in lida.negativos] == [governanca]
+    assert lida.sem_grupo == 1
+    assert [p.rotulo for p in lida.negativos] == [governanca]
 
 
 def test_a_janela_LONGA_nao_perde_os_meses_do_MEIO(sessao, clipei, temas, mes_com_base):
@@ -323,7 +337,7 @@ def test_a_janela_LONGA_nao_perde_os_meses_do_MEIO(sessao, clipei, temas, mes_co
             mes=date(dia.year, dia.month, 1),
         )
 
-    lida = impacto_por_n2_na_janela.ler(sessao, ate=CLICADO, dias=90)
+    lida = impacto_na_janela.ler(sessao, ate=CLICADO, dias=90)
 
     assert lida.de == date(2026, 2, 20)
     assert lida.negativos, "o tema da janela tem de aparecer"
@@ -355,13 +369,13 @@ def test_dois_temas_do_MESMO_pilar_aparecem_em_lados_OPOSTOS(sessao, clipei, mes
         _mencao(sessao, clipei, sentimento="pos", n2=do_mesmo_pai[0].id, dia=CLICADO)
     _mencao(sessao, clipei, sentimento="neg", n2=do_mesmo_pai[1].id, dia=CLICADO)
 
-    lida = impacto_por_n2_na_janela.ler(sessao, ate=CLICADO, dias=15)
+    lida = impacto_na_janela.ler(sessao, ate=CLICADO, dias=15)
 
-    assert [p.n2 for p in lida.positivos] == [do_mesmo_pai[0].nome]
-    assert [p.n2 for p in lida.negativos] == [do_mesmo_pai[1].nome]
+    assert [p.rotulo for p in lida.positivos] == [do_mesmo_pai[0].nome]
+    assert [p.rotulo for p in lida.negativos] == [do_mesmo_pai[1].nome]
     #: O PILAR É O MESMO NOS DOIS, e vem preenchido.
-    assert lida.positivos[0].n1 is not None
-    assert lida.positivos[0].n1 == lida.negativos[0].n1
+    assert lida.positivos[0].contexto is not None
+    assert lida.positivos[0].contexto == lida.negativos[0].contexto
 
 
 def test_dois_temas_de_MESMO_NOME_sob_pais_diferentes_NAO_se_fundem(
@@ -398,14 +412,14 @@ def test_dois_temas_de_MESMO_NOME_sob_pais_diferentes_NAO_se_fundem(
     for _ in range(2):
         _mencao(sessao, clipei, sentimento="neg", n2=homonimos[1].id, dia=CLICADO)
 
-    lida = impacto_por_n2_na_janela.ler(sessao, ate=CLICADO, dias=15)
+    lida = impacto_na_janela.ler(sessao, ate=CLICADO, dias=15)
 
-    homonimos_na_saida = [p for p in lida.negativos if p.n2 == "Tema Homônimo de Teste"]
+    homonimos_na_saida = [p for p in lida.negativos if p.rotulo == "Tema Homônimo de Teste"]
     #: DUAS LINHAS, e não uma somada.
     assert len(homonimos_na_saida) == 2
     assert {p.mencoes for p in homonimos_na_saida} == {1, 2}
     #: E CADA UMA COM O SEU PAI, que é a informação que a fusão destruía.
-    assert {p.n1 for p in homonimos_na_saida} == {pais[0].nome, pais[1].nome}
+    assert {p.contexto for p in homonimos_na_saida} == {pais[0].nome, pais[1].nome}
     #: AS CHAVES SÃO DISTINTAS, para a tela poder desenhar as duas.
     assert homonimos_na_saida[0].id != homonimos_na_saida[1].id
 
@@ -441,10 +455,10 @@ def test_a_mencao_com_N1_E_SEM_N2_e_o_caso_REAL_que_fica_de_fora(
     )
     sessao.flush()
 
-    lida = impacto_por_n2_na_janela.ler(sessao, ate=CLICADO, dias=15)
+    lida = impacto_na_janela.ler(sessao, ate=CLICADO, dias=15)
 
-    assert lida.sem_n2 == 1
-    assert [p.n2 for p in lida.negativos] == [com_tema]
+    assert lida.sem_grupo == 1
+    assert [p.rotulo for p in lida.negativos] == [com_tema]
 
 
 def test_o_EMPATE_nao_muda_de_ordem_entre_chamadas(sessao, clipei, temas, mes_com_base):
@@ -459,12 +473,66 @@ def test_o_EMPATE_nao_muda_de_ordem_entre_chamadas(sessao, clipei, temas, mes_co
     for nome in nomes:
         _mencao(sessao, clipei, sentimento="neg", n2=temas[nome], dia=CLICADO)
 
-    primeira = impacto_por_n2_na_janela.ler(sessao, ate=CLICADO, dias=15)
-    segunda = impacto_por_n2_na_janela.ler(sessao, ate=CLICADO, dias=15)
+    primeira = impacto_na_janela.ler(sessao, ate=CLICADO, dias=15)
+    segunda = impacto_na_janela.ler(sessao, ate=CLICADO, dias=15)
 
-    assert [p.n2 for p in primeira.negativos] == [p.n2 for p in segunda.negativos]
+    assert [p.rotulo for p in primeira.negativos] == [p.rotulo for p in segunda.negativos]
     #: EMPATADOS, A ORDEM É A DO NOME — previsível e explicável.
-    assert [p.n2 for p in primeira.negativos] == nomes
+    assert [p.rotulo for p in primeira.negativos] == nomes
+
+
+def test_O_PILAR_ALCANCA_O_QUE_O_TEMA_NAO_ALCANCA(sessao, clipei, temas, mes_com_base):
+    """A RAZÃO DE A CHAVE EXISTIR, no mesmo dado e numa asserção só.
+
+    A menção resolvida pelo `atributo` (o caminho da Clipei) tem PILAR e não tem
+    TEMA — e a migration 0098 mede 72.590 nesse estado. No nível do tema ela cai
+    no `sem_grupo`; no nível do pilar ela é uma linha do quadro.
+
+    É ISSO QUE NENHUM DOS DOIS NÍVEIS RESOLVE SOZINHO: escolher o tema esconde
+    essa menção, escolher o pilar junta tudo num grupo grosso. A chave deixa a
+    pessoa ver as duas leituras do MESMO recorte — e o contraste entre os dois
+    `sem_grupo` é a medida honesta do que cada nível custa.
+    """
+    pai = sessao.scalars(select(BlocoTema).order_by(BlocoTema.id)).first()
+    com_tema = next(iter(temas))
+    #: uma COM tema (e portanto com pilar, derivado), e uma só com pilar
+    _mencao(sessao, clipei, sentimento="neg", n2=temas[com_tema], dia=CLICADO)
+    sessao.add(
+        Mencao(
+            fonte_id=clipei.id,
+            mes=MES,
+            data=CLICADO,
+            sentimento="neg",
+            bloco_tema_id=pai.id,
+            macro_tema_id=None,
+        )
+    )
+    sessao.flush()
+
+    no_tema = impacto_na_janela.ler(sessao, ate=CLICADO, dias=15, nivel="n2")
+    no_pilar = impacto_na_janela.ler(sessao, ate=CLICADO, dias=15, nivel="n1")
+
+    #: NO TEMA: uma linha, e a outra menção fora da conta.
+    assert [p.rotulo for p in no_tema.negativos] == [com_tema]
+    assert no_tema.sem_grupo == 1
+    assert no_tema.nivel == "n2"
+
+    #: NO PILAR: a menção que estava fora entra, e NADA fica de fora.
+    assert no_pilar.sem_grupo == 0
+    assert no_pilar.nivel == "n1"
+    assert pai.nome in [p.rotulo for p in no_pilar.negativos]
+
+    #: E O PILAR NÃO TEM CONTEXTO, porque ele é o topo da árvore.
+    assert all(p.contexto is None for p in no_pilar.negativos)
+    #: o tema, sim.
+    assert no_tema.negativos[0].contexto is not None
+
+
+def test_o_nivel_DESCONHECIDO_e_recusado(sessao, clipei):
+    """Um nível que não existe devolveria a janela do padrão em silêncio, e a
+    tela afirmaria estar mostrando o que pediu."""
+    with pytest.raises(RegraViolada):
+        impacto_na_janela.ler(sessao, ate=CLICADO, dias=15, nivel="n3")
 
 
 def test_o_mes_SEM_BASE_diz_isso_em_vez_de_dizer_zero(sessao, clipei, temas):
@@ -480,7 +548,7 @@ def test_o_mes_SEM_BASE_diz_isso_em_vez_de_dizer_zero(sessao, clipei, temas):
     governanca = next(iter(temas))
     _mencao(sessao, clipei, sentimento="neg", n2=temas[governanca], dia=CLICADO)
 
-    lida = impacto_por_n2_na_janela.ler(sessao, ate=CLICADO, dias=15)
+    lida = impacto_na_janela.ler(sessao, ate=CLICADO, dias=15)
 
     assert lida.mes_sem_base is True
     assert lida.positivos == []
@@ -496,7 +564,7 @@ def test_a_mencao_SEM_DATA_fica_fora_da_janela_e_e_contada(sessao, clipei, temas
     governanca = next(iter(temas))
     _mencao(sessao, clipei, sentimento="neg", n2=temas[governanca], dia=None)
 
-    lida = impacto_por_n2_na_janela.ler(sessao, ate=CLICADO, dias=15)
+    lida = impacto_na_janela.ler(sessao, ate=CLICADO, dias=15)
 
     assert lida.sem_data >= 1
     assert lida.negativos == []
@@ -515,7 +583,7 @@ def test_o_sem_data_conta_TODOS_os_meses_da_janela(sessao, clipei, temas, mes_co
     _mencao(sessao, clipei, sentimento="neg", n2=None, dia=None, mes=date(2026, 5, 1))
 
     #: janela que atravessa a virada: de 19/04 a 03/05
-    lida = impacto_por_n2_na_janela.ler(sessao, ate=date(2026, 5, 3), dias=15)
+    lida = impacto_na_janela.ler(sessao, ate=date(2026, 5, 3), dias=15)
 
     assert lida.de == date(2026, 4, 19)
     assert lida.sem_data == 2
