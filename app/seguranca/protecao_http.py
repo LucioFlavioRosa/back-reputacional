@@ -194,6 +194,21 @@ _CAMINHOS_DE_UPLOAD = (
     #: então a isenção da subida de uma vez só não cobriria esta.
     re.compile(rf"^/api/score/fontes/[^/]+/planilha/{_UUID}/parte/[0-9]+$"),
     re.compile(r"^/api/importacoes$"),
+    #: A PLANILHA DE BONDS, as duas rotas. É a QUINTA vez que o comentário acima
+    #: se cumpre, e a terceira em que ele se cumpre ANTES de doer — porque uma
+    #: revisão o apontou: o export BDH tem 1,05 MB e o teto genérico é 1 MiB
+    #: (1.048.576 bytes). O arquivo real não chegaria à rota.
+    #:
+    #: E o sintoma seria o descrito acima, não um 413 legível: o middleware
+    #: recusa pelo `Content-Length` e fecha a conexão enquanto o navegador ainda
+    #: envia, o `fetch` falha em nível de rede, e a tela diz "não foi possível
+    #: falar com o servidor" — mandando procurar um backend derrubado quando o
+    #: problema é o tamanho do arquivo.
+    #:
+    #: AS DUAS, e não só a de importar: a conferência lê o MESMO arquivo. Foi
+    #: exatamente o esquecimento que a nota da planilha do Score registra.
+    re.compile(r"^/api/mercado/bonds/conferencia$"),
+    re.compile(r"^/api/mercado/bonds/importar$"),
 )
 
 

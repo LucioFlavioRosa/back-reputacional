@@ -24,6 +24,7 @@ from app.api import (
     interacoes,
     lentes,
     materiais,
+    mercado,
     metricas,
     mudanca_de_casa,
     referencias,
@@ -159,6 +160,7 @@ def criar_app() -> FastAPI:
     app.include_router(referencias.rotas)
     app.include_router(alegacoes.rotas)
     app.include_router(score.rotas)
+    app.include_router(mercado.rotas)
     app.include_router(riscos.rotas)
     app.include_router(lentes.rotas)
     app.include_router(consulta_profundidade.rotas)
