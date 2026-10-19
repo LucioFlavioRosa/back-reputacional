@@ -379,15 +379,48 @@ def exigir_portal_score(usuario: UsuarioLogado) -> UsuarioAtual:
     return usuario
 
 
-# NÃO existe `exigir_portal_de_inteligencia_de_mercado` aqui, e a ausência é
-# deliberada — mesma razão de `exigir_exportacao`, logo abaixo.
-#
-# `acessa_inteligencia_de_mercado` é o portal do "Painel de Inteligência de
-# Mercado". O painel está EM CONSTRUÇÃO: não existe rota dele para proteger, e o
-# nível correspondente na tela de perfis é concedível e inerte até ele abrir. É
-# o que `configuracao.mercado_lancado` diz, e é por isso que `/api/eu` o devolve
-# — a tela mostra o módulo como "Liberado ao lançar" em vez de prometer uma tela
-# que não abre.
+def exigir_portal_de_inteligencia_de_mercado(
+    usuario: UsuarioLogado,
+    #: A CONFIGURAÇÃO POR `Depends`, e não `obter_configuracao()` dentro do
+    #: corpo — é o padrão que `exigir_sso_configurado` já usa neste arquivo. A
+    #: chamada direta não passa por `app.dependency_overrides`, então o teste
+    #: não conseguia ligar a bandeira e a recusa de "não lançado" vencia todas
+    #: as asserções. Um guarda que não se consegue testar com a porta ABERTA é
+    #: um guarda cuja metade permissiva nunca foi exercitada.
+    configuracao: Annotated[Configuracao, Depends(obter_configuracao)],
+) -> UsuarioAtual:
+    """As rotas do Painel de Inteligência de Mercado: o ALCANCE e a PORTA.
+
+    ESTE GUARDA NÃO EXISTIA, e o comentário que morava aqui explicava por quê:
+    "o painel está EM CONSTRUÇÃO, não existe rota dele para proteger". A primeira
+    rota chegou (a cotação de bonds), então a ausência deixou de ser deliberada.
+
+    DUAS CONDIÇÕES, E NÃO UMA — é o que `configuracao.mercado_lancado` existe
+    para permitir, nas palavras do próprio campo: "fechar o painel por uma tarde
+    exigiria revogar o acesso de dezenas de pessoas, e na tela de acessos isso é
+    indistinguível de alguém ter perdido o acesso. Com a bandeira, o alcance
+    fica intacto e a porta fecha".
+
+    `papel.acessa_inteligencia_de_mercado` é o ALCANCE: quem pode, quando abrir.
+    `mercado_lancado` é a PORTA: se o módulo está no ar. Checar só o papel faria
+    a rota servir dado com o cartão da capa ainda dizendo "em construção" —
+    e esconder o cartão não fecha a rota, que é a frase escrita na configuração.
+
+    AS DUAS RECUSAS SÃO DIFERENTES de propósito. "Ainda não foi lançado" é
+    estado do produto e não tem o que pedir à coordenação; "seu perfil não tem
+    acesso" é concessão. Dar a mesma mensagem para as duas mandaria alguém pedir
+    permissão para uma porta que está fechada para todos.
+    """
+    if not configuracao.mercado_lancado:
+        raise NaoAutorizado(
+            "O Painel de Inteligência de Mercado ainda não foi lançado."
+        )
+    if usuario.papel is None or not usuario.papel.acessa_inteligencia_de_mercado:
+        raise NaoAutorizado(
+            "Seu perfil não tem acesso ao Painel de Inteligência de Mercado. "
+            "Peça à coordenação do painel."
+        )
+    return usuario
 #
 # ATÉ A 0095 ESTE PORTAL SE CHAMAVA `sintese`, e este comentário dizia "o rótulo
 # da capa mudou, o nome interno não". Mudou agora, junto com a decisão de
