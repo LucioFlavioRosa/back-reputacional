@@ -51,19 +51,25 @@ LENTE = "imprensa"
 #: Quantos dias a janela cobre, contados para trás a partir do dia clicado.
 DIAS_DA_JANELA = 15
 
-#: Quantos temas cada quadro mostra.
+#: O NIVEL PADRAO E O TEMA, por pedido dele: o pilar estava "quase tudo sendo
+#: positivo" e nao achava o problema. O pilar fica a um clique, pela chave.
+NIVEL_PADRAO = repositorio_score.NIVEL_DO_TEMA
+NIVEL_DO_PILAR = repositorio_score.NIVEL_DO_PILAR
+NIVEL_DO_TEMA = repositorio_score.NIVEL_DO_TEMA
+
+#: Quantos grupos cada quadro mostra.
 QUANTOS_NO_QUADRO = 5
 
 
 @dataclass(frozen=True, slots=True)
-class ImpactoDoTema:
+class ImpactoDoGrupo:
     #: A CHAVE e o id do cadastro -- o nome e rotulo. Ver TemaNaJanela.
     id: int
-    #: O tema estrategico (N2) -- o rotulo principal da linha.
-    n2: str
-    #: O pilar (N1) a que ele pertence, como contexto. None quando o
-    #: cadastro nao resolve o pai.
-    n1: str | None
+    #: O nome do grupo -- o pilar ou o tema, conforme o nivel pedido.
+    rotulo: str
+    #: O nivel de cima, como contexto: o pilar de um tema. None no nivel do
+    #: pilar (ele e o topo) ou quando o cadastro nao resolve o pai.
+    contexto: str | None
     #: Pontos na nota do mês: positivo empurra para cima, negativo para baixo.
     impacto: float
     mencoes: int
@@ -78,21 +84,29 @@ class ImpactoNaJanela:
     #: A régua de engajamento vigente no mês — a tela a diz, porque ela muda o
     #: que "peso" significa.
     regua: str
-    positivos: list[ImpactoDoTema] = field(default_factory=list)
-    negativos: list[ImpactoDoTema] = field(default_factory=list)
+    positivos: list[ImpactoDoGrupo] = field(default_factory=list)
+    negativos: list[ImpactoDoGrupo] = field(default_factory=list)
     #: Quantos temas com impacto existem de cada lado, para a tela poder dizer
     #: "3 de 3" em vez de fingir que são sempre cinco.
     total_positivos: int = 0
     total_negativos: int = 0
     #: As duas formas de uma menção ficar fora — ver `SomasNaJanela`.
-    sem_n2: int = 0
+    #: As mencoes da janela sem o nivel pedido.
+    sem_grupo: int = 0
+    #: O nivel que esta resposta descreve, ecoado como metrica na serie.
+    nivel: str = NIVEL_PADRAO
     sem_data: int = 0
     #: Zero quando o mês não tem base: sem denominador não há pergunta a
     #: responder, e é diferente de "nenhum pilar impactou".
     mes_sem_base: bool = False
 
 
-def ler(sessao: Session, ate: date, dias: int = DIAS_DA_JANELA) -> ImpactoNaJanela:
+def ler(
+    sessao: Session,
+    ate: date,
+    dias: int = DIAS_DA_JANELA,
+    nivel: str = NIVEL_PADRAO,
+) -> ImpactoNaJanela:
     """Os temas (N2) que mais empurraram a nota na janela que termina em `ate`."""
     if dias < 1:
         raise RegraViolada("A janela precisa de pelo menos um dia.")
@@ -109,7 +123,11 @@ def ler(sessao: Session, ate: date, dias: int = DIAS_DA_JANELA) -> ImpactoNaJane
     calibracao = repositorio_score.calibracao_vigente(sessao)
 
     regua, total_do_mes = repositorio_score.denominador_do_mes(sessao, lente.id, mes, calibracao)
-    somas = repositorio_score.somas_por_n2_na_janela(sessao, lente.id, de=de, ate=ate)
+    if nivel not in repositorio_score.NIVEIS_DA_JANELA:
+        raise RegraViolada(f"Nivel desconhecido: {nivel}.")
+    somas = repositorio_score.somas_por_nivel_na_janela(
+        sessao, lente.id, de=de, ate=ate, nivel=nivel
+    )
 
     if not total_do_mes:
         return ImpactoNaJanela(
@@ -117,14 +135,15 @@ def ler(sessao: Session, ate: date, dias: int = DIAS_DA_JANELA) -> ImpactoNaJane
             ate=ate,
             mes=mes,
             regua=regua,
-            sem_n2=somas.sem_n2,
+            sem_grupo=somas.sem_grupo,
+        nivel=nivel,
             sem_data=somas.sem_data,
             mes_sem_base=True,
         )
 
-    medidos: list[ImpactoDoTema] = []
-    for id_do_tema, por_fonte in somas.por_tema.items():
-        tema = somas.temas[id_do_tema]
+    medidos: list[ImpactoDoGrupo] = []
+    for id_do_grupo, por_fonte in somas.por_grupo.items():
+        grupo = somas.grupos[id_do_grupo]
         #: AS FONTES DESLIGADAS NA CALIBRAÇÃO SAEM, como em toda leitura do
         #: índice: a nota não as conta, e contá-las aqui faria o impacto de um
         #: pilar incluir o que a nota ignorou.
@@ -144,10 +163,10 @@ def ler(sessao: Session, ate: date, dias: int = DIAS_DA_JANELA) -> ImpactoNaJane
         impacto = PONTOS_POR_NS * (contagem.positivo - contagem.negativo) / total_do_mes
         if impacto:
             medidos.append(
-                ImpactoDoTema(
-                    id=tema.id,
-                    n2=tema.nome,
-                    n1=tema.n1,
+                ImpactoDoGrupo(
+                    id=grupo.id,
+                    rotulo=grupo.nome,
+                    contexto=grupo.contexto,
                     impacto=impacto,
                     mencoes=mencoes,
                 )
@@ -159,10 +178,10 @@ def ler(sessao: Session, ate: date, dias: int = DIAS_DA_JANELA) -> ImpactoNaJane
     #: aberturas da MESMA janela sobre o MESMO dado — e quem lê não tem como
     #: saber que a diferença é arbitrária.
     acima = sorted(
-        [p for p in medidos if p.impacto > 0], key=lambda p: (-p.impacto, p.n2)
+        [p for p in medidos if p.impacto > 0], key=lambda p: (-p.impacto, p.rotulo)
     )
     abaixo = sorted(
-        [p for p in medidos if p.impacto < 0], key=lambda p: (p.impacto, p.n2)
+        [p for p in medidos if p.impacto < 0], key=lambda p: (p.impacto, p.rotulo)
     )
 
     return ImpactoNaJanela(
@@ -174,6 +193,7 @@ def ler(sessao: Session, ate: date, dias: int = DIAS_DA_JANELA) -> ImpactoNaJane
         negativos=abaixo[:QUANTOS_NO_QUADRO],
         total_positivos=len(acima),
         total_negativos=len(abaixo),
-        sem_n2=somas.sem_n2,
+        sem_grupo=somas.sem_grupo,
+        nivel=nivel,
         sem_data=somas.sem_data,
     )

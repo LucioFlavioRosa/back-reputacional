@@ -147,13 +147,13 @@ def test_a_rota_de_impacto_por_n2_tambem_passa_pelo_guarda(sessao):
     usuario = _usuario(sessao, alcanca_mercado=True)
 
     cliente, _ = _cliente(sessao, usuario, lancado=False)
-    recusada = cliente.get("/api/mercado/impacto-por-n2?ate=2026-05-20")
+    recusada = cliente.get("/api/mercado/impacto-na-janela?ate=2026-05-20")
     assert recusada.status_code == 403
     assert "mercado" in recusada.json()["detalhe"].lower()
 
     limpar_todos()
     cliente, _ = _cliente(sessao, usuario, lancado=True)
-    atendida = cliente.get("/api/mercado/impacto-por-n2?ate=2026-05-20")
+    atendida = cliente.get("/api/mercado/impacto-na-janela?ate=2026-05-20")
     assert atendida.status_code == 200
     corpo = atendida.json()
     assert corpo["lente"] == "imprensa"
@@ -213,13 +213,13 @@ def test_impacto_por_n2_devolve_os_PILARES_de_verdade(sessao):
     sessao.flush()
 
     cliente, _ = _cliente(sessao, usuario, lancado=True)
-    resposta = cliente.get("/api/mercado/impacto-por-n2?ate=2026-05-20")
+    resposta = cliente.get("/api/mercado/impacto-na-janela?ate=2026-05-20")
 
     assert resposta.status_code == 200, resposta.text
     corpo = resposta.json()
     assert corpo["positivos"], "o tema semeado tem de voltar"
     primeiro = corpo["positivos"][0]
-    assert primeiro["n2"] == tema.nome
+    assert primeiro["rotulo"] == tema.nome
     assert primeiro["impacto"] > 0
     assert primeiro["mencoes"] == 1
 
@@ -230,7 +230,7 @@ def test_impacto_por_n2_SEM_a_data_e_recusado(sessao):
     usuario = _usuario(sessao, alcanca_mercado=True)
     cliente, _ = _cliente(sessao, usuario, lancado=True)
 
-    assert cliente.get("/api/mercado/impacto-por-n2").status_code == 422
+    assert cliente.get("/api/mercado/impacto-na-janela").status_code == 422
 
 
 @pytest.mark.parametrize("rota", ROTAS)
