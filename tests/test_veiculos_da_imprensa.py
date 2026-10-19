@@ -17,7 +17,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
 from app.banco.tabelas_catalogo import CategoriaPublico, Esfera
-from app.banco.tabelas_stakeholders import Instituicao
+from app.banco.tabelas_stakeholders import Instituicao, InstituicaoApelido
 from app.casos_de_uso.veiculos_da_imprensa import (
     CATEGORIA_DA_IMPRENSA,
     ESFERA_POR_ABRANGENCIA,
@@ -71,6 +71,94 @@ def test_reconhecer_separa_o_que_existe_do_que_falta(sessao):
     assert normalizar("Veículo Já Cadastrado 42") in reco.cadastrados
     assert [v.nome for v in reco.novos] == ["Veículo Que Falta 42"]
     assert reco.quantos_novos == 1
+
+
+def test_reconhecer_ACHA_PELO_APELIDO_o_nome_que_a_fusao_levou(sessao):
+    """A duplicata não volta na subida seguinte.
+
+    O DEFEITO, achado na revisão da fusão com escolha de direção: a ingestão casa
+    por `nome_normalizado` EXATO. Quando dois cadastros se fundem, o nome de quem
+    sai some do banco — e o fornecedor continua mandando aquele nome todo mês.
+    Sem apelido ele vira "veículo novo" e NASCE DE NOVO, com as menções do mês
+    dentro: a duplicata que alguém acabou de resolver volta.
+
+    O TESTE É A SUBIDA DO MÊS SEGUINTE: o cadastro se chama `handlezz10`, a
+    planilha manda "Veículo Fundido Zz10" — o nome que a fusão levou —, e o
+    reconhecimento tem de devolver o cadastro que ficou, e não um novo.
+    """
+    ficou = Instituicao(
+        nome="handlezz10",
+        nome_normalizado=normalizar("handlezz10"),
+        tipo="perfil_rede",
+    )
+    sessao.add(ficou)
+    sessao.flush()
+    sessao.add(
+        InstituicaoApelido(
+            nome_normalizado=normalizar("Veículo Fundido Zz10"),
+            nome="Veículo Fundido Zz10",
+            instituicao_id=ficou.id,
+        )
+    )
+    sessao.flush()
+
+    reco = reconhecer(sessao, _da_planilha("Veículo Fundido Zz10"))
+
+    assert reco.novos == ()
+    assert reco.cadastrados == {normalizar("Veículo Fundido Zz10"): str(ficou.id)}
+
+
+def test_sem_o_apelido_o_MESMO_nome_voltaria_a_nascer(sessao):
+    """O controle do teste acima, e a medida do defeito que ele fecha.
+
+    Sem esta asserção, um `reconhecer` que achasse o cadastro por outro caminho
+    qualquer faria o teste do apelido passar sem o apelido existir — e eu não
+    saberia se a linha nova serve para alguma coisa.
+    """
+    ficou = Instituicao(
+        nome="handlezz11",
+        nome_normalizado=normalizar("handlezz11"),
+        tipo="perfil_rede",
+    )
+    sessao.add(ficou)
+    sessao.flush()
+
+    reco = reconhecer(sessao, _da_planilha("Veículo Fundido Zz11"))
+
+    assert [v.nome for v in reco.novos] == ["Veículo Fundido Zz11"]
+
+
+def test_o_apelido_NAO_vence_um_cadastro_vivo_de_mesmo_nome(sessao):
+    """A ordem é cadastro exato primeiro, apelido depois.
+
+    `instituicao.nome_normalizado` NÃO é única — ALMG existe como entidade e como
+    órgão. Um apelido que respondesse antes da busca exata trocaria o ator de um
+    cadastro VIVO pelo de uma fusão antiga, e o pior é que ninguém veria: a
+    menção simplesmente iria para o dossiê errado.
+    """
+    vivo = Instituicao(
+        nome="Ambíguo Zz12",
+        nome_normalizado=normalizar("Ambíguo Zz12"),
+        tipo="veiculo",
+    )
+    outro = Instituicao(
+        nome="outrozz12", nome_normalizado=normalizar("outrozz12"), tipo="perfil_rede"
+    )
+    sessao.add_all([vivo, outro])
+    sessao.flush()
+    #: Um apelido com o MESMO nome do cadastro vivo, apontando para outro lugar.
+    sessao.add(
+        InstituicaoApelido(
+            nome_normalizado=normalizar("Ambíguo Zz12"),
+            nome="Ambíguo Zz12",
+            instituicao_id=outro.id,
+        )
+    )
+    sessao.flush()
+
+    reco = reconhecer(sessao, _da_planilha("Ambíguo Zz12"))
+
+    assert reco.cadastrados == {normalizar("Ambíguo Zz12"): str(vivo.id)}
 
 
 def test_reconhecer_NAO_escreve_nada(sessao):

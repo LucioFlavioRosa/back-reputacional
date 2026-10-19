@@ -31,12 +31,18 @@ import uuid
 from dataclasses import dataclass
 
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.banco.repositorio_score import so_interacoes_visiveis
 from app.banco.tabelas_interacoes import InteracaoRegistro
 from app.banco.tabelas_score import Lente, Mencao, ScoreFonte
-from app.banco.tabelas_stakeholders import AtorDistinto, Instituicao, Interlocutor
+from app.banco.tabelas_stakeholders import (
+    AtorDistinto,
+    Instituicao,
+    InstituicaoApelido,
+    Interlocutor,
+)
 from app.dominio.erros import NaoEncontrado, RegraViolada
 from app.dominio.texto import (
     SEMELHANCA_MINIMA,
@@ -573,6 +579,43 @@ def fundir(
         sobrevivente.pendente_de_revisao = True
         sobrevivente.motivo_da_revisao = (
             sobrevivente.motivo_da_revisao or perfil.motivo_da_revisao
+        )
+
+    #: E O NOME DE QUEM SAI VIRA APELIDO DO QUE FICA (migration `0102`).
+    #:
+    #: SEM ISTO A DUPLICATA VOLTA. A ingestão casa por `nome_normalizado` exato
+    #: (`veiculos_da_imprensa.reconhecer`), e o nome que some daqui continua
+    #: chegando na planilha do mês seguinte: ele deixaria de casar, viraria
+    #: "veículo novo" e nasceria de novo — com as menções do mês dentro. Foi o
+    #: achado ALTA da revisão da escolha de direção, e o buraco já existia antes
+    #: dela.
+    #:
+    #: OS APELIDOS DE QUEM SAI VÊM JUNTO, e não é zelo: sem reapontar, o
+    #: `on delete cascade` os levaria embora, e um nome que já tinha sido
+    #: absorvido uma vez voltaria a não casar na subida seguinte. Duas fusões
+    #: encadeadas (A→B, depois B→C) são o caso normal numa fila de 209 pares.
+    sessao.execute(
+        InstituicaoApelido.__table__.update()
+        .where(InstituicaoApelido.instituicao_id == perfil.id)
+        .values(instituicao_id=sobrevivente.id)
+    )
+    #: NOME IGUAL NÃO VIRA APELIDO: `ALMG` (entidade) dentro de `ALMG` (órgão)
+    #: não tira nome nenhum de circulação, e a linha só ocuparia a chave.
+    if perfil.nome_normalizado != sobrevivente.nome_normalizado:
+        #: O MAIS RECENTE VENCE quando a chave já existe, e é a escolha menos
+        #: surpreendente: a linha guarda a decisão de gente mais nova sobre para
+        #: onde aquele nome aponta.
+        sessao.execute(
+            pg_insert(InstituicaoApelido)
+            .values(
+                nome_normalizado=perfil.nome_normalizado,
+                nome=perfil.nome,
+                instituicao_id=sobrevivente.id,
+            )
+            .on_conflict_do_update(
+                index_elements=["nome_normalizado"],
+                set_={"nome": perfil.nome, "instituicao_id": sobrevivente.id},
+            )
         )
 
     #: AS MENÇÕES PASSAM: o dossiê do ator fica num só lugar.
