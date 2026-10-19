@@ -601,8 +601,11 @@ class SomasNaJanela:
     o mesmo defeito que `impacto_do_recorte` descreve sobre o denominador local.
     """
 
-    por_n1: dict[str, dict[str, list[SomasDaFonte]]]
-    sem_n1: int
+    #: Por nome do TEMA ESTRATÉGICO (N2), e o N1 dele como contexto.
+    por_n2: dict[str, dict[str, list[SomasDaFonte]]]
+    #: O N1 pai de cada N2, para a tela dar contexto sem uma segunda leitura.
+    n1_de: dict[str, str]
+    sem_n2: int
     #: As menções SEM DATA de todos os meses que a janela atravessa. Contava só o
     #: mês da ponta — achado de revisão: numa janela que cruza a virada, as sem
     #: data do mês anterior também ficam fora dela, e ficavam invisíveis.
@@ -631,10 +634,21 @@ def meses_da_janela(de: date, ate: date) -> list[date]:
     return meses
 
 
-def somas_por_n1_na_janela(
+def somas_por_n2_na_janela(
     sessao: Session, lente_id: int, de: date, ate: date
 ) -> SomasNaJanela:
-    """As somas da lente entre dois DIAS, agrupadas por pilar (N1).
+    """As somas da lente entre dois DIAS, agrupadas por tema estratégico (N2).
+
+    ERA POR PILAR (N1), E ELE PEDIU A TROCA: "ao invés de ser n1 pode aparecer o
+    n2, pois o n1 esta quase tudo sendo positivo e estamos deixando passar alguma
+    informação valiosa". São sete N1 contra quarenta e um N2 no cadastro — num
+    quadro de cinco linhas, sete grupos quase não escolhem nada, e um N1 com
+    muita matéria positiva e um bolsão negativo dentro dele aparece como
+    positivo. O N2 é onde esse bolsão fica visível.
+
+    O N1 PAI VAI JUNTO, como contexto: quarenta e um nomes de tema sem o pilar a
+    que pertencem dão uma lista mais granular e menos legível, e quem estava
+    olhando os pilares até agora perde a referência.
 
     MESMO MOLDE DE `somas_da_lente_filtradas`, e de propósito: ela agrega
     `mencao` ao vivo porque `score_mes_fonte` só tem grão de (fonte, mês,
@@ -648,8 +662,13 @@ def somas_por_n1_na_janela(
     apareceria como "o impacto não fecha", sem ninguém saber de onde veio.
 
     O FILTRO POR `mes` ENTRA JUNTO COM O DE `data`, e não é redundância: o índice
-    é `(mes, bloco_tema_id)`, e `data` não tem índice nenhum. Sem a coluna
+    é `(mes, macro_tema_id)`, e `data` não tem índice nenhum. Sem a coluna
     indexada na cláusula, a janela varre a tabela inteira.
+
+    O TEMA INATIVO ENTRA, e é consistente com o resto: nenhuma leitura do índice
+    filtra `MacroTema.ativo`, porque a menção existe e pesou na nota. Esconder o
+    tema desativado faria a soma dos pedaços não fechar com o período — e o
+    impacto dele é real, mesmo que o nome venha de uma taxonomia antiga.
 
     A FONTE INTERNA (CRM) FICA DE FORA, como em `somas_da_lente_filtradas`: ela
     não vem de `mencao` e não tem dia nenhum. Para a lente de imprensa isso é
@@ -658,6 +677,7 @@ def somas_por_n1_na_janela(
     meses = meses_da_janela(de, ate)
     consulta = (
         select(
+            MacroTema.nome,
             BlocoTema.nome,
             ScoreFonte.codigo,
             Mencao.sentimento,
@@ -667,7 +687,11 @@ def somas_por_n1_na_janela(
         )
         .select_from(Mencao)
         .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
-        .outerjoin(BlocoTema, BlocoTema.id == Mencao.bloco_tema_id)
+        .outerjoin(MacroTema, MacroTema.id == Mencao.macro_tema_id)
+        #: O N1 VEM DO N2, e não de `Mencao.bloco_tema_id`: o pai do tema é o que
+        #: dá contexto à linha, e a coluna da menção pode estar preenchida por
+        #: uma resolução que parou no pilar — aí ela fala de outro nível.
+        .outerjoin(BlocoTema, BlocoTema.id == MacroTema.bloco_tema_id)
         .where(
             ScoreFonte.lente_id == lente_id,
             Mencao.mes.in_(meses),
@@ -677,17 +701,22 @@ def somas_por_n1_na_janela(
         )
     )
 
-    sem_n1 = 0
+    sem_n2 = 0
+    n1_de: dict[str, str] = {}
     agrupadas: dict[str, dict[tuple[str, str, str], list[tuple[int | None, str | None]]]] = {}
-    for nome_n1, fonte_codigo, sentimento, tier, engajamento, cargo in sessao.execute(consulta):
-        if nome_n1 is None:
-            sem_n1 += 1
+    for nome_n2, nome_n1, fonte_codigo, sentimento, tier, engajamento, cargo in sessao.execute(
+        consulta
+    ):
+        if nome_n2 is None:
+            sem_n2 += 1
             continue
+        if nome_n1 is not None:
+            n1_de[nome_n2] = nome_n1
         chave = (fonte_codigo, sentimento, tier or "")
-        agrupadas.setdefault(nome_n1, {}).setdefault(chave, []).append((engajamento, cargo))
+        agrupadas.setdefault(nome_n2, {}).setdefault(chave, []).append((engajamento, cargo))
 
-    por_n1: dict[str, dict[str, list[SomasDaFonte]]] = {}
-    for nome_n1, grupos in agrupadas.items():
+    por_n2: dict[str, dict[str, list[SomasDaFonte]]] = {}
+    for nome_do_tema, grupos in agrupadas.items():
         por_fonte: dict[str, list[SomasDaFonte]] = {}
         for (fonte_codigo, sentimento, tier), linhas in grupos.items():
             por_fonte.setdefault(fonte_codigo, []).append(
@@ -701,7 +730,7 @@ def somas_por_n1_na_janela(
                     soma_cargo=sum(peso_do_cargo(cargo) for _, cargo in linhas),
                 )
             )
-        por_n1[nome_n1] = por_fonte
+        por_n2[nome_do_tema] = por_fonte
 
     #: AS MENÇÕES SEM DIA, em TODOS os meses da janela: elas pertencem ao mês e
     #: não a um dia, então janela nenhuma as alcança — e uma janela que atravessa
@@ -720,7 +749,7 @@ def somas_por_n1_na_janela(
         ).scalar()
         or 0
     )
-    return SomasNaJanela(por_n1=por_n1, sem_n1=sem_n1, sem_data=sem_data)
+    return SomasNaJanela(por_n2=por_n2, n1_de=n1_de, sem_n2=sem_n2, sem_data=sem_data)
 
 
 def _somas_da_lente(
