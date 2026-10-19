@@ -10,7 +10,12 @@ import pytest
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
-from app.api.base_das_lentes import EdicaoDoJornalista, editar_jornalista, listar_mencoes, opcoes_da_base
+from app.api.base_das_lentes import (
+    EdicaoDoJornalista,
+    editar_jornalista,
+    listar_mencoes,
+    opcoes_da_base,
+)
 from app.banco.tabelas_catalogo import BlocoTema
 from app.banco.tabelas_score import Mencao, ScoreFonte
 from app.banco.tabelas_stakeholders import Instituicao, Interlocutor
@@ -41,7 +46,9 @@ class _QuemOlha:
     ve_diretorio: bool = True
     #: Só usado por quem edita (`editar_jornalista`) — a leitura nem olha.
     papel: Papel | None = field(
-        default_factory=lambda: Papel(codigo="score_edicao", nome="Score · edição", pode_editar_tudo=True)
+        default_factory=lambda: Papel(
+            codigo="score_edicao", nome="Score · edição", pode_editar_tudo=True
+        )
     )
 
 
@@ -302,7 +309,9 @@ def materia_do_globo(sessao):
     um interlocutor cadastrado nele e outro numa instituição diferente."""
     clipei = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "clipei")).one()
     globo = Instituicao(nome="O Globo", nome_normalizado=normalizar("O Globo"), tipo="veiculo")
-    folha = Instituicao(nome="Folha de S.Paulo", nome_normalizado=normalizar("Folha de S.Paulo"), tipo="veiculo")
+    folha = Instituicao(
+        nome="Folha de S.Paulo", nome_normalizado=normalizar("Folha de S.Paulo"), tipo="veiculo"
+    )
     sessao.add_all([globo, folha])
     sessao.flush()
 
@@ -386,7 +395,9 @@ def test_so_quem_ve_o_diretorio_edita(sessao, materia_do_globo):
 
 def test_so_quem_pode_editar_tudo_edita(sessao, materia_do_globo):
     materia, jornalista_do_globo, _ = materia_do_globo
-    leitor = _QuemOlha(papel=Papel(codigo="score_leitura", nome="Score · leitura", ve_diretorio=True))
+    leitor = _QuemOlha(
+        papel=Papel(codigo="score_leitura", nome="Score · leitura", ve_diretorio=True)
+    )
     with pytest.raises(NaoAutorizado):
         _editar(sessao, materia.id, jornalista_do_globo.id, usuario=leitor)
     sem_papel = _QuemOlha(papel=None)
