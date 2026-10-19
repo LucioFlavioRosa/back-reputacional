@@ -25,7 +25,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.banco import repositorio_score
-from app.banco.tabelas_catalogo import MacroTema
+from app.banco.tabelas_catalogo import BlocoTema, MacroTema
 from app.banco.tabelas_score import Mencao, ScoreFonte, ScoreMesFonte
 from app.casos_de_uso import impacto_por_n2_na_janela
 from app.dominio.erros import RegraViolada
@@ -362,6 +362,109 @@ def test_dois_temas_do_MESMO_pilar_aparecem_em_lados_OPOSTOS(sessao, clipei, mes
     #: O PILAR É O MESMO NOS DOIS, e vem preenchido.
     assert lida.positivos[0].n1 is not None
     assert lida.positivos[0].n1 == lida.negativos[0].n1
+
+
+def test_dois_temas_de_MESMO_NOME_sob_pais_diferentes_NAO_se_fundem(
+    sessao, clipei, mes_com_base
+):
+    """ACHADO DE REVISÃO: o agrupamento era pelo NOME do tema.
+
+    Hoje o cadastro tem 41 temas e 41 nomes distintos, então nada colide — mas
+    `macro_tema.nome` NÃO É ÚNICO no schema (só `codigo` é). A unicidade era um
+    fato do dado, não uma garantia, e o dia em que alguém cadastrasse "Tarifa"
+    sob dois pilares os dois impactos se somariam numa linha só, com o pai do
+    último que passasse na consulta.
+
+    A CHAVE PASSOU A SER O `id`, que é o que a tabela garante. O nome continua
+    sendo o rótulo, e dois temas homônimos aparecem como duas linhas — que é o
+    que eles são.
+    """
+    pais = sessao.scalars(select(BlocoTema).order_by(BlocoTema.id)).all()[:2]
+    assert len(pais) == 2, "o cadastro precisa de dois N1"
+    homonimos = []
+    for indice, pai in enumerate(pais):
+        tema = MacroTema(
+            nome="Tema Homônimo de Teste",
+            bloco_tema_id=pai.id,
+            codigo=f"homonimo-de-teste-{indice}",
+            ordem=90 + indice,
+        )
+        sessao.add(tema)
+        homonimos.append(tema)
+    sessao.flush()
+
+    #: um NEGATIVO em cada, com volumes diferentes para a ordem ser previsível
+    _mencao(sessao, clipei, sentimento="neg", n2=homonimos[0].id, dia=CLICADO)
+    for _ in range(2):
+        _mencao(sessao, clipei, sentimento="neg", n2=homonimos[1].id, dia=CLICADO)
+
+    lida = impacto_por_n2_na_janela.ler(sessao, ate=CLICADO, dias=15)
+
+    homonimos_na_saida = [p for p in lida.negativos if p.n2 == "Tema Homônimo de Teste"]
+    #: DUAS LINHAS, e não uma somada.
+    assert len(homonimos_na_saida) == 2
+    assert {p.mencoes for p in homonimos_na_saida} == {1, 2}
+    #: E CADA UMA COM O SEU PAI, que é a informação que a fusão destruía.
+    assert {p.n1 for p in homonimos_na_saida} == {pais[0].nome, pais[1].nome}
+    #: AS CHAVES SÃO DISTINTAS, para a tela poder desenhar as duas.
+    assert homonimos_na_saida[0].id != homonimos_na_saida[1].id
+
+
+def test_a_mencao_com_N1_E_SEM_N2_e_o_caso_REAL_que_fica_de_fora(
+    sessao, clipei, temas, mes_com_base
+):
+    """O CASO QUE A TROCA DE N1 PARA N2 CRIOU, e que o teste de antes não via.
+
+    O resolvedor tem seis caminhos, e o da Clipei — pelo `atributo` — devolve
+    `Niveis(n1_id=achado)`: N1 preenchido, N2 e N3 NULOS. A migration 0098 mede
+    72.590 menções da Clipei nesse estado, e a Clipei é a única fonte da lente
+    de imprensa.
+
+    O TESTE ANTERIOR ZERAVA OS DOIS NÍVEIS, e por isso não reproduzia nada: ele
+    provava que menção sem taxonomia alguma fica fora, que é um caso raro. O
+    caso real — e volumoso — é ter pilar e não ter tema, e é ele que precisa
+    aparecer no contador que a tela mostra.
+    """
+    pai = sessao.scalars(select(BlocoTema).order_by(BlocoTema.id)).first()
+    com_tema = next(iter(temas))
+    _mencao(sessao, clipei, sentimento="neg", n2=temas[com_tema], dia=CLICADO)
+    #: a menção da Clipei resolvida pelo `atributo`: N1 sim, N2 não
+    sessao.add(
+        Mencao(
+            fonte_id=clipei.id,
+            mes=MES,
+            data=CLICADO,
+            sentimento="neg",
+            bloco_tema_id=pai.id,
+            macro_tema_id=None,
+        )
+    )
+    sessao.flush()
+
+    lida = impacto_por_n2_na_janela.ler(sessao, ate=CLICADO, dias=15)
+
+    assert lida.sem_n2 == 1
+    assert [p.n2 for p in lida.negativos] == [com_tema]
+
+
+def test_o_EMPATE_nao_muda_de_ordem_entre_chamadas(sessao, clipei, temas, mes_com_base):
+    """ACHADO DE REVISÃO: a ordenação usava só o impacto.
+
+    Dois temas com o mesmo impacto ficavam na ordem que o banco devolvesse — e
+    com cinco linhas no quadro, o QUINTO item podia trocar entre duas aberturas
+    da mesma janela, sobre o mesmo dado. Quem está lendo não tem como saber que
+    a diferença é arbitrária.
+    """
+    nomes = sorted(temas)[:3]
+    for nome in nomes:
+        _mencao(sessao, clipei, sentimento="neg", n2=temas[nome], dia=CLICADO)
+
+    primeira = impacto_por_n2_na_janela.ler(sessao, ate=CLICADO, dias=15)
+    segunda = impacto_por_n2_na_janela.ler(sessao, ate=CLICADO, dias=15)
+
+    assert [p.n2 for p in primeira.negativos] == [p.n2 for p in segunda.negativos]
+    #: EMPATADOS, A ORDEM É A DO NOME — previsível e explicável.
+    assert [p.n2 for p in primeira.negativos] == nomes
 
 
 def test_o_mes_SEM_BASE_diz_isso_em_vez_de_dizer_zero(sessao, clipei, temas):

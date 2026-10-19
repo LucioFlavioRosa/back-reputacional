@@ -57,6 +57,8 @@ QUANTOS_NO_QUADRO = 5
 
 @dataclass(frozen=True, slots=True)
 class ImpactoDoTema:
+    #: A CHAVE e o id do cadastro -- o nome e rotulo. Ver TemaNaJanela.
+    id: int
     #: O tema estrategico (N2) -- o rotulo principal da linha.
     n2: str
     #: O pilar (N1) a que ele pertence, como contexto. None quando o
@@ -121,7 +123,8 @@ def ler(sessao: Session, ate: date, dias: int = DIAS_DA_JANELA) -> ImpactoNaJane
         )
 
     medidos: list[ImpactoDoTema] = []
-    for n2, por_fonte in somas.por_n2.items():
+    for id_do_tema, por_fonte in somas.por_tema.items():
+        tema = somas.temas[id_do_tema]
         #: AS FONTES DESLIGADAS NA CALIBRAÇÃO SAEM, como em toda leitura do
         #: índice: a nota não as conta, e contá-las aqui faria o impacto de um
         #: pilar incluir o que a nota ignorou.
@@ -142,12 +145,25 @@ def ler(sessao: Session, ate: date, dias: int = DIAS_DA_JANELA) -> ImpactoNaJane
         if impacto:
             medidos.append(
                 ImpactoDoTema(
-                    n2=n2, n1=somas.n1_de.get(n2), impacto=impacto, mencoes=mencoes
+                    id=tema.id,
+                    n2=tema.nome,
+                    n1=tema.n1,
+                    impacto=impacto,
+                    mencoes=mencoes,
                 )
             )
 
-    acima = sorted([p for p in medidos if p.impacto > 0], key=lambda p: -p.impacto)
-    abaixo = sorted([p for p in medidos if p.impacto < 0], key=lambda p: p.impacto)
+    #: O DESEMPATE É PELO NOME, e é conserto de achado de revisão: a ordenação
+    #: usava só o impacto, e dois temas empatados ficavam na ordem que o banco
+    #: devolvesse. Com cinco linhas no quadro, o QUINTO item trocava entre duas
+    #: aberturas da MESMA janela sobre o MESMO dado — e quem lê não tem como
+    #: saber que a diferença é arbitrária.
+    acima = sorted(
+        [p for p in medidos if p.impacto > 0], key=lambda p: (-p.impacto, p.n2)
+    )
+    abaixo = sorted(
+        [p for p in medidos if p.impacto < 0], key=lambda p: (p.impacto, p.n2)
+    )
 
     return ImpactoNaJanela(
         de=de,
