@@ -31,7 +31,6 @@ import uuid
 from dataclasses import dataclass
 
 from sqlalchemy import func, select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.banco.repositorio_score import so_interacoes_visiveis
@@ -43,6 +42,7 @@ from app.banco.tabelas_stakeholders import (
     InstituicaoApelido,
     Interlocutor,
 )
+from app.casos_de_uso.veiculos_da_imprensa import LISTAS_DE_VEICULOS, nomes_da_lista
 from app.dominio.erros import NaoEncontrado, RegraViolada
 from app.dominio.texto import (
     SEMELHANCA_MINIMA,
@@ -581,6 +581,37 @@ def fundir(
             sobrevivente.motivo_da_revisao or perfil.motivo_da_revisao
         )
 
+    #: FUNDIR UM VEÍCULO DE LISTA DENTRO DE QUEM NÃO É VEÍCULO RECUSA, e isto é
+    #: conserto de achado ALTO de revisão.
+    #:
+    #: A LENTE MERCADO RECORTA POR `nomes_da_lista`, que exige `tipo='veiculo'`.
+    #: A fusão faz o sobrevivente HERDAR a subcategoria, mas nunca o `tipo` — ele
+    #: é identidade. Então fundir o Valor Econômico (veículo, classificado)
+    #: dentro de um perfil de rede deixava o cadastro com a classificação certa e
+    #: o tipo errado: ele saía da lente, sem erro e sem aviso. Com a peça que faz
+    #: a lista valer para o passado, essa saída ainda apagaria as menções dele de
+    #: todos os meses — uma mudança no índice que ninguém pediu.
+    #:
+    #: RECUSA, E NÃO CONSERTO AUTOMÁTICO. Trocar o `tipo` do sobrevivente seria
+    #: decidir que ele virou veículo, e os CHECKs do banco (`cargo` e pessoa só em
+    #: perfil) podem recusar isso no meio da fusão. A outra direção resolve o caso
+    #: real — quem quer unificar o Valor Econômico quer o veículo de pé — e a
+    #: mensagem a aponta.
+    if perfil.tipo == "veiculo" and sobrevivente.tipo != "veiculo":
+        em_lista = [
+            nome
+            for nome in LISTAS_DE_VEICULOS
+            if perfil.nome_normalizado in nomes_da_lista(sessao, nome)
+        ]
+        if em_lista:
+            raise RegraViolada(
+                f"{perfil.nome!r} está na lista de veículos "
+                f"{', '.join(sorted(em_lista))}, que alimenta uma lente, e "
+                f"{sobrevivente.nome!r} não é veículo — fundir assim tiraria as "
+                "menções dele da lente, inclusive nos meses já fechados. Funda na "
+                "outra direção, mantendo o veículo."
+            )
+
     #: E O NOME DE QUEM SAI VIRA APELIDO DO QUE FICA (migration `0102`).
     #:
     #: SEM ISTO A DUPLICATA VOLTA. A ingestão casa por `nome_normalizado` exato
@@ -602,21 +633,32 @@ def fundir(
     #: NOME IGUAL NÃO VIRA APELIDO: `ALMG` (entidade) dentro de `ALMG` (órgão)
     #: não tira nome nenhum de circulação, e a linha só ocuparia a chave.
     if perfil.nome_normalizado != sobrevivente.nome_normalizado:
-        #: O MAIS RECENTE VENCE quando a chave já existe, e é a escolha menos
-        #: surpreendente: a linha guarda a decisão de gente mais nova sobre para
-        #: onde aquele nome aponta.
-        sessao.execute(
-            pg_insert(InstituicaoApelido)
-            .values(
-                nome_normalizado=perfil.nome_normalizado,
-                nome=perfil.nome,
-                instituicao_id=sobrevivente.id,
+        ja = sessao.get(InstituicaoApelido, perfil.nome_normalizado)
+        if ja is not None and ja.instituicao_id != sobrevivente.id:
+            #: NOME AMBÍGUO NÃO APONTA PARA NINGUÉM, e isto é conserto de achado
+            #: ALTO de revisão.
+            #:
+            #: O CASO: dois cadastros VIVOS podem ter o mesmo `nome_normalizado`
+            #: (ALMG é entidade e órgão), e cada um pode ser fundido num
+            #: sobrevivente DIFERENTE. A primeira versão fazia "o mais recente
+            #: vence" — e com isso as menções que historicamente eram do primeiro
+            #: ator passavam, todas, para o segundo. Redirecionamento silencioso
+            #: de dossiê é pior que nome não resolvido.
+            #:
+            #: A REGRA É A MESMA DA CONCESSIONÁRIA: nunca adivinhar quando há mais
+            #: de uma candidata (`unidade_da_mencao`). Sem apelido, o nome volta a
+            #: não casar e aparece na CONFERÊNCIA da próxima subida, que é onde
+            #: gente decide — e é por isso que o apelido antigo também sai: deixá-
+            #: lo de pé manteria metade do redirecionamento.
+            sessao.delete(ja)
+        elif ja is None:
+            sessao.add(
+                InstituicaoApelido(
+                    nome_normalizado=perfil.nome_normalizado,
+                    nome=perfil.nome,
+                    instituicao_id=sobrevivente.id,
+                )
             )
-            .on_conflict_do_update(
-                index_elements=["nome_normalizado"],
-                set_={"nome": perfil.nome, "instituicao_id": sobrevivente.id},
-            )
-        )
 
     #: AS MENÇÕES PASSAM: o dossiê do ator fica num só lugar.
     sessao.execute(

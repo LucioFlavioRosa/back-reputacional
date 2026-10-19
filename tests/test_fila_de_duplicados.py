@@ -687,6 +687,92 @@ def test_a_fusao_REAPONTA_os_apelidos_de_quem_sai(sessao):
     assert apelido.instituicao_id == c.id
 
 
+def test_o_apelido_AMBIGUO_nao_aponta_para_ninguem(sessao):
+    """Dois atores com o MESMO nome, fundidos em sobreviventes diferentes.
+
+    ACHADO ALTO DE REVISÃO. A primeira versão fazia "o mais recente vence" no
+    conflito de chave — e com isso as menções que historicamente eram do primeiro
+    ator passavam, TODAS, para o segundo. Redirecionamento silencioso de dossiê é
+    pior que nome não resolvido.
+
+    O CASO É POSSÍVEL PORQUE `instituicao.nome_normalizado` NÃO É ÚNICA: ALMG
+    existe como entidade e como órgão, e cada uma pode ser fundida num lugar
+    diferente.
+
+    A REGRA É A MESMA DA CONCESSIONÁRIA: nunca adivinhar quando há mais de uma
+    candidata. Sem apelido, o nome volta a não casar e aparece na conferência da
+    próxima subida — que é onde gente decide.
+    """
+    um = _cadastrar(sessao, "Ambíguo Zz79", "entidade")
+    outro = _cadastrar(sessao, "Ambíguo Zz79", "orgao")
+    chave = um.nome_normalizado
+    assert chave == outro.nome_normalizado
+    casa_de_um = _cadastrar(sessao, "Casa Um Zz79", "entidade")
+    casa_de_outro = _cadastrar(sessao, "Casa Outra Zz79", "entidade")
+
+    atores_duplicados.fundir(
+        sessao, que_sai_id=um.id, sobrevivente_id=casa_de_um.id, contra_a_proposta=True
+    )
+    sessao.flush()
+    assert sessao.get(InstituicaoApelido, chave).instituicao_id == casa_de_um.id
+
+    #: A SEGUNDA FUSÃO produz o MESMO apelido, apontando para outro lugar.
+    atores_duplicados.fundir(
+        sessao,
+        que_sai_id=outro.id,
+        sobrevivente_id=casa_de_outro.id,
+        contra_a_proposta=True,
+    )
+    sessao.flush()
+
+    #: NINGUÉM FICA COM O NOME.
+    assert sessao.get(InstituicaoApelido, chave) is None
+
+
+def test_a_fusao_RECUSA_tirar_um_veiculo_da_LISTA_da_lente(sessao):
+    """Fundir um veículo de lista dentro de quem não é veículo muda o índice.
+
+    ACHADO ALTO DE REVISÃO. `nomes_da_lista` exige `tipo='veiculo'`. A fusão faz o
+    sobrevivente herdar a SUBCATEGORIA, mas nunca o `tipo` — ele é identidade.
+    Então o cadastro ficava com a classificação certa e o tipo errado, e saía da
+    lente Mercado sem erro e sem aviso. Com a peça que faz a lista valer para o
+    passado, a saída ainda apagaria as menções dele de todos os meses.
+    """
+    from app.banco.tabelas_catalogo import CategoriaPublico, SubcategoriaPublico
+
+    alvo = sessao.scalar(
+        select(SubcategoriaPublico.id)
+        .join(
+            CategoriaPublico,
+            CategoriaPublico.id == SubcategoriaPublico.categoria_publico_id,
+        )
+        .where(
+            CategoriaPublico.nome == "Imprensa",
+            SubcategoriaPublico.nome == "Econômica e de negócios",
+        )
+    )
+    veiculo = _cadastrar(
+        sessao, "Valor Econômico Zz80", "veiculo", subcategoria_publico_id=alvo
+    )
+    perfil = _cadastrar(sessao, "valoreconomicozz80", "perfil_rede")
+
+    with pytest.raises(RegraViolada, match="lista de veículos"):
+        atores_duplicados.fundir(
+            sessao,
+            que_sai_id=veiculo.id,
+            sobrevivente_id=perfil.id,
+            contra_a_proposta=True,
+        )
+
+    #: E A OUTRA DIREÇÃO FUNCIONA — senão o teste passaria por a fusão estar
+    #: quebrada, e não pela guarda.
+    atores_duplicados.fundir(
+        sessao, que_sai_id=perfil.id, sobrevivente_id=veiculo.id
+    )
+    sessao.flush()
+    assert sessao.get(Instituicao, veiculo.id) is not None
+
+
 def test_o_nome_IGUAL_nao_vira_apelido(sessao):
     #: `ALMG` (entidade) dentro de `ALMG` (órgão) não tira nome nenhum de
     #: circulação — a linha só ocuparia a chave.

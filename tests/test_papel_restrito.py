@@ -361,6 +361,17 @@ def test_fundir_grava_e_reaponta_o_apelido_com_o_papel_restrito(sessao_restrita,
         == outro.id
     )
 
+    #: E O `delete`, que a 0102 concede EXPLICITAMENTE: quando o mesmo nome seria
+    #: apelido de dois sobreviventes diferentes, a fusão APAGA o apelido em vez de
+    #: redirecioná-lo — nome ambíguo não aponta para ninguém. Sem o `grant`, essa
+    #: fusão passaria aqui em desenvolvimento e quebraria só no implantado.
+    sessao_restrita.delete(
+        sessao_restrita.get(InstituicaoApelido, "nome que saiu restrito")
+    )
+    sessao_restrita.flush()
+
+    assert sessao_restrita.get(InstituicaoApelido, "nome que saiu restrito") is None
+
 
 def test_remover_porta_voz_funciona_com_o_papel_restrito(sessao_restrita, semente):
     pessoas = sessao_restrita.scalars(select(PessoaAegea).limit(2)).all()

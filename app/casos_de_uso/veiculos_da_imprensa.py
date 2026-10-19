@@ -595,7 +595,39 @@ def nomes_da_lista(sessao: Session, lista: str) -> frozenset[str]:
         #: linhas com o mesmo par de nomes, o recorte inclui as duas — o que é
         #: mais seguro do que escolher uma e perder metade da lista.
     )
-    return frozenset(nome for nome in nomes if nome)
+    da_lista = {nome for nome in nomes if nome}
+
+    #: E OS APELIDOS DELES, que é conserto de um defeito ALTO achado na revisão
+    #: do apelido (`0102`).
+    #:
+    #: A LISTA É UM CONJUNTO DE NOMES, e o recorte casa o TEXTO da linha do
+    #: fornecedor contra ele. Quando dois cadastros se fundem, o nome de quem sai
+    #: deixa de existir em `instituicao` — então, sem esta união, TODA fusão que
+    #: levasse o nome de um veículo listado tirava as menções dele da lente
+    #: Mercado, em silêncio e para trás. O apelido já guarda esse nome apontando
+    #: para o cadastro que ficou; aqui ele volta a contar.
+    #:
+    #: E NÃO É SÓ A FUSÃO QUE TROCA DE TIPO: mesmo fundindo veículo em veículo, o
+    #: texto que o clipping manda todo mês é o de quem SAIU.
+    apelidos = sessao.scalars(
+        select(InstituicaoApelido.nome_normalizado)
+        .join(Instituicao, Instituicao.id == InstituicaoApelido.instituicao_id)
+        .join(
+            SubcategoriaPublico,
+            SubcategoriaPublico.id == Instituicao.subcategoria_publico_id,
+        )
+        .join(
+            CategoriaPublico,
+            CategoriaPublico.id == SubcategoriaPublico.categoria_publico_id,
+        )
+        .where(
+            Instituicao.tipo == "veiculo",
+            Instituicao.ativo.is_(True),
+            CategoriaPublico.nome == categoria,
+            SubcategoriaPublico.nome == subcategoria,
+        )
+    )
+    return frozenset(da_lista | {nome for nome in apelidos if nome})
 
 
 def _texto(valor: object) -> str | None:

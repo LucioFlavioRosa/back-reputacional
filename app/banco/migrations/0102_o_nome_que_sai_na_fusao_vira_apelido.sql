@@ -33,11 +33,14 @@
 --: ele não depende de `grant delete` para `painel_app`.
 --:
 --: PERMISSÃO: `select`, `insert` e `update` vêm do default ACL do schema, como
---: em toda tabela nova; é o que a fusão precisa (criar o apelido e reapontar).
---: `delete` NÃO é concedido, e é deliberado — apagar apelido não é gesto do app,
---: e a memória deste projeto registra que tabela nova sem `grant` deixa a suíte
---: verde e quebra só no ambiente implantado. `tests/test_papel_restrito.py`
---: conecta como `painel_app` de verdade e exercita esta tabela por isso.
+--: em toda tabela nova. `delete` é concedido EXPLICITAMENTE, e tem uma razão
+--: estreita: quando o mesmo nome normalizado seria apelido de DOIS sobreviventes
+--: diferentes, a fusão APAGA o apelido existente em vez de redirecioná-lo — nome
+--: ambíguo não aponta para ninguém, e o conserto é a conferência da próxima
+--: subida perguntar a gente. Sem este `grant`, essa fusão passaria em
+--: desenvolvimento (superusuário) e quebraria só no ambiente implantado, que é a
+--: armadilha registrada na memória deste projeto. `tests/test_papel_restrito.py`
+--: conecta como `painel_app` de verdade e exercita os TRÊS verbos por isso.
 --:
 --: Idempotente.
 
@@ -61,6 +64,9 @@ create table if not exists instituicao_apelido (
 --: reapontar os apelidos de quem sai. Sem índice, é varredura a cada fusão.
 create index if not exists instituicao_apelido_por_instituicao
     on instituicao_apelido (instituicao_id);
+
+--: Ver o cabeçalho: a fusão apaga o apelido que ficaria ambíguo.
+grant delete on instituicao_apelido to painel_app;
 
 comment on table instituicao_apelido is
     'Nome que já foi de um cadastro e hoje aponta para o que o absorveu. '
