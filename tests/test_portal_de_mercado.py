@@ -198,3 +198,64 @@ def test_sem_cookie_nenhum_nao_entra(sessao):
     )
 
     assert resposta.status_code == 403
+
+
+# -- o teto de corpo do middleware ---------------------------------------------
+#
+# O ACHADO MAIS CARO DA REVISÃO, porque ele fazia a funcionalidade não existir: o
+# `LimiteDeCorpoMiddleware` recusa corpo acima de 1 MiB, e as rotas de bonds não
+# estavam na lista de isenções. O export BDH real tem 1,05 MB — ele NÃO chegava à
+# rota.
+#
+# E o sintoma não seria um 413 legível. O comentário de `protecao_http.py`
+# descreve o que acontece, e é a terceira vez que ele se cumpre: o middleware
+# recusa pelo `Content-Length` e fecha a conexão enquanto o navegador ainda
+# envia; o `fetch` falha em nível de REDE, e a tela diz "não foi possível falar
+# com o servidor" — mandando procurar um backend derrubado quando o problema é o
+# tamanho do arquivo.
+
+
+UM_MIB = 1024 * 1024
+
+
+@pytest.mark.parametrize("rota", ROTAS)
+def test_corpo_acima_de_um_MiB_CHEGA_na_rota(sessao, rota):
+    """O arquivo real tem 1,05 MB. Sem a isenção, ele morria antes do guarda.
+
+    A asserção é sobre o que a recusa DIZ: 413 significa "o middleware barrou";
+    422 significa "chegou à rota e o leitor recusou o conteúdo". Os bytes aqui
+    não são um `.xlsx`, então 422 é a resposta certa — e é a prova de que o
+    corpo atravessou o teto genérico.
+    """
+    usuario = _usuario(sessao, alcanca_mercado=True)
+    cliente, cabecalho = _cliente(sessao, usuario, lancado=True)
+    grande = b"nao e zip" + b"\x00" * (UM_MIB + 1024)
+
+    resposta = cliente.post(
+        rota, headers=cabecalho, files={"arquivo": ("bonds.xlsx", grande, "x")}
+    )
+
+    assert resposta.status_code != 413, (
+        "o middleware barrou o corpo antes da rota — a isenção de "
+        "`_CAMINHOS_DE_UPLOAD` está faltando"
+    )
+    assert resposta.status_code == 422, resposta.text
+
+
+def test_o_teto_generico_CONTINUA_valendo_em_outra_rota(sessao):
+    """O controle negativo da isenção.
+
+    Isentar rota de upload não pode afrouxar o teto do resto da API — senão a
+    proteção vira decoração. `/api/interacoes` recebe JSON e tem de continuar
+    recusando 1 MiB.
+    """
+    usuario = _usuario(sessao, alcanca_mercado=True)
+    cliente, cabecalho = _cliente(sessao, usuario, lancado=True)
+
+    resposta = cliente.post(
+        "/api/interacoes",
+        headers=cabecalho,
+        content=b'{"x":"' + b"a" * (UM_MIB + 1024) + b'"}',
+    )
+
+    assert resposta.status_code == 413
