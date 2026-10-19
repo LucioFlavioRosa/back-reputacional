@@ -113,10 +113,19 @@ def test_preco_valido_proximo_de_zero_NAO_e_descartado():
 
 
 def test_a_coluna_das_datas_e_PROCURADA_e_nao_contada():
-    """Uma coluna a mais à esquerda não pode deslocar preço para yield."""
+    """Uma coluna a mais à esquerda não pode deslocar preço para yield.
+
+    SÓ O BLOCO DA SÉRIE FLUTUA, e a revisão do Codex mostrou que este teste
+    passava sem dizer isso: com o arquivo deslocado, o CATÁLOGO não é lido
+    (`A..E` são índices fixos) e os tickers aparecem como "fora do catálogo" —
+    o teste passava mesmo com catálogo vazio.
+
+    A asserção explícita abaixo documenta a assimetria em vez de esconder:
+    `DATES` se procura porque a posição do bloco de série depende de quantas
+    colunas o relatório tem; o catálogo mora em `A..E` por construção do export
+    BDH. Se um dia o catálogo flutuar, é aqui que se descobre.
+    """
     linhas = [[None] + list(linha) for linha in CABECALHO]
-    linhas[1][3] = "AAA29"  # o catálogo também andou uma casa
-    linhas[1][1] = "AAA 1 01/01/29"
     serie = [None] * 8 + [95.5, 9.1, 80.0, 7.0]
     serie[7] = date(2026, 1, 5)
     linhas.append(serie)
@@ -126,6 +135,10 @@ def test_a_coluna_das_datas_e_PROCURADA_e_nao_contada():
     por_ticker = {c.ticker: c for c in leitura.cotacoes}
     assert por_ticker["AAA29"].preco_pct_par == Decimal("95.5")
     assert por_ticker["AAA29"].yield_pct == Decimal("9.1")
+    assert por_ticker["BBB31"].preco_pct_par == Decimal("80.0")
+    #: A ASSIMETRIA, dita em voz alta: o catálogo não acompanhou o deslocamento.
+    assert leitura.papeis == []
+    assert leitura.tickers_fora_do_catalogo == ["AAA29", "BBB31"]
 
 
 def test_sem_a_palavra_DATES_devolve_o_catalogo_e_nenhuma_cotacao():
@@ -220,21 +233,22 @@ def test_o_montante_zero_do_catalogo_NAO_vira_nulo():
 # -- o fim do arquivo ----------------------------------------------------------
 
 
-def test_linha_sem_data_ENCERRA_a_leitura():
-    """O arquivo real declara 54.254 linhas e só 1.750 têm data.
-
-    E o ponto não é só desempenho: uma data perdida no rodapé fantasma seria
-    lida como série válida e esticaria o eixo do gráfico por anos vazios.
-    """
-    linhas = _com_catalogo(("AAA 1 01/01/29", "ID-A", "AAA29", 100))
-    _dia(linhas, date(2026, 1, 5), 95.5, 9.1, 0, 0)
-    linhas.append([None] * 11)
-    _dia(linhas, date(2030, 1, 1), 50.0, 20.0, 0, 0)
-
-    leitura = ler(linhas)
-
-    assert [c.data for c in leitura.cotacoes] == [date(2026, 1, 5)]
-    assert leitura.ultima_data == date(2026, 1, 5)
+#: O TESTE QUE MORAVA AQUI FOI SUBSTITUÍDO, e o motivo vale ficar escrito.
+#:
+#: Ele se chamava `test_linha_sem_data_ENCERRA_a_leitura` e provava o
+#: encerramento usando uma linha TOTALMENTE VAZIA — que é exatamente o caso em
+#: que encerrar está errado. Ele prendia o defeito que a revisão do Codex
+#: encontrou: `data / linha vazia / data` lia só a primeira, e tudo depois sumia
+#: sem relatório.
+#:
+#: A intenção legítima dele (o rodapé fantasma de 52 mil linhas não pode custar
+#: 52 mil iterações, e uma data perdida lá no fim não pode esticar o eixo do
+#: gráfico por anos vazios) está nos dois testes da seção dos achados:
+#: `test_linha_VAZIA_no_meio_nao_encerra_a_serie` e
+#: `test_linha_COM_CONTEUDO_e_sem_data_encerra_e_diz_onde`.
+#:
+#: Um teste que passa porque o código está errado é pior que teste nenhum: ele
+#: gasta a confiança de alguém.
 
 
 def test_arquivo_curto_demais_nao_levanta():
@@ -292,16 +306,157 @@ def test_o_arquivo_real_bate_com_o_que_foi_medido():
     leitura = ler(linhas)
 
     assert len(leitura.papeis) == 31
+    #: A CONTAGEM EXATA DE COTAÇÕES, que faltava — achado da revisão. Sem ela, o
+    #: teste aceitaria uma mudança que perdesse metade da série e mantivesse as
+    #: datas extremas (por exemplo, pular linha sim linha não).
+    assert len(leitura.cotacoes) == 33294
     assert leitura.primeira_data == date(2022, 1, 1)
     assert leitura.ultima_data == date(2026, 10, 16)
     #: O `AEGEBZ29` é o papel do mockup que o arquivo não tem.
     assert leitura.tickers_sem_valor == ["AEGEBZ29"]
     #: O catálogo do arquivo cobre toda coluna de série — nenhum ticker órfão.
     assert leitura.tickers_fora_do_catalogo == []
+    #: E NENHUM RÓTULO IGNORADO nem par repetido: o arquivo de hoje usa `Preço` e
+    #: `Yield` em todas as 62 colunas, e é essa premissa que, mudando, justifica
+    #: as listas existirem.
+    assert leitura.rotulos_ignorados == []
+    assert leitura.pares_repetidos == []
+    #: A leitura chega ao fim do arquivo pelas 52 mil linhas vazias do rodapé —
+    #: nenhuma delas tem conteúdo, então nada "encerra" a série.
+    assert leitura.linha_que_encerrou is None
     #: Nenhuma cotação com os dois lados nulos: seria linha sem informação.
     assert not [
         c for c in leitura.cotacoes if c.preco_pct_par is None and c.yield_pct is None
     ]
+    #: OS MÁXIMOS, que confirmam os tipos da `0100` — `numeric(10,4)` para preço
+    #: e yield, `numeric(18,2)` para o montante.
+    assert max(c.preco_pct_par for c in leitura.cotacoes if c.preco_pct_par) == Decimal(
+        "111.2048"
+    )
+    assert max(p.amt_outstanding for p in leitura.papeis if p.amt_outstanding) == Decimal(
+        "1500000000"
+    )
     #: E a Aegea tem o 2031 desde 28/09/2023 (o yield vem antes do preço).
     do_2031 = [c for c in leitura.cotacoes if c.ticker == "AEGEBZ31"]
     assert min(c.data for c in do_2031) == date(2023, 9, 28)
+    assert len(do_2031) == 1115
+
+
+# -- os três achados da revisão do Codex ---------------------------------------
+#
+# Os dois primeiros ele classificou como ALTA e bloquearia o PR por eles. Os
+# três têm a mesma forma: o leitor perdia dado ou gravava errado SEM reportar —
+# e "sem reportar" é o que os torna graves, porque a conferência diria um número
+# plausível e ninguém teria por que desconfiar.
+
+
+def test_rotulo_desconhecido_e_REPORTADO_e_nao_so_ignorado():
+    """Se `Yield` virar `PX_LAST` numa planilha futura.
+
+    Não falhar continua certo: uma coluna de nota à direita não deve impedir a
+    subida de 54 mil cotações. O que não pode é a coluna desaparecer calada.
+    """
+    linhas = _com_catalogo(("AAA 1 01/01/29", "ID-A", "AAA29", 100))
+    linhas[1][8] = "Observação"  # era o Yield do AAA29
+    _dia(linhas, date(2026, 1, 5), 95.5, 9.1, 80.0, 7.0)
+
+    leitura = ler(linhas)
+
+    assert leitura.rotulos_ignorados == [("AAA29", "observacao")]
+    #: E o preço do mesmo papel continua entrando — ignorar é por COLUNA.
+    assert leitura.cotacoes[0].preco_pct_par == Decimal("95.5")
+    assert leitura.cotacoes[0].yield_pct is None
+
+
+def test_os_DOIS_rotulos_desconhecidos_nao_somem_do_relatorio():
+    """O buraco exato que a revisão apontou.
+
+    Com os dois rótulos de um papel estranhos, ele não entrava em `pares` — e
+    por isso não entrava em `declarados`, e por isso não aparecia em
+    `tickers_sem_valor`. `ler` devolvia zero cotações e NENHUMA pista do porquê.
+    """
+    linhas = _com_catalogo(("AAA 1 01/01/29", "ID-A", "AAA29", 100))
+    linhas[1][7] = "Coluna X"
+    linhas[1][8] = "Coluna Y"
+    _dia(linhas, date(2026, 1, 5), 95.5, 9.1, 80.0, 7.0)
+
+    leitura = ler(linhas)
+
+    assert leitura.rotulos_ignorados == [("AAA29", "coluna x"), ("AAA29", "coluna y")]
+    assert "AAA29" in leitura.tickers_sem_valor, (
+        "o papel cujas duas colunas foram ignoradas tem de aparecer em alguma lista"
+    )
+
+
+def test_px_last_e_aceito_como_PRECO():
+    """É o nome do campo na fórmula BDH que já está na linha 5 do arquivo."""
+    linhas = _com_catalogo(("AAA 1 01/01/29", "ID-A", "AAA29", 100))
+    linhas[1][7] = "PX_LAST"
+    _dia(linhas, date(2026, 1, 5), 95.5, 0, 0, 0)
+
+    assert ler(linhas).cotacoes[0].preco_pct_par == Decimal("95.5")
+
+
+def test_linha_VAZIA_no_meio_nao_encerra_a_serie():
+    """O achado mais perigoso: dado perdido sem rastro.
+
+    `data / linha vazia / data` lia só a primeira, e tudo depois sumia sem
+    relatório. O rodapé fantasma justifica parar; uma linha em branco no meio
+    não é o rodapé.
+    """
+    linhas = _com_catalogo(("AAA 1 01/01/29", "ID-A", "AAA29", 100))
+    _dia(linhas, date(2026, 1, 5), 95.5, 9.1, 0, 0)
+    linhas.append([None] * 11)
+    _dia(linhas, date(2026, 1, 7), 96.0, 9.0, 0, 0)
+
+    leitura = ler(linhas)
+
+    assert [c.data for c in leitura.cotacoes] == [date(2026, 1, 5), date(2026, 1, 7)]
+    assert leitura.linha_que_encerrou is None
+
+
+def test_linha_COM_CONTEUDO_e_sem_data_encerra_e_diz_onde():
+    """A outra metade da distinção: ali o formato mudou, e isso se relata."""
+    linhas = _com_catalogo(("AAA 1 01/01/29", "ID-A", "AAA29", 100))
+    _dia(linhas, date(2026, 1, 5), 95.5, 9.1, 0, 0)
+    rodape = [None] * 11
+    rodape[0] = "Fonte: Bloomberg"
+    linhas.append(rodape)
+    _dia(linhas, date(2030, 1, 1), 50.0, 20.0, 0, 0)
+
+    leitura = ler(linhas)
+
+    assert [c.data for c in leitura.cotacoes] == [date(2026, 1, 5)]
+    assert leitura.linha_que_encerrou == 7
+
+
+def test_par_repetido_e_reportado_e_a_primeira_coluna_vence():
+    """Duas colunas com o mesmo (ticker, tipo).
+
+    A segunda vencia em silêncio no dicionário. Agora a primeira vence — a
+    escolha importa menos que o fato de a repetição ser dizível.
+    """
+    linhas = _com_catalogo(("AAA 1 01/01/29", "ID-A", "AAA29", 100))
+    linhas[0][9] = "AAA29"
+    linhas[1][9] = "Preço"
+    _dia(linhas, date(2026, 1, 5), 95.5, 9.1, 11.1, 0)
+
+    leitura = ler(linhas)
+
+    assert leitura.pares_repetidos == [("AAA29", "preco")]
+    assert leitura.cotacoes[0].preco_pct_par == Decimal("95.5")
+
+
+def test_valor_nao_finito_e_ausencia():
+    """`NaN` passava pela comparação com zero e virava cotação.
+
+    `Decimal('NaN') == 0` é falso, então o filtro do zero não o pegava — e um
+    `sNaN` levantaria `InvalidOperation` DENTRO da comparação, depois do `try`.
+    """
+    linhas = _com_catalogo(("AAA 1 01/01/29", "ID-A", "AAA29", 100))
+    _dia(linhas, date(2026, 1, 5), float("nan"), float("inf"), 80.0, 7.0)
+
+    leitura = ler(linhas)
+
+    assert {c.ticker for c in leitura.cotacoes} == {"BBB31"}
+    assert "AAA29" in leitura.tickers_sem_valor
