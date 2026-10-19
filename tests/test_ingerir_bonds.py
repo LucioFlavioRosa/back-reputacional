@@ -329,3 +329,119 @@ def test_catalogo_igual_nao_conta_como_alteracao(sessao):
     segunda = ingerir_bonds.gravar(sessao, conteudo)
 
     assert segunda.papeis_completados == 0
+
+
+# -- os achados da revisão do Codex --------------------------------------------
+
+
+def test_zip_INVALIDO_que_comeca_com_a_assinatura_nao_vira_500():
+    """`PK\\x03\\x04` seguido de lixo passa pela assinatura e explode no parser.
+
+    Sem o tratamento, um `.xlsx` truncado — uma subida interrompida, por
+    exemplo — vira 500 em vez de dizer à pessoa que o arquivo chegou incompleto.
+    O teste antigo só cobria bytes que NÃO começam com a assinatura, então este
+    caminho passava sem rede.
+    """
+    from app.casos_de_uso.ingerir_bonds import ler_arquivo
+
+    with pytest.raises(RegraViolada, match="não abre"):
+        ler_arquivo(b"PK\x03\x04" + b"\x00" * 200)
+
+
+def test_a_planilha_grande_demais_para_a_MEMORIA_e_recusada(monkeypatch):
+    """O limite de BYTES não protege a memória.
+
+    `TAMANHO_MAXIMO` são 80 MB de ZIP COMPRIMIDO, e um `.xlsx` de poucos MB pode
+    trazer milhões de células — `list(iter_rows())` materializa todas. Com o
+    orçamento rebaixado a zero, qualquer planilha estimável tem de ser recusada
+    com a frase certa, e não morrer sem frase nenhuma.
+    """
+    from app.casos_de_uso import ingerir_bonds as modulo
+
+    conteudo = _planilha(DO_CADASTRO, {date(2026, 1, 5): (95.5, 9.1, 0, 0)})
+    monkeypatch.setattr(modulo, "orcamento_de_leitura", lambda: 1)
+
+    with pytest.raises(RegraViolada, match="grande demais para a memória"):
+        modulo.ler_arquivo(conteudo)
+
+
+def test_a_planilha_normal_PASSA_pelo_orcamento():
+    """O controle negativo do teste acima: o orçamento real não barra o arquivo
+    de verdade. Sem isto, um coeficiente errado recusaria toda subida."""
+    from app.casos_de_uso.ingerir_bonds import ler_arquivo
+
+    conteudo = _planilha(DO_CADASTRO, {date(2026, 1, 5): (95.5, 9.1, 0, 0)})
+
+    assert ler_arquivo(conteudo).cotacoes
+
+
+def test_o_ticker_desconhecido_com_TUDO_ZERO_ainda_e_reportado(sessao):
+    """O achado: a lista vinha das cotações, e papel sem cotação desaparecia.
+
+    O ticker que o arquivo menciona, o cadastro não conhece, e cujos valores são
+    todos zero está sendo DESCARTADO — e a tela dizia "nada a reportar" sobre
+    ele. É justamente esse papel que pede uma linha em `bond`.
+    """
+    conteudo = _planilha(
+        (DO_CADASTRO[0], FORA_DO_CADASTRO),
+        {date(2026, 1, 5): (95.5, 9.1, 0, 0)},
+    )
+
+    conferencia = ingerir_bonds.conferir(sessao, conteudo)
+
+    assert FORA_DO_CADASTRO in conferencia.tickers_desconhecidos
+    assert conferencia.por_ticker == {DO_CADASTRO[0]: 1}
+
+
+def test_o_ticker_desconhecido_SO_NO_CATALOGO_tambem_e_reportado(sessao):
+    """A outra metade: ele aparece em `A..E` e não tem coluna de série."""
+    conteudo = _planilha(
+        (DO_CADASTRO[0],),
+        {date(2026, 1, 5): (95.5, 9.1)},
+        catalogo={DO_CADASTRO[0]: ("AEGEBZ 9 01/20/31", "ZH164262 Corp", 800000000)},
+    )
+    #: Põe o desconhecido numa linha do catálogo, sem coluna de série.
+    from openpyxl import load_workbook
+
+    pasta = load_workbook(io.BytesIO(conteudo))
+    folha = pasta[pasta.sheetnames[0]]
+    folha.cell(row=3, column=3, value=FORA_DO_CADASTRO)
+    folha.cell(row=3, column=1, value="Papel novo")
+    memoria = io.BytesIO()
+    pasta.save(memoria)
+
+    conferencia = ingerir_bonds.conferir(sessao, memoria.getvalue())
+
+    assert FORA_DO_CADASTRO in conferencia.tickers_desconhecidos
+
+
+def test_ticker_REPETIDO_no_catalogo_conta_o_papel_uma_vez(sessao):
+    """`papeis_completados` diria 32 num cadastro de 31.
+
+    A primeira linha vence, como no par repetido do leitor — a escolha importa
+    menos que o número do relatório não mentir.
+    """
+    conteudo = _planilha(
+        (DO_CADASTRO[0],),
+        {date(2026, 1, 5): (95.5, 9.1)},
+        catalogo={DO_CADASTRO[0]: ("AEGEBZ 9 01/20/31", "ZH164262 Corp", 800000000)},
+    )
+    from openpyxl import load_workbook
+
+    pasta = load_workbook(io.BytesIO(conteudo))
+    folha = pasta[pasta.sheetnames[0]]
+    #: A MESMA linha de catálogo, de novo, com outro valor.
+    folha.cell(row=3, column=1, value="Outra descricao")
+    folha.cell(row=3, column=2, value="OUTRO Corp")
+    folha.cell(row=3, column=3, value=DO_CADASTRO[0])
+    folha.cell(row=3, column=4, value="OUTRO Corp")
+    folha.cell(row=3, column=5, value=999)
+    memoria = io.BytesIO()
+    pasta.save(memoria)
+
+    resultado = ingerir_bonds.gravar(sessao, memoria.getvalue())
+    sessao.flush()
+
+    assert resultado.papeis_completados == 1
+    #: E venceu a PRIMEIRA linha.
+    assert sessao.get(Bond, DO_CADASTRO[0]).descricao == "AEGEBZ 9 01/20/31"

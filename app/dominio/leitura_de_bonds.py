@@ -124,6 +124,13 @@ class Leitura:
     #: silêncio no dicionário — outro caminho para gravar valor errado sem
     #: reportar. Não ocorre no arquivo medido; é barato não depender disso.
     pares_repetidos: list[tuple[str, str]] = field(default_factory=list)
+    #: TODO TICKER QUE O CABEÇALHO DECLARA, com valor ou sem, com rótulo
+    #: reconhecido ou não. Achado de revisão: quem consome a leitura precisa
+    #: saber o que o arquivo MENCIONA, e não só o que ele entregou — a
+    #: conferência deriva daqui a lista de "ticker que o cadastro não tem", e
+    #: derivá-la das cotações fazia o papel com tudo zero desaparecer dela,
+    #: embora ele seja descartado.
+    tickers_declarados: list[str] = field(default_factory=list)
     #: Linha com conteúdo e SEM data, que encerrou a leitura. Nulo quando o
     #: arquivo acabou por si.
     linha_que_encerrou: int | None = None
@@ -373,6 +380,7 @@ def ler(linhas: Sequence[Sequence[object]]) -> Leitura:
     return Leitura(
         papeis=papeis,
         cotacoes=cotacoes,
+        tickers_declarados=declarados,
         tickers_sem_valor=[t for t in declarados if t not in com_valor],
         tickers_fora_do_catalogo=[t for t in declarados if t not in no_catalogo],
         rotulos_ignorados=rotulos_ignorados,

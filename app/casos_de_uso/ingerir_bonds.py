@@ -38,6 +38,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
+from zipfile import BadZipFile
 
 from openpyxl import load_workbook
 from sqlalchemy import select
@@ -45,7 +46,12 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.banco.tabelas_mercado import Bond, BondCotacao
-from app.casos_de_uso.ingerir_mencoes import ASSINATURA_ZIP, TAMANHO_MAXIMO
+from app.casos_de_uso.ingerir_mencoes import (
+    ASSINATURA_ZIP,
+    TAMANHO_MAXIMO,
+    custo_da_leitura,
+    orcamento_de_leitura,
+)
 from app.dominio.erros import RegraViolada
 from app.dominio.leitura_de_bonds import Leitura, ler
 
@@ -104,7 +110,42 @@ def ler_arquivo(conteudo: bytes) -> Leitura:
     if not conteudo.startswith(ASSINATURA_ZIP):
         raise RegraViolada("O arquivo não é um .xlsx — os primeiros bytes não são de ZIP.")
 
-    pasta = load_workbook(io.BytesIO(conteudo), read_only=True, data_only=True)
+    #: O LIMITE DE BYTES NÃO PROTEGE A MEMÓRIA, e isto é achado de revisão.
+    #: `TAMANHO_MAXIMO` são 80 MB de ZIP COMPRIMIDO, e um `.xlsx` de poucos MB
+    #: pode trazer milhões de células: `list(iter_rows())` materializa todas, e
+    #: o processo morre por memória com o arquivo "dentro do limite".
+    #:
+    #: REAPROVEITA `custo_da_leitura`, que estima sem descomprimir a planilha
+    #: (~9 ms: lê o diretório central do ZIP e 6 KB da aba maior), e
+    #: `orcamento_de_leitura`, que DEDUZ o teto do contêiner em vez de fixá-lo —
+    #: é o que faz a decisão viajar entre o Container Apps de 4 GiB e o cluster
+    #: do cliente.
+    #:
+    #: AQUI RECUSA, não degrada. A ingestão de menções tem um caminho lento de
+    #: memória constante para cair quando não cabe; esta não tem, e inventar um
+    #: seria código sem usuário. Recusar com a frase certa é melhor que morrer
+    #: sem frase nenhuma — e o número vai na mensagem, porque quem opera o
+    #: cluster precisa dele para decidir.
+    custo = custo_da_leitura(conteudo)
+    orcamento = orcamento_de_leitura()
+    if custo is not None and custo > orcamento:
+        raise RegraViolada(
+            "A planilha de bonds é grande demais para a memória deste ambiente: "
+            f"a leitura pediria ~{custo // (1024 * 1024)} MB e o orçamento é de "
+            f"~{orcamento // (1024 * 1024)} MB."
+        )
+
+    try:
+        pasta = load_workbook(io.BytesIO(conteudo), read_only=True, data_only=True)
+    except (BadZipFile, KeyError, ValueError) as erro:
+        #: `PK\x03\x04` SEGUIDO DE LIXO passa pela assinatura e explode no
+        #: parser — outro achado de revisão. Sem isto, um `.xlsx` truncado (uma
+        #: subida interrompida, por exemplo) vira 500 em vez de dizer à pessoa
+        #: que o arquivo chegou corrompido.
+        raise RegraViolada(
+            "O arquivo começa como um .xlsx mas não abre — pode ter chegado "
+            "incompleto. Tente subir de novo."
+        ) from erro
     try:
         if not pasta.sheetnames:
             raise RegraViolada("A planilha não tem nenhuma aba.")
@@ -125,9 +166,14 @@ def conferir(sessao: Session, conteudo: bytes) -> Conferencia:
     cadastrados = set(sessao.scalars(select(Bond.ticker)))
 
     conhecidas = [c for c in leitura.cotacoes if c.ticker in cadastrados]
-    desconhecidos = sorted(
-        {c.ticker for c in leitura.cotacoes if c.ticker not in cadastrados}
-    )
+    #: DOS DECLARADOS E DO CATÁLOGO DO ARQUIVO, e não das cotações — achado de
+    #: revisão. Derivando das cotações, o ticker desconhecido cujos valores são
+    #: todos zero (ou cujos dois rótulos foram ignorados) não produzia cotação
+    #: nenhuma e DESAPARECIA desta lista, embora esteja sendo descartado. A tela
+    #: diria "nada a reportar" sobre um papel que o arquivo menciona e o
+    #: cadastro não conhece — e é esse papel que pede uma linha em `bond`.
+    mencionados = set(leitura.tickers_declarados) | {p.ticker for p in leitura.papeis}
+    desconhecidos = sorted(mencionados - cadastrados)
 
     #: AS QUE JÁ EXISTEM, em UMA consulta. Perguntar por cotação seriam 33 mil
     #: idas ao banco numa tela de conferência; o conjunto de chaves do período
@@ -221,9 +267,15 @@ def _completar_catalogo(
     NÃO CRIA PAPEL, pela mesma razão de `gravar` não gravar ticker desconhecido.
     """
     alterados = 0
+    #: UMA VEZ POR TICKER, e isto é achado de revisão: um catálogo com o mesmo
+    #: ticker em duas linhas e valores diferentes contaria o papel duas vezes em
+    #: `papeis_completados`, e o relatório da importação diria 32 papéis num
+    #: cadastro de 31. A primeira linha vence, como no par repetido do leitor.
+    ja_visto: set[str] = set()
     for papel in leitura.papeis:
-        if papel.ticker not in cadastrados:
+        if papel.ticker not in cadastrados or papel.ticker in ja_visto:
             continue
+        ja_visto.add(papel.ticker)
         linha = sessao.get(Bond, papel.ticker)
         if linha is None:
             continue
