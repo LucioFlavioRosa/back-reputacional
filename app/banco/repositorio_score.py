@@ -1370,26 +1370,36 @@ def unidades_do_mes(
     ORDENADO PELO NEGATIVO, e não pelo volume: a pergunta é onde está o
     problema. O total vai junto porque 300 negativas em 400 menções é uma
     situação, e 300 em 3.000 é outra.
+
+    PELO NOME DO CADASTRO (`CONCESSIONARIA`), e não pela grafia do fornecedor.
+    Esta leitura ficou de fora quando a `0099` levou o rótulo cadastral às
+    outras cinco, e a revisão do Codex a encontrou: a Corsan aparecia em DUAS
+    barras — "Corsan" e "Companhia Riograndense de Saneamento (Corsan)" —, o que
+    num painel chamado "onde a pressão se concentra" divide ao meio justamente a
+    pressão que ele existe para mostrar.
+
+    `outerjoin` E NÃO `join`: "Águas do Rio" são dois blocos e fica sem chave de
+    propósito (ver `casos_de_uso/unidade_da_mencao`). Um `join` a sumiria do
+    ranking, e sumir é pior que aparecer com a palavra do fornecedor.
     """
+    negativas = func.count().filter(Mencao.sentimento == "neg")
     consulta = (
-        select(
-            Mencao.unidade_texto,
-            func.count().filter(Mencao.sentimento == "neg"),
-            func.count(),
-        )
+        select(CONCESSIONARIA, negativas, func.count())
         .select_from(Mencao)
         .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .outerjoin(UnidadeNegocio, UnidadeNegocio.id == Mencao.unidade_negocio_id)
         .where(
             Mencao.mes == primeiro_dia(mes),
-            Mencao.unidade_texto.is_not(None),
+            #: SOBRE A EXPRESSÃO, e não sobre `unidade_texto`: é o rótulo que a
+            #: tela mostra que precisa existir. Hoje dá no mesmo — a chave só
+            #: nasce de um texto —, mas amarrar a guarda ao que se exibe é o que
+            #: impede a linha com chave e sem texto de sumir em silêncio.
+            CONCESSIONARIA.is_not(None),
             *so_fontes_ligadas(calibracao),
         )
-        .group_by(Mencao.unidade_texto)
-        .having(func.count().filter(Mencao.sentimento == "neg") > 0)
-        .order_by(
-            func.count().filter(Mencao.sentimento == "neg").desc(),
-            Mencao.unidade_texto.asc(),
-        )
+        .group_by(CONCESSIONARIA)
+        .having(negativas > 0)
+        .order_by(negativas.desc(), CONCESSIONARIA.asc())
         .limit(quantos)
     )
     return [(nome, neg, total) for nome, neg, total in sessao.execute(consulta)]
