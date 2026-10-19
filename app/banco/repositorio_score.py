@@ -587,6 +587,21 @@ def somas_da_lente_filtradas(
 
 
 @dataclass(frozen=True, slots=True)
+class TemaNaJanela:
+    """A identidade de um tema estratégico (N2) na janela.
+
+    O `id` É A CHAVE e o `nome` é o rótulo. Separá-los é o conserto de um achado
+    de revisão: enquanto o nome era a chave, dois temas homônimos sob pilares
+    diferentes viravam uma linha só.
+    """
+
+    id: int
+    nome: str
+    #: O pilar (N1) a que ele pertence. `None` quando o cadastro não resolve.
+    n1: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class SomasNaJanela:
     """As somas de uma janela de dias, quebradas por N1.
 
@@ -601,10 +616,15 @@ class SomasNaJanela:
     o mesmo defeito que `impacto_do_recorte` descreve sobre o denominador local.
     """
 
-    #: Por nome do TEMA ESTRATÉGICO (N2), e o N1 dele como contexto.
-    por_n2: dict[str, dict[str, list[SomasDaFonte]]]
-    #: O N1 pai de cada N2, para a tela dar contexto sem uma segunda leitura.
-    n1_de: dict[str, str]
+    #: Por `MacroTema.id`, E NÃO POR NOME — achado de revisão. Hoje o cadastro
+    #: tem 41 temas e 41 nomes distintos, mas `macro_tema.nome` NÃO é único no
+    #: schema (só `codigo` é): a unicidade era um fato do dado, não uma
+    #: garantia. Agrupar por nome fundia dois temas homônimos de pilares
+    #: diferentes numa linha só, somando os impactos e exibindo o pai do último
+    #: que passasse na consulta.
+    por_tema: dict[int, dict[str, list[SomasDaFonte]]]
+    #: Quem é cada tema — o nome é rótulo, não chave.
+    temas: dict[int, TemaNaJanela]
     sem_n2: int
     #: As menções SEM DATA de todos os meses que a janela atravessa. Contava só o
     #: mês da ponta — achado de revisão: numa janela que cruza a virada, as sem
@@ -677,6 +697,7 @@ def somas_por_n2_na_janela(
     meses = meses_da_janela(de, ate)
     consulta = (
         select(
+            MacroTema.id,
             MacroTema.nome,
             BlocoTema.nome,
             ScoreFonte.codigo,
@@ -702,21 +723,31 @@ def somas_por_n2_na_janela(
     )
 
     sem_n2 = 0
-    n1_de: dict[str, str] = {}
-    agrupadas: dict[str, dict[tuple[str, str, str], list[tuple[int | None, str | None]]]] = {}
-    for nome_n2, nome_n1, fonte_codigo, sentimento, tier, engajamento, cargo in sessao.execute(
-        consulta
-    ):
-        if nome_n2 is None:
+    temas: dict[int, TemaNaJanela] = {}
+    agrupadas: dict[int, dict[tuple[str, str, str], list[tuple[int | None, str | None]]]] = {}
+    for (
+        id_n2,
+        nome_n2,
+        nome_n1,
+        fonte_codigo,
+        sentimento,
+        tier,
+        engajamento,
+        cargo,
+    ) in sessao.execute(consulta):
+        if id_n2 is None:
+            #: N2 NULO É O CASO VOLUMOSO, e não a exceção: o resolvedor da Clipei
+            #: pelo `atributo` devolve só o N1, e a migration 0098 mede 72.590
+            #: menções nesse estado. Elas pesam na nota e não pertencem a tema
+            #: nenhum — contar é o que impede o quadro de parecer o todo.
             sem_n2 += 1
             continue
-        if nome_n1 is not None:
-            n1_de[nome_n2] = nome_n1
+        temas.setdefault(id_n2, TemaNaJanela(id=id_n2, nome=nome_n2, n1=nome_n1))
         chave = (fonte_codigo, sentimento, tier or "")
-        agrupadas.setdefault(nome_n2, {}).setdefault(chave, []).append((engajamento, cargo))
+        agrupadas.setdefault(id_n2, {}).setdefault(chave, []).append((engajamento, cargo))
 
-    por_n2: dict[str, dict[str, list[SomasDaFonte]]] = {}
-    for nome_do_tema, grupos in agrupadas.items():
+    por_tema: dict[int, dict[str, list[SomasDaFonte]]] = {}
+    for id_do_tema, grupos in agrupadas.items():
         por_fonte: dict[str, list[SomasDaFonte]] = {}
         for (fonte_codigo, sentimento, tier), linhas in grupos.items():
             por_fonte.setdefault(fonte_codigo, []).append(
@@ -730,7 +761,7 @@ def somas_por_n2_na_janela(
                     soma_cargo=sum(peso_do_cargo(cargo) for _, cargo in linhas),
                 )
             )
-        por_n2[nome_do_tema] = por_fonte
+        por_tema[id_do_tema] = por_fonte
 
     #: AS MENÇÕES SEM DIA, em TODOS os meses da janela: elas pertencem ao mês e
     #: não a um dia, então janela nenhuma as alcança — e uma janela que atravessa
@@ -749,7 +780,9 @@ def somas_por_n2_na_janela(
         ).scalar()
         or 0
     )
-    return SomasNaJanela(por_n2=por_n2, n1_de=n1_de, sem_n2=sem_n2, sem_data=sem_data)
+    return SomasNaJanela(
+        por_tema=por_tema, temas=temas, sem_n2=sem_n2, sem_data=sem_data
+    )
 
 
 def _somas_da_lente(

@@ -162,6 +162,9 @@ def serie_dos_bonds(
 
 
 class TemaNaJanelaSaida(BaseModel):
+    #: A CHAVE do cadastro. A tela desenha a lista por ela, e nao pelo nome:
+    #: dois temas homonimos sob pilares diferentes sao duas linhas.
+    id: int
     n2: str
     n1: str | None
     impacto: float
@@ -186,7 +189,9 @@ class ImpactoNaJanelaSaida(BaseModel):
 
 def _tema(p: impacto_por_n2_na_janela.ImpactoDoTema) -> TemaNaJanelaSaida:
     """Um tema, campo por campo — ver o comentário em `impacto_por_n2`."""
-    return TemaNaJanelaSaida(n2=p.n2, n1=p.n1, impacto=p.impacto, mencoes=p.mencoes)
+    return TemaNaJanelaSaida(
+        id=p.id, n2=p.n2, n1=p.n1, impacto=p.impacto, mencoes=p.mencoes
+    )
 
 
 @rotas.get("/impacto-por-n2")
