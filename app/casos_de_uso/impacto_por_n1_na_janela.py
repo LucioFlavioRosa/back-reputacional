@@ -74,7 +74,7 @@ class ImpactoNaJanela:
     total_negativos: int = 0
     #: As duas formas de uma menção ficar fora — ver `SomasNaJanela`.
     sem_n1: int = 0
-    sem_data_no_mes: int = 0
+    sem_data: int = 0
     #: Zero quando o mês não tem base: sem denominador não há pergunta a
     #: responder, e é diferente de "nenhum pilar impactou".
     mes_sem_base: bool = False
@@ -106,7 +106,7 @@ def ler(sessao: Session, ate: date, dias: int = DIAS_DA_JANELA) -> ImpactoNaJane
             mes=mes,
             regua=regua,
             sem_n1=somas.sem_n1,
-            sem_data_no_mes=somas.sem_data_no_mes,
+            sem_data=somas.sem_data,
             mes_sem_base=True,
         )
 
@@ -145,5 +145,5 @@ def ler(sessao: Session, ate: date, dias: int = DIAS_DA_JANELA) -> ImpactoNaJane
         total_positivos=len(acima),
         total_negativos=len(abaixo),
         sem_n1=somas.sem_n1,
-        sem_data_no_mes=somas.sem_data_no_mes,
+        sem_data=somas.sem_data,
     )

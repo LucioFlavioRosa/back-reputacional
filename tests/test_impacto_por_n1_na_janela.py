@@ -295,6 +295,37 @@ def test_a_mencao_SEM_N1_e_contada_e_nao_entra_em_pilar_nenhum(
     assert [p.n1 for p in lida.negativos] == [governanca]
 
 
+def test_a_janela_LONGA_nao_perde_os_meses_do_MEIO(sessao, clipei, pilares, mes_com_base):
+    """ACHADO DE REVISÃO, e era perda silenciosa de dado.
+
+    A consulta filtrava `Mencao.mes.in_({primeiro_dia(de), primeiro_dia(ate)})` —
+    as duas PONTAS. Numa janela de noventa dias que vai de 20/02 a 20/05, isso
+    são fevereiro e maio: março e abril inteiros eram descartados, e o impacto
+    dos pilares saía menor sem nada na tela dizendo que faltou metade da janela.
+
+    A ROTA ACEITA `dias` ATÉ 90, então o caminho era alcançável de fato — não é
+    cenário de laboratório.
+    """
+    governanca = next(iter(pilares))
+    #: uma menção em CADA mês que a janela de 90 dias atravessa
+    for dia in (date(2026, 2, 25), date(2026, 3, 10), date(2026, 4, 10), date(2026, 5, 10)):
+        _mencao(
+            sessao,
+            clipei,
+            sentimento="neg",
+            n1=pilares[governanca],
+            dia=dia,
+            mes=date(dia.year, dia.month, 1),
+        )
+
+    lida = impacto_por_n1_na_janela.ler(sessao, ate=CLICADO, dias=90)
+
+    assert lida.de == date(2026, 2, 20)
+    assert lida.negativos, "o pilar da janela tem de aparecer"
+    #: AS QUATRO MENÇÕES ENTRAM. Com as pontas só, seriam duas.
+    assert lida.negativos[0].mencoes == 4
+
+
 def test_o_mes_SEM_BASE_diz_isso_em_vez_de_dizer_zero(sessao, clipei, pilares):
     """SEM A FIXTURE `mes_com_base`, de propósito: é o mês que não tem
     denominador.
@@ -326,5 +357,24 @@ def test_a_mencao_SEM_DATA_fica_fora_da_janela_e_e_contada(sessao, clipei, pilar
 
     lida = impacto_por_n1_na_janela.ler(sessao, ate=CLICADO, dias=15)
 
-    assert lida.sem_data_no_mes >= 1
+    assert lida.sem_data >= 1
     assert lida.negativos == []
+
+
+def test_o_sem_data_conta_TODOS_os_meses_da_janela(sessao, clipei, pilares, mes_com_base):
+    """ACHADO DE REVISÃO: o número contava só o mês da ponta.
+
+    Numa janela que atravessa a virada, as menções sem data do mês ANTERIOR
+    também ficam fora dela — e eram invisíveis. A frase na tela diz "menções do
+    mês sem data", e com a janela atravessando há dois meses: contar um só fazia
+    o número mentir por omissão, que é o defeito que este campo existe para
+    evitar.
+    """
+    _mencao(sessao, clipei, sentimento="neg", n1=None, dia=None, mes=date(2026, 4, 1))
+    _mencao(sessao, clipei, sentimento="neg", n1=None, dia=None, mes=date(2026, 5, 1))
+
+    #: janela que atravessa a virada: de 19/04 a 03/05
+    lida = impacto_por_n1_na_janela.ler(sessao, ate=date(2026, 5, 3), dias=15)
+
+    assert lida.de == date(2026, 4, 19)
+    assert lida.sem_data == 2

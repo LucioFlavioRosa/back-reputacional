@@ -177,7 +177,7 @@ class ImpactoNaJanelaSaida(BaseModel):
     total_positivos: int
     total_negativos: int
     sem_n1: int
-    sem_data_no_mes: int
+    sem_data: int
     mes_sem_base: bool
     lente: str
     dias: int
@@ -221,7 +221,7 @@ def impacto_por_n1(
         total_positivos=lida.total_positivos,
         total_negativos=lida.total_negativos,
         sem_n1=lida.sem_n1,
-        sem_data_no_mes=lida.sem_data_no_mes,
+        sem_data=lida.sem_data,
         mes_sem_base=lida.mes_sem_base,
         lente=impacto_por_n1_na_janela.LENTE,
         dias=dias,
