@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import (
     acesso,
     alegacoes,
+    arvore_da_taxonomia,
     base_das_lentes,
     cadastro_duplicado,
     catalogo,
@@ -176,6 +177,8 @@ def criar_app() -> FastAPI:
     # la existe POST /api/importacoes/{importacao_id}/confirmacao, e o
     # parametro casa com qualquer literal. Ver o cabecalho do modulo.
     app.include_router(importacao_de_subtemas.rotas)
+    # A Árvore da taxonomia (Metodologia): o Cadastro de Temas em leitura.
+    app.include_router(arvore_da_taxonomia.rotas)
 
     @app.get("/api/saude", tags=["plataforma"])
     def saude() -> dict[str, str]:
