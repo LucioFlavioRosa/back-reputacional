@@ -330,6 +330,89 @@ def test_com_VEICULO_do_outro_lado_a_pergunta_nasce_do_perfil(sessao, bites):
     assert [c.id for c in achado.candidatos] == [veiculo.id]
 
 
+def test_a_fila_diz_DE_ONDE_vem_cada_lado(sessao, bites):
+    """As origens de cada cadastro, que é a evidência da duplicata.
+
+    O PEDIDO DO DONO DO PRODUTO, na letra: "o valor economico pode vim de vários
+    meios, pode vim do crm, pode vim de midias sociais, pode vim de mercado,
+    enfim, pode ter várias fontes distintas, mas a instituição é a mesma. Então
+    isso deve ficar bem claro".
+
+    POR QUE ISSO É DADO E NÃO ENFEITE. Quem decide olhava dois nomes parecidos e
+    duas contagens — e o que explica a duplicata estava de fora: um lado chegou
+    pelo clipping, o outro pelo CRM. É a resposta para "por que existem dois?".
+
+    DUAS LEITURAS DIFERENTES, e o teste cobre as duas: a menção tem lente (por
+    `score_fonte`), a interação do CRM não tem — e por isso ela aparece como `crm`
+    em vez de `institucional`. Dizer `institucional` confundiria "tem reunião
+    registrada" com "tem menção na lente institucional".
+    """
+    from uuid import uuid4 as _uuid4
+
+    from sqlalchemy import text
+
+    from app.banco.tabelas_acesso import Usuario
+    from app.banco.tabelas_interacoes import InteracaoRegistro
+
+    clipei = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == "clipei"))
+
+    perfil = _cadastrar(sessao, "valoreconomicozz71", "perfil_rede")
+    veiculo = _cadastrar(sessao, "Valor Econômico Zz71", "veiculo")
+    #: O VEÍCULO VEM DE DUAS LENTES: clipping (imprensa) e Bites (sociedade).
+    _mencao(sessao, veiculo, clipei)
+    _mencao(sessao, veiculo, bites)
+
+    #: E O PERFIL TEM RELACIONAMENTO REGISTRADO no CRM.
+    sufixo = _uuid4().hex[:8]
+    autor = Usuario(
+        entra_object_id=f"origens-{sufixo}",
+        email=f"{sufixo}@aegea.com.br",
+        nome="Autor das origens",
+        acesso_irrestrito=True,
+    )
+    sessao.add(autor)
+    sessao.flush()
+    sessao.add(
+        InteracaoRegistro(
+            frente_id=sessao.scalar(text("select id from frente limit 1")),
+            data_interacao=date(2026, 8, 4),
+            instituicao_id=perfil.id,
+            uf="SP",
+            status_id=sessao.scalar(text("select id from status limit 1")),
+            pauta="conversa registrada",
+            criado_por=autor.id,
+        )
+    )
+    sessao.flush()
+
+    achado = _na_fila(sessao, perfil.id)
+
+    assert achado is not None
+    assert achado.origens == (atores_duplicados.ORIGEM_DO_CRM,)
+    deste_lado = next(c for c in achado.candidatos if c.id == veiculo.id)
+    assert deste_lado.origens == ("imprensa", "sociedade")
+
+
+def test_o_cadastro_SEM_registro_nenhum_nao_inventa_origem(sessao):
+    """Zero registros é tupla vazia, e não uma origem chutada.
+
+    O CONTROLE DO TESTE ACIMA: sem ele, uma implementação que devolvesse sempre
+    `('imprensa',)` passaria no teste do veículo e mentiria sobre as 4 duplicatas
+    do CRM (ALMG, ANA, BNDES, Itaú BBA), que têm zero menções.
+    """
+    um = _cadastrar(sessao, "Almgzz72", "entidade")
+    outro = _cadastrar(sessao, "ALMG Zz72", "orgao")
+
+    #: QUAL DOS DOIS PERGUNTA é a ordem total `(menções, nome, id)` — com zero
+    #: menções nos dois, quem ancora depende do `id`, que é sorteado. O teste é
+    #: sobre as origens, não sobre o lado: pega o que estiver na fila.
+    achado = _na_fila(sessao, um.id) or _na_fila(sessao, outro.id)
+
+    assert achado is not None
+    assert achado.origens == ()
+    assert all(c.origens == () for c in achado.candidatos)
+
+
 # -- a fusão ---------------------------------------------------------------------
 
 
@@ -376,6 +459,59 @@ def test_a_fusao_RECUSA_apagar_o_veiculo_curado(sessao):
         atores_duplicados.fundir(
             sessao, que_sai_id=veiculo.id, sobrevivente_id=perfil.id
         )
+
+
+def test_a_fusao_ACEITA_a_escolha_de_gente_CONTRA_a_proposta(sessao, bites):
+    """A guarda é a PROPOSTA da fila, e não a sentença.
+
+    O PEDIDO DO DONO DO PRODUTO: "não basta termos uma opção de dizer se são ou não
+    o mesmo, além de mostrar quais podem se juntar temos que dizer qual é o real
+    para ser considerado na unificação".
+
+    O teste acima prova que a direção inversa é recusada SEM o pedido explícito —
+    é o que protege o clique errado e o `curl` distraído. Este prova que, dito de
+    propósito, a escolha de quem conhece o ator vale.
+
+    E MEDE O QUE ISSO CUSTA: o sobrevivente mantém o NOME dele. `nome` não está em
+    `CAMPOS_QUE_O_SOBREVIVENTE_HERDA`, porque trocá-lo faria a fusão virar
+    renomeação — então escolher o handle como o real deixa o cadastro chamado
+    `valorzz70`, com as menções do veículo dentro. A tela tem de dizer isso antes
+    do clique, e por isso o teste afirma o nome e não só a contagem.
+    """
+    perfil = _cadastrar(sessao, "valorzz70", "perfil_rede")
+    veiculo = _cadastrar(sessao, "Valor Zz70", "veiculo", uf="SP")
+    for _ in range(3):
+        _mencao(sessao, veiculo, bites)
+    id_do_veiculo = veiculo.id
+
+    sobrevivente = atores_duplicados.fundir(
+        sessao,
+        que_sai_id=id_do_veiculo,
+        sobrevivente_id=perfil.id,
+        contra_a_proposta=True,
+    )
+
+    #: O VEÍCULO SAIU, e as menções dele estão no perfil.
+    assert sobrevivente.id == perfil.id
+    assert sobrevivente.nome == "valorzz70"
+    assert (
+        sessao.scalar(
+            select(func.count())
+            .select_from(Instituicao)
+            .where(Instituicao.id == id_do_veiculo)
+        )
+        == 0
+    )
+    assert (
+        sessao.scalar(
+            select(func.count())
+            .select_from(Mencao)
+            .where(Mencao.instituicao_id == perfil.id)
+        )
+        == 3
+    )
+    #: E A CURADORIA NÃO SE PERDE: o que o sobrevivente não tinha, ele herdou.
+    assert sobrevivente.uf == "SP"
 
 
 def test_a_fusao_RECUSA_apagar_a_linha_com_MAIS_MENCOES(sessao, bites):
@@ -555,6 +691,44 @@ def test_a_rota_RECUSA_o_caminho_inverso(cliente, sessao):
     assert resposta.status_code == 422, resposta.text
     assert "deve sobreviver" in resposta.text
     assert "quem sai vai na URL" in resposta.text
+
+
+def test_a_rota_ACEITA_o_caminho_inverso_quando_dito_de_proposito(cliente, sessao, bites):
+    """O mesmo pedido do teste acima, com a escolha explícita — e 200.
+
+    É O PEDIDO DO DONO DO PRODUTO ("temos que dizer qual é o real"), e o par de
+    testes é o contrato inteiro: sem o campo, 422; com o campo, funde. Só um dos
+    dois seria metade da regra.
+    """
+    perfil = _cadastrar(sessao, "valorzz84", "perfil_rede")
+    veiculo = _cadastrar(sessao, "Valor Zz84", "veiculo")
+    _mencao(sessao, veiculo, bites)
+
+    resposta = cliente.post(
+        f"/api/instituicoes/{veiculo.id}/fundir",
+        json={"sobrevivente_id": str(perfil.id), "contra_a_proposta": True},
+    )
+
+    assert resposta.status_code == 200, resposta.text
+    #: O NOME QUE FICA É O DO SOBREVIVENTE, e é o que a tela precisa avisar antes
+    #: do clique: escolher o handle como o real deixa o cadastro com o nome dele.
+    assert resposta.json()["nome"] == "valorzz84"
+
+
+def test_a_rota_diz_as_ORIGENS_de_cada_lado(cliente, sessao, bites):
+    #: O dado novo chega à tela: sem ele, a linha mostra dois nomes parecidos e
+    #: nenhuma pista de por que existem dois cadastros.
+    perfil = _cadastrar(sessao, "valorzz85", "perfil_rede")
+    veiculo = _cadastrar(sessao, "Valor Zz85", "veiculo")
+    _mencao(sessao, veiculo, bites)
+
+    resposta = cliente.get("/api/instituicoes/duplicados")
+
+    assert resposta.status_code == 200, resposta.text
+    achado = next(d for d in resposta.json() if d["id"] == str(perfil.id))
+    assert achado["origens"] == []
+    deste_lado = next(c for c in achado["candidatos"] if c["id"] == str(veiculo.id))
+    assert deste_lado["origens"] == ["sociedade"]
 
 
 def test_a_rota_guarda_o_par_distinto(cliente, sessao):

@@ -49,6 +49,10 @@ class CandidatoSaida(BaseModel):
     #: QUANTAS MENÇÕES este lado carrega. É o número que diz qual dos dois é a
     #: linha com história — e, na tela, qual deve sobreviver.
     mencoes: int
+    #: DE ONDE VÊM OS REGISTROS DESTE LADO: códigos de lente, e `crm`. É a
+    #: evidência que explica a duplicata — um chegou pelo clipping, o outro pelo
+    #: social listening, e é o mesmo ator.
+    origens: list[str] = []
 
 
 class DuplicadoSaida(BaseModel):
@@ -60,6 +64,8 @@ class DuplicadoSaida(BaseModel):
     cargo: str | None
     mencoes: int
     candidatos: list[CandidatoSaida]
+    #: Ver `CandidatoSaida.origens`.
+    origens: list[str] = []
 
 
 class FusaoEntrada(BaseModel):
@@ -71,6 +77,17 @@ class FusaoEntrada(BaseModel):
     #: ORDEM DA FILA — `_esta_do_lado_que_pergunta` ancora a pergunta em quem deve
     #: sair — e não por um `if` de tipo no servidor.
     sobrevivente_id: UUID
+    #: "O CADASTRO CERTO É ESTE", dito de propósito contra a proposta da fila.
+    #:
+    #: A fila propõe quem sai (o perfil cru antes do curado, depois quem tem menos
+    #: menções) e o servidor recusa o inverso — é o que impede fundir a linha com
+    #: história dentro da linha crua por um clique errado. Mas só quem conhece o
+    #: ator sabe quando o cadastro certo é o outro, e o pedido do dono do produto é
+    #: justamente "dizer qual é o real para ser considerado na unificação".
+    #:
+    #: FALSO POR PADRÃO, e é isso que mantém a proteção: quem não disser nada
+    #: continua levando 422 na direção inversa.
+    contra_a_proposta: bool = False
 
 
 class DistintosEntrada(BaseModel):
@@ -111,7 +128,10 @@ def fundir_cadastro(
     promete a quem lê.
     """
     sobrevivente = atores_duplicados.fundir(
-        sessao, que_sai_id=que_sai_id, sobrevivente_id=entrada.sobrevivente_id
+        sessao,
+        que_sai_id=que_sai_id,
+        sobrevivente_id=entrada.sobrevivente_id,
+        contra_a_proposta=entrada.contra_a_proposta,
     )
     return {"id": str(sobrevivente.id), "nome": sobrevivente.nome}
 
