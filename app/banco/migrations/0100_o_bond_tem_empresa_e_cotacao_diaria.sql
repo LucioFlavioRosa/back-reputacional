@@ -105,9 +105,21 @@ insert into emissor (nome, e_aegea) values
   ('Minerva',        false),
   ('Petrobras',      false);
 
-insert into bond (ticker, emissor_id)
-select t.ticker, e.id
-  from (values
+-- A LISTA MORA NUMA TABELA TEMPORÁRIA, e não num `values` dentro do `insert`,
+-- por um motivo que a revisão encontrou: a conferência precisa comparar o PAR
+-- (ticker, empresa) GRAVADO contra o par PEDIDO, e repetir a lista de 31 linhas
+-- no `insert` e outra vez na conferência deixaria um erro de digitação passar
+-- justamente por estar nos DOIS lugares. Uma fonte, lida duas vezes.
+--
+-- SEM `on commit drop`: o `migrar.py` roda a migration inteira numa transação só
+-- (e aí o `drop` do fim é redundante, mas inofensivo), enquanto o CI aplica com
+-- `psql -f` em autocommit — e ali `on commit drop` apagaria a tabela logo depois
+-- do `insert`, antes de a conferência poder lê-la.
+
+create temporary table par_pedido (ticker text, emissor text);
+
+insert into par_pedido (ticker, emissor)
+values
     ('AEGEBZ29', 'Aegea'),
     ('AEGEBZ31', 'Aegea'),
     ('AEGEBZ36', 'Aegea'),
@@ -139,9 +151,12 @@ select t.ticker, e.id
     ('BEEFBZ33', 'Minerva'),
     ('BEEFBZ36', 'Minerva'),
     ('PETBRA30', 'Petrobras'),
-    ('PETBRA36', 'Petrobras')
-  ) as t (ticker, emissor)
-  join emissor e on e.nome = t.emissor;
+    ('PETBRA36', 'Petrobras');
+
+insert into bond (ticker, emissor_id)
+select p.ticker, e.id
+  from par_pedido p
+  join emissor e on e.nome = p.emissor;
 
 -- -----------------------------------------------------------------------------
 -- A CONFERÊNCIA DA PRÓPRIA MIGRATION
@@ -149,27 +164,55 @@ select t.ticker, e.id
 -- `join` com `emissor` por NOME: se uma empresa acima estiver escrita de duas
 -- formas, o `join` não casa e a linha do bond desaparece em SILÊNCIO — nenhum
 -- erro, nenhum aviso, e o ticker simplesmente não existiria para a ingestão.
--- Esta checagem é o que transforma esse silêncio em falha.
+--
+-- COMPARA O PAR, E NÃO A CONTAGEM — e esta frase é um conserto. A primeira
+-- versão conferia três cardinalidades (15 empresas, 31 bonds, 3 da Aegea), e
+-- uma revisão mostrou que isso não basta: trocar `BRASKM50` para Minerva e
+-- `BEEFBZ36` para Braskem preserva os três números E a contagem de papéis de
+-- cada empresa — Braskem continua com 4, Minerva com 3. O painel mostraria a
+-- cotação de um bond sob a empresa errada, sem falha em lugar nenhum.
+--
+-- Comparar nos DOIS SENTIDOS: `pedido except gravado` pega o par que não entrou
+-- (o `join` que não casou), e `gravado except pedido` pega o par que entrou
+-- diferente do pedido. Um sentido só deixaria metade dos erros passar.
 
 do $$
 declare
-  empresas integer;
-  bonds    integer;
+  faltando text;
+  sobrando text;
   aegea    integer;
 begin
-  select count(*) into empresas from emissor;
-  select count(*) into bonds    from bond;
-  select count(*) into aegea    from bond b join emissor e on e.id = b.emissor_id
-   where e.e_aegea;
+  select string_agg(ticker || '→' || emissor, ', ' order by ticker) into faltando
+    from (
+      select ticker, emissor from par_pedido
+      except
+      select b.ticker, e.nome from bond b join emissor e on e.id = b.emissor_id
+    ) as q;
 
-  if empresas <> 15 then
-    raise exception 'esperava 15 empresas, gravou %', empresas;
+  select string_agg(ticker || '→' || emissor, ', ' order by ticker) into sobrando
+    from (
+      select b.ticker, e.nome as emissor from bond b join emissor e on e.id = b.emissor_id
+      except
+      select ticker, emissor from par_pedido
+    ) as q;
+
+  if faltando is not null then
+    raise exception 'par pedido que não entrou: % — nome de empresa divergente?', faltando;
   end if;
-  if bonds <> 31 then
-    raise exception 'esperava 31 bonds, gravou % — nome de empresa divergente no join?', bonds;
+  if sobrando is not null then
+    raise exception 'par gravado que não foi pedido: %', sobrando;
   end if;
+
+  --: A ÚNICA CARDINALIDADE QUE SOBRA, e ela afirma outra coisa: que a coluna
+  --: `e_aegea` marca exatamente os três papéis da companhia. Isso não sai da
+  --: comparação de pares acima, porque `par_pedido` não diz quem é a Aegea.
+  select count(*) into aegea
+    from bond b join emissor e on e.id = b.emissor_id
+   where e.e_aegea;
   if aegea <> 3 then
-    raise exception 'esperava 3 bonds da Aegea, achou %', aegea;
+    raise exception 'esperava 3 bonds marcados como Aegea, achou %', aegea;
   end if;
 end
 $$;
+
+drop table par_pedido;

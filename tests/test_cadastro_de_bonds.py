@@ -49,23 +49,52 @@ PARES_PEDIDOS = (
     "Petrobras",
 )
 
-#: Quantos papéis cada empresa tem no arquivo de 16/10/2026, medido.
-PAPEIS_POR_EMPRESA = {
-    "Aegea": 3,
-    "Sabesp": 3,
-    "Eletrobras": 2,
-    "Light": 1,
-    "Simpar": 1,
-    "Movida": 3,
-    "Vamos": 1,
-    "Rumo": 2,
-    "Hidrovias": 1,
-    "Ultrapar": 1,
-    "Açu Petróleo": 1,
-    "Braskem": 4,
-    "Rede D'Or": 3,
-    "Minerva": 3,
-    "Petrobras": 2,
+#: O PAR, E NÃO A CONTAGEM — e esta lista existe por um achado de revisão.
+#:
+#: A primeira versão deste arquivo afirmava quantos papéis cada empresa tem, e
+#: isso não basta: trocar `BRASKM50` para Minerva e `BEEFBZ36` para Braskem
+#: preserva TODAS as contagens (Braskem 4, Minerva 3), preserva as 15 empresas,
+#: os 31 bonds e os 3 da Aegea — e faz o painel mostrar a cotação de um bond sob
+#: a empresa errada, sem falha em lugar nenhum.
+#:
+#: A LISTA SE REPETE AQUI DE PROPÓSITO. A migration confere a si mesma contra a
+#: própria fonte (uma tabela temporária lida duas vezes), o que pega o `join`
+#: que não casou. O que ela NÃO pode pegar é ter semeado a correspondência
+#: errada — para isso é preciso uma segunda declaração, escrita por fora, e é
+#: esta. Repetir a lista é o teste; não repetir seria confiar na mesma fonte
+#: duas vezes.
+TICKER_DA_EMPRESA = {
+    "AEGEBZ29": "Aegea",
+    "AEGEBZ31": "Aegea",
+    "AEGEBZ36": "Aegea",
+    "SBSPAB31": "Sabesp",
+    "SBSPAB36": "Sabesp",
+    "SABESP30": "Sabesp",
+    "ELEBRA30": "Eletrobras",
+    "ELEBRA35": "Eletrobras",
+    "LIGTBZ32": "Light",
+    "SIMHBZ31": "Simpar",
+    "MOVIBZ29": "Movida",
+    "MOVIBZ31": "Movida",
+    "MOVIBZ33": "Movida",
+    "VAMOBZ31": "Vamos",
+    "RAILBZ28": "Rumo",
+    "RAILBZ32": "Rumo",
+    "HIDRVS31": "Hidrovias",
+    "UGPABZ29": "Ultrapar",
+    "ACUPET32": "Açu Petróleo",
+    "BRASKM28": "Braskem",
+    "BRASKM30": "Braskem",
+    "BRASKM31": "Braskem",
+    "BRASKM50": "Braskem",
+    "RDEDOR30": "Rede D'Or",
+    "RDEDOR35": "Rede D'Or",
+    "RDEDOR36": "Rede D'Or",
+    "BEEFBZ31": "Minerva",
+    "BEEFBZ33": "Minerva",
+    "BEEFBZ36": "Minerva",
+    "PETBRA30": "Petrobras",
+    "PETBRA36": "Petrobras",
 }
 
 
@@ -120,8 +149,41 @@ def test_a_SABESP_une_os_dois_prefixos_de_ticker(sessao):
     assert len({t[:4] for t in tickers}) == 2
 
 
-@pytest.mark.parametrize(("empresa", "quantos"), sorted(PAPEIS_POR_EMPRESA.items()))
-def test_cada_empresa_tem_os_papeis_medidos(sessao, empresa, quantos):
+def test_cada_TICKER_esta_sob_a_empresa_certa(sessao):
+    """A asserção que a contagem não faz.
+
+    Compara o conjunto inteiro de pares, nos dois sentidos: o que falta diz que
+    algum ticker não entrou ou entrou sob outra empresa; o que sobra diz que
+    entrou um par que ninguém pediu. Uma troca entre duas empresas aparece nas
+    duas listas ao mesmo tempo, e é o caso que a cardinalidade não vê.
+    """
+    gravado = {
+        ticker: nome
+        for ticker, nome in sessao.execute(
+            select(Bond.ticker, Emissor.nome).join(Emissor)
+        )
+    }
+
+    errados = {
+        ticker: (gravado.get(ticker), empresa)
+        for ticker, empresa in TICKER_DA_EMPRESA.items()
+        if gravado.get(ticker) != empresa
+    }
+    assert not errados, f"ticker sob a empresa errada (gravado, pedido): {errados}"
+
+    sobrando = set(gravado) - set(TICKER_DA_EMPRESA)
+    assert not sobrando, f"ticker gravado que ninguém pediu: {sorted(sobrando)}"
+
+
+@pytest.mark.parametrize("empresa", sorted(set(TICKER_DA_EMPRESA.values())))
+def test_cada_empresa_tem_os_papeis_medidos(sessao, empresa):
+    """A contagem CONTINUA, ao lado da comparação de pares.
+
+    Ela não é redundante: a comparação acima prova a correspondência dos 31
+    tickers que esta suíte conhece; a contagem prova que não há um 32º papel
+    pendurado numa dessas empresas. São perguntas diferentes.
+    """
+    esperados = sum(1 for e in TICKER_DA_EMPRESA.values() if e == empresa)
     total = sessao.scalar(
         select(func.count())
         .select_from(Bond)
@@ -129,7 +191,7 @@ def test_cada_empresa_tem_os_papeis_medidos(sessao, empresa, quantos):
         .where(Emissor.nome == empresa)
     )
 
-    assert total == quantos
+    assert total == esperados
 
 
 def test_nenhum_bond_fica_sem_empresa(sessao):
