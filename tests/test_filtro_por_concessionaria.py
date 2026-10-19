@@ -37,10 +37,11 @@ import pytest
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
+from app.banco import repositorio_lentes, repositorio_score
 from app.banco.repositorio_score import CONCESSIONARIA, condicoes_do_filtro
 from app.banco.tabelas_catalogo import UnidadeNegocio
 from app.banco.tabelas_score import Mencao, ScoreFonte
-from app.dominio.score import FiltroDeMencoes
+from app.dominio.score import Calibracao, FiltroDeMencoes
 from tests.test_e2e_postgres import URL
 
 _engine = create_engine(URL, pool_pre_ping=True)
@@ -359,3 +360,76 @@ def test_a_aba_DA_CAUSA_agrupa_a_concessionaria_pelo_cadastro():
     #: E AS OUTRAS NÃO MUDAM: é uma exceção nomeada, não um desvio geral.
     assert coluna_da_dimensao("uf") is Mencao.uf
     assert coluna_da_dimensao("perfil_autor") is Mencao.perfil_autor
+
+
+# -- 5. os dois RANKINGS que ficaram para trás ---------------------------------
+#
+# A REVISÃO DO CODEX (18/10/2026) ACHOU O QUE EU PROCUREI E NÃO ENCONTREI. Eu
+# tinha levado `CONCESSIONARIA` a cinco leituras e escrito, no cabeçalho deste
+# arquivo, que o rótulo e o recorte contam o mesmo. Duas ficaram de fora, e são
+# justamente as que respondem "onde está o problema":
+#
+#   `repositorio_score.unidades_do_mes`   — "onde a pressão se concentra"
+#   `repositorio_lentes.unidades_da_lente` — o ranking do dossiê, com o mês de pico
+#
+# Nas duas, a Corsan voltava a aparecer em DUAS barras. É o mesmo defeito que a
+# `0098` cobrou na barra do N2 — agrupar por um caminho e recortar por outro —,
+# só que aqui nem recortar chegava a acontecer: elas agrupavam pela grafia crua
+# enquanto o seletor ao lado já oferecia o nome do cadastro.
+
+
+def test_o_ranking_do_MES_agrupa_as_duas_grafias_numa_barra(sessao, fonte, corsan):
+    """`unidades_do_mes`: uma linha "Corsan", com as duas grafias somadas."""
+    _mencao(sessao, fonte, unidade_texto=NOME_DO_CADASTRO, unidade_negocio_id=corsan)
+    _mencao(sessao, fonte, unidade_texto=RAZAO_SOCIAL, unidade_negocio_id=corsan)
+
+    linhas = repositorio_score.unidades_do_mes(sessao, MES, Calibracao())
+    por_nome = {nome: (neg, total) for nome, neg, total in linhas}
+
+    assert RAZAO_SOCIAL not in por_nome, (
+        "a razão social virou uma barra própria — a mesma empresa em dois lugares"
+    )
+    assert por_nome.get(NOME_DO_CADASTRO) == (2, 2), (
+        f"esperava Corsan somando as duas grafias; veio {por_nome!r}"
+    )
+
+
+def test_o_ranking_do_MES_ainda_mostra_quem_o_cadastro_nao_resolve(sessao, fonte):
+    """O `outerjoin` não pode sumir com a menção sem chave.
+
+    `Águas do Rio` são dois blocos e fica sem chave DE PROPÓSITO. Um `join` em
+    vez de `outerjoin` a tiraria do ranking — e sumir do painel "onde está o
+    problema" é pior que aparecer com a palavra do fornecedor.
+    """
+    _mencao(sessao, fonte, unidade_texto=SEM_CHAVE)
+
+    linhas = repositorio_score.unidades_do_mes(sessao, MES, Calibracao())
+
+    assert SEM_CHAVE in {nome for nome, _, _ in linhas}
+
+
+def test_o_ranking_do_DOSSIE_agrupa_as_duas_grafias(sessao, fonte, corsan):
+    """`unidades_da_lente`: idem, e o `total` soma as duas."""
+    lente_id = sessao.scalar(select(ScoreFonte.lente_id).where(ScoreFonte.id == fonte))
+    _mencao(sessao, fonte, unidade_texto=NOME_DO_CADASTRO, unidade_negocio_id=corsan)
+    _mencao(sessao, fonte, unidade_texto=RAZAO_SOCIAL, unidade_negocio_id=corsan)
+
+    linhas = repositorio_lentes.unidades_da_lente(sessao, lente_id, [MES], Calibracao())
+    por_nome = {linha["unidade"]: linha["total"] for linha in linhas}
+
+    assert RAZAO_SOCIAL not in por_nome, (
+        "a razão social virou uma entrada própria no ranking do dossiê"
+    )
+    assert por_nome.get(NOME_DO_CADASTRO) == 2, (
+        f"esperava Corsan com as duas grafias somadas; veio {por_nome!r}"
+    )
+
+
+def test_o_ranking_do_DOSSIE_ainda_mostra_quem_o_cadastro_nao_resolve(sessao, fonte):
+    """O mesmo controle negativo do `outerjoin`, no dossiê."""
+    lente_id = sessao.scalar(select(ScoreFonte.lente_id).where(ScoreFonte.id == fonte))
+    _mencao(sessao, fonte, unidade_texto=SEM_CHAVE)
+
+    linhas = repositorio_lentes.unidades_da_lente(sessao, lente_id, [MES], Calibracao())
+
+    assert SEM_CHAVE in {linha["unidade"] for linha in linhas}

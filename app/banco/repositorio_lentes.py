@@ -1316,18 +1316,28 @@ def unidades_da_lente(
     O PICO VAI JUNTO porque volume sem quando não orienta ação: 2.515 menções
     espalhadas por seis meses e 2.515 concentradas em março pedem respostas
     diferentes.
+
+    PELO NOME DO CADASTRO (`CONCESSIONARIA`), como `_concessionarias` e o
+    seletor ao lado. Esta leitura ficou de fora da `0099` e a revisão do Codex a
+    encontrou: a Corsan ocupava DUAS posições do ranking com metade do volume
+    cada, e o "mês de pico" era calculado sobre cada metade — então a tela podia
+    apontar março numa linha e maio na outra para a mesma operação.
+
+    `outerjoin` E NÃO `join`, pela razão de sempre: "Águas do Rio" são dois
+    blocos, fica sem chave de propósito, e precisa continuar no ranking.
     """
     consulta = (
-        select(Mencao.unidade_texto, Mencao.mes, func.count())
+        select(CONCESSIONARIA, Mencao.mes, func.count())
         .select_from(Mencao)
         .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .outerjoin(UnidadeNegocio, UnidadeNegocio.id == Mencao.unidade_negocio_id)
         .where(
             ScoreFonte.lente_id == lente_id,
             Mencao.mes.in_(list(meses)),
-            Mencao.unidade_texto.is_not(None),
+            CONCESSIONARIA.is_not(None),
             *so_fontes_ligadas(calibracao),
         )
-        .group_by(Mencao.unidade_texto, Mencao.mes)
+        .group_by(CONCESSIONARIA, Mencao.mes)
     )
     por_unidade: dict[str, dict] = {}
     # ORDENADO ANTES DE RESOLVER O EMPATE. Sem isto, duas altas iguais deixavam
