@@ -24,7 +24,7 @@ from sqlalchemy import Date as ColunaDeData
 from sqlalchemy import case, func, null, or_, select
 from sqlalchemy.orm import Session
 
-from app.banco.tabelas_catalogo import BlocoTema, Clima, MacroTema, Tema
+from app.banco.tabelas_catalogo import BlocoTema, Clima, MacroTema, Tema, UnidadeNegocio
 from app.banco.tabelas_interacoes import InteracaoRegistro
 from app.banco.tabelas_score import (
     Lente,
@@ -84,6 +84,26 @@ FONTE_INTERNA_DO_CRM = "crm"
 #: aceita ESPAÇO como separador e continua comendo "2024 " e "2 ". Medido contra
 #: o banco antes de escolher.
 ATRIBUTO_SEM_PREFIXO = func.regexp_replace(Mencao.atributo, r"^[0-9]+[.)-]\s*", "")
+
+#: A CONCESSIONÁRIA COMO O CADASTRO A CHAMA, com o texto do fornecedor como
+#: reserva. Exige `outerjoin(UnidadeNegocio, UnidadeNegocio.id ==
+#: Mencao.unidade_negocio_id)` em quem a usa.
+#:
+#: É O QUE FAZ A NORMALIZAÇÃO APARECER. A chave que a subida resolve (`0099`)
+#: não muda nada sozinha: quem desenha a dimensão "Concessionária" é o NOME, e
+#: a mesma operação chega em grafias diferentes — "Corsan" (1.111) e "Companhia
+#: Riograndense de Saneamento (Corsan)" (15.019) eram duas barras e dois
+#: valores de filtro para 16.130 menções da mesma empresa. A holding, três.
+#:
+#: `coalesce` E NÃO O NOME SECO: 28.549 menções nomeiam operação que o cadastro
+#: não resolve — "Águas do Rio" (9.411), que são dois blocos, e as ~45 grafias
+#: de operações que o cadastro não tem. Elas continuam aparecendo com a palavra
+#: do fornecedor, porque sumir do seletor é o oposto de normalizar.
+#:
+#: AQUI, E NÃO EM CADA LEITOR, pelo mesmo motivo de `ATRIBUTO_SEM_PREFIXO` —
+#: ver o cabeçalho deste módulo. Quem agrupa por esta expressão e quem filtra
+#: por `condicoes_do_filtro` têm de concordar, e duas cópias divergem.
+CONCESSIONARIA = func.coalesce(UnidadeNegocio.nome, Mencao.unidade_texto)
 
 #: Como o clima de uma interação vira sentimento do índice (`SCORE.md` §2).
 #:
@@ -382,10 +402,37 @@ def condicoes_do_filtro(filtro: FiltroDeMencoes | None) -> list:
         (Mencao.uf, filtro.uf),
         (Mencao.subtema, filtro.subtema),
         (Mencao.autor, filtro.autor),
-        (Mencao.unidade_texto, filtro.empresa),
         (Mencao.sentimento, filtro.sentimento),
     )
     condicoes = [coluna == valor for coluna, valor in de_cada if valor]
+    if filtro.empresa:
+        #: A CONCESSIONÁRIA CASA POR DUAS COLUNAS, pelo mesmo motivo do tema
+        #: logo abaixo — e aqui o efeito é maior. O rótulo que a tela mostra
+        #: passou a ser `coalesce(UnidadeNegocio.nome, Mencao.unidade_texto)`
+        #: (`0099`), e a Corsan chega em duas grafias: "Corsan" (1.111) e
+        #: "Companhia Riograndense de Saneamento (Corsan)" (15.019). Comparando
+        #: só o texto cru, clicar na barra "Corsan" — que acabou de somar as
+        #: duas — devolveria 1.111 menções de 16.130.
+        #:
+        #: AS DUAS, E NÃO SÓ A CHAVE: a menção que o cadastro não resolve
+        #: ("Águas do Rio", 9.411) continua tendo o texto como único recorte,
+        #: e tirar a primeira condição a tiraria do filtro que ela tem hoje.
+        #: Acrescentar disjunção só GANHA linha — ver
+        #: `tests/test_filtro_por_concessionaria.py`.
+        #:
+        #: SUBCONSULTA, E NÃO JUNÇÃO: `condicoes_do_filtro` entra em nove
+        #: consultas diferentes, e acrescentar uma junção mudaria o `from`
+        #: delas por baixo.
+        condicoes.append(
+            or_(
+                Mencao.unidade_texto == filtro.empresa,
+                Mencao.unidade_negocio_id.in_(
+                    select(UnidadeNegocio.id)
+                    .where(UnidadeNegocio.nome == filtro.empresa)
+                    .scalar_subquery()
+                ),
+            )
+        )
     if filtro.atributo:
         condicoes.append(
             or_(Mencao.atributo == filtro.atributo, ATRIBUTO_SEM_PREFIXO == filtro.atributo)
@@ -419,19 +466,61 @@ def condicoes_do_filtro(filtro: FiltroDeMencoes | None) -> list:
         )
     if filtro.tema_n2:
         condicoes.append(
-            Mencao.tema_id.in_(
-                select(Tema.id)
-                .join(MacroTema, MacroTema.id == Tema.macro_tema_id)
-                .where(MacroTema.nome == filtro.tema_n2)
-                .scalar_subquery()
+            or_(
+                #: A CHAVE DA `0098` PRIMEIRO, e a derivação por `tema_id` depois.
+                Mencao.macro_tema_id.in_(
+                    select(MacroTema.id)
+                    .where(MacroTema.nome == filtro.tema_n2)
+                    .scalar_subquery()
+                ),
+                Mencao.tema_id.in_(
+                    select(Tema.id)
+                    .join(MacroTema, MacroTema.id == Tema.macro_tema_id)
+                    .where(MacroTema.nome == filtro.tema_n2)
+                    .scalar_subquery()
+                ),
             )
         )
     if filtro.tema_n1:
-        #: O TEMA DO FORNECEDOR É O PILAR (N1) — definição do dono do produto.
-        #: A menção entra pelo tema que o fornecedor escreveu OU pelo pilar do
-        #: tema do cadastro a que está ligada, quando estiver.
+        #: O FORNECEDOR TRAZ UM NÍVEL E O CADASTRO DERIVA O RESTO (decisão do
+        #: dono do produto, 18/10/2026) — e a `0098` gravou o resultado em
+        #: `mencao.bloco_tema_id`. É por ELE que o recorte por pilar passa a
+        #: entrar, e era o que faltava para este filtro contar a verdade.
+        #:
+        #: MEDIDO ANTES DE MUDAR (base local, 104.670 menções): o recorte por
+        #: pilar alcançava 29.701 linhas e passa a alcançar 102.715. Por pilar:
+        #:
+        #:     Eficiência Operacional e Qualidade   12.386 -> 60.114
+        #:     Prosperidade Compartilhada            3.614 -> 13.281
+        #:     Governança                            5.537 -> 10.336
+        #:     Responsabilidade Social               5.548 ->  8.687
+        #:     Crescimento e Solidez Financeira      1.131 ->  6.763
+        #:     Responsabilidade Ambiental              839 ->  2.888
+        #:     Inovação e Tecnologia                   646 ->    646
+        #:
+        #: Filtrar por "Eficiência Operacional e Qualidade" devolvia 12.386 de
+        #: 60.114 — escondia quatro de cada cinco, com a conta certa na tela.
+        #:
+        #: AS DUAS CONDIÇÕES ANTIGAS FICAM, e isso é deliberado: com um `or`, o
+        #: conjunto novo é SUPERCONJUNTO do antigo. Nenhuma menção que o filtro
+        #: achava hoje deixa de ser achada — a mudança só pode ganhar linhas,
+        #: nunca perder. É o que torna "mantém tudo funcionando" verificável em
+        #: vez de prometido (`test_o_filtro_por_pilar_e_superconjunto_do_antigo`).
+        #:
+        #: E A COLUNA NÃO DEPENDE DE REGRA DE PREFIXO. O `atributo` tem 15
+        #: grafias para 7 pilares porque metade do volume vem numerado, e há
+        #: DUAS regras de recorte diferentes no repo — a de
+        #: `dominio/niveis_de_taxonomia` (separador opcional) e a
+        #: `ATRIBUTO_SEM_PREFIXO` daqui (separador obrigatório, escolhida com
+        #: medição em 16/10/2026). Comparar `bloco_tema_id` não passa por
+        #: nenhuma das duas: a normalização aconteceu uma vez, na gravação.
         condicoes.append(
             or_(
+                Mencao.bloco_tema_id.in_(
+                    select(BlocoTema.id)
+                    .where(BlocoTema.nome == filtro.tema_n1)
+                    .scalar_subquery()
+                ),
                 Mencao.tema_texto == filtro.tema_n1,
                 Mencao.tema_id.in_(
                     select(Tema.id)
@@ -811,6 +900,11 @@ def mencoes_da_consulta(
             Mencao.atributo,
             Mencao.veiculo,
             Mencao.unidade_texto,
+            #: O NOME DO CADASTRO, para o drill agrupar por ele (`0099`). O
+            #: texto do fornecedor vai junto: quem agrupa é
+            #: `MencaoDaConsulta.concessionaria`, que prefere este e cai
+            #: naquele — o mesmo `coalesce` que as lentes fazem em SQL.
+            UnidadeNegocio.nome.label("unidade_cadastrada"),
             Mencao.uf,
             Mencao.autor,
             Mencao.titulo_texto,
@@ -818,6 +912,9 @@ def mencoes_da_consulta(
             Mencao.id_fonte,
         )
         .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        #: `outerjoin`: a menção sem chave continua vindo, com o nome do
+        #: fornecedor. Um `join` a tiraria do drill inteiro.
+        .outerjoin(UnidadeNegocio, UnidadeNegocio.id == Mencao.unidade_negocio_id)
         .where(
             ScoreFonte.lente_id == lente_id,
             Mencao.mes == primeiro_dia(mes),
@@ -842,6 +939,7 @@ def mencoes_da_consulta(
             atributo=linha.atributo,
             veiculo=linha.veiculo,
             unidade_texto=linha.unidade_texto,
+            unidade_cadastrada=linha.unidade_cadastrada,
             uf=linha.uf,
             autor=linha.autor,
             titulo_texto=linha.titulo_texto,
@@ -1272,26 +1370,36 @@ def unidades_do_mes(
     ORDENADO PELO NEGATIVO, e não pelo volume: a pergunta é onde está o
     problema. O total vai junto porque 300 negativas em 400 menções é uma
     situação, e 300 em 3.000 é outra.
+
+    PELO NOME DO CADASTRO (`CONCESSIONARIA`), e não pela grafia do fornecedor.
+    Esta leitura ficou de fora quando a `0099` levou o rótulo cadastral às
+    outras cinco, e a revisão do Codex a encontrou: a Corsan aparecia em DUAS
+    barras — "Corsan" e "Companhia Riograndense de Saneamento (Corsan)" —, o que
+    num painel chamado "onde a pressão se concentra" divide ao meio justamente a
+    pressão que ele existe para mostrar.
+
+    `outerjoin` E NÃO `join`: "Águas do Rio" são dois blocos e fica sem chave de
+    propósito (ver `casos_de_uso/unidade_da_mencao`). Um `join` a sumiria do
+    ranking, e sumir é pior que aparecer com a palavra do fornecedor.
     """
+    negativas = func.count().filter(Mencao.sentimento == "neg")
     consulta = (
-        select(
-            Mencao.unidade_texto,
-            func.count().filter(Mencao.sentimento == "neg"),
-            func.count(),
-        )
+        select(CONCESSIONARIA, negativas, func.count())
         .select_from(Mencao)
         .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .outerjoin(UnidadeNegocio, UnidadeNegocio.id == Mencao.unidade_negocio_id)
         .where(
             Mencao.mes == primeiro_dia(mes),
-            Mencao.unidade_texto.is_not(None),
+            #: SOBRE A EXPRESSÃO, e não sobre `unidade_texto`: é o rótulo que a
+            #: tela mostra que precisa existir. Hoje dá no mesmo — a chave só
+            #: nasce de um texto —, mas amarrar a guarda ao que se exibe é o que
+            #: impede a linha com chave e sem texto de sumir em silêncio.
+            CONCESSIONARIA.is_not(None),
             *so_fontes_ligadas(calibracao),
         )
-        .group_by(Mencao.unidade_texto)
-        .having(func.count().filter(Mencao.sentimento == "neg") > 0)
-        .order_by(
-            func.count().filter(Mencao.sentimento == "neg").desc(),
-            Mencao.unidade_texto.asc(),
-        )
+        .group_by(CONCESSIONARIA)
+        .having(negativas > 0)
+        .order_by(negativas.desc(), CONCESSIONARIA.asc())
         .limit(quantos)
     )
     return [(nome, neg, total) for nome, neg, total in sessao.execute(consulta)]

@@ -17,10 +17,11 @@ from datetime import date, datetime
 
 from sqlalchemy import Boolean, Date, ForeignKey, Integer, Text, func
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.banco.sessao import Tabela
 from app.banco.tabelas_interacoes import Arquivo
+from app.dominio.texto import normalizar
 
 
 class ReferenciaTema(Tabela):
@@ -45,6 +46,34 @@ class Referencia(Tabela):
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     titulo: Mapped[str] = mapped_column(Text)
+    #: A CHAVE DE UNICIDADE do título, e ela é DERIVADA: ninguém a atribui.
+    #:
+    #: Até a `0097` o índice único era a expressão `lower(btrim(titulo))` dentro
+    #: do SQL da `0026`, e ela NÃO TIRAVA ACENTO: "Relatório Anual" e "Relatorio
+    #: Anual" entravam como duas referências — o começo de duas versões
+    #: circulando, que é o problema que esta tabela existe para acabar.
+    titulo_normalizado: Mapped[str] = mapped_column(Text)
+
+    @validates("titulo")
+    def _derivar_titulo_normalizado(self, _campo: str, valor: str) -> str:
+        """A chave sai do título SOZINHA, em um lugar só.
+
+        POR QUE AQUI E NÃO EM CADA PONTO DE ESCRITA. A primeira versão desta
+        mudança atribuía `titulo_normalizado` à mão na criação, na edição e no
+        semeador — e a suíte mostrou o problema na hora: havia pontos de escrita
+        que eu não conhecia, e cada um deles era uma chance de esquecer. Uma
+        coluna DERIVADA que depende de alguém lembrar dela não é derivada; é uma
+        segunda fonte de verdade esperando divergir. `instituicao`,
+        `interlocutor` e `pessoa_aegea` ainda atribuem a sua à mão em seis
+        lugares, e vale trazê-las para cá.
+
+        O QUE ISTO NÃO ALCANÇA: `insert()` em massa e `update()` por Core não
+        passam pelo ORM, então não disparam este gancho. Hoje ninguém escreve
+        nestas tabelas assim — quem for fazê-lo calcula a chave com
+        `dominio/texto.normalizar`, e não com SQL.
+        """
+        self.titulo_normalizado = normalizar(valor)
+        return valor
     #: O assunto que define a PASTA no blob.
     #:
     #: Nulo no banco e obrigatório na API: a referência nasce em duas escritas

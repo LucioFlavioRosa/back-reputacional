@@ -183,7 +183,7 @@ def _papel_de(sessao: Session, papel_id: int | None) -> Papel | None:
         ve_diretorio=registro.ve_diretorio,
         pode_exportar=registro.pode_exportar,
         acessa_crm=registro.acessa_crm,
-        acessa_sintese=registro.acessa_sintese,
+        acessa_inteligencia_de_mercado=registro.acessa_inteligencia_de_mercado,
         acessa_score=registro.acessa_score,
     )
 

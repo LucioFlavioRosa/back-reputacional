@@ -1,6 +1,6 @@
 """Roda a carga inicial de uma lente, a partir da planilha do pacote.
 
-    python -m app.banco.carregar_pacote_das_lentes sociedade "<caminho do .xlsx>"
+    python -m app.comandos.carregar_pacote_das_lentes sociedade "<caminho do .xlsx>"
 
 A PLANILHA NÃO MORA NO REPOSITÓRIO. São 2 MB de dados de produção entregues uma
 vez, e versioná-los faria todo clone do projeto baixar uma base que envelhece na

@@ -168,17 +168,31 @@ def test_todo_campo_mapeado_existe_no_vocabulario(mapeamentos: dict[str, dict]) 
 
 
 def test_o_N1_do_fornecedor_so_sobrevive_na_clipei(mapeamentos: dict[str, dict]) -> None:
-    """O estado de hoje, registrado — não um estado desejado.
+    """Quem informa o N1 — e agora é DECISÃO, não pendência.
 
     A Bites parou de informar o N1 na migration **0069**, e a 0079 mediu por quê:
-    naquela planilha o `Atributo` contradizia o `N1` em 1.418 das 2.842 linhas. A
-    Clipei ainda mapeia `atributo` para a coluna `Atributo`, que é o N1 dela, e
-    ninguém mediu a divergência lá.
+    naquela planilha o `Atributo` contradizia o `N1` em 1.418 das 2.842 linhas.
+    A Clipei continuou mapeando `atributo` para a coluna `Atributo`, que é o N1
+    dela, e este teste dizia: "ninguém mediu a divergência lá".
 
-    SE ESTE TESTE QUEBRAR, há uma decisão a tomar, não um número a atualizar:
-    ou o novo fornecedor para de informar o N1 (como a Bites), ou alguém assume
-    que aquele N1 vale e aceita conviver com dois. Trocar a lista esperada sem
-    decidir é perder a pergunta.
+    A MEDIÇÃO FOI FEITA (18/10/2026, base local, 104.670 menções) e a decisão
+    tomada pelo dono do produto: **o fornecedor traz o N1 ou o N2 ou o N3, e os
+    de cima são derivados do cadastro.** O N1 da Clipei VALE.
+
+    Por que não é "conviver com dois", que era o medo certo da 0079:
+
+        onde a menção tem os dois N1    27.315 concordam, 2 discordam (99,993%)
+        onde tem só o do fornecedor     73.928 menções — 71% da base
+
+    O `Atributo` da Clipei não é um segundo N1 que contradiz o derivado; é o
+    ÚNICO N1 de 71% da base, porque a Clipei não fala o vocabulário do N3 (71
+    dos 326 assuntos dela casam no cadastro) enquanto a Bites fala (92 de 92).
+    E onde os dois se encontram, o derivado ganha — ver `Arvore.resolver`.
+
+    O TESTE CONTINUA VALENDO COMO REGISTRO: se um fornecedor NOVO passar a
+    informar o N1, ainda há o que decidir — se ele fala N3 como a Bites, o N1
+    dele é redundância com chance de divergir; se não fala, é o piso dele. A
+    lista muda depois da medição daquele fornecedor, não antes.
     """
     com_atributo = sorted(
         codigo

@@ -20,13 +20,13 @@ cd back-reputacional
 
 docker compose -f docker-compose.pilha.yml up -d --build
 
-docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_desenvolvimento
-docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_referencias
-docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_enredos
-docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_taxonomia_de_temas
-docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_lentes
-docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_mencoes
-docker compose -f docker-compose.pilha.yml exec api python -m app.banco.semear_score
+docker compose -f docker-compose.pilha.yml exec api python -m app.comandos.semear_desenvolvimento
+docker compose -f docker-compose.pilha.yml exec api python -m app.comandos.semear_referencias
+docker compose -f docker-compose.pilha.yml exec api python -m app.comandos.semear_enredos
+docker compose -f docker-compose.pilha.yml exec api python -m app.comandos.semear_taxonomia_de_temas
+docker compose -f docker-compose.pilha.yml exec api python -m app.comandos.semear_lentes
+docker compose -f docker-compose.pilha.yml exec api python -m app.comandos.semear_mencoes
+docker compose -f docker-compose.pilha.yml exec api python -m app.comandos.semear_score
 ```
 
 SÃO SETE, E A ORDEM IMPORTA. Até 08/10/2026 o README listava três e o
@@ -125,7 +125,7 @@ Com `AUTH_MOCK=true` (o padrão do `.env.example`) um usuário fixo é provision
 pelo mesmo caminho do SSO real, para desenvolver sem depender do tenant.
 
 ```bash
-python -m app.banco.semear_desenvolvimento   # 60 registros sintéticos
+python -m app.comandos.semear_desenvolvimento   # 60 registros sintéticos
 ```
 
 ## Como o repositório é organizado
@@ -152,6 +152,10 @@ app/
 ├── dominio/               entidades, regras e vocabulário. Sem SQL, sem FastAPI
 ├── casos_de_uso/          o que a aplicação faz, um arquivo por operação
 ├── banco/                 ORM, consultas, sessão e migrations
+├── comandos/              o que uma PESSOA roda: `python -m app.comandos.<nome>`
+│                          semeadores de desenvolvimento e as cargas únicas.
+│                          São pontos de entrada, como `main.py`: podem importar
+│                          qualquer camada — e nenhuma camada os importa
 ├── armazenamento/         o Blob: caminho, upload e download dos arquivos
 │                          três árvores, e cada uma responde a uma pergunta:
 │                          `interacoes/<id>/<momento>/` — o material da agenda,
@@ -168,6 +172,14 @@ tests/
 A dependência corre em um sentido só: `api` conhece `casos_de_uso`, que conhece
 `dominio`. **`dominio` não conhece ninguém** — é o que permite testá-lo sem
 banco e sem HTTP.
+
+**E ISSO É CONFERIDO, NÃO PROMETIDO.** `tests/test_as_camadas_sao_respeitadas.py`
+mede a cada execução: quem cada camada pode importar, que o domínio não conhece
+ninguém, que não há ciclo novo, e que nenhum nome privado novo atravessa
+arquivo. O teste nasceu porque a frase acima já foi **falsa**: havia quatro
+imports de baixo para cima e um ciclo, e um documento afirmando o contrário.
+Transversais (`configuracao`, `observabilidade`) e a dívida conhecida estão
+nomeadas uma por uma lá dentro, com o motivo de cada exceção.
 
 Cada pacote tem um `__init__.py` com uma descrição do que mora ali. Comece por
 `app/__init__.py`.
@@ -201,15 +213,24 @@ privilégio](#versão-e-privilégio). 71 tabelas, organizadas em nove assuntos:
 | sinais | `alegacao`, `alegacao_tema`, `interacao_alegacao`, `apuracao`, `canal_consulta` |
 | score | `lente`, `score_fonte`, `mencao`, `score_mes_fonte`, `score_estimativa`, `score_config`, `score_fato` |
 | lentes | `evento_mercado`, `estudo_percepcao`, `estudo_atributo`, `jornalista_matriz`, `cm_resposta_mes`, `curadoria_lente`, `encaminhamento` |
-| trilhas | `auditoria`, `exportacao`, `importacao` (schema sem aplicação) |
+| trilhas | `auditoria`, `exportacao`, `importacao`, `importacao_linha` |
 
-As 48 migrations (`0001` a `0049`; a `0019` não existe) ficam em
-`app/banco/migrations/` e rodam **em ordem alfabética**, uma vez, na primeira
-subida do banco. Cada arquivo abre com um
-cabeçalho dizendo o que muda e por quê — é lá que está o histórico, e não aqui.
+As **98 migrations** (`0001` a `0096`; a `0019` não existe, e três prefixos se
+repetem — `0055`, `0060` e `0061` têm dois arquivos cada) ficam em
+`app/banco/migrations/`. Cada arquivo abre com um cabeçalho dizendo o que muda e
+por quê — é lá que está o histórico, e não aqui.
 
-Cada objeto é criado **uma vez**, no estado final. Não há migration que corrija
-outra.
+**ORDEM E CONTROLE SÃO PELO NOME COMPLETO DO ARQUIVO**, e não pelo prefixo:
+`migrar.py` ordena com `sorted(pasta.glob("*.sql"))` e registra cada arquivo
+aplicado em `migracao_aplicada`. Por isso os prefixos repetidos não colidem — são
+entradas distintas, em ordem determinística. Pela mesma razão, **renomear um
+arquivo já aplicado faz o runner rodá-lo de novo**.
+
+Nem todo objeto é criado uma vez: migrations posteriores corrigem anteriores
+(`0025` renomeou uma tabela, `0068` e `0093` concederam permissão que faltava,
+`0095` renomeou uma coluna, `0096` removeu outra). O que não se faz é **editar
+migration já aplicada** — quem a editar faz o banco novo divergir do que já
+rodou.
 
 > **Migration nova precisa conceder `delete` a `painel_app`.** A 0009 concede em
 > massa e só alcança o que já existia; `select`, `insert` e `update` vêm depois
@@ -331,9 +352,16 @@ a consulta operacional que ele serve — `acesso_log` é a única tabela sem tet
 crescimento, e uma varredura sequencial nela durante uma investigação seria cara
 justamente na hora errada.
 
-A segunda são os dois GIN de `importacao_linha`, em `0008_importacao.sql`. Ali a
-tabela inteira é rascunho — a importação da planilha não foi implementada, e o
-arquivo diz isso no cabeçalho. Os índices fazem parte do desenho e caem junto se
+A segunda são os dois GIN de `importacao_linha`, em `0008_importacao.sql`.
+
+> **O CABEÇALHO DA `0008` ESTÁ DESATUALIZADO, e não será editado.** Ele diz
+> "SCHEMA SEM APLICAÇÃO — não há rota, caso de uso nem tela de importação". Isso
+> era verdade quando ele foi escrito e deixou de ser: a importação existe em
+> `app/api/importacoes.py`, `app/casos_de_uso/importar_agendas.py` e na tela
+> `src/paginas/importacao/`, e a própria `0068` concedeu a escrita que faltava.
+> Migration aplicada não se edita — o histórico dela é o que ela dizia na época.
+
+Os índices fazem parte do desenho e caem junto se
 o desenho cair.
 
 Antes de acrescentar qualquer índice, meça: `explain (analyze, buffers)` sobre a
@@ -406,7 +434,7 @@ oferece do que só se lê.
 ## Testes e qualidade
 
 ```bash
-python -m pytest        # 709 testes; precisa do Postgres no ar
+python -m pytest        # 919 passam, 63 pulam; precisa do Postgres no ar
 ruff check .            # linter, com as regras FastAPI (FAST); passa limpo
 ```
 
@@ -506,8 +534,11 @@ endereço do cliente é `app/seguranca/limite_de_taxa.py`, lendo o
 
 Escrito explicitamente para quem for continuar.
 
-- **Importação da planilha.** As tabelas existem (migration `0008`) e o desenho
-  está documentado lá; não há rota nem caso de uso.
+- **Comentários na agenda.** A tabela `comentario` existe desde a `0004` e tem
+  modelo (`tabelas_interacoes.Comentario`), mas **nada a lê ou escreve**. Ela
+  nasceu do mockup de handoff, que traz a interface inteira — lista por
+  registro, campo de texto e botão "Comentar". Falta a rota, o caso de uso e a
+  tela. Não confundir com código morto: é desenho não construído.
 - **Ingestão automática de e-mail.** A consulta recebida (`0046`) é
   REGISTRADA À MÃO: quem recebe o questionário cadastra a interação e a
   alegação que ela traz. Encaminhar para uma caixa e o sistema se registrar

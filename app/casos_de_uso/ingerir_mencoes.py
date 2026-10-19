@@ -55,7 +55,7 @@ from sqlalchemy.orm import Session
 
 from app.banco.tabelas_lentes import MencaoNaoClassificada
 from app.banco.tabelas_score import Mencao, ScoreFonte, ScoreMesFonte
-from app.casos_de_uso import temas_da_mencao, veiculos_da_imprensa
+from app.casos_de_uso import temas_da_mencao, unidade_da_mencao, veiculos_da_imprensa
 from app.casos_de_uso.veiculos_da_imprensa import nomes_da_lista
 from app.configuracao import obter_configuracao
 from app.dominio.erros import RegraViolada
@@ -805,10 +805,19 @@ def regravar(
     #: os DOIS caminhos de escrita, inclusive a `carga_do_pacote_das_lentes`,
     #: que monta a `Leitura` à mão e chama esta função direto.
     #:
-    #: UMA CONSULTA por gravação, e são 104 temas: o conjunto cabe na memória e
-    #: a comparação é O(1). Perguntar ao banco por linha faria da subida de
-    #: 25.597 linhas um problema de rede.
-    de_temas = temas_da_mencao.por_nome(sessao)
+    #: UMA CONSULTA POR NÍVEL por gravação, e são 7 N1 + 41 N2 + 104 N3: o
+    #: conjunto cabe na memória e a comparação é O(1). Perguntar ao banco por
+    #: linha faria da subida de 25.597 linhas um problema de rede.
+    #:
+    #: A ÁRVORE INTEIRA, e não só o mapa do N3 (`por_nome`), desde a `0098`: o
+    #: fornecedor traz um nível e os de cima são derivados daqui. Ver
+    #: `dominio/niveis_de_taxonomia.py`.
+    arvore_de_temas = temas_da_mencao.arvore(sessao)
+    #: E A CONCESSIONÁRIA, pelo mesmo motivo e no mesmo momento: 29 unidades e
+    #: os apelidos declarados cabem em memória, e a busca vira `dict.get`. Ver
+    #: `casos_de_uso/unidade_da_mencao.py` para a medição e para por que ela
+    #: NUNCA adivinha bloco.
+    cadastro_de_unidades = unidade_da_mencao.cadastro(sessao)
     #: OS MESES DO ARQUIVO para quem recorta por lista — ver
     #: `Leitura.meses_a_substituir`. Apagar por `meses` deixaria o mês sem
     #: veículo da lista com o que o critério anterior gravou.
@@ -834,6 +843,24 @@ def regravar(
     #: de volta (esta função não devolve nada, e quem conta usa a `leitura`).
     #: O `id` continua vindo do default da coluna, aplicado pelo próprio
     #: `insert()`.
+    #: ONDE O CADASTRO PÕE CADA MENÇÃO, resolvido ANTES de montar os valores.
+    #:
+    #: Um passo à parte porque `resolver` devolve os TRÊS níveis de uma vez, e
+    #: chamá-lo três vezes dentro do dicionário resolveria a árvore três vezes
+    #: por linha — 75 mil buscas a mais numa subida de 25 mil linhas, com a
+    #: chance de as três discordarem se alguém mexer numa só.
+    #: OS MESMOS QUATRO CAMPOS QUE A LEITURA USA (`consulta_profundidade`), e
+    #: na mesma ordem de precedência — é o que torna a coluna gravada igual ao
+    #: que a tela calcula ao vivo. `tema_id` não entra porque é o que estamos
+    #: resolvendo: na subida mensal ninguém conferiu nível nenhum ainda.
+    niveis_por_linha = [
+        arvore_de_temas.resolver(
+            tema_texto=mencao.tema_texto,
+            subtema=mencao.subtema,
+            atributo=mencao.atributo,
+        )
+        for mencao in leitura.mencoes
+    ]
     valores = [
         {
             "fonte_id": fonte.id,
@@ -851,13 +878,29 @@ def regravar(
             # começou com 39. A cada subida com criação a cobertura sobe.
             "instituicao_id": de_cadastro.get(normalizar(mencao.veiculo or "")),
             # O ASSUNTO DO CADASTRO, quando o nome casa. Nulo é o normal
-            # enquanto o fornecedor não fala o vocabulário do N3 — e é o que a
-            # conferência mostra antes de gravar. Com o vínculo, o dossiê filtra
-            # por Pilar (N1), Tema estratégico (N2) e Subtema (N3) sem o
-            # fornecedor mandar nada além do N3.
-            "tema_id": de_temas.get(normalizar(mencao.tema_texto or "")),
+            # enquanto o fornecedor não fala o vocabulário do nível — e é o que
+            # a conferência mostra antes de gravar. Com o vínculo, o dossiê
+            # filtra por Pilar (N1), Tema estratégico (N2) e Subtema (N3).
+            #
+            # OS TRÊS GRAVADOS, e não só o N3 com o resto por `join`: o
+            # fornecedor que descreve a menção só no topo (a Clipei, em 71% do
+            # volume) tem N1 e não tem N3, e um `join` a partir de `tema_id`
+            # nunca o alcançaria. Ver a `0098`.
+            "bloco_tema_id": niveis.n1_id,
+            "macro_tema_id": niveis.n2_id,
+            "tema_id": niveis.n3_id,
             "tema_texto": mencao.tema_texto,
             "unidade_texto": mencao.unidade_texto,
+            # A CONCESSIONÁRIA DO CADASTRO, quando o nome casa ou há apelido
+            # declarado. É o que faz as duas grafias da Corsan — "Corsan" e
+            # "Companhia Riograndense de Saneamento (Corsan)" — virarem uma
+            # linha só no gráfico e no recorte, em vez de duas.
+            #
+            # NULO QUANDO O CADASTRO NÃO RESOLVE, inclusive quando ele tem mais
+            # de uma candidata ("Águas do Pará" e os quatro blocos). A
+            # conferência mostra os dois casos antes de gravar, com as opções ao
+            # lado — escolher um bloco aqui inventaria o dado. Ver a `0099`.
+            "unidade_negocio_id": cadastro_de_unidades.resolver(mencao.unidade_texto),
             "teor": mencao.teor,
             "acionavel": mencao.acionavel,
             "autor": mencao.autor,
@@ -872,7 +915,11 @@ def regravar(
             "link": mencao.link,
             "peso_tier": mencao.peso_tier,
         }
-        for mencao in leitura.mencoes
+        #: `zip` com `strict=True`: as duas listas saem da MESMA `leitura.mencoes`
+        #: e têm de ter o mesmo tamanho. Se um dia alguém filtrar uma e não a
+        #: outra, isto estoura aqui em vez de deslocar os níveis em uma linha e
+        #: gravar 25 mil menções com o pilar da vizinha.
+        for mencao, niveis in zip(leitura.mencoes, niveis_por_linha, strict=True)
     ]
     #: PLANILHA VAZIA NÃO VIRA `insert` VAZIO: o SQLAlchemy recusaria a lista
     #: sem linhas, e mês sem menção é caso legítimo — é o que acontece quando o
@@ -1277,23 +1324,75 @@ def assuntos_da_planilha(
 
     LÊ O ARQUIVO DE NOVO, como `veiculos_da_planilha`: é o preço de não ter
     tabela de rascunho, e o mesmo desenho do resto da conferência.
+
+    E NÃO LÊ NADA quando a fonte não mapeia assunto: a fonte sem a coluna
+    confere sem estourar, e é o que `test_fonte_sem_coluna_de_assunto_nao_reclama`
+    exige. Foi este teste que pegou a primeira versão de `contagens_da_planilha`,
+    onde a saída antecipada passou a depender das DUAS colunas — e aí a fonte
+    sem assunto, mas com concessionária, lia o arquivo e recusava um `b""`.
+    """
+    if not _mapeamento_de(fonte).colunas.get("tema"):
+        return {}
+    return contagens_da_planilha(sessao, fonte, conteudo)[0]
+
+
+def unidades_da_planilha(
+    sessao: Session, fonte: ScoreFonte, conteudo: bytes | ArquivoLido
+) -> dict[str, int]:
+    """Concessionária → quantas linhas a citam, CONTADA COMO A SUBIDA CONTA.
+
+    PELA LEITURA, pelas mesmas duas razões que `assuntos_da_planilha` explica:
+    sem ela a conferência contaria linhas que o filtro descarta, e o texto não
+    passaria por `_rotulo` — que aplica os apelidos POR FONTE (a `bites` dobra
+    "Aegea" em "Holding" ali). Conferir por um caminho e gravar por outro é
+    prometer uma coisa e fazer outra.
+
+    E NÃO LÊ NADA quando a fonte não mapeia concessionária — a `crm` é uma
+    delas —, pelo mesmo motivo que vale para os assuntos.
+    """
+    if not _mapeamento_de(fonte).colunas.get("unidade"):
+        return {}
+    return contagens_da_planilha(sessao, fonte, conteudo)[1]
+
+
+def contagens_da_planilha(
+    sessao: Session, fonte: ScoreFonte, conteudo: bytes | ArquivoLido
+) -> tuple[dict[str, int], dict[str, int]]:
+    """Os assuntos E as concessionárias do arquivo, NUMA LEITURA SÓ.
+
+    AS DUAS JUNTAS PORQUE SAEM DA MESMA `Leitura`, e separá-las custaria uma
+    decodificação a mais do arquivo inteiro. Isso importa acima do orçamento de
+    memória (`orcamento_de_leitura`): ali `ArquivoLido` não guarda nada e cada
+    chamada decodifica de novo, então uma função a mais seria 25% a mais de
+    tempo na conferência do arquivo grande — justamente o caso em que ela já é
+    lenta. `tests/test_a_planilha_e_aberta_uma_vez.py` prende a conta.
+
+    NÃO É UM AGREGADO DE CONVENIÊNCIA: as duas contagens têm o mesmo contrato
+    (texto cru do fornecedor → linhas que o citam, vazio como chave para "veio
+    sem"), percorrem a mesma lista e são consumidas lado a lado por `conferir`.
     """
     mapeamento = _mapeamento_de(fonte)
-    if not mapeamento.colunas.get("tema"):
-        return {}
+    tem_tema = bool(mapeamento.colunas.get("tema"))
+    tem_unidade = bool(mapeamento.colunas.get("unidade"))
+    if not tem_tema and not tem_unidade:
+        return {}, {}
 
     leitura = ler_planilha(
         _linhas_da_aba(conteudo, mapeamento),
         mapeamento,
         _recorte_por_lista(sessao, mapeamento),
     )
-    contagem: dict[str, int] = {}
+    assuntos: dict[str, int] = {}
+    unidades: dict[str, int] = {}
     for mencao in leitura.mencoes:
-        #: VAZIO É CHAVE VAZIA, e é o que `temas_da_mencao.reconhecer` conta
-        #: como "veio sem assunto".
-        texto = mencao.tema_texto or ""
-        contagem[texto] = contagem.get(texto, 0) + 1
-    return contagem
+        #: VAZIO É CHAVE VAZIA, e é o que `reconhecer` conta como "veio sem".
+        if tem_tema:
+            texto = mencao.tema_texto or ""
+            assuntos[texto] = assuntos.get(texto, 0) + 1
+        if tem_unidade:
+            unidade = mencao.unidade_texto or ""
+            unidades[unidade] = unidades.get(unidade, 0) + 1
+    return assuntos, unidades
 
 
 def recusar_a_fonte(fonte: ScoreFonte) -> None:
@@ -1358,6 +1457,7 @@ def conferir(
     list[Resumo],
     veiculos_da_imprensa.Reconhecimento,
     temas_da_mencao.Reconhecimento,
+    unidade_da_mencao.Reconhecimento,
 ]:
     """O que a subida FARIA, sem gravar nada.
 
@@ -1388,6 +1488,10 @@ def conferir(
         _prever_uma(sessao, irma, arquivo)
         for irma in fontes_do_mesmo_arquivo(sessao, fonte)
     ]
+    #: AS DUAS CONTAGENS NUMA LEITURA SÓ. Chamar `assuntos_da_planilha` e
+    #: `unidades_da_planilha` lado a lado daria o mesmo resultado e uma
+    #: decodificação a mais do arquivo — ver `contagens_da_planilha`.
+    assuntos, unidades = contagens_da_planilha(sessao, fonte, arquivo)
     #: OS ASSUNTOS TAMBÉM SÃO CONFERIDOS ANTES, e pelo mesmo motivo dos
     #: veículos: o critério do dossiê por N1/N2/N3 sai do vínculo com o
     #: cadastro, e menção sem vínculo não entra em recorte nenhum. Ver o nome
@@ -1400,9 +1504,14 @@ def conferir(
             veiculos_da_planilha(sessao, fonte, arquivo),
             _mapeamento_de(fonte).quem_fala,
         ),
-        temas_da_mencao.reconhecer(
-            sessao, assuntos_da_planilha(sessao, fonte, arquivo)
-        ),
+        temas_da_mencao.reconhecer(sessao, assuntos),
+        #: E AS CONCESSIONÁRIAS, pelo mesmo motivo dos assuntos — com uma
+        #: diferença que vale dizer: o nome que não resolve aqui não é
+        #: necessariamente um nome ERRADO. "Águas do Pará" está escrito certo e
+        #: mesmo assim não liga, porque o cadastro tem quatro blocos e a
+        #: planilha não diz qual. A lista traz as opções ao lado justamente
+        #: para a pessoa distinguir "corrija a planilha" de "diga o bloco".
+        unidade_da_mencao.reconhecer(sessao, unidades),
     )
 
 

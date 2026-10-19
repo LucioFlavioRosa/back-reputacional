@@ -49,12 +49,14 @@ from app.casos_de_uso import ingerir_mencoes, planilha_do_score
 from app.casos_de_uso.ler_sinais_da_lente import regua_dos_sinais
 from app.dominio.erros import Conflito, NaoEncontrado, RegraViolada
 from app.dominio.ingestao_score import rotulo_do_cargo
+from app.dominio.periodo import mes_de
 from app.dominio.score import (
     REGUAS_DE_ENGAJAMENTO,
     REGUAS_DE_TIER,
     Calibracao,
     Contagem,
     Indice,
+    formula_aplicada,
     ns,
     para_score,
     pesos_efetivos,
@@ -237,29 +239,6 @@ class PontoDaSerie(BaseModel):
     temas_das_lentes: dict[str, TemasDaLenteSaida] = Field(default_factory=dict)
 
 
-def _mes_de(texto: str) -> date:
-    """`2026-06` vira o primeiro dia do mês.
-
-    O ANO TEM FAIXA: `date` aceita o ano 1, mas as telas voltam meses a partir
-    do pedido (`meses_ate`), e "0001-02" estourava em ValueError lá dentro, como
-    500. Fora de 2000–2100 não há dado nenhum, e a resposta certa é 422.
-    """
-    try:
-        ano, mes = texto.split("-")
-        valor = date(int(ano), int(mes), 1)
-    except (ValueError, TypeError) as erro:
-        raise RegraViolada(f"Mês inválido: {texto!r}. Use o formato AAAA-MM.") from erro
-    if not ANO_MINIMO <= valor.year <= ANO_MAXIMO:
-        raise RegraViolada(
-            f"Mês inválido: {texto!r}. O ano vai de {ANO_MINIMO} a {ANO_MAXIMO}."
-        )
-    return valor
-
-
-ANO_MINIMO = 2000
-ANO_MAXIMO = 2100
-
-
 #: Como cada limite se apresenta na Calibração, na ordem em que se lê: dos
 #: cortes da série mensal para os da composição, e por fim o tamanho da lista.
 LIMITES_DOS_SINAIS: tuple[tuple[str, str, str, str, str | None], ...] = (
@@ -399,7 +378,7 @@ def obter(
     mes: Annotated[str, Query(description="AAAA-MM")],
 ) -> IndiceSaida:
     """O índice do mês, com as lentes que o formaram e o que explica a curva."""
-    alvo = _mes_de(mes)
+    alvo = mes_de(mes)
     calibracao = repositorio_score.calibracao_vigente(sessao)
 
     indice = repositorio_score.indice_do_mes(sessao, alvo, calibracao)
@@ -645,7 +624,7 @@ def listar_fontes(
     mes: Annotated[str, Query(description="AAAA-MM")],
 ) -> list[FonteSaida]:
     """O registro de fontes, com cobertura e volume — a aba Calibração."""
-    alvo = _mes_de(mes)
+    alvo = mes_de(mes)
     calibracao = repositorio_score.calibracao_vigente(sessao)
     lentes = {lente.id: lente.nome for lente in repositorio_score.lentes_cadastradas(sessao)}
 
@@ -742,7 +721,7 @@ def obter_lente(
     mes: Annotated[str, Query(description="AAAA-MM")],
 ) -> LenteDetalheSaida:
     """Uma lente por dentro: a composição, a fórmula e os temas."""
-    alvo = _mes_de(mes)
+    alvo = mes_de(mes)
     calibracao = repositorio_score.calibracao_vigente(sessao)
 
     lente = sessao.scalar(select(Lente).where(Lente.codigo == codigo))
@@ -771,7 +750,7 @@ def obter_lente(
             neutro=round(composicao.neutro, 2),
             negativo=round(composicao.negativo, 2),
         ),
-        formula=_formula(lente.codigo, calibracao),
+        formula=formula_aplicada(lente.codigo, calibracao),
         fontes=[
             FonteDaLenteSaida(
                 codigo=fonte.codigo,
@@ -791,34 +770,6 @@ def obter_lente(
             )
         ],
     )
-
-
-#: Quantas matérias cada tier vale, em palavras, para a frase da fórmula.
-def _formula(lente: str, calibracao: Calibracao) -> str:
-    """A fórmula aplicada, escrita — é a explicação que a tela mostra.
-
-    GERADA, e não fixa: ela muda com a régua, e um texto escrito à mão
-    passaria a mentir no primeiro ajuste da calibração.
-    """
-    base = "NS = (positivas − negativas) ÷ total; score = (NS + 1) ÷ 2 × 100."
-    if lente in ("imprensa", "mercado"):
-        pesos = REGUAS_DE_TIER[calibracao.regua_tier]
-        return (
-            f"{base} Cada matéria vale {pesos['muito_relevante']:g} (Tier 1), "
-            f"{pesos['relevante']:g} (Tier 2) ou {pesos['menos_relevante']:g} (Tier 3)."
-        )
-    if lente in ("sociedade", "clientes"):
-        comoR = {
-            "n": "cada menção vale 1",
-            "log": "cada menção vale 1 + log₁₀(1 + engajamento)",
-            "bruto": "cada menção vale o seu engajamento",
-            "cargo": "cada menção vale o peso do cargo de quem postou",
-        }[calibracao.regua_engajamento]
-        return (
-            f"{base} {comoR[0].upper() + comoR[1:]}. Com mais de uma fonte, "
-            "as menções das duas entram na mesma conta — um denominador só."
-        )
-    return f"{base} Vem do clima das interações registradas neste painel."
 
 
 class CalibracaoEntrada(BaseModel):
@@ -925,7 +876,7 @@ def criar_fato(
     if entrada.efeito not in EFEITOS:
         raise RegraViolada(f"Efeito inválido: {entrada.efeito!r}. Use {', '.join(EFEITOS)}.")
     registro = ScoreFato(
-        mes=_mes_de(entrada.mes),
+        mes=mes_de(entrada.mes),
         texto=entrada.texto.strip(),
         efeito=entrada.efeito,
         criado_por=usuario.id,
@@ -1024,7 +975,7 @@ def drivers(
     mes: Annotated[str, Query(description="AAAA-MM")],
 ) -> DriversSaida:
     """O que explica o índice do mês: atributo, unidade e o que não passa."""
-    alvo = _mes_de(mes)
+    alvo = mes_de(mes)
     calibracao = repositorio_score.calibracao_vigente(sessao)
 
     atributos = [
@@ -1177,6 +1128,24 @@ class AssuntoNaoReconhecidoSaida(BaseModel):
     desativado: bool
 
 
+class ConcessionariaNaoReconhecidaSaida(BaseModel):
+    """Uma concessionária que a planilha traz e o cadastro não resolve."""
+
+    #: O texto como o fornecedor o escreveu — é o que se procura na planilha.
+    nome: str
+    #: Quantas linhas a citam. A lista ordena por aqui.
+    mencoes: int
+    #: AS UNIDADES DO CADASTRO QUE ESTE NOME PODE SER, quando são mais de uma.
+    #:
+    #: LISTA CHEIA E LISTA VAZIA SÃO PROBLEMAS DIFERENTES, e é por isso que o
+    #: campo existe em vez de um booleano. Cheia: o nome está CERTO e mesmo
+    #: assim não liga — "Águas do Pará" são quatro blocos no cadastro, e o
+    #: conserto é o fornecedor informar qual (ou alguém declarar o apelido).
+    #: Vazia: o cadastro não tem nada parecido, e o conserto é cadastrar a
+    #: unidade — ou aceitar que aquela operação não é da Aegea.
+    opcoes: list[str] = []
+
+
 class ConferenciaSaida(BaseModel):
     """O que a subida FARIA, antes de gravar.
 
@@ -1205,6 +1174,19 @@ class ConferenciaSaida(BaseModel):
     #: pessoa leva para o fornecedor — ou para o cadastro, quando o tema existe
     #: e está desativado.
     assuntos_nao_reconhecidos: list[AssuntoNaoReconhecidoSaida] = []
+    #: Quantas linhas achariam concessionária no cadastro central.
+    #:
+    #: POR QUE ESTE NÚMERO APARECE AQUI. É a mesma razão dos assuntos, e tem um
+    #: segundo lado: sem o vínculo, a dimensão "Concessionária" agrupa pelo
+    #: texto do fornecedor, e a mesma operação em duas grafias vira duas barras
+    #: no gráfico — a Corsan chega como "Corsan" e como "Companhia Riograndense
+    #: de Saneamento (Corsan)". Ver a `0099`.
+    mencoes_com_concessionaria: int = 0
+    #: Quantas vieram SEM concessionária. Hoje são 37 em 104.670 — mas o número
+    #: aparece porque um export que a perca não deve passar em silêncio.
+    mencoes_sem_concessionaria: int = 0
+    #: OS NOMES QUE O CADASTRO NÃO RESOLVE, por volume.
+    concessionarias_nao_reconhecidas: list[ConcessionariaNaoReconhecidaSaida] = []
     #: O ARQUIVO JÁ ESTÁ GUARDADO, e a confirmação pode mandar este id em vez
     #: dos bytes de novo. Nulo quando o ambiente não tem armazenamento — e aí a
     #: tela manda o arquivo, como sempre fez. Ver `casos_de_uso/planilha_do_score`.
@@ -1414,7 +1396,9 @@ def conferir_planilha(
         raise NaoEncontrado("Fonte não encontrada.")
 
     conteudo = arquivo.file.read()
-    previsao, reconhecimento, assuntos = ingerir_mencoes.conferir(sessao, fonte, conteudo)
+    previsao, reconhecimento, assuntos, concessionarias = ingerir_mencoes.conferir(
+        sessao, fonte, conteudo
+    )
     guardada = planilha_do_score.guardar(
         sessao,
         fonte=fonte,
@@ -1426,11 +1410,13 @@ def conferir_planilha(
     #: transação deixaria a linha dela ressuscitada apontando para o vazio se
     #: algo voltasse atrás. Ver `planilha_do_score.Guardada`.
     tarefas.add_task(planilha_do_score.apagar_byte, guardada.caminho_substituido)
-    return _saida_da_conferencia(guardada.id, previsao, reconhecimento, assuntos)
+    return _saida_da_conferencia(
+        guardada.id, previsao, reconhecimento, assuntos, concessionarias
+    )
 
 
 def _saida_da_conferencia(
-    planilha_id: UUID | None, previsao, reconhecimento, assuntos
+    planilha_id: UUID | None, previsao, reconhecimento, assuntos, concessionarias
 ) -> ConferenciaSaida:
     """A resposta da conferência, montada num lugar só.
 
@@ -1471,6 +1457,17 @@ def _saida_da_conferencia(
             #: centenas. Quem corrige a planilha ataca por volume, e a lista
             #: ordenada já põe o que importa no topo.
             for item in assuntos.nao_ligados[:30]
+        ],
+        mencoes_com_concessionaria=concessionarias.ligadas,
+        mencoes_sem_concessionaria=concessionarias.sem_unidade,
+        concessionarias_nao_reconhecidas=[
+            ConcessionariaNaoReconhecidaSaida(
+                nome=item.nome, mencoes=item.mencoes, opcoes=list(item.opcoes)
+            )
+            #: OS TRINTA MAIORES, pelo mesmo motivo dos assuntos: a base inteira
+            #: tem 65 grafias distintas de concessionária, e quem corrige ataca
+            #: por volume.
+            for item in concessionarias.nao_ligados[:30]
         ],
     )
 
@@ -1637,7 +1634,7 @@ def conferir_planilha_em_partes(
             partes=partes,
         )
         ingerir_mencoes.recusar_o_que_nao_entra(fonte, conteudo)
-        previsao, reconhecimento, assuntos = ingerir_mencoes.conferir(
+        previsao, reconhecimento, assuntos, concessionarias = ingerir_mencoes.conferir(
             sessao, fonte, conteudo
         )
         planilha_do_score.concluir(subida, tamanho=len(conteudo))
@@ -1647,7 +1644,9 @@ def conferir_planilha_em_partes(
         planilha_do_score.descartar_montagem(fonte=fonte, planilha_id=planilha_id)
         raise
 
-    return _saida_da_conferencia(planilha_id, previsao, reconhecimento, assuntos)
+    return _saida_da_conferencia(
+        planilha_id, previsao, reconhecimento, assuntos, concessionarias
+    )
 
 
 @rotas.post("/fontes/{codigo}/planilha", status_code=status.HTTP_201_CREATED)

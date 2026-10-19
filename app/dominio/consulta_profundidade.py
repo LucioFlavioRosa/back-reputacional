@@ -51,13 +51,13 @@ from __future__ import annotations
 
 import calendar
 import math
-import re
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 
 from app.dominio import frases_da_consulta as frases
+from app.dominio.niveis_de_taxonomia import sem_numeracao
 from app.dominio.score import (
     FAIXAS,
     REGUA_DE_CONTAGEM,
@@ -67,7 +67,7 @@ from app.dominio.score import (
     peso_da_mencao,
 )
 from app.dominio.tema_do_mes import PONTOS_POR_NS
-from app.dominio.texto import normalizar
+from app.dominio.texto import codigo_estavel, normalizar
 
 #: Versão do contrato. O front ilustrativo é '1.0'; esta é a primeira que sai
 #: do banco, e o prefixo deixa claro de onde o JSON veio.
@@ -142,10 +142,13 @@ _CORES_DAS_FAIXAS: dict[str, tuple[str, str, str, str]] = {
     "Crítico": ("critico", "#FFE7E8", "#B32328", "#FFEDEE"),
 }
 
-#: "7. X", "7) X", "7 - X", "7 – X": o número do pilar com qualquer separador
-#: que um export à mão costuma ter, com ou sem espaço antes dele.
-_PREFIXO_NUMERICO = re.compile(r"^\s*[0-9]+\s*[.)\-–]?\s*")
-_FORA_DO_SLUG = re.compile(r"[^a-z0-9]+")
+#: O prefixo numerado do pilar MUDOU DE CASA para `dominio/niveis_de_taxonomia`,
+#: e com ele o `sem_prefixo` abaixo — ver o alias logo depois de `Taxonomia`.
+#:
+#: POR QUE: com a `0098` a mesma regra passou a decidir o que é GRAVADO em
+#: `mencao.bloco_tema_id`, e não só o que a tela mostra. Duas cópias de uma regra
+#: de chave derivada de nome é o defeito que o PR #91 e o #92 removeram de quatro
+#: lugares; abrir o quinto na mesma semana seria difícil de defender.
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,12 +208,33 @@ class MencaoDaConsulta:
     subtema: str | None = None
     atributo: str | None = None
     veiculo: str | None = None
+    #: A concessionária COMO O FORNECEDOR A ESCREVEU.
     unidade_texto: str | None = None
+    #: E COMO O CADASTRO A CHAMA, quando ele a resolve (`0099`). Nulo nas
+    #: 28.549 menções que o cadastro não resolve — as ambíguas ("Águas do Rio",
+    #: que são dois blocos) e as que nomeiam operação que ele não tem.
+    unidade_cadastrada: str | None = None
     uf: str | None = None
     autor: str | None = None
     titulo_texto: str | None = None
     link: str | None = None
     id_fonte: str | None = None
+
+    @property
+    def concessionaria(self) -> str | None:
+        """O nome por que o drill agrupa: o do cadastro, e o do fornecedor como
+        reserva.
+
+        É O MESMO `coalesce` DA LEITURA DAS LENTES (`repositorio_score.
+        CONCESSIONARIA`), aqui em Python porque este drill agrupa em Python. Sem
+        ele a Corsan vira DUAS fatias nesta tela — "Corsan" e a razão social
+        dela — enquanto o seletor das lentes já mostra uma. Duas telas
+        discordando sobre quantas empresas existem.
+
+        PROPRIEDADE, E NÃO CAMPO: os dois nomes ficam guardados, e quem precisar
+        do texto cru do fornecedor (a auditoria da carga) continua tendo.
+        """
+        return self.unidade_cadastrada or self.unidade_texto
 
 
 @dataclass(frozen=True, slots=True)
@@ -305,20 +329,12 @@ class Vinculo:
         return tuple(parte for parte in (self.pilar, self.tema, self.subtema) if parte)
 
 
-def sem_prefixo(texto: str) -> str:
-    """'7. Prosperidade Compartilhada' vira 'Prosperidade Compartilhada'.
-
-    O EXPORT REAL NUMERA O PILAR (ingerir_mencoes, linha de marcadores N1/N2/N3),
-    e o mock não. Sem tirar o número, nenhum atributo real casaria com o
-    cadastro — e todo o mês cairia em "sem pilar" com a conta certa e a árvore
-    vazia, o pior jeito de errar porque parece funcionar.
-    """
-    return _PREFIXO_NUMERICO.sub("", texto)
-
-
-def slug(nome: str) -> str:
-    """O id do N3 no estilo do `codigo` de N1/N2: ASCII, minúsculas e '_'."""
-    return _FORA_DO_SLUG.sub("_", normalizar(nome)).strip("_")
+#: O NOME ANTIGO DA MESMA FUNÇÃO, que agora mora no domínio dos níveis.
+#:
+#: Fica como alias porque três testes e `causa_da_lente` o importam deste
+#: módulo, e renomear chamador não é o assunto da `0098`. É a mesma função, não
+#: uma cópia — `sem_prefixo is sem_numeracao`.
+sem_prefixo = sem_numeracao
 
 
 class Taxonomia:
@@ -363,10 +379,18 @@ class Taxonomia:
         # O SLUG DO N3 COLIDE quando dois nomes só diferem em acento ou
         # pontuação; o primeiro por id fica com o slug limpo e os outros levam
         # o id — estável entre leituras, que é o que o endereço precisa.
+        #
+        # É `codigo_estavel`, A MESMA REGRA DO `codigo` DE N1/N2, e não uma
+        # terceira: o endereço do N3 tem de casar com o código que os outros
+        # dois níveis já publicam. Havia aqui um `slug()` com o regex e o
+        # `.strip("_")` copiados de `dominio/texto.py` — mesmo resultado, por
+        # enquanto, e é esse "por enquanto" que fazia a cópia valer a pena
+        # tirar: se a regra canônica mudar, o endereço do N3 ficava para trás
+        # sozinho.
         self.slug_do_subtema: dict[int, str] = {}
         usados: set[str] = set()
         for s in sorted(self.subtemas, key=lambda s: s.id):
-            base = slug(s.nome) or f"subtema_{s.id}"
+            base = codigo_estavel(s.nome) or f"subtema_{s.id}"
             self.slug_do_subtema[s.id] = base if base not in usados else f"{base}_{s.id}"
             usados.add(self.slug_do_subtema[s.id])
         self.nome_do_subtema = {self.slug_do_subtema[s.id]: s.nome for s in self.subtemas}
@@ -839,7 +863,7 @@ class _Contexto:
             "jornalista": (mencao.autor or "") if self.ve_diretorio else "",
             "tier": tier,
             "sentimento": SENTIMENTO_DA_TELA.get(mencao.sentimento, "neutro"),
-            "concessionaria": mencao.unidade_texto or NAO_INFORMADA,
+            "concessionaria": mencao.concessionaria or NAO_INFORMADA,
             "uf": mencao.uf or NAO_INFORMADA,
             "titulo": mencao.titulo_texto or SEM_TITULO,
             "trecho": "",
@@ -949,7 +973,9 @@ def _nivel3(ctx: _Contexto, caminho: tuple[str, str], tema_no: No, tema_saida: d
     pesos = REGUAS_DE_TIER[ctx.calibracao.regua_tier]
 
     # -- concessionárias: o par (concessionária, UF), topo 4 + Outras.
-    pares = _agrupar(mencoes, lambda m: (m.unidade_texto or NAO_INFORMADA, m.uf or NAO_INFORMADA))
+    pares = _agrupar(
+        mencoes, lambda m: (m.concessionaria or NAO_INFORMADA, m.uf or NAO_INFORMADA)
+    )
     linhas_conc = _topo_com_outras(
         pares,
         d,
@@ -1119,7 +1145,7 @@ def _nivel2(ctx: _Contexto, pilar: str, pilar_no: No, pilar_saida: dict) -> dict
     d = ctx.denominador
     tema_imp = destaque["impacto"]
 
-    por_conc = _agrupar(tema_no.mencoes, lambda m: m.unidade_texto or NAO_INFORMADA)
+    por_conc = _agrupar(tema_no.mencoes, lambda m: m.concessionaria or NAO_INFORMADA)
     por_uf = _agrupar(tema_no.mencoes, lambda m: m.uf or NAO_INFORMADA)
     concessionarias = _topo_com_outras(por_conc, d, tema_imp, OUTRAS, lambda k: {"nome": k})
     ufs = _topo_com_outras(por_uf, d, tema_imp, OUTRAS_UFS, lambda k: {"nome": k})

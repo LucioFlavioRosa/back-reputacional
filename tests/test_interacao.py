@@ -236,8 +236,8 @@ PAPEIS = {
         administra_dicionarios=True, administra_acessos=True,
         ve_campos_sensiveis=True, ve_diretorio=True, pode_exportar=True,
     ),
-    Perfil.SINTESE_LEITURA: Papel(
-        codigo="sintese_leitura", nome="Diretoria",
+    Perfil.INTELIGENCIA_DE_MERCADO_LEITURA: Papel(
+        codigo="inteligencia_de_mercado_leitura", nome="Diretoria",
         ve_campos_sensiveis=True, ve_diretorio=True, pode_exportar=True,
     ),
     Perfil.SCORE_LEITURA: Papel(codigo="score_leitura", nome="Externo"),
@@ -273,7 +273,7 @@ def test_coordenacao_edita_tudo():
 
 
 def test_diretoria_nao_edita_nada():
-    diretoria = usuario(Perfil.SINTESE_LEITURA)
+    diretoria = usuario(Perfil.INTELIGENCIA_DE_MERCADO_LEITURA)
     interacao = nova(criado_por=diretoria.id)
     assert not pode_editar(diretoria, interacao)
     assert diretoria.somente_leitura

@@ -11,7 +11,7 @@ a separação é o ponto: sem ela, "lê a Síntese" e "lê a Síntese e o Score"
 papéis diferentes, e cada portal novo dobraria a tabela.
 
 AS COLUNAS SAEM DO ENUM, e não de listas escritas à mão em cada teste. Três
-deles enumeravam `acessa_crm`, `acessa_sintese`, `acessa_score` por extenso, e
+deles enumeravam `acessa_crm`, `acessa_inteligencia_de_mercado`, `acessa_score` por extenso, e
 uma lista escrita à mão não cobre o portal que ainda não existia quando ela foi
 escrita — comparava os papéis nas três dimensões conhecidas e ignoraria a
 quarta. Derivar do enum faz `Portal` ser a única lista.
@@ -69,14 +69,14 @@ def test_papel_sem_decidir_nada_nao_abre_porta_nenhuma():
 def test_alcanca_responde_por_portal():
     so_crm = Papel(codigo="x", nome="X", acessa_crm=True)
     assert so_crm.alcanca(Portal.CRM)
-    assert not so_crm.alcanca(Portal.SINTESE)
+    assert not so_crm.alcanca(Portal.INTELIGENCIA_DE_MERCADO)
     assert not so_crm.alcanca(Portal.SCORE)
     assert so_crm.portais == {Portal.CRM}
 
 
 def test_portais_devolve_todos_os_abertos():
-    dois = Papel(codigo="x", nome="X", acessa_sintese=True, acessa_score=True)
-    assert dois.portais == {Portal.SINTESE, Portal.SCORE}
+    dois = Papel(codigo="x", nome="X", acessa_inteligencia_de_mercado=True, acessa_score=True)
+    assert dois.portais == {Portal.INTELIGENCIA_DE_MERCADO, Portal.SCORE}
 
 
 def test_alcanca_cobre_todo_portal_do_enum():
@@ -90,7 +90,7 @@ def test_alcanca_cobre_todo_portal_do_enum():
         codigo="x",
         nome="X",
         acessa_crm=True,
-        acessa_sintese=True,
+        acessa_inteligencia_de_mercado=True,
         acessa_score=True,
     )
     assert tudo.portais == set(Portal)
@@ -121,8 +121,8 @@ def test_os_papeis_de_partida(sessao):
         "plataforma_edicao",
         "crm_leitura",
         "crm_edicao",
-        "sintese_leitura",
-        "sintese_edicao",
+        "inteligencia_de_mercado_leitura",
+        "inteligencia_de_mercado_edicao",
         "score_leitura",
         "score_edicao",
         # -- 0088: o Executivo que edita os painéis e não administra acessos ---
@@ -138,7 +138,7 @@ def test_os_papeis_de_partida(sessao):
     [
         ("plataforma_leitura", "plataforma_edicao"),
         ("crm_leitura", "crm_edicao"),
-        ("sintese_leitura", "sintese_edicao"),
+        ("inteligencia_de_mercado_leitura", "inteligencia_de_mercado_edicao"),
         ("score_leitura", "score_edicao"),
     ],
 )
@@ -194,8 +194,8 @@ def test_a_plataforma_alcanca_todos_os_portais(sessao, codigo):
     [
         ("crm_leitura", "acessa_crm"),
         ("crm_edicao", "acessa_crm"),
-        ("sintese_leitura", "acessa_sintese"),
-        ("sintese_edicao", "acessa_sintese"),
+        ("inteligencia_de_mercado_leitura", "acessa_inteligencia_de_mercado"),
+        ("inteligencia_de_mercado_edicao", "acessa_inteligencia_de_mercado"),
         ("score_leitura", "acessa_score"),
         ("score_edicao", "acessa_score"),
     ],

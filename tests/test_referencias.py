@@ -12,7 +12,7 @@ está exercitando — e falhar por ele.
 
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -488,6 +488,61 @@ def test_o_mesmo_titulo_nao_entra_duas_vezes(cliente, assuntos, guardados):
     repetida = criar(cliente, assuntos, titulo="  POSICIONAMENTO — TARIFA  ")
     assert repetida.status_code == 422
     assert "Ja existe" in repetida.json()["detalhe"]
+
+
+@pytest.mark.parametrize(
+    "segundo, por_que",
+    [
+        ("Relatorio Anual zz1", "ACENTO — era o que escapava"),
+        ("Relatório  Anual zz1", "espaço interno duplo — também escapava"),
+        ("  Relatório Anual zz1  ", "espaço nas pontas — esta o `btrim` já pegava"),
+        ("RELATÓRIO ANUAL ZZ1", "caixa — esta o `lower` já pegava"),
+    ],
+)
+def test_a_outra_grafia_do_mesmo_titulo_tambem_e_recusada(
+    cliente, assuntos, guardados, segundo, por_que
+):
+    """A REGRA ANTIGA ERA `lower(btrim(titulo))` DENTRO DO ÍNDICE, na `0026`, e
+    ela NÃO TIRAVA ACENTO: "Relatório Anual" e "Relatorio Anual" entravam como
+    duas referências — exatamente as duas versões circulando que o comentário
+    daquela migration diz que a tabela existe para impedir. A `0097` passou a
+    chave para uma coluna escrita por `dominio/texto.normalizar`.
+    """
+    assert criar(cliente, assuntos, titulo="Relatório Anual zz1").status_code == 201
+    repetida = criar(cliente, assuntos, titulo=segundo)
+    assert repetida.status_code == 422, f"{por_que}: {repetida.status_code}"
+    assert "Ja existe" in repetida.json()["detalhe"]
+
+
+def test_renomear_para_a_outra_grafia_tambem_e_recusado(cliente, assuntos, guardados):
+    """A EDIÇÃO ERA A OUTRA METADE DO BURACO: dava para criar com um título e
+    RENOMEAR para a outra grafia de algo que já existe."""
+    criar(cliente, assuntos, titulo="Nota Técnica zz2")
+    outra = criar(cliente, assuntos, titulo="Parecer Jurídico zz2")
+    assert outra.status_code == 201, outra.text
+    resposta = cliente.put(
+        f"/api/referencias/{outra.json()['id']}",
+        json={
+            "titulo": "Nota Tecnica zz2",
+            "tipo": "qa",
+            "tema_principal_id": assuntos[0].id,
+            "resumo": "Um resumo qualquer.",
+            "temas": [],
+            "ativo": True,
+        },
+    )
+    assert resposta.status_code == 422, resposta.text
+    assert "Ja existe" in resposta.json()["detalhe"]
+
+
+def test_a_chave_do_titulo_e_a_canonica(cliente, assuntos, guardados, sessao):
+    """O TÍTULO MOSTRADO NÃO MUDA — muda só a chave que decide a unicidade."""
+    criada = criar(cliente, assuntos, titulo="Plano  de Obras zz3")
+    assert criada.status_code == 201, criada.text
+    registro = sessao.get(Referencia, UUID(criada.json()["id"]))
+    sessao.refresh(registro)
+    assert registro.titulo_normalizado == "plano de obras zz3"
+    assert registro.titulo == "Plano  de Obras zz3"
 
 
 def test_tipo_fora_do_vocabulario_e_recusado(cliente, assuntos, guardados):

@@ -1,11 +1,11 @@
 """Semeia o banco local com a amostra sintética do handoff.
 
-    python -m app.banco.semear_desenvolvimento
+    python -m app.comandos.semear_desenvolvimento
 
-Cria também o usuário de desenvolvimento e a senha dele, para a pilha local
-não subir trancada — ver `SENHA_DE_DESENVOLVIMENTO`.
+Cria também as oito contas de desenvolvimento, uma por papel. Entra-se
+nelas pelo `AUTH_MOCK` — ver `_semear_usuarios`.
 
-    python -m app.banco.semear_desenvolvimento
+    python -m app.comandos.semear_desenvolvimento
 
 São 60 registros **sintéticos**, derivados da planilha real mas sem ser dado de
 produção — servem para ver as telas funcionando antes da importação de verdade.
@@ -47,8 +47,7 @@ from app.banco.tabelas_stakeholders import (
     Interlocutor,
     PessoaAegea,
 )
-from app.banco.temas_de_demonstracao import id_de_tema_por_nome_antigo
-from app.casos_de_uso.autenticar_por_senha import definir_senha
+from app.comandos.temas_de_demonstracao import id_de_tema_por_nome_antigo
 from app.dominio.frentes import (
     TIPO_DE_INSTITUICAO as _TIPO_DE_INSTITUICAO,
 )
@@ -118,19 +117,22 @@ USUARIOS_DE_DESENVOLVIMENTO = [
     ("plataforma_edicao", "plataforma.edicao@aegea.com.br", "Plataforma · edição"),
     ("crm_leitura", "crm.leitura@aegea.com.br", "CRM · leitura"),
     ("crm_edicao", "crm.edicao@aegea.com.br", "CRM · edição"),
-    ("sintese_leitura", "sintese.leitura@aegea.com.br", "Síntese · leitura"),
-    ("sintese_edicao", "sintese.edicao@aegea.com.br", "Síntese · edição"),
+    #: O E-MAIL CONTINUA DIZENDO `sintese`, e é de propósito: ele é identidade
+    #: de login no ambiente local, e trocá-lo criaria conta nova em quem já tem
+    #: a pilha de pé. O código do papel seguiu o rename da 0095; o e-mail não.
+    (
+        "inteligencia_de_mercado_leitura",
+        "sintese.leitura@aegea.com.br",
+        "Inteligência de Mercado · leitura",
+    ),
+    (
+        "inteligencia_de_mercado_edicao",
+        "sintese.edicao@aegea.com.br",
+        "Inteligência de Mercado · edição",
+    ),
     ("score_leitura", "score.leitura@aegea.com.br", "Score · leitura"),
     ("score_edicao", "score.edicao@aegea.com.br", "Score · edição"),
 ]
-
-#: A senha do usuário local. NÃO é segredo, e não pretende ser.
-#:
-#: Longa porque `definir_senha` exige 12 caracteres — a mesma regra que vale
-#: para qualquer senha da plataforma, e um mínimo aplicado só em produção é um
-#: mínimo que ninguém testa.
-SENHA_DE_DESENVOLVIMENTO = "painel-reputacional-2026"
-
 
 def _semear_usuarios(sessao: Session) -> None:
     """Um usuário POR PAPEL, e não um só.
@@ -140,9 +142,11 @@ def _semear_usuarios(sessao: Session) -> None:
     fica em cache por cinco minutos. Quatro contas transformam a comparação em
     oito logins.
 
-    Cada uma recebe a MESMA senha, e isso é conveniência de desenvolvimento
-    consciente: quem testa não deveria ter de consultar oito credenciais para
-    comparar oito perfis.
+    COMO SE ENTRA EM CADA UMA, desde a 0096: pelo `AUTH_MOCK`. A entrada por
+    senha saiu, e estas contas entravam por ela. O `entra_object_id` abaixo
+    segue a mesma convenção de `dependencias.oid_do_mock`, então apontar
+    `AUTH_MOCK_PERFIL` e `AUTH_MOCK_EMAIL` para uma destas linhas cai
+    exatamente nela, com o papel que ela já tem.
 
     Idempotente por e-mail: rodar duas vezes não duplica, e um papel novo
     acrescentado a esta lista aparece na execução seguinte sem apagar nada.
@@ -173,7 +177,6 @@ def _semear_usuarios(sessao: Session) -> None:
             ),
             {"papel": codigo, "email": email},
         )
-        definir_senha(sessao, email=email, senha=SENHA_DE_DESENVOLVIMENTO)
 
 
 def semear(sessao: Session) -> dict[str, int]:
@@ -388,7 +391,8 @@ def main() -> int:
     for chave, valor in resultado.items():
         print(f"  {chave:<16} {valor}")
     print("\nAmostra sintética carregada. Não é dado de produção.")
-    print(f"\nOito contas, todas com a senha  {SENHA_DE_DESENVOLVIMENTO}")
+    print("\nOito contas, uma por papel. Entre pelo AUTH_MOCK:")
+    print("  AUTH_MOCK=true, AUTH_MOCK_PERFIL=<papel>, AUTH_MOCK_EMAIL=<e-mail>")
     for _codigo, email, nome in USUARIOS_DE_DESENVOLVIMENTO:
         print(f"  {email:34} {nome}")
     return 0

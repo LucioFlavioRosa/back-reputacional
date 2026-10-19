@@ -93,6 +93,29 @@ class Mencao(Tabela):
     unidade_negocio_id: Mapped[int | None] = mapped_column(
         SmallInteger, ForeignKey("unidade_negocio.id"), nullable=True
     )
+    #: OS TRÊS NÍVEIS DA TAXONOMIA DO CADASTRO: `bloco_tema` (N1) >
+    #: `macro_tema` (N2) > `tema` (N3). Ver `0098`.
+    #:
+    #: POR QUE TRÊS COLUNAS E NÃO SÓ O N3. Até a 0098 só existia `tema_id`, e o
+    #: N2 e o N1 eram alcançados por `join` a partir dele — o que funciona para
+    #: a menção que TEM N3 e deixa sem nível nenhum a que o fornecedor só
+    #: descreveu no topo. Medido: 73.928 menções (71% da base) tinham um N1 bom
+    #: em `atributo` e nenhuma ligação com o cadastro, então não apareciam em
+    #: recorte por pilar algum.
+    #:
+    #: SÃO CHAVE, E O TEXTO DO FORNECEDOR CONTINUA DO LADO. `tema_texto`,
+    #: `subtema` e `atributo` guardam a palavra exata da planilha, porque é
+    #: contra ela que a carga é auditável; estas três dizem onde o CADASTRO
+    #: colocou a menção. É o mesmo par que `instituicao_id`/`veiculo` já formava.
+    #:
+    #: NUNCA SE DESCE: um N1 não preenche o N2 nem o N3. A regra inteira, com a
+    #: medição, está em `app/dominio/niveis_de_taxonomia.py`.
+    bloco_tema_id: Mapped[int | None] = mapped_column(
+        SmallInteger, ForeignKey("bloco_tema.id"), nullable=True
+    )
+    macro_tema_id: Mapped[int | None] = mapped_column(
+        SmallInteger, ForeignKey("macro_tema.id"), nullable=True
+    )
     tema_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("tema.id"), nullable=True)
     #: O VEÍCULO NO CADASTRO COMPARTILHADO — `instituicao` com `tipo='veiculo'`.
     #:

@@ -48,7 +48,7 @@ class Configuracao(BaseSettings):
     #: migration 0088 criar um quarto portal para um painel que já tinha o seu.
     #:
     #: DESLIGADO por padrão: o painel está em construção. Quem PODE entrar
-    #: quando ele abrir é pergunta do banco (`papel.acessa_sintese`); se ele
+    #: quando ele abrir é pergunta do banco (`papel.acessa_inteligencia_de_mercado`); se ele
     #: está aberto é esta bandeira.
     #:
     #: As duas não moram no mesmo lugar de propósito. Com a decisão só no banco,

@@ -23,7 +23,7 @@ IDEMPOTENTE. Apaga e regrava por (fonte, mês) antes de inserir — rodar de
 novo não duplica.
 
 Rodar:
-    python -m app.banco.semear_mencoes
+    python -m app.comandos.semear_mencoes
 """
 
 from __future__ import annotations

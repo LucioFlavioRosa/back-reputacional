@@ -47,7 +47,7 @@ class Papel(Tabela):
 
     #: ONDE a pessoa entra. Ver o comentário em `Papel`, no domínio.
     acessa_crm: Mapped[bool] = mapped_column(Boolean, default=False)
-    acessa_sintese: Mapped[bool] = mapped_column(Boolean, default=False)
+    acessa_inteligencia_de_mercado: Mapped[bool] = mapped_column(Boolean, default=False)
     acessa_score: Mapped[bool] = mapped_column(Boolean, default=False)
 
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -82,14 +82,12 @@ class Usuario(Tabela):
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     #: `oid` do token do Entra ID — a identidade estável da pessoa no diretório.
-    #: Nulo para quem só entra por senha local. Ver a migration 0003.
-    entra_object_id: Mapped[str | None] = mapped_column(Text, unique=True, nullable=True)
-
-    #: bcrypt do pgcrypto. Nulo = não entra por senha.
+    #: O `oid` do Entra ID, e o ÚNICO caminho de entrada desde a 0096.
     #:
-    #: NUNCA sai em resposta de API, e não há esquema Pydantic que o inclua. A
-    #: comparação acontece no Postgres, em `autenticar_por_senha`.
-    senha_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Era nulável enquanto existia entrada por senha local. A 0096 tirou a
+    #: senha e tornou esta coluna obrigatória: conta sem `entra_object_id`
+    #: passou a ser conta que não existe, em vez de conta que não entra.
+    entra_object_id: Mapped[str] = mapped_column(Text, unique=True)
     #: CITEXT: o Entra ID pode devolver a claim com outra caixa, e sem isso a
     #: mesma pessoa ganharia uma segunda conta no provisionamento JIT.
     email: Mapped[str] = mapped_column(CITEXT, unique=True)

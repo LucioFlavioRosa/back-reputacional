@@ -38,9 +38,25 @@ from app.seguranca.limite_de_taxa import (
     custo_da_requisicao,
 )
 
+
 #: `oid` sintético do usuário de desenvolvimento. Estável, para que o mesmo
 #: registro seja reaproveitado entre execuções.
-OID_MOCK = "mock-desenvolvimento"
+#:
+#: DERIVADO DO PAPEL desde a 0096, e não mais uma constante única. A razão é a
+#: pilha local: ela entrava por SENHA, com oito contas semeadas — uma por papel
+#: —, e trocar de papel era sair e entrar como outra pessoa. Sem senha, quem
+#: abre a porta é o `AUTH_MOCK`.
+#:
+#: Com um `oid` fixo, o mock criaria UM usuário e `papel_inicial` só age na
+#: criação (ver `provisionar_usuario`): mudar `AUTH_MOCK_PERFIL` depois não
+#: mudaria nada, e trocar de papel exigiria apagar o usuário na mão. Derivando
+#: o `oid` do papel, cada perfil tem a sua linha — e `semear_desenvolvimento`
+#: usa a MESMA convenção, então as oito contas semeadas são alcançáveis.
+#:
+#: Trocar de papel volta a ser: mudar `AUTH_MOCK_PERFIL` e `AUTH_MOCK_EMAIL`
+#: para a conta correspondente, e subir de novo.
+def oid_do_mock(perfil: str) -> str:
+    return f"mock-{perfil}"
 
 
 #: Métodos que não alteram estado. Só os outros exigem token anti-CSRF.
@@ -92,7 +108,7 @@ def _usuario_provisionado(
 
     usuario = provisionar(
         sessao,
-        entra_object_id=OID_MOCK,
+        entra_object_id=oid_do_mock(configuracao.auth_mock_perfil),
         email=configuracao.auth_mock_email,
         nome=configuracao.auth_mock_nome,
         papel_inicial=Perfil(configuracao.auth_mock_perfil),
@@ -363,27 +379,66 @@ def exigir_portal_score(usuario: UsuarioLogado) -> UsuarioAtual:
     return usuario
 
 
-# NÃO existe `exigir_portal_sintese` aqui, e a ausência é deliberada — mesma
-# razão de `exigir_exportacao`, logo abaixo.
+def exigir_portal_de_inteligencia_de_mercado(
+    usuario: UsuarioLogado,
+    #: A CONFIGURAÇÃO POR `Depends`, e não `obter_configuracao()` dentro do
+    #: corpo — é o padrão que `exigir_sso_configurado` já usa neste arquivo. A
+    #: chamada direta não passa por `app.dependency_overrides`, então o teste
+    #: não conseguia ligar a bandeira e a recusa de "não lançado" vencia todas
+    #: as asserções. Um guarda que não se consegue testar com a porta ABERTA é
+    #: um guarda cuja metade permissiva nunca foi exercitada.
+    configuracao: Annotated[Configuracao, Depends(obter_configuracao)],
+) -> UsuarioAtual:
+    """As rotas do Painel de Inteligência de Mercado: o ALCANCE e a PORTA.
+
+    ESTE GUARDA NÃO EXISTIA, e o comentário que morava aqui explicava por quê:
+    "o painel está EM CONSTRUÇÃO, não existe rota dele para proteger". A primeira
+    rota chegou (a cotação de bonds), então a ausência deixou de ser deliberada.
+
+    DUAS CONDIÇÕES, E NÃO UMA — é o que `configuracao.mercado_lancado` existe
+    para permitir, nas palavras do próprio campo: "fechar o painel por uma tarde
+    exigiria revogar o acesso de dezenas de pessoas, e na tela de acessos isso é
+    indistinguível de alguém ter perdido o acesso. Com a bandeira, o alcance
+    fica intacto e a porta fecha".
+
+    `papel.acessa_inteligencia_de_mercado` é o ALCANCE: quem pode, quando abrir.
+    `mercado_lancado` é a PORTA: se o módulo está no ar. Checar só o papel faria
+    a rota servir dado com o cartão da capa ainda dizendo "em construção" —
+    e esconder o cartão não fecha a rota, que é a frase escrita na configuração.
+
+    AS DUAS RECUSAS SÃO DIFERENTES de propósito. "Ainda não foi lançado" é
+    estado do produto e não tem o que pedir à coordenação; "seu perfil não tem
+    acesso" é concessão. Dar a mesma mensagem para as duas mandaria alguém pedir
+    permissão para uma porta que está fechada para todos.
+    """
+    if not configuracao.mercado_lancado:
+        raise NaoAutorizado(
+            "O Painel de Inteligência de Mercado ainda não foi lançado."
+        )
+    if usuario.papel is None or not usuario.papel.acessa_inteligencia_de_mercado:
+        raise NaoAutorizado(
+            "Seu perfil não tem acesso ao Painel de Inteligência de Mercado. "
+            "Peça à coordenação do painel."
+        )
+    return usuario
 #
-# `acessa_sintese` é o portal do "Painel de Inteligência de Mercado" (o rótulo
-# da capa mudou, o nome interno não — ver `Portal`, no domínio). O painel está
-# EM CONSTRUÇÃO: não existe rota dele para proteger, e o nível correspondente na
-# tela de perfis é concedível e inerte até ele abrir. É o que
-# `configuracao.mercado_lancado` diz, e é por isso que `/api/eu` o devolve — a
-# tela mostra o módulo como "Liberado ao lançar" em vez de prometer uma tela que
-# não abre.
+# ATÉ A 0095 ESTE PORTAL SE CHAMAVA `sintese`, e este comentário dizia "o rótulo
+# da capa mudou, o nome interno não". Mudou agora, junto com a decisão de
+# construir o painel: escrever tabela, rota e tela com um nome que a tela não usa
+# multiplicaria a divergência.
 #
 # NÃO CONFUNDIR COM A LENTE `mercado`, que existe hoje e vive DENTRO do Score —
 # ela recorta a lista de veículos da aba Classificação. Essa lente é do Score,
-# está protegida por `exigir_portal_score`, e apontá-la para `acessa_sintese`
-# tiraria-a de todo mundo que tem Score hoje. Duas coisas com nomes parecidos, e
-# trocá-las custaria acesso em produção.
+# está protegida por `exigir_portal_score`, e apontá-la para
+# `acessa_inteligencia_de_mercado` tiraria-a de todo mundo que tem Score hoje.
+# É exatamente por isso que o nome novo é longo: `acessa_mercado` foi cogitado e
+# recusado, porque deixaria as duas com o mesmo nome.
 #
 # QUEM FOR CONSTRUIR O PAINEL escreve a dependência aqui, exigindo as DUAS
-# coisas — `papel.acessa_sintese` e `configuracao.mercado_lancado` —, e aí ela
-# nasce com rota. Escrevê-la antes seria um controle que parece existir e não
-# roda, que é o que o bloco abaixo explica ser pior do que não ter.
+# coisas — `papel.acessa_inteligencia_de_mercado` e
+# `configuracao.mercado_lancado` —, e aí ela nasce com rota. Escrevê-la antes
+# seria um controle que parece existir e não roda, que é o que o bloco abaixo
+# explica ser pior do que não ter.
 
 
 # NÃO existe `exigir_exportacao` aqui, e a ausência é deliberada.

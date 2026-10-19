@@ -31,13 +31,20 @@ from sqlalchemy.orm import Session
 
 from app.banco.repositorio_score import (
     ATRIBUTO_SEM_PREFIXO,
+    CONCESSIONARIA,
     SENTIMENTO_DO_CLIMA,
     condicoes_do_filtro,
     primeiro_dia,
     so_fontes_ligadas,
     so_interacoes_visiveis,
 )
-from app.banco.tabelas_catalogo import BlocoTema, Clima, MacroTema, Tema
+from app.banco.tabelas_catalogo import (
+    BlocoTema,
+    Clima,
+    MacroTema,
+    Tema,
+    UnidadeNegocio,
+)
 from app.banco.tabelas_interacoes import InteracaoRegistro, InteracaoTema
 from app.banco.tabelas_lentes import (
     CmRespostaMes,
@@ -404,6 +411,44 @@ def opcoes_de_filtro(sessao: Session, lente_id: int, mes: date) -> dict[str, lis
         )
         return [valor for valor, _ in sessao.execute(consulta) if valor]
 
+    def _concessionarias(quantos: int) -> list[str]:
+        """As concessionárias do mês, PELO NOME DO CADASTRO quando ele resolve.
+
+        É `_mais_presentes` com uma junção a mais, e a junção é a razão de esta
+        função existir em vez de um parâmetro: sem ela, a Corsan aparece DUAS
+        vezes na lista — "Corsan" (1.111 menções) e "Companhia Riograndense de
+        Saneamento (Corsan)" (15.019) —, e escolher uma perde a outra. A
+        holding aparecia três vezes.
+
+        `coalesce` E `outerjoin`, e não um `join`: a menção que o cadastro não
+        resolve — "Águas do Rio" (9.411), que são dois blocos — continua na
+        lista com a palavra do fornecedor. Um `join` a sumiria do seletor, que
+        é o oposto de normalizar.
+
+        AGRUPA PELA MESMA EXPRESSÃO QUE O FILTRO RECORTA (`condicoes_do_filtro`
+        casa o nome do cadastro OU o texto cru). Agrupar por um caminho e
+        filtrar por outro faria a opção escolhida devolver menos linhas do que
+        a lista prometia — foi exatamente o que aconteceu com a barra do N2 na
+        `0098`, e o conserto está no `_por_taxonomia`.
+        """
+        consulta = (
+            select(CONCESSIONARIA, func.count().label("total"))
+            .select_from(Mencao)
+            .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+            .outerjoin(
+                UnidadeNegocio, UnidadeNegocio.id == Mencao.unidade_negocio_id
+            )
+            .where(
+                ScoreFonte.lente_id == lente_id,
+                Mencao.mes == primeiro_dia(mes),
+                CONCESSIONARIA.is_not(None),
+            )
+            .group_by(CONCESSIONARIA)
+            .order_by(func.count().desc(), CONCESSIONARIA.asc())
+            .limit(quantos)
+        )
+        return [valor for valor, _ in sessao.execute(consulta) if valor]
+
     return {
         "tiers": _distintos(Mencao.tier),
         "veiculos": _distintos(Mencao.veiculo),
@@ -436,7 +481,7 @@ def opcoes_de_filtro(sessao: Session, lente_id: int, mes: date) -> dict[str, lis
         #: A concessionária citada. Cortada como o autor, pelo mesmo motivo: numa
         #: base nacional são dezenas, e a lista por volume responde "quem está
         #: aparecendo este mês".
-        "empresas": _mais_presentes(Mencao.unidade_texto, 20),
+        "empresas": _concessionarias(20),
         # -- a taxonomia de temas do CRM, pelas menções ligadas a ela ----------
         #
         # SÓ O QUE APARECE NO MÊS, como as outras: os nomes dos pilares, temas
@@ -689,6 +734,10 @@ def _por_coluna_de_texto(
         )
         .select_from(Mencao)
         .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        #: PARA `CONCESSIONARIA` PODER SER A COLUNA. Sai barato (29 linhas,
+        #: chave indexada) e vale para toda dimensão: o que importa é a aba
+        #: agrupar pelo mesmo nome que o seletor oferece e o filtro recorta.
+        .outerjoin(UnidadeNegocio, UnidadeNegocio.id == Mencao.unidade_negocio_id)
         .where(
             ScoreFonte.lente_id == lente_id,
             Mencao.mes == primeiro_dia(mes),
@@ -716,6 +765,26 @@ def _por_coluna_de_texto(
 _DIMENSOES_DA_TAXONOMIA = frozenset({"tema_n2", "tema_n3"})
 
 
+def coluna_da_dimensao(campo: str):
+    """A coluna por que uma dimensão da aba "Onde está a causa" agrupa e conta.
+
+    QUASE SEMPRE É O ATRIBUTO DE `Mencao` DE MESMO NOME — `causa_da_lente.
+    Dimensao.campo` guarda o nome e diz que "o repositório resolve". A exceção é
+    a CONCESSIONÁRIA, e a razão é a mesma que o caso do `tema` logo acima
+    registra como achado de revisão: a aba agrupava pelo texto cru enquanto o
+    painel ao lado agrupava pelo nome do cadastro, e aí os dois ficam na mesma
+    tela com rótulos diferentes para o mesmo mês — e o clique no rótulo manda ao
+    servidor uma grafia que o dado não tem.
+
+    Para a concessionária isso é visível: a Corsan seria duas fatias de 1.111 e
+    15.019 aqui, e uma de 16.130 no seletor. Quem usa a função tem de ter
+    `outerjoin(UnidadeNegocio, ...)` na consulta.
+    """
+    if campo == "unidade_texto":
+        return CONCESSIONARIA
+    return getattr(Mencao, campo)
+
+
 def _por_taxonomia(
     sessao: Session,
     nivel: str,
@@ -728,11 +797,28 @@ def _por_taxonomia(
     """O corte do mês pelo N2 (tema estratégico) ou pelo N3 (subtema) do
     cadastro, contado por sentimento.
 
-    PELO `tema_id` DA MENÇÃO, e só por ele — o mesmo caminho dos filtros
-    `tema_n2`/`tema_n3` (`condicoes_do_filtro`). Agrupar por outro caminho (o
-    texto do fornecedor, por exemplo) faria a coluna contar menções que o
-    clique nela não recorta. Menção sem vínculo fica fora, como o nulo das
-    outras abas; quanto falta vai na ficha.
+    PELO MESMO CAMINHO DO FILTRO, sempre — é esta a regra, e ela é mais forte
+    que "pelo `tema_id`". Agrupar por um caminho e recortar por outro faria a
+    coluna contar menções que o clique nela não recorta. Menção que o caminho
+    não alcança fica fora, como o nulo das outras abas; quanto falta vai na
+    ficha.
+
+    E O CAMINHO DO N2 MUDOU NA `0098`: `condicoes_do_filtro` passou a aceitar
+    `Mencao.macro_tema_id` (a chave gravada) ALÉM da derivação por `tema_id`,
+    porque o fornecedor que fala N2 não tem N3 para derivar. Então o
+    agrupamento tem de aceitar as duas também — senão o filtro alcança 30.932
+    menções e a barra conta 29.701, e as 1.231 de diferença são exatamente as
+    que só têm N2.
+
+    `coalesce(Mencao.macro_tema_id, Tema.macro_tema_id)`: a chave gravada
+    primeiro, a derivada depois. Elas concordam onde as duas existem — a
+    gravação deriva uma da outra (ver `temas_da_mencao.Arvore`) —, então a ordem
+    só decide quem responde quando a outra é nula.
+
+    E O `Tema` VIRA `outerjoin` NO N2, por consequência: a menção com N2 e sem
+    N3 não tem linha em `Tema`, e o join interno a descartaria antes do
+    `coalesce` ter chance. O N3 segue com join INTERNO, porque lá não há o que
+    aceitar além do `tema_id` — o filtro `tema_n3` também só usa ele.
     """
     nome = MacroTema.nome if nivel == "tema_n2" else Tema.nome
     consulta = (
@@ -744,10 +830,14 @@ def _por_taxonomia(
         )
         .select_from(Mencao)
         .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
-        .join(Tema, Tema.id == Mencao.tema_id)
     )
     if nivel == "tema_n2":
-        consulta = consulta.join(MacroTema, MacroTema.id == Tema.macro_tema_id)
+        consulta = consulta.outerjoin(Tema, Tema.id == Mencao.tema_id).join(
+            MacroTema,
+            MacroTema.id == func.coalesce(Mencao.macro_tema_id, Tema.macro_tema_id),
+        )
+    else:
+        consulta = consulta.join(Tema, Tema.id == Mencao.tema_id)
     consulta = (
         consulta.where(
             ScoreFonte.lente_id == lente_id,
@@ -794,16 +884,26 @@ def _presenca_da_taxonomia(
     O `count()` SEM COLUNA depois de joins internos já é "quantas menções a aba
     alcança": o join é o filtro. E `distintas` conta o nível certo — macro tema
     no N2, tema no N3 —, não `tema_id` nos dois.
+
+    OS JOINS SÃO OS MESMOS DE `_por_taxonomia`, E TÊM DE SER: esta função existe
+    para dizer quanto AQUELA aba alcança. Depois da `0098` o N2 entra também por
+    `Mencao.macro_tema_id`, então aqui entra igual — senão a ficha diria "vem em
+    29.701 menções" sobre barras que somam 30.932, e seria ela mentindo, que é
+    exatamente o que este docstring diz que ela existe para impedir.
     """
     alvo = MacroTema.id if nivel == "tema_n2" else Tema.id
     consulta = (
         select(func.count(), func.count(alvo.distinct()))
         .select_from(Mencao)
         .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
-        .join(Tema, Tema.id == Mencao.tema_id)
     )
     if nivel == "tema_n2":
-        consulta = consulta.join(MacroTema, MacroTema.id == Tema.macro_tema_id)
+        consulta = consulta.outerjoin(Tema, Tema.id == Mencao.tema_id).join(
+            MacroTema,
+            MacroTema.id == func.coalesce(Mencao.macro_tema_id, Tema.macro_tema_id),
+        )
+    else:
+        consulta = consulta.join(Tema, Tema.id == Mencao.tema_id)
     consulta = consulta.where(
         ScoreFonte.lente_id == lente_id,
         Mencao.mes == primeiro_dia(mes),
@@ -835,13 +935,18 @@ def presenca_das_dimensoes(
     """
     medidas: list = [func.count()]
     for campo in campos:
-        coluna = getattr(Mencao, campo)
+        #: PELA MESMA COLUNA QUE O CORTE AGRUPA (`coluna_da_dimensao`), e não
+        #: por `getattr` direto: a ficha da aba publica "vem em N menções, em M
+        #: valores", e M tem de ser o número de rótulos que a aba desenha. Com
+        #: o texto cru, a concessionária diria 65 valores e a aba mostraria 62.
+        coluna = coluna_da_dimensao(campo)
         medidas.append(func.count(coluna))
         medidas.append(func.count(coluna.distinct()))
     consulta = (
         select(*medidas)
         .select_from(Mencao)
         .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .outerjoin(UnidadeNegocio, UnidadeNegocio.id == Mencao.unidade_negocio_id)
         .where(
             ScoreFonte.lente_id == lente_id,
             Mencao.mes == primeiro_dia(mes),
@@ -969,7 +1074,9 @@ def cortes_da_causa(
                 #: para a planilha real, e o clique filtra pelo mesmo rótulo.
                 ATRIBUTO_SEM_PREFIXO
                 if dimensao.chave == "atributo"
-                else getattr(Mencao, dimensao.campo),
+                #: E A CONCESSIONÁRIA PELO NOME DO CADASTRO — ver
+                #: `coluna_da_dimensao`, que registra por que.
+                else coluna_da_dimensao(dimensao.campo),
                 "rotulo",
                 lente_id,
                 mes,
@@ -1209,18 +1316,28 @@ def unidades_da_lente(
     O PICO VAI JUNTO porque volume sem quando não orienta ação: 2.515 menções
     espalhadas por seis meses e 2.515 concentradas em março pedem respostas
     diferentes.
+
+    PELO NOME DO CADASTRO (`CONCESSIONARIA`), como `_concessionarias` e o
+    seletor ao lado. Esta leitura ficou de fora da `0099` e a revisão do Codex a
+    encontrou: a Corsan ocupava DUAS posições do ranking com metade do volume
+    cada, e o "mês de pico" era calculado sobre cada metade — então a tela podia
+    apontar março numa linha e maio na outra para a mesma operação.
+
+    `outerjoin` E NÃO `join`, pela razão de sempre: "Águas do Rio" são dois
+    blocos, fica sem chave de propósito, e precisa continuar no ranking.
     """
     consulta = (
-        select(Mencao.unidade_texto, Mencao.mes, func.count())
+        select(CONCESSIONARIA, Mencao.mes, func.count())
         .select_from(Mencao)
         .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .outerjoin(UnidadeNegocio, UnidadeNegocio.id == Mencao.unidade_negocio_id)
         .where(
             ScoreFonte.lente_id == lente_id,
             Mencao.mes.in_(list(meses)),
-            Mencao.unidade_texto.is_not(None),
+            CONCESSIONARIA.is_not(None),
             *so_fontes_ligadas(calibracao),
         )
-        .group_by(Mencao.unidade_texto, Mencao.mes)
+        .group_by(CONCESSIONARIA, Mencao.mes)
     )
     por_unidade: dict[str, dict] = {}
     # ORDENADO ANTES DE RESOLVER O EMPATE. Sem isto, duas altas iguais deixavam

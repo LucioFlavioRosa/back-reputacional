@@ -1,5 +1,5 @@
 -- =============================================================================
--- 0095 — O jornalista da menção é auditado
+-- 0101 — O jornalista da menção é auditado
 --
 -- A Base do Score é só leitura desde sempre: nenhuma linha de `mencao` jamais
 -- foi alterada pela aplicação depois de ingerida. Esta migration prepara o

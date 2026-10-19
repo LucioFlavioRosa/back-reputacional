@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.banco.sugerir_categoria_de_publico import aplicar_sugestoes, gerar_sugestoes
 from app.banco.tabelas_catalogo import CategoriaPublico, SubcategoriaPublico
 from app.banco.tabelas_stakeholders import Instituicao
+from app.dominio.texto import normalizar
 from tests.test_e2e_postgres import URL
 
 _engine = create_engine(URL, pool_pre_ping=True)
@@ -30,7 +31,11 @@ def sessao():
 
 
 def _criar_instituicao(sessao: Session, *, nome: str, tipo: str) -> Instituicao:
-    instituicao = Instituicao(nome=nome, nome_normalizado=nome.lower(), tipo=tipo)
+    #: `normalizar`, E NÃO `nome.lower()`: com o `.lower()` à mão esta fixture
+    #: gravava "…governança" COM cedilha, uma linha que a gravação de verdade
+    #: não produz — o teste passava sobre um registro que não existe em
+    #: produção.
+    instituicao = Instituicao(nome=nome, nome_normalizado=normalizar(nome), tipo=tipo)
     sessao.add(instituicao)
     sessao.flush()
     return instituicao

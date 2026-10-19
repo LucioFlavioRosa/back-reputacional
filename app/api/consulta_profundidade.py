@@ -23,7 +23,6 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 
 from app.api.dependencias import UsuarioLogado, exigir_portal_score
-from app.api.score import _mes_de
 from app.banco import repositorio_lentes, repositorio_score
 from app.banco.sessao import SessaoDoPedido
 from app.dominio.consulta_profundidade import (
@@ -33,6 +32,7 @@ from app.dominio.consulta_profundidade import (
     montar_consulta,
 )
 from app.dominio.erros import NaoEncontrado
+from app.dominio.periodo import mes_de
 
 rotas = APIRouter(
     prefix="/api/score/lentes",
@@ -61,7 +61,7 @@ def obter_consulta(
     do mês da tela, os grupos dos cinco meses anteriores (já somados no banco),
     três da taxonomia e três do agregado — nada aqui consulta o banco por nó.
     """
-    alvo = _mes_de(mes)
+    alvo = mes_de(mes)
     if codigo not in LENTES_DA_CONSULTA:
         raise NaoEncontrado("A consulta em profundidade existe só para Imprensa e Mercado.")
     lente = repositorio_lentes.lente_por_codigo(sessao, codigo)

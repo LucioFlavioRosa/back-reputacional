@@ -707,7 +707,7 @@ def papel_de_coordenacao():
         # parava antes de chegar a rota — `exigir_portal_crm` barra quem nao
         # abre o CRM, e o teste deixaria de contar o que se propoe a contar.
         acessa_crm=True,
-        acessa_sintese=True,
+        acessa_inteligencia_de_mercado=True,
         acessa_score=True,
         pode_criar=True,
         pode_editar_proprio=True,
@@ -889,8 +889,8 @@ def test_migration_semeou_os_papeis(sessao):
         "plataforma_edicao",
         "crm_leitura",
         "crm_edicao",
-        "sintese_leitura",
-        "sintese_edicao",
+        "inteligencia_de_mercado_leitura",
+        "inteligencia_de_mercado_edicao",
         "score_leitura",
         "score_edicao",
         "plataforma_edicao_sem_acessos",

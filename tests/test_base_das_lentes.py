@@ -11,6 +11,7 @@ from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
 from app.api.base_das_lentes import EdicaoDoJornalista, editar_jornalista, listar_mencoes, opcoes_da_base
+from app.banco.tabelas_catalogo import BlocoTema
 from app.banco.tabelas_score import Mencao, ScoreFonte
 from app.banco.tabelas_stakeholders import Instituicao, Interlocutor
 from app.dominio.causa_da_lente import DIMENSOES_POR_LENTE, nomeia_o_diretorio
@@ -410,3 +411,142 @@ def test_a_edicao_fica_na_trilha_de_auditoria(sessao, materia_do_globo):
     assert linha.campo == "autor"
     assert linha.valor_anterior is None
     assert linha.valor_novo == "Dani Souza"
+
+
+# -- o rótulo do pilar depois da 0098 -----------------------------------------
+
+
+def test_o_pilar_da_linha_vem_da_coluna_quando_nao_ha_tema_do_cadastro(sessao) -> None:
+    """A coluna "Pilar (N1)" mostra o PILAR, e não a Subcategoria do fornecedor.
+
+    O QUE ESTAVA ERRADO. O rótulo era `n1 or m.tema_texto`: sem tema do cadastro
+    para derivar, caía no texto do fornecedor — que na Clipei é a `Subcategoria`,
+    um ASSUNTO, exibido numa coluna chamada "Pilar (N1)". Eram 73.014 linhas
+    (71% da base da Clipei) lendo "Falta de água" como se fosse um dos 7
+    pilares.
+
+    Com a `0098` a menção tem o pilar de verdade em `mencao.bloco_tema_id`, e é
+    ele que aparece. O texto do fornecedor fica como último recurso, para a
+    linha que não tem nível nenhum.
+    """
+    clipei = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "clipei")).one()
+    pilar = sessao.execute(
+        select(BlocoTema.id, BlocoTema.nome)
+        .where(BlocoTema.ativo.is_(True))
+        .order_by(BlocoTema.id)
+        .limit(1)
+    ).one()
+    sessao.add(
+        Mencao(
+            fonte_id=clipei.id,
+            mes=date(2026, 8, 1),
+            data=date(2026, 8, 5),
+            sentimento="neg",
+            titulo_texto="Ligada só pelo pilar",
+            #: O QUE A CLIPEI MANDA: um assunto, não o nome de um pilar.
+            tema_texto="Falta de água",
+            bloco_tema_id=pilar.id,
+        )
+    )
+    sessao.flush()
+
+    achada = next(
+        item
+        for item in _listar(sessao).itens
+        if item.titulo == "Ligada só pelo pilar"
+    )
+    assert achada.tema_n1 == pilar.nome, (
+        f"a coluna Pilar mostrou {achada.tema_n1!r}; devia mostrar o pilar "
+        f"gravado ({pilar.nome!r}), e não a Subcategoria do fornecedor."
+    )
+
+
+def test_o_pilar_derivado_continua_vencendo(sessao, imprensa) -> None:
+    """Onde o rótulo já tinha valor, ele NÃO muda — a mudança só preenche vazio.
+
+    As menções do fixture não têm `tema_id` nem `bloco_tema_id`, então caem no
+    último recurso e seguem mostrando o texto do fornecedor (nulo aqui). O que
+    este teste prende é que a ordem das três tentativas não inverteu: nenhuma
+    linha que mostrava um valor passou a mostrar outro.
+    """
+    for item in _listar(sessao).itens:
+        assert item.tema_n1 == item.tema or item.tema_n1 is None, (
+            f"o rótulo do pilar mudou para {item.tema_n1!r} numa linha sem "
+            "nível nenhum; o último recurso tem de seguir sendo o tema do "
+            "fornecedor."
+        )
+
+# -- a busca livre e o nome do cadastro ----------------------------------------
+#
+# ACHADO DA REVISÃO DO CODEX (18/10/2026). A `0099` fez a COLUNA da Base mostrar
+# `CONCESSIONARIA` — o nome do cadastro, com o texto do fornecedor como reserva.
+# A busca livre ficou procurando só `Mencao.unidade_texto`. Resultado: a pessoa
+# lê "Holding / corporativo" na tela, digita exatamente isso no campo de busca,
+# e recebe zero — porque o texto gravado é "Aegea Saneamento e Participações
+# S/A". Procurar pelo que a tela NÃO mostra é o pior tipo de busca vazia: nada
+# indica que a palavra certa era outra.
+#
+# `Corsan` NÃO SERVE DE EXEMPLO, e é por isso que este teste usa a holding: a
+# razão social da Corsan contém a palavra "Corsan", então o defeito se esconde
+# justamente no caso mais citado.
+
+NOME_DA_HOLDING = "Holding / corporativo"
+RAZAO_DA_HOLDING = "Aegea Saneamento e Participações S/A"
+
+
+@pytest.fixture
+def holding(sessao):
+    """Uma menção que a tela rotula pelo cadastro e grava com a razão social."""
+    from app.banco.tabelas_catalogo import UnidadeNegocio
+
+    clipei = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "clipei")).one()
+    unidade = sessao.scalar(
+        select(UnidadeNegocio.id).where(UnidadeNegocio.nome == NOME_DA_HOLDING)
+    )
+    assert unidade is not None, f"o cadastro não tem {NOME_DA_HOLDING!r}"
+    sessao.add(
+        Mencao(
+            fonte_id=clipei.id,
+            mes=date(2026, 8, 1),
+            data=date(2026, 8, 5),
+            sentimento="neu",
+            titulo_texto="Resultado trimestral",
+            unidade_texto=RAZAO_DA_HOLDING,
+            unidade_negocio_id=unidade,
+        )
+    )
+    sessao.flush()
+    return unidade
+
+
+def test_a_busca_acha_pelo_nome_que_a_TELA_MOSTRA(sessao, holding):
+    pagina = _listar(sessao, q=NOME_DA_HOLDING)
+
+    assert pagina.total == 1, (
+        "buscar o nome que a coluna exibe devolveu nada — a busca procura o "
+        f"texto do fornecedor e a tela mostra o do cadastro (total={pagina.total})"
+    )
+    assert pagina.itens[0].empresa == NOME_DA_HOLDING
+
+
+def test_a_busca_CONTINUA_achando_pelo_texto_do_fornecedor(sessao, holding):
+    """O controle negativo: o novo campo acrescenta, não substitui.
+
+    Quem já procurava pela razão social — porque é o que está na planilha que
+    tem na mão — não pode perder o resultado.
+    """
+    pagina = _listar(sessao, q="Participações")
+
+    assert pagina.total == 1
+    assert pagina.itens[0].empresa == NOME_DA_HOLDING
+
+
+def test_a_CONTAGEM_e_a_lista_concordam_na_busca_pelo_cadastro(sessao, holding):
+    """`total` sai de outra consulta, e ela também precisa da junção.
+
+    Sem o `outerjoin` na consulta do `total`, a paginação diria um número e a
+    lista mostraria outro — ou a consulta nem montaria.
+    """
+    pagina = _listar(sessao, q=NOME_DA_HOLDING)
+
+    assert pagina.total == len(pagina.itens)

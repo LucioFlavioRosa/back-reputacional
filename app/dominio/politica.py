@@ -8,8 +8,13 @@ Os OITO semeados são um LEITOR e um EDITOR para cada portal:
 
     plataforma_leitura / plataforma_edicao   os três portais
     crm_leitura        / crm_edicao          CRM dos Stakeholders
-    sintese_leitura    / sintese_edicao      Síntese Executiva
+    inteligencia_de_mercado_leitura / _edicao   Painel de Inteligência de Mercado
     score_leitura      / score_edicao        Score Executivo
+
+E ESTA LINHA ESTAVA ERRADA ANTES DA 0095, não só desatualizada: ela dizia
+"Síntese Executiva", que é um BLOCO dentro do Painel do CRM e não tem papel
+nenhum. Os papéis sempre foram do portal — que até a 0095 se chamava `sintese`,
+e é daí que veio a confusão.
 
 O prefixo diz ONDE entra; o sufixo diz o que FAZ lá dentro.
 

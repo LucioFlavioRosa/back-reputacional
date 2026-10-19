@@ -1216,7 +1216,7 @@ def test_a_aba_de_JORNALISTA_respeita_ve_diretorio(sessao, imprensa_de_junho):
 
     E A DA SOCIEDADE CONTINUA: lá o autor é o perfil de rede que veio DENTRO da
     menção, não cadastro de terceiro — é o mesmo dado que o indicador "Autor mais
-    negativo" já publica. A distinção é a que `_nomeia_o_diretorio` faz, e ela é
+    negativo" já publica. A distinção é a que `nomeia_o_diretorio` faz, e ela é
     por lente, não por nome de coluna."""
     bites = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "bites")).one()
     clipei = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "clipei")).one()

@@ -156,7 +156,7 @@ def test_a_conferencia_lista_UM_perfil_para_os_dois_jeitos(sessao, bites):
     #: o banco gravaria um — a conferência existe para prometer o que acontece.
     conteudo = _planilha(["@casadevovodede zz2", "casadevovodede zz2"])
 
-    _previsao, veiculos, _assuntos = ingerir_mencoes.conferir(sessao, bites, conteudo)
+    _previsao, veiculos, _assuntos, _unidades = ingerir_mencoes.conferir(sessao, bites, conteudo)
 
     nomes = [novo.nome for novo in veiculos.novos]
     assert nomes == ["casadevovodede zz2"]
