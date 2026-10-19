@@ -32,7 +32,7 @@ from sqlalchemy.orm import Session
 
 from app.banco.sessao import obter_sessao
 from app.banco.tabelas_acesso import Papel, Usuario
-from app.banco.tabelas_catalogo import BlocoTema
+from app.banco.tabelas_catalogo import MacroTema
 from app.banco.tabelas_score import Mencao, ScoreFonte, ScoreMesFonte
 from app.configuracao import Configuracao, obter_configuracao
 from app.seguranca import sessao_assinada
@@ -135,7 +135,7 @@ def _sem_sobrescritas():
     app.dependency_overrides.clear()
 
 
-def test_a_rota_de_impacto_por_n1_tambem_passa_pelo_guarda(sessao):
+def test_a_rota_de_impacto_por_n2_tambem_passa_pelo_guarda(sessao):
     """A rota NOVA, e ela não está em `ROTAS` por um motivo: as duas de lá são
     POST com arquivo, e esta é GET com parâmetro. O guarda é do `APIRouter`
     inteiro, mas "é do roteador" é exatamente o tipo de afirmação que para de
@@ -147,13 +147,13 @@ def test_a_rota_de_impacto_por_n1_tambem_passa_pelo_guarda(sessao):
     usuario = _usuario(sessao, alcanca_mercado=True)
 
     cliente, _ = _cliente(sessao, usuario, lancado=False)
-    recusada = cliente.get("/api/mercado/impacto-por-n1?ate=2026-05-20")
+    recusada = cliente.get("/api/mercado/impacto-por-n2?ate=2026-05-20")
     assert recusada.status_code == 403
     assert "mercado" in recusada.json()["detalhe"].lower()
 
     limpar_todos()
     cliente, _ = _cliente(sessao, usuario, lancado=True)
-    atendida = cliente.get("/api/mercado/impacto-por-n1?ate=2026-05-20")
+    atendida = cliente.get("/api/mercado/impacto-por-n2?ate=2026-05-20")
     assert atendida.status_code == 200
     corpo = atendida.json()
     assert corpo["lente"] == "imprensa"
@@ -163,10 +163,10 @@ def test_a_rota_de_impacto_por_n1_tambem_passa_pelo_guarda(sessao):
     assert corpo["de"] == "2026-05-06"
 
 
-def test_impacto_por_n1_devolve_os_PILARES_de_verdade(sessao):
+def test_impacto_por_n2_devolve_os_PILARES_de_verdade(sessao):
     """O 500 QUE FOI AO AR, e a razão de o teste anterior não o ter pego.
 
-    `test_a_rota_de_impacto_por_n1_tambem_passa_pelo_guarda` afirma 200 numa
+    `test_a_rota_de_impacto_por_n2_tambem_passa_pelo_guarda` afirma 200 numa
     janela VAZIA — e com as listas vazias a compreensão de lista da rota nunca
     roda. A rota montava a saída com `PilarNaJanelaSaida(**vars(p))`, e
     `ImpactoDoPilar` é `@dataclass(frozen=True, slots=True)`: dataclass com slots
@@ -185,8 +185,8 @@ def test_impacto_por_n1_devolve_os_PILARES_de_verdade(sessao):
     """
     usuario = _usuario(sessao, alcanca_mercado=True)
     clipei = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "clipei")).one()
-    pilar = sessao.scalars(select(BlocoTema)).first()
-    assert pilar is not None, "o cadastro precisa de um N1"
+    tema = sessao.scalars(select(MacroTema)).first()
+    assert tema is not None, "o cadastro precisa de um N2"
 
     mes = date(2026, 5, 1)
     sessao.add(
@@ -207,30 +207,30 @@ def test_impacto_por_n1_devolve_os_PILARES_de_verdade(sessao):
             mes=mes,
             data=date(2026, 5, 18),
             sentimento="pos",
-            bloco_tema_id=pilar.id,
+            macro_tema_id=tema.id,
         )
     )
     sessao.flush()
 
     cliente, _ = _cliente(sessao, usuario, lancado=True)
-    resposta = cliente.get("/api/mercado/impacto-por-n1?ate=2026-05-20")
+    resposta = cliente.get("/api/mercado/impacto-por-n2?ate=2026-05-20")
 
     assert resposta.status_code == 200, resposta.text
     corpo = resposta.json()
-    assert corpo["positivos"], "o pilar semeado tem de voltar"
+    assert corpo["positivos"], "o tema semeado tem de voltar"
     primeiro = corpo["positivos"][0]
-    assert primeiro["n1"] == pilar.nome
+    assert primeiro["n2"] == tema.nome
     assert primeiro["impacto"] > 0
     assert primeiro["mencoes"] == 1
 
 
-def test_impacto_por_n1_SEM_a_data_e_recusado(sessao):
+def test_impacto_por_n2_SEM_a_data_e_recusado(sessao):
     """`ate` é o dia que a pessoa clicou. Um padrão aqui faria a tela mostrar uma
     janela que ninguém pediu quando o parâmetro se perdesse no caminho."""
     usuario = _usuario(sessao, alcanca_mercado=True)
     cliente, _ = _cliente(sessao, usuario, lancado=True)
 
-    assert cliente.get("/api/mercado/impacto-por-n1").status_code == 422
+    assert cliente.get("/api/mercado/impacto-por-n2").status_code == 422
 
 
 @pytest.mark.parametrize("rota", ROTAS)

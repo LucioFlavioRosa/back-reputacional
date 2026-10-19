@@ -1,9 +1,15 @@
-"""Que pilares (N1) mais empurraram a nota numa janela de dias.
+"""Que temas estrategicos (N2) mais empurraram a nota numa janela de dias.
 
 A PERGUNTA, nas palavras de quem pediu: "quero poder clicar em alguma data seja
 no gráfico ou no eixo, que você pega a data e subtrai 15 dias, pega esse recorte
 de data e me traga dois quadros logo abaixo do gráfico, um quadro com os 5 N1 que
 mais impactaram positivamente o score e 5 N1 que mais impactaram negativamente".
+
+ERA N1 E PASSOU A SER N2, por pedido dele depois de ver no ar: "ao inves de ser
+n1 pode aparece o n2, pois o n1 esta quase tudo sendo positivo e estamos deixando
+passar alguma informacao valiosa". Sao SETE N1 contra QUARENTA E UM N2 no
+cadastro: num quadro de cinco linhas, sete grupos quase nao escolhem nada, e um
+pilar com muita materia positiva esconde o bolsao negativo que mora dentro dele.
 
 O SCORE É MENSAL E A JANELA TEM QUINZE DIAS, e isso não é contradição — é o que
 ele esclareceu: "seria simplesmente fazer um recorte do período que tem aquele
@@ -45,13 +51,17 @@ LENTE = "imprensa"
 #: Quantos dias a janela cobre, contados para trás a partir do dia clicado.
 DIAS_DA_JANELA = 15
 
-#: Quantos pilares cada quadro mostra.
+#: Quantos temas cada quadro mostra.
 QUANTOS_NO_QUADRO = 5
 
 
 @dataclass(frozen=True, slots=True)
-class ImpactoDoPilar:
-    n1: str
+class ImpactoDoTema:
+    #: O tema estrategico (N2) -- o rotulo principal da linha.
+    n2: str
+    #: O pilar (N1) a que ele pertence, como contexto. None quando o
+    #: cadastro nao resolve o pai.
+    n1: str | None
     #: Pontos na nota do mês: positivo empurra para cima, negativo para baixo.
     impacto: float
     mencoes: int
@@ -66,14 +76,14 @@ class ImpactoNaJanela:
     #: A régua de engajamento vigente no mês — a tela a diz, porque ela muda o
     #: que "peso" significa.
     regua: str
-    positivos: list[ImpactoDoPilar] = field(default_factory=list)
-    negativos: list[ImpactoDoPilar] = field(default_factory=list)
-    #: Quantos pilares com impacto existem de cada lado, para a tela poder dizer
+    positivos: list[ImpactoDoTema] = field(default_factory=list)
+    negativos: list[ImpactoDoTema] = field(default_factory=list)
+    #: Quantos temas com impacto existem de cada lado, para a tela poder dizer
     #: "3 de 3" em vez de fingir que são sempre cinco.
     total_positivos: int = 0
     total_negativos: int = 0
     #: As duas formas de uma menção ficar fora — ver `SomasNaJanela`.
-    sem_n1: int = 0
+    sem_n2: int = 0
     sem_data: int = 0
     #: Zero quando o mês não tem base: sem denominador não há pergunta a
     #: responder, e é diferente de "nenhum pilar impactou".
@@ -81,7 +91,7 @@ class ImpactoNaJanela:
 
 
 def ler(sessao: Session, ate: date, dias: int = DIAS_DA_JANELA) -> ImpactoNaJanela:
-    """Os pilares que mais empurraram a nota na janela que termina em `ate`."""
+    """Os temas (N2) que mais empurraram a nota na janela que termina em `ate`."""
     if dias < 1:
         raise RegraViolada("A janela precisa de pelo menos um dia.")
 
@@ -97,7 +107,7 @@ def ler(sessao: Session, ate: date, dias: int = DIAS_DA_JANELA) -> ImpactoNaJane
     calibracao = repositorio_score.calibracao_vigente(sessao)
 
     regua, total_do_mes = repositorio_score.denominador_do_mes(sessao, lente.id, mes, calibracao)
-    somas = repositorio_score.somas_por_n1_na_janela(sessao, lente.id, de=de, ate=ate)
+    somas = repositorio_score.somas_por_n2_na_janela(sessao, lente.id, de=de, ate=ate)
 
     if not total_do_mes:
         return ImpactoNaJanela(
@@ -105,13 +115,13 @@ def ler(sessao: Session, ate: date, dias: int = DIAS_DA_JANELA) -> ImpactoNaJane
             ate=ate,
             mes=mes,
             regua=regua,
-            sem_n1=somas.sem_n1,
+            sem_n2=somas.sem_n2,
             sem_data=somas.sem_data,
             mes_sem_base=True,
         )
 
-    medidos: list[ImpactoDoPilar] = []
-    for n1, por_fonte in somas.por_n1.items():
+    medidos: list[ImpactoDoTema] = []
+    for n2, por_fonte in somas.por_n2.items():
         #: AS FONTES DESLIGADAS NA CALIBRAÇÃO SAEM, como em toda leitura do
         #: índice: a nota não as conta, e contá-las aqui faria o impacto de um
         #: pilar incluir o que a nota ignorou.
@@ -130,7 +140,11 @@ def ler(sessao: Session, ate: date, dias: int = DIAS_DA_JANELA) -> ImpactoNaJane
             mencoes += sum(int(linha.mencoes) for linha in linhas)
         impacto = PONTOS_POR_NS * (contagem.positivo - contagem.negativo) / total_do_mes
         if impacto:
-            medidos.append(ImpactoDoPilar(n1=n1, impacto=impacto, mencoes=mencoes))
+            medidos.append(
+                ImpactoDoTema(
+                    n2=n2, n1=somas.n1_de.get(n2), impacto=impacto, mencoes=mencoes
+                )
+            )
 
     acima = sorted([p for p in medidos if p.impacto > 0], key=lambda p: -p.impacto)
     abaixo = sorted([p for p in medidos if p.impacto < 0], key=lambda p: p.impacto)
@@ -144,6 +158,6 @@ def ler(sessao: Session, ate: date, dias: int = DIAS_DA_JANELA) -> ImpactoNaJane
         negativos=abaixo[:QUANTOS_NO_QUADRO],
         total_positivos=len(acima),
         total_negativos=len(abaixo),
-        sem_n1=somas.sem_n1,
+        sem_n2=somas.sem_n2,
         sem_data=somas.sem_data,
     )
