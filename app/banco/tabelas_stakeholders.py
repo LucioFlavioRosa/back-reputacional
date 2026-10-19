@@ -296,6 +296,42 @@ class PessoaAegeaTema(Tabela):
     )
 
 
+class InstituicaoApelido(Tabela):
+    """Um nome que já foi de um cadastro e hoje aponta para o que o absorveu.
+
+    POR QUE EXISTE (migration `0102`). A ingestão casa menção com cadastro por
+    `nome_normalizado` EXATO (`veiculos_da_imprensa.reconhecer`). Quando dois
+    cadastros se fundem, o nome de quem sai some do banco — e o fornecedor
+    continua mandando aquele nome todo mês. Sem apelido, ele deixa de casar,
+    vira "veículo novo" e NASCE DE NOVO: a duplicata que alguém acabou de
+    resolver volta, e as menções do mês vão para o cadastro recém-criado.
+
+    O MESMO DESENHO DE `UnidadeNegocioApelido`, que resolveu isto para a
+    concessionária. Dois jeitos diferentes de dizer "este nome também é aquele
+    cadastro" seriam dois lugares para divergir.
+
+    A BUSCA EXATA VENCE O APELIDO, e a ordem importa: `instituicao`
+    `nome_normalizado` NÃO é única (ALMG existe como entidade e como órgão), e um
+    apelido que respondesse antes trocaria o ator de um cadastro vivo.
+    """
+
+    __tablename__ = "instituicao_apelido"
+
+    #: A chave é o nome já normalizado — a MESMA com que `reconhecer` procura.
+    #: Chave diferente da busca seria um apelido que nunca casa.
+    nome_normalizado: Mapped[str] = mapped_column(Text, primary_key=True)
+    #: A grafia como ela existia no cadastro que saiu, para a tela dizer o que
+    #: foi absorvido em vez de devolver a chave achatada.
+    nome: Mapped[str] = mapped_column(Text)
+    instituicao_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("instituicao.id", ondelete="CASCADE"),
+    )
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class AtorDistinto(Tabela):
     """O par que alguém olhou e declarou atores diferentes.
 

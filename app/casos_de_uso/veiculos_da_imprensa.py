@@ -37,7 +37,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.banco.tabelas_catalogo import CategoriaPublico, Esfera, SubcategoriaPublico
-from app.banco.tabelas_stakeholders import Instituicao
+from app.banco.tabelas_stakeholders import Instituicao, InstituicaoApelido
 from app.dominio.erros import RegraViolada
 from app.dominio.ingestao_score import (
     TIERS,
@@ -298,6 +298,26 @@ def reconhecer(
         if atual is None or (atual[1] and not de_outro_tipo):
             achados[normalizado] = (str(ident), bool(de_outro_tipo))
     existentes = {chave: ident for chave, (ident, _) in achados.items()}
+
+    #: E DEPOIS O APELIDO, para os nomes que a busca exata não achou.
+    #:
+    #: POR QUE EXISTE (migration `0102`): quando dois cadastros se fundem, o nome
+    #: de quem sai some do banco — e o fornecedor continua mandando aquele nome
+    #: todo mês. Sem esta consulta ele vira "veículo novo" e NASCE DE NOVO,
+    #: recriando a duplicata que alguém acabou de resolver.
+    #:
+    #: DEPOIS, E NUNCA ANTES: `instituicao.nome_normalizado` não é única (ALMG
+    #: existe como entidade e como órgão), e um apelido que respondesse primeiro
+    #: trocaria o ator de um cadastro VIVO pelo de uma fusão antiga. O apelido só
+    #: fala sobre nome que não existe mais.
+    sem_cadastro = [chave for chave in nomes if chave not in existentes]
+    if sem_cadastro:
+        for chave, ident in sessao.execute(
+            select(
+                InstituicaoApelido.nome_normalizado, InstituicaoApelido.instituicao_id
+            ).where(InstituicaoApelido.nome_normalizado.in_(sem_cadastro))
+        ).all():
+            existentes[chave] = str(ident)
 
     #: O CADASTRO ATIVO INTEIRO, PELA CHAVE ACHATADA — uma consulta, e um
     #: dicionário consultado em O(1) por nome novo.

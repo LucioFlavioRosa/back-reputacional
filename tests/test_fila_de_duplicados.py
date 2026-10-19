@@ -44,7 +44,12 @@ from sqlalchemy.orm import Session
 
 from app.banco.sessao import obter_sessao
 from app.banco.tabelas_score import Mencao, ScoreFonte
-from app.banco.tabelas_stakeholders import AtorDistinto, Instituicao, Interlocutor
+from app.banco.tabelas_stakeholders import (
+    AtorDistinto,
+    Instituicao,
+    InstituicaoApelido,
+    Interlocutor,
+)
 from app.casos_de_uso import atores_duplicados
 from app.dominio.erros import RegraViolada
 from app.dominio.texto import normalizar
@@ -633,6 +638,69 @@ def test_a_fusao_RECUSA_apagar_a_linha_com_MAIS_MENCOES(sessao, bites):
     #: estar quebrada, e não pela guarda.
     atores_duplicados.fundir(sessao, que_sai_id=poucas.id, sobrevivente_id=muitas.id)
     assert quantas(muitas) == 4
+
+
+def test_a_fusao_GUARDA_o_nome_que_sai_como_APELIDO(sessao):
+    """O nome que some daqui continua chegando na planilha do mês que vem.
+
+    Ver `test_reconhecer_ACHA_PELO_APELIDO_o_nome_que_a_fusao_levou`, que é o
+    outro lado: aqui se grava, lá se usa. Sem os dois, a duplicata volta.
+    """
+    que_sai = _cadastrar(sessao, "Valor Econômico Zz76", "veiculo")
+    fica = _cadastrar(sessao, "valoreconomicozz76", "perfil_rede")
+    nome_que_sai = que_sai.nome_normalizado
+
+    atores_duplicados.fundir(
+        sessao, que_sai_id=que_sai.id, sobrevivente_id=fica.id, contra_a_proposta=True
+    )
+    sessao.flush()
+
+    apelido = sessao.get(InstituicaoApelido, nome_que_sai)
+    assert apelido is not None
+    assert apelido.instituicao_id == fica.id
+    assert apelido.nome == "Valor Econômico Zz76"
+
+
+def test_a_fusao_REAPONTA_os_apelidos_de_quem_sai(sessao):
+    """Duas fusões encadeadas: A entra em B, e depois B entra em C.
+
+    SEM REAPONTAR, o `on delete cascade` levaria o apelido de A junto com B — e o
+    nome de A voltaria a não casar na subida seguinte, recriando a duplicata que
+    JÁ tinha sido resolvida uma vez. Numa fila de 209 pares, fusão encadeada não
+    é hipótese.
+    """
+    a = _cadastrar(sessao, "Jornal A Zz77", "veiculo")
+    b = _cadastrar(sessao, "jornalazz77", "perfil_rede")
+    c = _cadastrar(sessao, "jornalaz77", "perfil_rede")
+    nome_de_a = a.nome_normalizado
+
+    atores_duplicados.fundir(
+        sessao, que_sai_id=a.id, sobrevivente_id=b.id, contra_a_proposta=True
+    )
+    atores_duplicados.fundir(
+        sessao, que_sai_id=b.id, sobrevivente_id=c.id, contra_a_proposta=True
+    )
+    sessao.flush()
+
+    apelido = sessao.get(InstituicaoApelido, nome_de_a)
+    assert apelido is not None, "o apelido de A foi embora com B"
+    assert apelido.instituicao_id == c.id
+
+
+def test_o_nome_IGUAL_nao_vira_apelido(sessao):
+    #: `ALMG` (entidade) dentro de `ALMG` (órgão) não tira nome nenhum de
+    #: circulação — a linha só ocuparia a chave.
+    que_sai = _cadastrar(sessao, "ALMG Zz78", "entidade")
+    fica = _cadastrar(sessao, "ALMG Zz78", "orgao")
+    chave = que_sai.nome_normalizado
+    assert chave == fica.nome_normalizado
+
+    atores_duplicados.fundir(
+        sessao, que_sai_id=que_sai.id, sobrevivente_id=fica.id, contra_a_proposta=True
+    )
+    sessao.flush()
+
+    assert sessao.get(InstituicaoApelido, chave) is None
 
 
 def test_a_fusao_recusa_o_perfil_ligado_a_uma_pessoa(sessao):

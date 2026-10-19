@@ -313,6 +313,55 @@ def test_apagar_instituicao_funciona_com_o_papel_restrito(sessao_restrita, semen
     assert sessao_restrita.get(Instituicao, registro.id) is None
 
 
+def test_fundir_grava_e_reaponta_o_apelido_com_o_papel_restrito(sessao_restrita, semente):
+    """A tabela `instituicao_apelido` (0102) é ESCRITA pela aplicação.
+
+    A memória deste projeto registra a armadilha exata: tabela nova nasce do
+    `alter default privileges` com `select, insert, update` e SEM `delete`, a
+    suíte inteira roda como superusuário e fica verde, e só o ambiente implantado
+    quebra. Aqui a conexão é a `painel_app` de verdade.
+
+    OS DOIS VERBOS QUE A FUSÃO USA, e não só o `insert`: ela grava o nome de quem
+    sai e REAPONTA os apelidos que já existiam. Um `grant` que cobrisse só o
+    primeiro deixaria a segunda fusão da fila morrer em produção.
+    """
+    from app.banco.tabelas_stakeholders import InstituicaoApelido
+
+    fica = Instituicao(
+        nome="Sobrevivente Restrito",
+        nome_normalizado="sobrevivente restrito",
+        tipo="veiculo",
+    )
+    outro = Instituicao(
+        nome="Segundo Sobrevivente Restrito",
+        nome_normalizado="segundo sobrevivente restrito",
+        tipo="veiculo",
+    )
+    sessao_restrita.add_all([fica, outro])
+    sessao_restrita.flush()
+
+    sessao_restrita.add(
+        InstituicaoApelido(
+            nome_normalizado="nome que saiu restrito",
+            nome="Nome Que Saiu Restrito",
+            instituicao_id=fica.id,
+        )
+    )
+    sessao_restrita.flush()
+
+    sessao_restrita.execute(
+        InstituicaoApelido.__table__.update()
+        .where(InstituicaoApelido.instituicao_id == fica.id)
+        .values(instituicao_id=outro.id)
+    )
+    sessao_restrita.flush()
+
+    assert (
+        sessao_restrita.get(InstituicaoApelido, "nome que saiu restrito").instituicao_id
+        == outro.id
+    )
+
+
 def test_remover_porta_voz_funciona_com_o_papel_restrito(sessao_restrita, semente):
     pessoas = sessao_restrita.scalars(select(PessoaAegea).limit(2)).all()
     repositorio = RepositorioSQL(sessao_restrita)
