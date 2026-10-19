@@ -22,6 +22,7 @@ mandaria alguém pedir permissão para uma porta fechada para todos.
 
 from __future__ import annotations
 
+from datetime import date
 from uuid import uuid4
 
 import pytest
@@ -31,6 +32,8 @@ from sqlalchemy.orm import Session
 
 from app.banco.sessao import obter_sessao
 from app.banco.tabelas_acesso import Papel, Usuario
+from app.banco.tabelas_catalogo import BlocoTema
+from app.banco.tabelas_score import Mencao, ScoreFonte, ScoreMesFonte
 from app.configuracao import Configuracao, obter_configuracao
 from app.seguranca import sessao_assinada
 from app.seguranca.cache_de_autorizacao import limpar_todos
@@ -158,6 +161,67 @@ def test_a_rota_de_impacto_por_n1_tambem_passa_pelo_guarda(sessao):
     #: A JANELA VOLTA NA RESPOSTA, e tem quinze dias contados nas duas pontas.
     assert corpo["ate"] == "2026-05-20"
     assert corpo["de"] == "2026-05-06"
+
+
+def test_impacto_por_n1_devolve_os_PILARES_de_verdade(sessao):
+    """O 500 QUE FOI AO AR, e a razão de o teste anterior não o ter pego.
+
+    `test_a_rota_de_impacto_por_n1_tambem_passa_pelo_guarda` afirma 200 numa
+    janela VAZIA — e com as listas vazias a compreensão de lista da rota nunca
+    roda. A rota montava a saída com `PilarNaJanelaSaida(**vars(p))`, e
+    `ImpactoDoPilar` é `@dataclass(frozen=True, slots=True)`: dataclass com slots
+    NÃO TEM `__dict__`, então `vars()` levanta `TypeError`.
+
+    O resultado no ambiente: clicar numa data sem dado devolvia 200, e clicar
+    numa data COM dado — o caso que a funcionalidade existe para atender —
+    devolvia "Erro interno. A falha foi registrada".
+
+    AS DATACLASSES ANTIGAS DESTE MESMO MÓDULO não usam `slots`, e é por isso que
+    `/bonds/serie` sempre funcionou com o mesmo `**vars(...)`. A divergência
+    estava nas minhas duas.
+
+    ESTE TESTE SEMEIA DADO, e é a única forma de ele ter valor: a serialização de
+    uma LINHA é o que quebrava.
+    """
+    usuario = _usuario(sessao, alcanca_mercado=True)
+    clipei = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "clipei")).one()
+    pilar = sessao.scalars(select(BlocoTema)).first()
+    assert pilar is not None, "o cadastro precisa de um N1"
+
+    mes = date(2026, 5, 1)
+    sessao.add(
+        ScoreMesFonte(
+            fonte_id=clipei.id,
+            mes=mes,
+            sentimento="pos",
+            tier="",
+            mencoes=10,
+            soma_log=10,
+            soma_engajamento=0,
+            soma_cargo=0,
+        )
+    )
+    sessao.add(
+        Mencao(
+            fonte_id=clipei.id,
+            mes=mes,
+            data=date(2026, 5, 18),
+            sentimento="pos",
+            bloco_tema_id=pilar.id,
+        )
+    )
+    sessao.flush()
+
+    cliente, _ = _cliente(sessao, usuario, lancado=True)
+    resposta = cliente.get("/api/mercado/impacto-por-n1?ate=2026-05-20")
+
+    assert resposta.status_code == 200, resposta.text
+    corpo = resposta.json()
+    assert corpo["positivos"], "o pilar semeado tem de voltar"
+    primeiro = corpo["positivos"][0]
+    assert primeiro["n1"] == pilar.nome
+    assert primeiro["impacto"] > 0
+    assert primeiro["mencoes"] == 1
 
 
 def test_impacto_por_n1_SEM_a_data_e_recusado(sessao):
