@@ -603,7 +603,32 @@ class SomasNaJanela:
 
     por_n1: dict[str, dict[str, list[SomasDaFonte]]]
     sem_n1: int
-    sem_data_no_mes: int
+    #: As menções SEM DATA de todos os meses que a janela atravessa. Contava só o
+    #: mês da ponta — achado de revisão: numa janela que cruza a virada, as sem
+    #: data do mês anterior também ficam fora dela, e ficavam invisíveis.
+    sem_data: int
+
+
+def meses_da_janela(de: date, ate: date) -> list[date]:
+    """Os primeiros dias de TODOS os meses que a janela atravessa.
+
+    ACHADO DE REVISÃO, e era perda silenciosa de dado: isto era
+    `{primeiro_dia(de), primeiro_dia(ate)}` — as duas PONTAS. Numa janela de
+    noventa dias de 20/02 a 20/05 são fevereiro e maio, e março e abril inteiros
+    eram descartados; o impacto saía menor sem nada dizer que faltou metade da
+    janela. A rota aceita `dias` até 90, então o caminho era alcançável.
+
+    A COLUNA `mes` ENTRA NA CONSULTA PELO ÍNDICE, e é por isso que esta lista
+    existe em vez de só comparar `data`: `mencao_por_mes` cobre `mes`, e `data`
+    não tem índice nenhum.
+    """
+    meses = []
+    atual = primeiro_dia(de)
+    fim = primeiro_dia(ate)
+    while atual <= fim:
+        meses.append(atual)
+        atual = date(atual.year + (atual.month == 12), (atual.month % 12) + 1, 1)
+    return meses
 
 
 def somas_por_n1_na_janela(
@@ -630,7 +655,7 @@ def somas_por_n1_na_janela(
     não vem de `mencao` e não tem dia nenhum. Para a lente de imprensa isso é
     vazio — ela tem uma fonte só, a Clipei.
     """
-    meses = sorted({primeiro_dia(de), primeiro_dia(ate)})
+    meses = meses_da_janela(de, ate)
     consulta = (
         select(
             BlocoTema.nome,
@@ -678,22 +703,24 @@ def somas_por_n1_na_janela(
             )
         por_n1[nome_n1] = por_fonte
 
-    #: AS MENÇÕES DO MÊS SEM DIA, contadas no mês da ponta da janela: é o mês cuja
-    #: régua mede esta conta, e é dele que a pessoa está lendo o índice.
-    sem_data_no_mes = (
+    #: AS MENÇÕES SEM DIA, em TODOS os meses da janela: elas pertencem ao mês e
+    #: não a um dia, então janela nenhuma as alcança — e uma janela que atravessa
+    #: a virada tem dois meses de onde elas podem vir. Contar só o da ponta fazia
+    #: o número mentir por omissão, que é o defeito que ele existe para evitar.
+    sem_data = (
         sessao.execute(
             select(func.count())
             .select_from(Mencao)
             .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
             .where(
                 ScoreFonte.lente_id == lente_id,
-                Mencao.mes == primeiro_dia(ate),
+                Mencao.mes.in_(meses),
                 Mencao.data.is_(None),
             )
         ).scalar()
         or 0
     )
-    return SomasNaJanela(por_n1=por_n1, sem_n1=sem_n1, sem_data_no_mes=sem_data_no_mes)
+    return SomasNaJanela(por_n1=por_n1, sem_n1=sem_n1, sem_data=sem_data)
 
 
 def _somas_da_lente(
