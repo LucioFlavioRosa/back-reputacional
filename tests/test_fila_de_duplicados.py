@@ -36,7 +36,7 @@ O QUE ESTES TESTES PROTEGEM:
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 
 import pytest
 from sqlalchemy import create_engine, func, select
@@ -108,6 +108,39 @@ def _o_par_esta_na_fila(sessao, um, outro) -> bool:
         if um.id in ids and outro.id in ids:
             return True
     return False
+
+
+def _interacao(sessao, dono: Instituicao, **extra) -> None:
+    """Uma agenda registrada para a instituição — a origem `crm` da fila."""
+    from uuid import uuid4
+
+    from sqlalchemy import text
+
+    from app.banco.tabelas_acesso import Usuario
+    from app.banco.tabelas_interacoes import InteracaoRegistro
+
+    sufixo = uuid4().hex[:8]
+    autor = Usuario(
+        entra_object_id=f"origens-{sufixo}",
+        email=f"{sufixo}@aegea.com.br",
+        nome="Autor das origens",
+        acesso_irrestrito=True,
+    )
+    sessao.add(autor)
+    sessao.flush()
+    sessao.add(
+        InteracaoRegistro(
+            frente_id=sessao.scalar(text("select id from frente limit 1")),
+            data_interacao=date(2026, 8, 4),
+            instituicao_id=dono.id,
+            uf="SP",
+            status_id=sessao.scalar(text("select id from status limit 1")),
+            pauta="conversa registrada",
+            criado_por=autor.id,
+            **extra,
+        )
+    )
+    sessao.flush()
 
 
 def _na_fila(sessao, qual) -> atores_duplicados.Duplicado | None:
@@ -347,13 +380,6 @@ def test_a_fila_diz_DE_ONDE_vem_cada_lado(sessao, bites):
     em vez de `institucional`. Dizer `institucional` confundiria "tem reunião
     registrada" com "tem menção na lente institucional".
     """
-    from uuid import uuid4 as _uuid4
-
-    from sqlalchemy import text
-
-    from app.banco.tabelas_acesso import Usuario
-    from app.banco.tabelas_interacoes import InteracaoRegistro
-
     clipei = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == "clipei"))
 
     perfil = _cadastrar(sessao, "valoreconomicozz71", "perfil_rede")
@@ -363,27 +389,7 @@ def test_a_fila_diz_DE_ONDE_vem_cada_lado(sessao, bites):
     _mencao(sessao, veiculo, bites)
 
     #: E O PERFIL TEM RELACIONAMENTO REGISTRADO no CRM.
-    sufixo = _uuid4().hex[:8]
-    autor = Usuario(
-        entra_object_id=f"origens-{sufixo}",
-        email=f"{sufixo}@aegea.com.br",
-        nome="Autor das origens",
-        acesso_irrestrito=True,
-    )
-    sessao.add(autor)
-    sessao.flush()
-    sessao.add(
-        InteracaoRegistro(
-            frente_id=sessao.scalar(text("select id from frente limit 1")),
-            data_interacao=date(2026, 8, 4),
-            instituicao_id=perfil.id,
-            uf="SP",
-            status_id=sessao.scalar(text("select id from status limit 1")),
-            pauta="conversa registrada",
-            criado_por=autor.id,
-        )
-    )
-    sessao.flush()
+    _interacao(sessao, perfil)
 
     achado = _na_fila(sessao, perfil.id)
 
@@ -391,6 +397,39 @@ def test_a_fila_diz_DE_ONDE_vem_cada_lado(sessao, bites):
     assert achado.origens == (atores_duplicados.ORIGEM_DO_CRM,)
     deste_lado = next(c for c in achado.candidatos if c.id == veiculo.id)
     assert deste_lado.origens == ("imprensa", "sociedade")
+
+
+def test_a_agenda_ESCONDIDA_nao_vira_origem_crm(sessao):
+    """A existência de relacionamento no CRM não escapa pela fila.
+
+    ACHADO ALTA DE REVISÃO. A primeira versão marcava `crm` para QUALQUER
+    `interacao_registro`, e esta listagem exige apenas a permissão do DIRETÓRIO:
+    quem vê o diretório passava a inferir que a Aegea tem relacionamento com uma
+    instituição mesmo quando a agenda foi tirada da vista, arquivada ou marcada
+    como sensível. O docstring de `so_interacoes_visiveis` diz o porquê — o nome
+    da instituição de uma agenda é "a informação que o CRM guarda com mais
+    cuidado".
+
+    OS TRÊS ESTADOS, num teste só: cada um esconde por uma razão diferente, e uma
+    implementação que pegasse só o arquivamento (como cinco das seis consultas do
+    Score faziam antes da regra única) passaria num teste de um estado.
+    """
+    escondidos = _cadastrar(sessao, "Escondidozz75", "entidade")
+    _cadastrar(sessao, "Escondido Zz75", "orgao")
+    _interacao(sessao, escondidos, visivel=False)
+    _interacao(sessao, escondidos, sensivel=True)
+    _interacao(sessao, escondidos, arquivado_em=datetime(2026, 9, 1, tzinfo=UTC))
+
+    origens = atores_duplicados._origens_por_instituicao(sessao)
+
+    assert origens.get(escondidos.id, ()) == ()
+
+    #: O CONTROLE: uma agenda normal na MESMA instituição vira `crm`. Sem ele,
+    #: um filtro que escondesse tudo passaria neste teste.
+    _interacao(sessao, escondidos)
+    assert atores_duplicados._origens_por_instituicao(sessao)[escondidos.id] == (
+        atores_duplicados.ORIGEM_DO_CRM,
+    )
 
 
 def test_o_cadastro_SEM_registro_nenhum_nao_inventa_origem(sessao):
@@ -512,6 +551,55 @@ def test_a_fusao_ACEITA_a_escolha_de_gente_CONTRA_a_proposta(sessao, bites):
     )
     #: E A CURADORIA NÃO SE PERDE: o que o sobrevivente não tinha, ele herdou.
     assert sobrevivente.uf == "SP"
+
+
+def test_a_fusao_LEVA_A_PENDENCIA_de_revisao_de_quem_sai(sessao):
+    """Unir dois cadastros não responde a pergunta da conferência.
+
+    ACHADO ALTA DE REVISÃO. A linha que sai é a pendente na maioria dos pares —
+    ela nasce da subida de planilha —, e a fusão a apagava com a pendência dentro:
+    o item desaparecia de "Esperando conferência" sem ninguém ter conferido nada.
+
+    NÃO CABE EM `CAMPOS_QUE_O_SOBREVIVENTE_HERDA`, e é por isso que mora num `if`
+    próprio: aquela regra é "herda o que está NULO", e `pendente_de_revisao` é
+    booleano com padrão `False` — nunca seria alcançado. E pôr o campo na tupla
+    faria toda fusão entre um cadastro pendente e um conferido recusar com 422.
+    """
+    que_sai = _cadastrar(sessao, "Pendentezz73", "perfil_rede")
+    que_sai.pendente_de_revisao = True
+    que_sai.motivo_da_revisao = "nasceu da planilha, ninguém conferiu"
+    fica = _cadastrar(sessao, "Pendente Zz73", "veiculo")
+    assert fica.pendente_de_revisao is False
+    sessao.flush()
+
+    atores_duplicados.fundir(sessao, que_sai_id=que_sai.id, sobrevivente_id=fica.id)
+    sessao.flush()
+
+    assert fica.pendente_de_revisao is True
+    assert fica.motivo_da_revisao == "nasceu da planilha, ninguém conferiu"
+
+
+def test_a_fusao_RECUSA_entrar_num_cadastro_DESATIVADO(sessao, bites):
+    """Fundir dentro de um desativado esconderia o que está à vista.
+
+    `ativo=false` é alguém dizendo "este cadastro sai do cadastro de agenda".
+    Reativá-lo por efeito colateral de uma fusão seria decidir no lugar dessa
+    pessoa, no sentido oposto; e deixá-lo desativado com as menções do outro
+    dentro esconderia dado que estava aparecendo.
+
+    A FILA NÃO ALCANÇA ESTE CASO — `listar` só olha cadastro ativo —, e é
+    exatamente por isso que a guarda existe: o caminho de fora da tela.
+    """
+    que_sai = _cadastrar(sessao, "Ativozz74", "perfil_rede")
+    _mencao(sessao, que_sai, bites)
+    fica = _cadastrar(sessao, "Ativo Zz74", "veiculo")
+    fica.ativo = False
+    sessao.flush()
+
+    with pytest.raises(RegraViolada, match="desativado"):
+        atores_duplicados.fundir(
+            sessao, que_sai_id=que_sai.id, sobrevivente_id=fica.id
+        )
 
 
 def test_a_fusao_RECUSA_apagar_a_linha_com_MAIS_MENCOES(sessao, bites):

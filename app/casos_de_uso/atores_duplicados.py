@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.banco.repositorio_score import so_interacoes_visiveis
 from app.banco.tabelas_interacoes import InteracaoRegistro
 from app.banco.tabelas_score import Lente, Mencao, ScoreFonte
 from app.banco.tabelas_stakeholders import AtorDistinto, Instituicao, Interlocutor
@@ -176,9 +177,21 @@ def _origens_por_instituicao(sessao: Session) -> dict[uuid.UUID, tuple[str, ...]
     for instituicao, lente in das_mencoes:
         origens.setdefault(instituicao, set()).add(lente)
 
+    #: SÓ AS INTERAÇÕES QUE PODEM SER LIDAS, e isto é conserto de achado ALTA de
+    #: revisão. A primeira versão marcava `crm` para QUALQUER `interacao_registro`,
+    #: e esta listagem exige apenas `UsuarioQueVeDiretorio`: quem vê o diretório
+    #: passava a inferir que a Aegea tem relacionamento com uma instituição mesmo
+    #: quando a agenda foi tirada da vista, arquivada ou marcada como sensível.
+    #:
+    #: `so_interacoes_visiveis` É A REGRA DA CASA para isso, e o docstring dela diz
+    #: por quê: o nome da instituição de uma agenda é "a informação que o CRM
+    #: guarda com mais cuidado". Reescrever o filtro aqui seria a sétima cópia.
     do_crm = sessao.execute(
         select(InteracaoRegistro.instituicao_id)
-        .where(InteracaoRegistro.instituicao_id.is_not(None))
+        .where(
+            InteracaoRegistro.instituicao_id.is_not(None),
+            *so_interacoes_visiveis(),
+        )
         .distinct()
     )
     for (instituicao,) in do_crm:
@@ -439,9 +452,25 @@ def fundir(
     até 11/10/2026: as chaves estrangeiras passavam e a linha era apagada, com a
     categoria de público e o tier dela dentro.
 
-    O QUE SE PERDE, dito em voz alta: o `cargo` de quem sai, se ele tiver — o CHECK
-    `instituicao_cargo_so_de_perfil` existe de propósito, e um jornal não tem
-    cargo. É o único campo que não viaja.
+    O QUE SE PERDE, dito em voz alta — e a lista ERRADA era mais curta (achado
+    ALTA de revisão, 19/10/2026; o docstring dizia "o cargo é o único campo que
+    não viaja"):
+
+    * o `cargo` de quem sai — o CHECK `instituicao_cargo_so_de_perfil` existe de
+      propósito, e um jornal não tem cargo;
+    * o `nome` e o `nome_normalizado`, que são a identidade do sobrevivente. ISTO
+      TEM CONSEQUÊNCIA ALÉM DA TELA: a ingestão casa menção com cadastro por
+      `nome_normalizado` exato (`veiculos_da_imprensa.reconhecer`), então o nome
+      que desaparece daqui volta a NÃO casar na próxima subida — e o veículo pode
+      nascer de novo, recriando a duplicata que alguém acabou de resolver. É um
+      buraco que não nasceu com a escolha de direção, mas que ela alcança mais
+      vezes. O conserto é apelido de instituição, como
+      `unidade_negocio_apelido` fez para a concessionária, e está fora desta
+      mudança;
+    * `criado_em`, que é a data da linha que sai e não diz nada sobre a que fica.
+
+    E DUAS COISAS QUE PASSARAM A NÃO SE PERDER, por este mesmo achado: a pendência
+    de revisão e o motivo dela. Ver abaixo.
     """
     if que_sai_id == sobrevivente_id:
         raise RegraViolada("Um cadastro nao funde com ele mesmo.")
@@ -485,6 +514,22 @@ def fundir(
             "antes de fundir, ou funda no cadastro da pessoa."
         )
 
+    #: FUNDIR DENTRO DE UM CADASTRO DESATIVADO ESCONDERIA O DADO ATIVO, e por isso
+    #: recusa em vez de herdar: `ativo=false` é alguém dizendo "este cadastro sai
+    #: do cadastro de agenda", e reativá-lo por efeito colateral de uma fusão é
+    #: decidir no lugar dessa pessoa — no sentido oposto.
+    #:
+    #: A FILA NÃO ALCANÇA ESTE CASO: `listar` só olha cadastro ativo, então os dois
+    #: lados de toda pergunta estão ativos. Esta guarda é para o caminho de fora da
+    #: tela, que é o mesmo motivo por que a guarda de direção vive aqui e não no
+    #: botão — um `curl` basta.
+    if not sobrevivente.ativo:
+        raise RegraViolada(
+            f"{sobrevivente.nome!r} está desativado, e fundir dentro dele "
+            "esconderia as menções que estão à vista. Reative o cadastro que "
+            "fica, ou funda na outra direção."
+        )
+
     #: O CONFLITO RECUSA ANTES DE QUALQUER ESCRITA, e com os nomes dos campos.
     #:
     #: Dois valores diferentes preenchidos são duas afirmações de GENTE sobre o
@@ -512,6 +557,23 @@ def fundir(
     for campo in CAMPOS_QUE_O_SOBREVIVENTE_HERDA:
         if getattr(sobrevivente, campo) is None:
             setattr(sobrevivente, campo, getattr(perfil, campo))
+
+    #: A PENDÊNCIA DE REVISÃO VIAJA, e ela não cabia na regra acima porque não é
+    #: campo nulo: `pendente_de_revisao` é booleano com padrão `False`, então
+    #: "herda o que não tem" nunca a alcançaria. Pôr `ativo` e esta na tupla faria
+    #: toda fusão entre um cadastro pendente e um conferido RECUSAR com 422 — e
+    #: quase todo cadastro nascido de planilha nasce pendente.
+    #:
+    #: O QUE ISTO FECHA (achado ALTA de revisão): a linha que sai era a pendente na
+    #: maioria dos pares — ela nasce da subida —, e a fusão a apagava com a
+    #: pendência dentro. O item desaparecia de "Esperando conferência" sem ninguém
+    #: ter conferido nada: a fusão respondia, em silêncio, uma pergunta que ela não
+    #: responde. Unir dois cadastros não diz que o resultado está conferido.
+    if perfil.pendente_de_revisao and not sobrevivente.pendente_de_revisao:
+        sobrevivente.pendente_de_revisao = True
+        sobrevivente.motivo_da_revisao = (
+            sobrevivente.motivo_da_revisao or perfil.motivo_da_revisao
+        )
 
     #: AS MENÇÕES PASSAM: o dossiê do ator fica num só lugar.
     sessao.execute(
