@@ -112,6 +112,21 @@ class Leitura:
     tickers_sem_valor: list[str] = field(default_factory=list)
     #: Coluna de série cujo ticker não aparece no catálogo `A..E` do arquivo.
     tickers_fora_do_catalogo: list[str] = field(default_factory=list)
+    #: COLUNA COM TICKER E RÓTULO QUE NÃO SE RECONHECE, como `('AEGEBZ31',
+    #: 'px_last')`. Achado de revisão, e era defeito ALTO: se a planilha de uma
+    #: semana trocar `Yield` por `PX_LAST`, a coluna era simplesmente ignorada.
+    #: Com os DOIS rótulos trocados, `ler` devolvia catálogo e ZERO cotações sem
+    #: dizer por quê — e `tickers_sem_valor` não ajudava, porque o ticker nem
+    #: chegava a ser declarado. A conferência agora pode mostrar a coluna que
+    #: ficou de fora, que é a única informação capaz de explicar o zero.
+    rotulos_ignorados: list[tuple[str, str]] = field(default_factory=list)
+    #: O MESMO par (ticker, tipo) EM DUAS COLUNAS. A segunda venceria em
+    #: silêncio no dicionário — outro caminho para gravar valor errado sem
+    #: reportar. Não ocorre no arquivo medido; é barato não depender disso.
+    pares_repetidos: list[tuple[str, str]] = field(default_factory=list)
+    #: Linha com conteúdo e SEM data, que encerrou a leitura. Nulo quando o
+    #: arquivo acabou por si.
+    linha_que_encerrou: int | None = None
     primeira_data: date | None = None
     ultima_data: date | None = None
 
@@ -170,6 +185,13 @@ def _numero(valor: object) -> Decimal | None:
             return None
     else:
         return None
+    #: NÃO-FINITO É AUSÊNCIA, e isto é achado de revisão: `NaN` passava pela
+    #: comparação com zero (`Decimal('NaN') == 0` é falso) e virava cotação, e
+    #: um `sNaN` levantaria `InvalidOperation` DENTRO da comparação — depois do
+    #: `try`. Célula de erro do Excel costuma vir como texto (`#N/A`), que já
+    #: cai acima, mas um float `nan` é possível e não pode ir para o gráfico.
+    if not numero.is_finite():
+        return None
     return None if numero == 0 else numero
 
 
@@ -183,25 +205,43 @@ def _coluna_das_datas(linha_das_formulas: Sequence[object]) -> int | None:
 
 def _pares(
     tickers: Sequence[object], tipos: Sequence[object], primeira_coluna: int
-) -> list[tuple[int, str, str]]:
-    """As colunas de série, como `(índice, ticker, 'preco' | 'yield')`.
+) -> tuple[list[tuple[int, str, str]], list[tuple[str, str]], list[tuple[str, str]]]:
+    """As colunas de série, mais o que ficou de fora e o que repetiu.
 
-    IGNORA O QUE NÃO RECONHECE em vez de falhar: uma coluna de nota que alguém
-    acrescente à direita não deve impedir a subida de 54 mil cotações. O que
-    importa é que nenhuma coluna reconhecida seja lida como outra coisa, e isso
-    o par (ticker, tipo) garante.
+    NÃO FALHA, MAS REPORTA — e a segunda metade desta frase é um conserto. A
+    versão anterior ignorava em silêncio a coluna cujo rótulo não reconhecia, e
+    uma revisão mostrou o custo: trocar `Yield` por `PX_LAST` na planilha de uma
+    semana fazia a coluna desaparecer; trocar os DOIS rótulos fazia `ler`
+    devolver catálogo e ZERO cotações sem nenhum diagnóstico. Não falhar
+    continua certo — uma coluna de nota à direita não deve impedir a subida de
+    54 mil cotações —, mas o que se ignora tem de ser dizível.
+
+    `px_last` ENTRA COMO APELIDO DE PREÇO porque é o nome do campo na fórmula
+    BDH que já está na linha 5 do próprio arquivo: é o rótulo que uma planilha
+    gerada sem a camada de apresentação traria.
     """
     encontrados: list[tuple[int, str, str]] = []
+    ignorados: list[tuple[str, str]] = []
+    vistos: set[tuple[str, str]] = set()
+    repetidos: list[tuple[str, str]] = []
     for indice in range(primeira_coluna, len(tickers)):
         ticker = _texto(tickers[indice])
         tipo = _achatar(tipos[indice]) if indice < len(tipos) else ""
         if not ticker:
             continue
-        if tipo.startswith(_PRECO) or tipo.startswith("price"):
-            encontrados.append((indice, ticker, _PRECO))
+        if tipo.startswith(_PRECO) or tipo.startswith("price") or tipo.startswith("px_last"):
+            reconhecido = _PRECO
         elif tipo.startswith(_YIELD):
-            encontrados.append((indice, ticker, _YIELD))
-    return encontrados
+            reconhecido = _YIELD
+        else:
+            ignorados.append((ticker, tipo))
+            continue
+        if (ticker, reconhecido) in vistos:
+            repetidos.append((ticker, reconhecido))
+            continue
+        vistos.add((ticker, reconhecido))
+        encontrados.append((indice, ticker, reconhecido))
+    return encontrados, ignorados, repetidos
 
 
 def _catalogo(linhas: Sequence[Sequence[object]]) -> list[PapelLido]:
@@ -261,7 +301,9 @@ def ler(linhas: Sequence[Sequence[object]]) -> Leitura:
     if coluna_das_datas is None:
         return Leitura(papeis=papeis)
 
-    pares = _pares(linhas[0], linhas[1], coluna_das_datas + 1)
+    pares, rotulos_ignorados, pares_repetidos = _pares(
+        linhas[0], linhas[1], coluna_das_datas + 1
+    )
     no_catalogo = {papel.ticker for papel in papeis}
 
     #: ACUMULA POR (ticker, data) porque preço e yield são DUAS colunas e viram
@@ -273,16 +315,33 @@ def ler(linhas: Sequence[Sequence[object]]) -> Leitura:
     primeira: date | None = None
     ultima: date | None = None
 
-    for linha in linhas[_PRIMEIRA_LINHA_DE_DADO:]:
-        if len(linha) <= coluna_das_datas:
-            continue
-        dia = _data(linha[coluna_das_datas])
-        #: LINHA SEM DATA ENCERRA A LEITURA. O arquivo medido declara 54.254
-        #: linhas e só 1.750 têm data: o resto é rodapé fantasma do Excel.
-        #: Continuar varrendo custaria 52 mil iterações para nada — e, pior,
-        #: uma data perdida no fim seria lida como série válida.
+    linha_que_encerrou: int | None = None
+    for numero_da_linha, linha in enumerate(
+        linhas[_PRIMEIRA_LINHA_DE_DADO:], start=_PRIMEIRA_LINHA_DE_DADO + 1
+    ):
+        dia = (
+            _data(linha[coluna_das_datas]) if len(linha) > coluna_das_datas else None
+        )
         if dia is None:
-            break
+            #: LINHA TOTALMENTE VAZIA SE PULA; LINHA COM CONTEÚDO E SEM DATA
+            #: ENCERRA — e a distinção é conserto de achado ALTO da revisão.
+            #:
+            #: O arquivo medido declara 54.254 linhas e só 1.750 têm data: o
+            #: resto é rodapé fantasma do Excel, e varrê-lo custaria 52 mil
+            #: iterações para nada. Mas a versão anterior encerrava em QUALQUER
+            #: linha sem data — inclusive numa linha vazia no MEIO da série. A
+            #: sequência `data / linha vazia / data` lia só a primeira, e tudo
+            #: depois sumia sem relatório: dado perdido sem rastro, que é o pior
+            #: formato de perda.
+            #:
+            #: Pular a vazia é seguro porque ela não carrega informação; parar
+            #: na linha com conteúdo continua sendo o certo, porque ali o
+            #: formato mudou — e agora o número da linha vai no relatório, para
+            #: a conferência poder dizer ONDE parou.
+            if any(celula is not None for celula in linha):
+                linha_que_encerrou = numero_da_linha
+                break
+            continue
         primeira = dia if primeira is None or dia < primeira else primeira
         ultima = dia if ultima is None or dia > ultima else ultima
         for indice, ticker, tipo in pares:
@@ -304,12 +363,21 @@ def ler(linhas: Sequence[Sequence[object]]) -> Leitura:
         for (ticker, dia), valores in sorted(por_chave.items())
     ]
 
-    declarados = sorted({ticker for _, ticker, _ in pares})
+    #: INCLUI OS TICKERS DOS RÓTULOS IGNORADOS, senão um papel cujas DUAS
+    #: colunas tenham rótulo estranho não apareceria em lista nenhuma — nem em
+    #: `declarados`, nem em `tickers_sem_valor`. Era justamente o buraco que a
+    #: revisão apontou.
+    declarados = sorted(
+        {ticker for _, ticker, _ in pares} | {ticker for ticker, _ in rotulos_ignorados}
+    )
     return Leitura(
         papeis=papeis,
         cotacoes=cotacoes,
         tickers_sem_valor=[t for t in declarados if t not in com_valor],
         tickers_fora_do_catalogo=[t for t in declarados if t not in no_catalogo],
+        rotulos_ignorados=rotulos_ignorados,
+        pares_repetidos=pares_repetidos,
+        linha_que_encerrou=linha_que_encerrou,
         primeira_data=primeira,
         ultima_data=ultima,
     )
