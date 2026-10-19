@@ -32,7 +32,7 @@ from app.api.dependencias import (
     exigir_portal_de_inteligencia_de_mercado,
 )
 from app.banco.sessao import SessaoDoPedido
-from app.casos_de_uso import ingerir_bonds, serie_de_mercado
+from app.casos_de_uso import impacto_na_janela, ingerir_bonds, serie_de_mercado
 
 rotas = APIRouter(
     prefix="/api/mercado",
@@ -158,6 +158,102 @@ def serie_dos_bonds(
         ],
         indice=[PontoDoIndiceSaida(**vars(p)) for p in lida.indice],
         metrica=lida.metrica,
+    )
+
+
+class GrupoNaJanelaSaida(BaseModel):
+    #: A CHAVE do cadastro. A tela desenha a lista por ela, e nao pelo nome:
+    #: dois temas homonimos sob pilares diferentes sao duas linhas.
+    id: int
+    rotulo: str
+    contexto: str | None
+    impacto: float
+    mencoes: int
+
+
+class ImpactoNaJanelaSaida(BaseModel):
+    de: date
+    ate: date
+    mes: date
+    regua: str
+    positivos: list[GrupoNaJanelaSaida]
+    negativos: list[GrupoNaJanelaSaida]
+    total_positivos: int
+    total_negativos: int
+    sem_grupo: int
+    nivel: str
+    sem_data: int
+    mes_sem_base: bool
+    lente: str
+    dias: int
+
+
+def _grupo(p: impacto_na_janela.ImpactoDoGrupo) -> GrupoNaJanelaSaida:
+    """Um tema, campo por campo — ver o comentário em `impacto_por_n2`."""
+    return GrupoNaJanelaSaida(
+        id=p.id,
+        rotulo=p.rotulo,
+        contexto=p.contexto,
+        impacto=p.impacto,
+        mencoes=p.mencoes,
+    )
+
+
+@rotas.get("/impacto-na-janela")
+def impacto_na_janela_(
+    sessao: Sessao,
+    usuario: UsuarioLogado,
+    ate: Annotated[date, Query()],
+    dias: Annotated[int, Query(ge=1, le=90)] = impacto_na_janela.DIAS_DA_JANELA,
+    nivel: Annotated[str, Query(pattern="^(n1|n2)$")] = impacto_na_janela.NIVEL_PADRAO,
+) -> ImpactoNaJanelaSaida:
+    """Os temas estratégicos (N2) que mais empurraram a nota da imprensa na janela.
+
+    NESTE ROTEADOR, E NÃO NO DO SCORE, por causa do guarda: a pergunta nasce no
+    Painel de Inteligência de Mercado e quem pode fazê-la é quem tem o portal —
+    `exigir_portal_de_inteligencia_de_mercado`, que já cerca este `APIRouter`
+    inteiro. Pendurá-la no `score.py` a abriria para quem tem o Score e não tem
+    este painel.
+
+    `ate` É OBRIGATÓRIO de propósito: ele é o dia que a pessoa clicou no gráfico,
+    e um padrão aqui ("hoje", "o último dia com dado") faria a tela mostrar uma
+    janela que ninguém pediu quando o parâmetro se perdesse no caminho.
+
+    `dias` TEM TETO porque a janela existe para ser um recorte: noventa dias já
+    são três meses, e o denominador é de UM mês só — ver o cabeçalho do caso de
+    uso. O teto não é performance, é a conta parar de querer dizer o que diz.
+
+    A LENTE E A JANELA VOLTAM NA RESPOSTA, como `metrica` volta na série: é o que
+    permite a tela afirmar "imprensa, 27/08 a 10/09" com o dado que desenhou, e
+    não com o que ela pediu — os dois divergem enquanto a resposta não chega.
+    """
+    lida = impacto_na_janela.ler(sessao, ate=ate, dias=dias, nivel=nivel)
+    return ImpactoNaJanelaSaida(
+        de=lida.de,
+        ate=lida.ate,
+        mes=lida.mes,
+        regua=lida.regua,
+        #: CAMPO POR CAMPO, e não `**vars(p)`: `ImpactoDoPilar` é
+        #: `@dataclass(frozen=True, slots=True)`, e dataclass com slots NÃO TEM
+        #: `__dict__` — `vars()` levanta `TypeError` ali mesmo. Foi 500 no
+        #: ambiente: clicar numa data SEM dado devolvia 200 (a compreensão de
+        #: lista não roda com lista vazia) e clicar numa data COM dado — o caso
+        #: que a funcionalidade existe para atender — devolvia "Erro interno".
+        #:
+        #: AS OUTRAS SAÍDAS DESTE MÓDULO usam `**vars(...)` e funcionam porque as
+        #: dataclasses delas não declaram `slots`. A divergência estava nas duas
+        #: minhas, e escrever os campos aqui é o que tira a saída da dependência
+        #: de um detalhe da declaração da dataclass.
+        positivos=[_grupo(p) for p in lida.positivos],
+        negativos=[_grupo(p) for p in lida.negativos],
+        total_positivos=lida.total_positivos,
+        total_negativos=lida.total_negativos,
+        sem_grupo=lida.sem_grupo,
+        nivel=lida.nivel,
+        sem_data=lida.sem_data,
+        mes_sem_base=lida.mes_sem_base,
+        lente=impacto_na_janela.LENTE,
+        dias=dias,
     )
 
 

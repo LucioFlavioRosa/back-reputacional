@@ -586,6 +586,238 @@ def somas_da_lente_filtradas(
     return por_fonte
 
 
+@dataclass(frozen=True, slots=True)
+class GrupoNaJanela:
+    """A identidade de um grupo da janela — um pilar (N1) ou um tema (N2).
+
+    O `id` É A CHAVE e o `nome` é o rótulo. Separá-los é o conserto de um achado
+    de revisão: enquanto o nome era a chave, dois temas homônimos sob pilares
+    diferentes viravam uma linha só.
+    """
+
+    id: int
+    nome: str
+    #: O nível de cima, como CONTEXTO: o pilar (N1) de um tema. `None` quando o
+    #: grupo já é o pilar, ou quando o cadastro não resolve o pai.
+    contexto: str | None
+
+
+#: Os dois níveis em que a janela se agrupa.
+#:
+#: A CHAVE EXISTE PORQUE OS DOIS RESPONDEM PERGUNTAS DIFERENTES, e ele pediu
+#: assim depois de ver as duas: o PILAR tem ~98% de cobertura na Clipei e diz "a
+#: imprensa está amplamente positiva" sobre o TODO; o TEMA tem sete vezes mais
+#: grupos e acha o bolsão negativo, mas só sobre o quarto que está classificado
+#: (a migration 0098 mede 72.590 menções com pilar e sem tema).
+#:
+#: Escolher um dos dois perderia uma das perguntas. E a cobertura do tema MELHORA
+#: com o tempo: ela depende de o fornecedor mandar o N3 que o cadastro reconhece,
+#: trabalho que está em curso com eles.
+NIVEL_DO_PILAR = "n1"
+NIVEL_DO_TEMA = "n2"
+NIVEIS_DA_JANELA = (NIVEL_DO_PILAR, NIVEL_DO_TEMA)
+
+
+@dataclass(frozen=True, slots=True)
+class SomasNaJanela:
+    """As somas de uma janela de dias, quebradas pelo nível pedido.
+
+    `sem_grupo` e `sem_data` NÃO SÃO DETALHE: são as duas formas de uma menção
+    ficar fora desta conta, e as duas têm de chegar à tela. A menção sem o nível
+    existe e pesa no índice, mas não pertence a grupo nenhum — somá-la a um seria
+    inventar vínculo. A menção sem `data` (a coluna é opcional) pertence ao mês e
+    não a um dia, então nenhuma janela a alcança.
+
+    Omitir as duas faria a soma dos impactos não fechar com o impacto do período,
+    e a tela mostraria pedaços que não compõem o que dizem compor — o mesmo
+    defeito que `impacto_do_recorte` descreve sobre o denominador local.
+    """
+
+    #: Pelo `id` do cadastro, E NÃO POR NOME — achado de revisão. O cadastro tem
+    #: 41 temas e 41 nomes distintos, mas `macro_tema.nome` NÃO é único no schema
+    #: (só `codigo` é): a unicidade era um fato do dado, não uma garantia.
+    #: Agrupar por nome fundia dois homônimos de pilares diferentes numa linha
+    #: só, somando os impactos e exibindo o pai do último que passasse.
+    por_grupo: dict[int, dict[str, list[SomasDaFonte]]]
+    #: Quem é cada grupo — o nome é rótulo, não chave.
+    grupos: dict[int, GrupoNaJanela]
+    #: As menções da janela que não têm o nível pedido.
+    sem_grupo: int
+    #: As menções SEM DATA de todos os meses que a janela atravessa. Contava só o
+    #: mês da ponta — achado de revisão: numa janela que cruza a virada, as sem
+    #: data do mês anterior também ficam fora dela, e ficavam invisíveis.
+    sem_data: int
+
+
+def meses_da_janela(de: date, ate: date) -> list[date]:
+    """Os primeiros dias de TODOS os meses que a janela atravessa.
+
+    ACHADO DE REVISÃO, e era perda silenciosa de dado: isto era
+    `{primeiro_dia(de), primeiro_dia(ate)}` — as duas PONTAS. Numa janela de
+    noventa dias de 20/02 a 20/05 são fevereiro e maio, e março e abril inteiros
+    eram descartados; o impacto saía menor sem nada dizer que faltou metade da
+    janela. A rota aceita `dias` até 90, então o caminho era alcançável.
+
+    A COLUNA `mes` ENTRA NA CONSULTA PELO ÍNDICE, e é por isso que esta lista
+    existe em vez de só comparar `data`: `mencao_por_mes` cobre `mes`, e `data`
+    não tem índice nenhum.
+    """
+    meses = []
+    atual = primeiro_dia(de)
+    fim = primeiro_dia(ate)
+    while atual <= fim:
+        meses.append(atual)
+        atual = date(atual.year + (atual.month == 12), (atual.month % 12) + 1, 1)
+    return meses
+
+
+def somas_por_nivel_na_janela(
+    sessao: Session, lente_id: int, de: date, ate: date, nivel: str = NIVEL_DO_TEMA
+) -> SomasNaJanela:
+    """As somas da lente entre dois DIAS, agrupadas pelo nível pedido.
+
+    OS DOIS NÍVEIS, PORQUE OS DOIS RESPONDEM PERGUNTAS DIFERENTES — ver
+    `NIVEIS_DA_JANELA`. Começou só com o pilar; ele pediu a troca para o tema
+    ("o n1 esta quase tudo sendo positivo e estamos deixando passar alguma
+    informação valiosa"); e virou chave quando a medição mostrou que o tema cobre
+    um quarto da Clipei. O pilar dá cobertura, o tema dá profundidade.
+
+    O NÍVEL DE CIMA VAI COMO CONTEXTO quando o grupo é o tema: quarenta e um
+    nomes sem o pilar a que pertencem dão uma lista mais granular e menos
+    legível. No pilar não há contexto — ele já é o topo da árvore.
+
+    MESMO MOLDE DE `somas_da_lente_filtradas`, e de propósito: ela agrega
+    `mencao` ao vivo porque `score_mes_fonte` só tem grão de (fonte, mês,
+    sentimento, tier) e não responde por dimensão nenhuma. Aqui o motivo é o
+    mesmo e mais um: aquele agregado não tem grão de DIA, então uma janela de
+    quinze dias não tem como sair dele.
+
+    AS FÓRMULAS SÃO AS DA INGESTÃO (`peso_do_engajamento`, `peso_do_cargo`) e a
+    ponderação é `ponderar`, do domínio. Reimplementar o peso aqui faria esta
+    tela discordar da nota que a tela do Score mostra ao lado — e a divergência
+    apareceria como "o impacto não fecha", sem ninguém saber de onde veio.
+
+    O FILTRO POR `mes` ENTRA JUNTO COM O DE `data`, e não é redundância: os dois
+    índices são `(mes, …)` e `data` não tem índice nenhum. Sem a coluna indexada
+    na cláusula, a janela varre a tabela inteira.
+
+    O GRUPO INATIVO ENTRA, e é consistente com o resto: nenhuma leitura do índice
+    filtra `ativo`, porque a menção existe e pesou na nota. Esconder o tema
+    desativado faria a soma dos pedaços não fechar com o período — e o impacto
+    dele é real, mesmo que o nome venha de uma taxonomia antiga.
+
+    A FONTE INTERNA (CRM) FICA DE FORA, como em `somas_da_lente_filtradas`: ela
+    não vem de `mencao` e não tem dia nenhum. Para a lente de imprensa isso é
+    vazio — ela tem uma fonte só, a Clipei.
+    """
+    if nivel not in NIVEIS_DA_JANELA:
+        raise ValueError(f"nível desconhecido: {nivel!r}")
+
+    meses = meses_da_janela(de, ate)
+    no_tema = nivel == NIVEL_DO_TEMA
+    #: NO TEMA, O CONTEXTO É O PAI DELE; no pilar não há contexto, porque ele já
+    #: é o topo da árvore — e `null()` mantém a forma da linha igual nos dois
+    #: casos, em vez de duas consultas quase iguais que divergem na primeira
+    #: mudança.
+    coluna_do_grupo = MacroTema if no_tema else BlocoTema
+    coluna_da_mencao = Mencao.macro_tema_id if no_tema else Mencao.bloco_tema_id
+    contexto = BlocoTema.nome if no_tema else null()
+
+    consulta = (
+        select(
+            coluna_do_grupo.id,
+            coluna_do_grupo.nome,
+            contexto,
+            ScoreFonte.codigo,
+            Mencao.sentimento,
+            Mencao.tier,
+            Mencao.engajamento,
+            Mencao.cargo,
+        )
+        .select_from(Mencao)
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .outerjoin(coluna_do_grupo, coluna_do_grupo.id == coluna_da_mencao)
+        .where(
+            ScoreFonte.lente_id == lente_id,
+            Mencao.mes.in_(meses),
+            Mencao.data.is_not(None),
+            Mencao.data >= de,
+            Mencao.data <= ate,
+        )
+    )
+    if no_tema:
+        #: O PAI VEM DO TEMA, e não de `Mencao.bloco_tema_id`: o pai do tema é o
+        #: que dá contexto à linha, e a coluna da menção pode estar preenchida
+        #: por uma resolução que parou no pilar — aí ela fala de outro nível.
+        consulta = consulta.outerjoin(BlocoTema, BlocoTema.id == MacroTema.bloco_tema_id)
+
+    sem_grupo = 0
+    grupos: dict[int, GrupoNaJanela] = {}
+    agrupadas: dict[int, dict[tuple[str, str, str], list[tuple[int | None, str | None]]]] = {}
+    for (
+        id_grupo,
+        nome_grupo,
+        nome_do_contexto,
+        fonte_codigo,
+        sentimento,
+        tier,
+        engajamento,
+        cargo,
+    ) in sessao.execute(consulta):
+        if id_grupo is None:
+            #: SEM O NÍVEL É CASO VOLUMOSO NO TEMA, e não exceção: o resolvedor
+            #: da Clipei pelo `atributo` devolve só o pilar, e a migration 0098
+            #: mede 72.590 menções nesse estado. Elas pesam na nota e não
+            #: pertencem a grupo nenhum — contar é o que impede o quadro de
+            #: parecer o todo. No pilar este número é pequeno, e o contraste
+            #: entre os dois é exatamente o que a chave serve para mostrar.
+            sem_grupo += 1
+            continue
+        grupos.setdefault(
+            id_grupo, GrupoNaJanela(id=id_grupo, nome=nome_grupo, contexto=nome_do_contexto)
+        )
+        chave = (fonte_codigo, sentimento, tier or "")
+        agrupadas.setdefault(id_grupo, {}).setdefault(chave, []).append((engajamento, cargo))
+
+    por_grupo: dict[int, dict[str, list[SomasDaFonte]]] = {}
+    for id_do_grupo, por_chave in agrupadas.items():
+        por_fonte: dict[str, list[SomasDaFonte]] = {}
+        for (fonte_codigo, sentimento, tier), linhas in por_chave.items():
+            por_fonte.setdefault(fonte_codigo, []).append(
+                SomasDaFonte(
+                    fonte=fonte_codigo,
+                    sentimento=sentimento,
+                    tier=tier,
+                    mencoes=len(linhas),
+                    soma_log=sum(peso_do_engajamento(engajamento) for engajamento, _ in linhas),
+                    soma_engajamento=sum(engajamento or 0 for engajamento, _ in linhas),
+                    soma_cargo=sum(peso_do_cargo(cargo) for _, cargo in linhas),
+                )
+            )
+        por_grupo[id_do_grupo] = por_fonte
+
+    #: AS MENÇÕES SEM DIA, em TODOS os meses da janela: elas pertencem ao mês e
+    #: não a um dia, então janela nenhuma as alcança — e uma janela que atravessa
+    #: a virada tem dois meses de onde elas podem vir. Contar só o da ponta fazia
+    #: o número mentir por omissão, que é o defeito que ele existe para evitar.
+    sem_data = (
+        sessao.execute(
+            select(func.count())
+            .select_from(Mencao)
+            .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+            .where(
+                ScoreFonte.lente_id == lente_id,
+                Mencao.mes.in_(meses),
+                Mencao.data.is_(None),
+            )
+        ).scalar()
+        or 0
+    )
+    return SomasNaJanela(
+        por_grupo=por_grupo, grupos=grupos, sem_grupo=sem_grupo, sem_data=sem_data
+    )
+
+
 def _somas_da_lente(
     sessao: Session, lente_id: int, mes: date, filtro: FiltroDeMencoes | None = None
 ) -> dict[str, list[SomasDaFonte]]:
