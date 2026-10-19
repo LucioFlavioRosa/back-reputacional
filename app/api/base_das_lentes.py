@@ -151,7 +151,27 @@ def _onde(lente_id: int, de: date | None, ate: date | None) -> list:
 
 
 def _busca(q: str) -> object:
-    """A busca livre: qualquer pedaço, sem acento, em todo campo de texto."""
+    """A busca livre: qualquer pedaço, sem acento, em todo campo de texto.
+
+    INCLUI O NOME DO CADASTRO, e não só o texto do fornecedor. A coluna
+    "Concessionária" desta tela mostra `CONCESSIONARIA` desde a `0099` — o nome
+    do cadastro, com o texto do fornecedor como reserva —, e a busca continuava
+    varrendo apenas `unidade_texto`. A pessoa lia "Holding / corporativo",
+    digitava exatamente isso, e recebia zero: o gravado é "Aegea Saneamento e
+    Participações S/A".
+
+    É o pior tipo de busca vazia, porque nada na tela indica que a palavra certa
+    era outra. E `Corsan` esconde o defeito — a razão social dela contém a
+    palavra —, então ele sobreviveu ao caso que todo mundo testa.
+
+    OS DOIS, e não um no lugar do outro: quem procura pela razão social está
+    lendo a planilha que tem na mão, e não pode perder o resultado. `like` sobre
+    um `or_` de colunas só ganha linha.
+
+    EXIGE `outerjoin(UnidadeNegocio, ...)` em QUEM USA — nas DUAS consultas, a
+    da lista e a do `total`. Elas são montadas separadamente, e uma junção só na
+    primeira faria a paginação discordar do que a lista mostra.
+    """
     termo = f"%{normalizar(q)}%"
     campos = (
         Mencao.titulo_texto,
@@ -160,6 +180,7 @@ def _busca(q: str) -> object:
         Mencao.tema_texto,
         Mencao.subtema,
         Mencao.unidade_texto,
+        UnidadeNegocio.nome,
         Mencao.atributo,
         Mencao.uf,
         Tema.nome,
@@ -236,6 +257,11 @@ def listar_mencoes(
         .select_from(Mencao)
         .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
         .outerjoin(Tema, Tema.id == Mencao.tema_id)
+        #: A MESMA JUNÇÃO DA LISTA, porque `condicoes_do_filtro` e `_busca`
+        #: alcançam `UnidadeNegocio.nome`. Esta consulta existe só para contar,
+        #: e é montada à parte da que exibe — então a junção precisa ser
+        #: repetida aqui, ou o `total` do rodapé discorda das linhas.
+        .outerjoin(UnidadeNegocio, UnidadeNegocio.id == Mencao.unidade_negocio_id)
         .where(*onde)
     )
     total = sessao.scalar(select(func.count()).select_from(base.subquery())) or 0

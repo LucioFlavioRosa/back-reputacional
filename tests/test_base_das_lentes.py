@@ -345,3 +345,78 @@ def test_o_pilar_derivado_continua_vencendo(sessao, imprensa) -> None:
             "nível nenhum; o último recurso tem de seguir sendo o tema do "
             "fornecedor."
         )
+
+# -- a busca livre e o nome do cadastro ----------------------------------------
+#
+# ACHADO DA REVISÃO DO CODEX (18/10/2026). A `0099` fez a COLUNA da Base mostrar
+# `CONCESSIONARIA` — o nome do cadastro, com o texto do fornecedor como reserva.
+# A busca livre ficou procurando só `Mencao.unidade_texto`. Resultado: a pessoa
+# lê "Holding / corporativo" na tela, digita exatamente isso no campo de busca,
+# e recebe zero — porque o texto gravado é "Aegea Saneamento e Participações
+# S/A". Procurar pelo que a tela NÃO mostra é o pior tipo de busca vazia: nada
+# indica que a palavra certa era outra.
+#
+# `Corsan` NÃO SERVE DE EXEMPLO, e é por isso que este teste usa a holding: a
+# razão social da Corsan contém a palavra "Corsan", então o defeito se esconde
+# justamente no caso mais citado.
+
+NOME_DA_HOLDING = "Holding / corporativo"
+RAZAO_DA_HOLDING = "Aegea Saneamento e Participações S/A"
+
+
+@pytest.fixture
+def holding(sessao):
+    """Uma menção que a tela rotula pelo cadastro e grava com a razão social."""
+    from app.banco.tabelas_catalogo import UnidadeNegocio
+
+    clipei = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "clipei")).one()
+    unidade = sessao.scalar(
+        select(UnidadeNegocio.id).where(UnidadeNegocio.nome == NOME_DA_HOLDING)
+    )
+    assert unidade is not None, f"o cadastro não tem {NOME_DA_HOLDING!r}"
+    sessao.add(
+        Mencao(
+            fonte_id=clipei.id,
+            mes=date(2026, 8, 1),
+            data=date(2026, 8, 5),
+            sentimento="neu",
+            titulo_texto="Resultado trimestral",
+            unidade_texto=RAZAO_DA_HOLDING,
+            unidade_negocio_id=unidade,
+        )
+    )
+    sessao.flush()
+    return unidade
+
+
+def test_a_busca_acha_pelo_nome_que_a_TELA_MOSTRA(sessao, holding):
+    pagina = _listar(sessao, q=NOME_DA_HOLDING)
+
+    assert pagina.total == 1, (
+        "buscar o nome que a coluna exibe devolveu nada — a busca procura o "
+        f"texto do fornecedor e a tela mostra o do cadastro (total={pagina.total})"
+    )
+    assert pagina.itens[0].empresa == NOME_DA_HOLDING
+
+
+def test_a_busca_CONTINUA_achando_pelo_texto_do_fornecedor(sessao, holding):
+    """O controle negativo: o novo campo acrescenta, não substitui.
+
+    Quem já procurava pela razão social — porque é o que está na planilha que
+    tem na mão — não pode perder o resultado.
+    """
+    pagina = _listar(sessao, q="Participações")
+
+    assert pagina.total == 1
+    assert pagina.itens[0].empresa == NOME_DA_HOLDING
+
+
+def test_a_CONTAGEM_e_a_lista_concordam_na_busca_pelo_cadastro(sessao, holding):
+    """`total` sai de outra consulta, e ela também precisa da junção.
+
+    Sem o `outerjoin` na consulta do `total`, a paginação diria um número e a
+    lista mostraria outro — ou a consulta nem montaria.
+    """
+    pagina = _listar(sessao, q=NOME_DA_HOLDING)
+
+    assert pagina.total == len(pagina.itens)
