@@ -76,10 +76,20 @@ def listar_dicionarios(sessao: Sessao) -> dict[str, list[dict[str, Any]]]:
     resposta: dict[str, list[dict[str, Any]]] = {}
     for chave, tabela in DICIONARIOS.items():
         consulta = select(tabela).where(tabela.ativo.is_(True))  # type: ignore[attr-defined]
+        #: DESEMPATE PELO ID, e é achado de revisão.
+        #:
+        #: `ordem` NÃO é única dentro de nenhum destes dicionários — só o par
+        #: (pai, codigo) é, onde há pai. Hoje nenhum tem empate, mas duas linhas
+        #: com a mesma `ordem` sairiam na ordem que o banco devolvesse, e ela
+        #: pode mudar entre duas cargas da MESMA tela, sobre o MESMO dado. É o
+        #: mesmo defeito que o quadro da janela teve (lá o desempate é o nome) e
+        #: a mesma razão: quem lê não tem como saber que a diferença é
+        #: arbitrária. O `id` é o desempate estável — quem foi semeado antes
+        #: aparece antes.
         if hasattr(tabela, "ordem"):
-            consulta = consulta.order_by(tabela.ordem)  # type: ignore[attr-defined]
+            consulta = consulta.order_by(tabela.ordem, tabela.id)  # type: ignore[attr-defined]
         else:
-            consulta = consulta.order_by(tabela.nome)  # type: ignore[attr-defined]
+            consulta = consulta.order_by(tabela.nome, tabela.id)  # type: ignore[attr-defined]
 
         resposta[chave] = [
             {
