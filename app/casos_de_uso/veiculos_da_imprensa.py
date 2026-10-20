@@ -65,6 +65,11 @@ CATEGORIA_DA_IMPRENSA = "Imprensa"
 #: aparece em três), então a chave real é sempre (categoria, subcategoria).
 LISTAS_DE_VEICULOS: dict[str, tuple[str, str]] = {
     "imprensa_economica": (CATEGORIA_DA_IMPRENSA, "Econômica e de negócios"),
+    #: A LENTE INSTITUCIONAL RECORTA PELO MESMO MECANISMO (pedido de 20/10/2026:
+    #: "na lente Institucional, o filtro que deve ser utilizado será Imprensa >
+    #: Institucional, assim como fizemos para a lente mercado"). A subcategoria
+    #: nasceu na `0106`; a fonte que a recorta, na `0107`.
+    "imprensa_institucional": (CATEGORIA_DA_IMPRENSA, "Institucional"),
 }
 
 #: A CATEGORIA DE PÚBLICO COM QUE CADA TIPO NASCE.

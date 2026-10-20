@@ -657,9 +657,13 @@ def test_um_arquivo_alimenta_as_duas_fontes_que_o_leem(cliente_do_score, sessao)
     assert resposta.status_code == 201
 
     por_fonte = {resumo["fonte"]: resumo for resumo in resposta.json()}
-    assert set(por_fonte) == {"clipei", "clipei_investidores"}
+    assert set(por_fonte) == {"clipei", "clipei_investidores", "clipei_institucional"}
     assert por_fonte["clipei"]["ingeridas"] == 2
     assert por_fonte["clipei_investidores"]["ingeridas"] == 1
+    #: A TERCEIRA IRMÃ LÊ E NÃO FICA COM NADA: nenhum destes veículos está
+    #: classificado como institucional, e recorte vazio é resposta legítima.
+    assert por_fonte["clipei_institucional"]["ingeridas"] == 0
+    assert por_fonte["clipei_institucional"]["linhas"] == 2
     assert (
         por_fonte["clipei_investidores"]["descartes"]["fora_da_lista_de_veiculos"] == 1
     )
@@ -672,7 +676,7 @@ def test_subir_pela_fonte_irma_da_no_mesmo(cliente_do_score):
     o grupo é do arquivo, e não de quem clicou."""
     resposta = _subir(cliente_do_score, "clipei_investidores", _clipping(DUAS_MATERIAS))
     assert {resumo["fonte"] for resumo in resposta.json()} == {
-        "clipei", "clipei_investidores"
+        "clipei", "clipei_investidores", "clipei_institucional"
     }
 
 
@@ -1009,9 +1013,16 @@ def test_tudo_desligado_nao_e_o_mesmo_que_planilha_faltando(cliente_do_score):
             [_post_da_bites(date(2026, 6, 5), "Negativo", "Governança", "Corsan", "Tarifa")]
         ),
     )
+    #: AS FONTES VÊM DO SERVIDOR, e não de uma lista escrita aqui. Com a lista à
+    #: mão, "tudo desligado" significava "tudo o que existia no dia em que
+    #: escrevi": a `0107` acrescentou uma fonte, ela ficou LIGADA, e o teste
+    #: passou a afirmar zero medindo um. Quem conhece todas as fontes é o
+    #: cadastro.
     todas = [
-        "clipei", "clipei_investidores", "approach_sl", "approach_cm", "bites",
+        fonte["codigo"]
+        for fonte in cliente_do_score.get("/api/score/fontes?mes=2026-06").json()
     ]
+    assert len(todas) >= 6, "a listagem de fontes não respondeu o cadastro inteiro"
     cliente_do_score.put("/api/score/calibracao", json={"fontes_desligadas": todas})
 
     corpo_ = cliente_do_score.get("/api/score/drivers?mes=2026-06").json()

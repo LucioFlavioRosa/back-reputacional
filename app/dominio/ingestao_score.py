@@ -188,7 +188,12 @@ class Descarte(StrEnum):
 #: em `casos_de_uso/veiculos_da_imprensa.py`, que é quem tem banco. Aqui só se
 #: declara quais nomes existem — um nome errado no mapeamento tem de doer no
 #: cadastro da fonte, e não aparecer depois como recorte misteriosamente vazio.
-LISTAS_DE_VEICULOS = frozenset({"imprensa_economica"})
+#:
+#: SÃO DUAS, E A SEGUNDA PROVA QUE O DESENHO ERA GERAL: `imprensa_institucional`
+#: recorta a MESMA Clipei pela subcategoria "Institucional", para a lente
+#: Institucional, do mesmo jeito que `imprensa_economica` a recorta para a
+#: Mercado. Nenhuma linha do motor mudou para a segunda existir.
+LISTAS_DE_VEICULOS = frozenset({"imprensa_economica", "imprensa_institucional"})
 
 #: COMO NASCE QUEM FALA, quando a fonte traz um nome que o cadastro não tem.
 #:
