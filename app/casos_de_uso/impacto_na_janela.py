@@ -101,6 +101,50 @@ class ImpactoNaJanela:
     mes_sem_base: bool = False
 
 
+def registros(
+    sessao: Session,
+    ate: date,
+    grupo: int,
+    dias: int = DIAS_DA_JANELA,
+    nivel: str = NIVEL_PADRAO,
+    pagina: int = 1,
+    tamanho: int = 50,
+) -> repositorio_score.RegistrosDaJanela:
+    """As menções que compõem UM grupo do quadro — o que abre ao clicar nele.
+
+    O PEDIDO: "se eu clicar em alguma dessas opções quero que abra um modal com
+    os registros do tema ou pilar, assim como fazemos nas lentes no KPI".
+
+    A JANELA É CALCULADA AQUI, pelos mesmos `ate` e `dias` do quadro, e não vem
+    pronta da tela: duas contas de data em dois lugares divergem na primeira vez
+    que alguém mudar o tamanho da janela. A tela manda o que ela clicou (o dia e
+    o grupo); quem sabe o que é uma janela é este módulo.
+
+    O RECORTE É O MESMO DO QUADRO — ver `registros_do_grupo_na_janela`, que
+    explica por que a rota da Base das lentes não serve.
+    """
+    if dias < 1:
+        raise RegraViolada("A janela precisa de pelo menos um dia.")
+    if nivel not in repositorio_score.NIVEIS_DA_JANELA:
+        raise RegraViolada(f"Nivel desconhecido: {nivel}.")
+
+    lente = sessao.execute(select(Lente).where(Lente.codigo == LENTE)).scalar_one_or_none()
+    if lente is None:
+        raise NaoEncontrado(f"A lente {LENTE} não está cadastrada.")
+
+    return repositorio_score.registros_do_grupo_na_janela(
+        sessao,
+        lente.id,
+        de=ate - timedelta(days=dias - 1),
+        ate=ate,
+        grupo_id=grupo,
+        calibracao=repositorio_score.calibracao_vigente(sessao),
+        nivel=nivel,
+        pagina=pagina,
+        tamanho=tamanho,
+    )
+
+
 def ler(
     sessao: Session,
     ate: date,
