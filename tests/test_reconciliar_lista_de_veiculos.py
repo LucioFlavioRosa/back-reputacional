@@ -260,6 +260,31 @@ def test_o_AGREGADO_reconciliado_e_igual_ao_que_a_subida_escreveria(sessao, par)
     assert pela_reconciliacao == pela_subida
 
 
+def test_a_RESPOSTA_do_aplicar_descreve_o_estado_DEPOIS(sessao, par):
+    """Nenhum mês volta com `mudou=True` de uma aplicação bem-sucedida.
+
+    ACHADO ALTO DE REVISÃO. A primeira versão devolvia a medida de ANTES, com
+    `mudou=True` nos meses que ela acabara de reescrever. A tela pergunta "ainda
+    há desvio?" para decidir se mostra o aviso — e continuava mostrando o aviso e
+    o botão depois de aplicar com sucesso.
+
+    O QUE FOI FEITO fica em `entram`/`saem`, que são a única coisa que só a
+    medida de antes sabe dizer.
+    """
+    espelho, recorte = par
+    _subir(sessao, espelho)
+    _marcar(sessao, "Valor Econômico zz90")
+
+    depois = reconciliar_lista_de_veiculos.aplicar(sessao, recorte)
+
+    assert depois.aplicada is True
+    assert depois.meses_que_mudam == ()
+    assert [v.nome for v in depois.entram] == ["Valor Econômico zz90"]
+    #: E OS NÚMEROS DOS MESES SÃO OS DE AGORA: `antes` e `depois` iguais, porque
+    #: o mês já foi reescrito.
+    assert all(mes.antes == mes.depois for mes in depois.meses)
+
+
 def test_a_RECONCILIACAO_e_IDEMPOTENTE(sessao, par):
     #: Rodar duas vezes não muda nada — e a segunda não deve nem tocar nos meses,
     #: porque nenhum mudou.

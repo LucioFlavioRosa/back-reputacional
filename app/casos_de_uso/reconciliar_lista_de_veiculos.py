@@ -57,6 +57,11 @@ from app.dominio.texto import normalizar
 #: A única lista que existe hoje. Ver `ingestao_score.LISTAS_DE_VEICULOS`.
 LISTA_PADRAO = "imprensa_economica"
 
+#: O "namespace" da trava de aplicação (`pg_advisory_xact_lock` recebe dois
+#: inteiros). Um número desta casa, para a trava desta operação não colidir com
+#: outra que alguém venha a pôr no mesmo banco.
+_ESPACO_DA_TRAVA = 10_267
+
 
 @dataclass(frozen=True, slots=True)
 class MudancaDoVeiculo:
@@ -314,7 +319,28 @@ def aplicar(sessao: Session, fonte: ScoreFonte) -> Reconciliacao:
     mês, sentimento, tier, engajamento e cargo, e os cinco estão em `mencao` —
     então não há uma segunda definição de "o que é um mês no banco". Reescrevê-la
     em SQL seria a segunda régua, livre para divergir da primeira.
+
+    A RESPOSTA DESCREVE O ESTADO DEPOIS, e isto é conserto de achado ALTO de
+    revisão. A primeira versão devolvia a medida de ANTES, com `mudou=True` nos
+    meses que ela acabara de reescrever: a tela, que pergunta "ainda há desvio?",
+    continuava mostrando o aviso e o botão depois de aplicar com sucesso. O que
+    FOI feito está em `entram`/`saem`, que vêm da medida de antes — é a única
+    coisa que só a medida de antes sabe.
+
+    UM POR VEZ, POR TRAVA DE BANCO. Duas aplicações simultâneas (duas abas, ou um
+    clique que escape do botão desabilitado) apagavam e inseriam o mesmo mês ao
+    mesmo tempo, e a segunda morria com `IntegrityError` na chave primária de
+    `score_mes_fonte` — 500 na cara de quem clicou. O banco final ficava certo,
+    porque a perdedora desfazia tudo; o erro é que a segunda pessoa via um erro
+    para uma operação que simplesmente já tinha sido feita. Com a trava, ela
+    espera, remede, e não acha mês para mudar.
     """
+    #: A TRAVA É POR FONTE e morre com a transação (`xact`): duas
+    #: reconciliações de fontes diferentes não se esperam, e nada fica preso se
+    #: o processo cair. A chave é o id da fonte num espaço próprio — o primeiro
+    #: argumento é o "namespace", para não colidir com outra trava desta casa.
+    sessao.execute(select(func.pg_advisory_xact_lock(_ESPACO_DA_TRAVA, fonte.id)))
+
     espelho, alvo, medida = _medir(sessao, fonte)
 
     mudam = [mudanca.mes for mudanca in medida.meses if mudanca.mudou]
@@ -397,11 +423,19 @@ def aplicar(sessao: Session, fonte: ScoreFonte) -> Reconciliacao:
         )
 
     sessao.flush()
+    #: REMEDE DEPOIS DE ESCREVER: `meses` passa a descrever o estado de AGORA, e
+    #: nenhum mês volta com `mudou=True` — era isso que fazia a tela continuar
+    #: avisando que há desvio logo depois de aplicar com sucesso.
+    #:
+    #: `entram`/`saem` CONTINUAM SENDO OS DE ANTES, e é de propósito: eles são a
+    #: única coisa que só a medida anterior sabe dizer — o que ESTA aplicação
+    #: moveu. Depois de escrever, não há mais ninguém entrando nem saindo.
+    _, _, agora = _medir(sessao, fonte)
     return Reconciliacao(
         fonte=medida.fonte,
         espelho=medida.espelho,
         lista=medida.lista,
-        meses=medida.meses,
+        meses=agora.meses,
         entram=medida.entram,
         saem=medida.saem,
         aplicada=True,
