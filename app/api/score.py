@@ -33,7 +33,7 @@ from fastapi import (
     status,
 )
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from app.api.dependencias import (
     UsuarioLogado,
@@ -1210,6 +1210,25 @@ SUBCATEGORIA_DO_MERCADO = "Econômica e de negócios"
 #: Elas continuam no ar como atalho para esta — ver `_rotas_antigas`.
 LISTA_DO_MERCADO = "imprensa_economica"
 
+#: O "namespace" da trava que serializa a gravação de uma lista
+#: (`pg_advisory_xact_lock` recebe dois inteiros). Número próprio, para não
+#: colidir com o 10_267 da aplicação retroativa, que é outra operação.
+_ESPACO_DA_TRAVA_DA_LISTA = 10_268
+
+
+def _chave_da_lista(lista: str) -> int:
+    """Um inteiro estável por nome de lista, para a trava.
+
+    `hash()` do Python NÃO serve: ele é aleatorizado por processo (PYTHONHASHSEED),
+    então dois trabalhadores do mesmo app calculariam chaves diferentes para a
+    mesma lista — e a trava não travaria nada. A ordem em
+    `LISTAS_DE_VEICULOS` também não serve, porque muda quando alguém acrescenta
+    uma lista no meio. Soma dos bytes do nome é estável entre processos e entre
+    versões; colidir com outra lista só faria duas listas se esperarem, que é
+    lento e correto — nunca errado.
+    """
+    return sum(lista.encode("utf-8"))
+
 
 def _par_da_lista(lista: str) -> tuple[str, str]:
     """O par (categoria, subcategoria) que uma lista de veículos significa.
@@ -1487,6 +1506,27 @@ def _definir_a_lista(
     duplicar justamente as partes que levaram revisão.
     """
     alvo, categoria = _subcategoria_da_lista(sessao, lista)
+
+    #: A TRAVA DA LISTA INTEIRA, e ela é conserto de achado ALTO de revisão.
+    #:
+    #: A trava de linhas abaixo cobre `pedidos ∪ conhecidos` — as instituições
+    #: que esta gravação menciona. Com a LISTA VAZIA, duas pessoas acrescentando
+    #: veículos DIFERENTES não têm nenhuma linha em comum: as duas travam coisas
+    #: distintas, as duas leem a lista vazia, as duas passam pela conferência de
+    #: `conhecidos` e o resultado é {A, B} — quando cada uma afirmou que a lista
+    #: inteira era só o seu. A gravação é declarativa; esse resultado não é o
+    #: que nenhuma das duas pediu.
+    #:
+    #: O DEFEITO É ANTERIOR A ESTA ROTA, e estava dormente porque a lista do
+    #: Mercado nunca está vazia (a `0066` semeou 81). A lista Institucional
+    #: NASCE vazia — é exatamente o estado em que ele acorda.
+    #:
+    #: POR LISTA, e morre com a transação: duas listas diferentes não se
+    #: esperam. A chave é o nome da lista num espaço próprio, como
+    #: `reconciliar_lista_de_veiculos` já faz por fonte.
+    sessao.execute(
+        select(func.pg_advisory_xact_lock(_ESPACO_DA_TRAVA_DA_LISTA, _chave_da_lista(lista)))
+    )
 
     pedidos = set(entrada.ids)
     #: TRAVA AS LINHAS ENVOLVIDAS ANTES DE DECIDIR, em ordem de id — a mesma

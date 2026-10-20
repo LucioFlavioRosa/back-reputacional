@@ -127,6 +127,68 @@ def test_as_duas_listas_NAO_se_misturam(cliente, sessao):
     assert resposta.json()["desmarcados"] == 0
 
 
+def test_salvar_a_lista_VAZIA_com_ids_vazios_nao_toca_na_outra(cliente, sessao):
+    """O caso destrutivo do declarativo: "a lista é NENHUM".
+
+    `ids=[]` afirma que a lista pedida está vazia, e é a forma mais curta de
+    pedir uma remoção em massa. Ela tem de alcançar SÓ a lista do endereço.
+    """
+    do_mercado = _veiculo(sessao, "Jornal do Mercado zz34")
+    do_mercado.subcategoria_publico_id = _subcategoria(sessao, "Econômica e de negócios")
+    sessao.flush()
+
+    resposta = cliente.put(
+        f"{DA_LISTA}/imprensa_institucional", json={"ids": [], "conhecidos": []}
+    )
+
+    assert resposta.status_code == 200, resposta.text
+    assert resposta.json()["desmarcados"] == 0
+    sessao.refresh(do_mercado)
+    assert do_mercado.subcategoria_publico_id is not None
+
+
+def test_duas_gravacoes_na_LISTA_VAZIA_nao_se_atropelam(cliente, sessao):
+    """ACHADO ALTO DE REVISÃO, e ele é ANTERIOR a esta rota.
+
+    A guarda de concorrência trava as linhas que a gravação MENCIONA
+    (`pedidos ∪ conhecidos`). Com a lista vazia, duas pessoas acrescentando
+    veículos DIFERENTES não mencionam nenhuma linha em comum: as duas travam
+    coisas distintas, as duas leem a lista vazia, as duas passam pela
+    conferência de `conhecidos` — e o resultado é {A, B}, quando cada uma
+    afirmou que a lista inteira era só o seu veículo.
+
+    ESTAVA DORMENTE porque a lista do Mercado nunca esteve vazia (a `0066`
+    semeou 81). A Institucional NASCE vazia: é o estado em que ele acorda.
+
+    O QUE ESTE TESTE MEDE é a trava, e não a corrida: reproduzir duas sessões
+    simultâneas aqui exigiria duas conexões e um `commit` no meio — e o teste
+    inteiro vive numa transação que termina em rollback. O que se afirma é que
+    a gravação PEDE a trava da lista; sem ela, as duas gravações nem se veem.
+    """
+    executadas: list[str] = []
+    original = sessao.execute
+
+    def espiando(consulta, *resto, **nomeados):
+        executadas.append(str(consulta))
+        return original(consulta, *resto, **nomeados)
+
+    sessao.execute = espiando  # type: ignore[method-assign]
+    try:
+        alvo = _veiculo(sessao, "Agência Institucional zz35")
+        resposta = cliente.put(
+            f"{DA_LISTA}/imprensa_institucional",
+            json={"ids": [str(alvo.id)], "conhecidos": []},
+        )
+    finally:
+        sessao.execute = original  # type: ignore[method-assign]
+
+    assert resposta.status_code == 200, resposta.text
+    assert any("pg_advisory_xact_lock" in consulta for consulta in executadas), (
+        "a gravação da lista tem de pedir a trava da lista — sem ela, duas "
+        "pessoas partindo da lista vazia não se enxergam"
+    )
+
+
 def test_a_lista_QUE_NAO_EXISTE_e_recusada(cliente):
     #: 404, e não lista vazia: um nome errado na tela tem de doer aqui, e não
     #: virar "nenhum veículo" que ninguém sabe explicar. É a mesma escolha que
