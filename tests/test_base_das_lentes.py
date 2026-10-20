@@ -171,9 +171,32 @@ def test_as_opcoes_do_periodo(sessao, imprensa):
     assert set(opcoes.sentimentos) >= {"neg", "pos", "neu"}
 
 
-def test_institucional_nao_tem_base_de_mencoes(sessao):
+def test_a_institucional_PASSOU_a_ter_base_de_mencoes(sessao):
+    """A regra virou do avesso na `0108`, e é pedido do dono do produto.
+
+    A Base recusava esta lente com uma razão escrita: "ela lê o CRM, que tem a
+    Base dele". Desde que a Institucional passou a ser o clipping da Clipei
+    recortado pela subcategoria "Institucional", a razão caiu — e esconder a
+    Base dela seria esconder justamente as linhas que formam a nota.
+
+    SEM MENÇÃO AINDA, e é por isso que a resposta é uma lista vazia e não um
+    erro: enquanto nenhum veículo estiver classificado, a lente existe, é
+    consultável, e não tem o que mostrar. "Ainda não classificaram ninguém" e
+    "esta lente não é de menção" são coisas diferentes, e a tela precisa poder
+    dizer a primeira.
+    """
+    pagina = listar_mencoes(sessao=sessao, usuario=_QuemOlha(), codigo="institucional")
+
+    assert pagina.total == 0
+    assert pagina.itens == []
+
+
+def test_a_lente_que_NAO_e_de_mencao_continua_recusada(sessao):
+    #: O CONTROLE DA MUDANÇA ACIMA: a Base não passou a aceitar qualquer código.
+    #: Uma lente que não existe continua sendo 404 — se este teste passasse a
+    #: falhar, o de cima estaria provando só que a rota virou permissiva.
     with pytest.raises(NaoEncontrado):
-        listar_mencoes(sessao=sessao, usuario=_QuemOlha(), codigo="institucional")
+        listar_mencoes(sessao=sessao, usuario=_QuemOlha(), codigo="lente-que-nao-existe")
 
 
 # -- QUEM NOMEIA GENTE DE FORA, E QUEM NÃO ------------------------------------

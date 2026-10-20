@@ -27,6 +27,7 @@ from app.banco.tabelas_lentes import (
 )
 from app.dominio.ingestao_score import Mapeamento, MencaoLida, ler_linha
 from app.dominio.texto import normalizar
+from tests.apoio_da_fonte_interna import ligar_o_crm
 from tests.test_e2e_postgres import URL
 
 _engine = create_engine(URL, pool_pre_ping=True)
@@ -216,13 +217,26 @@ def test_a_lacuna_do_autor_aparece_onde_a_pessoa_esta_olhando(sessao):
     assert any("assina" in lacuna for lacuna in matriz.ficha.lacunas)
 
 
-def test_a_lente_institucional_le_o_crm_e_nao_as_mencoes(sessao):
+def test_a_lente_INTERNA_le_o_crm_e_nao_as_mencoes(sessao):
     """A fonte dela é interna: são agendas registradas, e não menções
     ingeridas. Rodar as consultas de `mencao` aqui devolveria zero — e zero,
-    numa tela, se lê como "não houve"."""
+    numa tela, se lê como "não houve".
+
+    COM O CRM RELIGADO (`0108`): a Institucional saiu desse arranjo por decisão
+    de produto, e o mecanismo da fonte interna continua no código. É ele que
+    este teste mede."""
+    ligar_o_crm(sessao)
     dossie = _dossie(sessao, "institucional")
     for bloco in [dossie.evolucao, *dossie.paineis]:
         assert bloco.ficha.origem == "crm", bloco.titulo
+
+
+def test_a_institucional_de_hoje_le_MENCAO(sessao):
+    #: A REGRA DE HOJE, sem religar nada: toda procedência do dossiê é planilha,
+    #: porque a lente é o clipping da Clipei recortado por "Institucional".
+    dossie = _dossie(sessao, "institucional")
+    for bloco in [dossie.evolucao, *dossie.paineis]:
+        assert bloco.ficha.origem == "planilha", bloco.titulo
 
 
 def test_a_evolucao_mostra_a_janela_inteira_com_os_buracos(sessao):
@@ -930,6 +944,11 @@ def test_sem_ve_diretorio_os_orgaos_do_crm_nao_sao_nomeados(sessao):
 
 
 def test_com_ve_diretorio_os_orgaos_continuam_vindo(sessao):
+    #: COM O CRM RELIGADO (`0108`): "Órgãos com mais interações" é painel da
+    #: fonte interna. A regra medida aqui é de PERMISSÃO — quem vê o diretório
+    #: recebe o painel que nomeia terceiros —, e ela não deve morrer junto com
+    #: a decisão de produto de tirar o CRM do índice.
+    ligar_o_crm(sessao)
     paineis = _dossie_de(sessao, "institucional", ve_diretorio=True).paineis
     titulos = [p.titulo for p in paineis]
 

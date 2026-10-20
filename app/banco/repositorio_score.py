@@ -298,7 +298,17 @@ def catalogo_das_lentes(sessao: Session) -> list[LenteNoCadastro]:
             # receber importação, e o histórico dele continua valendo — ver o
             # comentário da 0048.
             fontes=tuple(f.codigo for f in por_lente.get(lente.id, ())),
-            tem_fonte_interna=any(f.interna for f in por_lente.get(lente.id, ())),
+            # A FONTE INTERNA É A EXCEÇÃO, e `ativo` conta nela. O histórico de
+            # uma fonte de planilha está gravado em `score_mes_fonte` e continua
+            # valendo depois de aposentada; o da fonte interna não existe — ela
+            # é recontada de `interacao_registro` a cada leitura. Aposentá-la só
+            # pode significar "para de contar", que é o que a `0108` fez com o
+            # CRM ao tirá-lo do índice. Ver `repositorio_lentes.lente_e_interna`,
+            # que precisa dizer o mesmo: as duas derivações divergindo partiriam
+            # a lente ao meio (nota de um lado, série do outro).
+            tem_fonte_interna=any(
+                f.interna and f.ativo for f in por_lente.get(lente.id, ())
+            ),
         )
         for lente in lentes
     ]

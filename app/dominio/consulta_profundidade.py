@@ -73,9 +73,14 @@ from app.dominio.texto import codigo_estavel, normalizar
 #: do banco, e o prefixo deixa claro de onde o JSON veio.
 VERSAO = "api-1"
 
-#: As lentes que esta consulta sabe montar. As outras três não são menções da
-#: Clipei (redes, canais próprios, CRM) e não têm pilar por matéria.
-LENTES_DA_CONSULTA = ("imprensa", "mercado")
+#: As lentes que esta consulta sabe montar: as que são menção da CLIPEI, inteira
+#: ou recortada — é a Clipei que traz o pilar por matéria, na coluna `Atributo`.
+#:
+#: A INSTITUCIONAL É A TERCEIRA desde a `0108`. Ela estava fora por ler o CRM; a
+#: razão caiu quando ela passou a ler o mesmo export que as outras duas,
+#: recortado pela subcategoria "Institucional". As outras duas lentes (redes e
+#: canais próprios) continuam fora: elas não são Clipei.
+LENTES_DA_CONSULTA = ("imprensa", "mercado", "institucional")
 
 #: Quem desce além do Nível 1. O Mercado tem a árvore calculada igual, mas a
 #: tela dele fica no Nível 1 nesta versão (decisão D2): abrir o drill é trocar

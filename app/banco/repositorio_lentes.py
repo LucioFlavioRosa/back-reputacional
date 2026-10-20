@@ -101,7 +101,24 @@ def fontes_da_lente(sessao: Session, lente_id: int) -> list[ScoreFonte]:
 
 
 def lente_e_interna(sessao: Session, lente_id: int) -> bool:
-    return any(fonte.interna for fonte in fontes_da_lente(sessao, lente_id))
+    """A lente se lê deste banco (o CRM), e não de menção ingerida.
+
+    `ativo` CONTA AQUI, e só aqui ele significa isto. Para uma fonte de planilha,
+    `ativo=false` é "parou de receber importação" e o histórico dela continua
+    valendo, porque está gravado em `score_mes_fonte` — é o que
+    `catalogo_das_lentes` documenta. A fonte interna não tem histórico gravado:
+    ela é recontada de `interacao_registro` a cada leitura. Aposentá-la só pode
+    significar "para de contar", e é o que a `0108` fez com o CRM.
+
+    SEM ISTO, A INSTITUCIONAL FICARIA PARTIDA AO MEIO — achado de revisão. Ela
+    tem as duas fontes cadastradas (o CRM aposentado e a Clipei recortada), e com
+    `any(interna)` a nota viria das menções enquanto série, explorador, recorte e
+    painéis continuariam no CRM: dois números para a mesma lente, cada um certo
+    no seu mundo, lado a lado se contradizendo.
+    """
+    return any(
+        fonte.interna and fonte.ativo for fonte in fontes_da_lente(sessao, lente_id)
+    )
 
 
 # -- a evolução mensal ----------------------------------------------------------

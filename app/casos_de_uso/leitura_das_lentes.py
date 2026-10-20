@@ -282,7 +282,21 @@ def _colunas_do_teor(linhas: list[dict]) -> list[ColunaSaida]:
 
 
 def _nomes_das_fontes(sessao, lente_id: int) -> str:
-    fontes = repositorio_lentes.fontes_da_lente(sessao, lente_id)
+    """De onde veio o dado deste bloco — o rodapé de procedência da ficha.
+
+    A FONTE INTERNA APOSENTADA SAI DA FRASE, e as de planilha ficam. É a mesma
+    assimetria de `lente_e_interna`, pela mesma razão: o histórico de uma fonte
+    de planilha aposentada continua gravado em `score_mes_fonte` e continua
+    dentro do número, então nomeá-la é dizer a verdade; a interna é recontada a
+    cada leitura, e aposentada ela não contribui com nada. Depois da `0108`, a
+    ficha da Institucional dizia "CRM dos Stakeholders · Clipei · imprensa
+    institucional" sobre um dado em que o CRM não tem parte nenhuma.
+    """
+    fontes = [
+        fonte
+        for fonte in repositorio_lentes.fontes_da_lente(sessao, lente_id)
+        if fonte.ativo or not fonte.interna
+    ]
     return " · ".join(fonte.nome for fonte in fontes) or "sem fonte cadastrada"
 
 
@@ -360,7 +374,12 @@ def evolucao(
             conclusao,
         )
 
-    interna = lente.codigo == "institucional"
+    #: PELO CADASTRO, E NÃO PELO CÓDIGO DA LENTE — achado de revisão. "Clima em
+    #: vez de sentimento" é consequência de a lente se ler do CRM, e quem sabe
+    #: disso é `lente_e_interna`. Com o código escrito aqui, a Institucional
+    #: continuaria com a legenda de clima depois da `0108`, que a fez ler
+    #: menções: a legenda diria "Proativo/Reativo" sobre barras de matérias.
+    interna = repositorio_lentes.lente_e_interna(sessao, lente.id)
     legenda, cores = (
         _legenda_e_cores_do_clima(sessao) if interna else (SENTIMENTO, CORES_DO_SENTIMENTO)
     )
@@ -587,11 +606,14 @@ def paineis(
 
     # Sociedade e Institucional: temas e onde a conversa se concentra.
     #
-    # A INSTITUCIONAL LÊ DE OUTRO LUGAR. A fonte dela é interna — são agendas
-    # registradas, e não menções ingeridas. Rodar aqui as consultas de `mencao`
-    # devolveria zero, e zero numa tela se lê como "não houve", nunca como
-    # "está noutro lugar".
-    interna = lente.codigo == "institucional"
+    # A LENTE INTERNA LÊ DE OUTRO LUGAR. A fonte dela são agendas registradas, e
+    # não menções ingeridas. Rodar aqui as consultas de `mencao` devolveria zero,
+    # e zero numa tela se lê como "não houve", nunca como "está noutro lugar".
+    #
+    # PELO CADASTRO, E NÃO PELO CÓDIGO: a Institucional deixou de ser interna na
+    # `0108`. Com o código escrito aqui, ela ficaria com os painéis do CRM sobre
+    # uma nota que passou a vir de matérias.
+    interna = repositorio_lentes.lente_e_interna(sessao, lente.id)
 
     # OS DOIS PAINÉIS DESTA LENTE FICAM COMO ESTÃO, e isto é uma decisão que eu
     # TOMEI E DESFIZ no meio do caminho.
