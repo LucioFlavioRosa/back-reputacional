@@ -148,6 +148,19 @@ def _interacao(sessao, dono: Instituicao, **extra) -> None:
     sessao.flush()
 
 
+def _apelidos(sessao, chave: str) -> list[InstituicaoApelido]:
+    """As linhas de apelido daquele nome. A chave da tabela é o PAR (nome,
+    instituição), então um nome pode ter mais de uma — é assim que a
+    ambiguidade fica registrada em vez de destruída."""
+    return list(
+        sessao.scalars(
+            select(InstituicaoApelido).where(
+                InstituicaoApelido.nome_normalizado == chave
+            )
+        )
+    )
+
+
 def _na_fila(sessao, qual) -> atores_duplicados.Duplicado | None:
     return next((d for d in atores_duplicados.listar(sessao) if d.id == qual), None)
 
@@ -655,10 +668,10 @@ def test_a_fusao_GUARDA_o_nome_que_sai_como_APELIDO(sessao):
     )
     sessao.flush()
 
-    apelido = sessao.get(InstituicaoApelido, nome_que_sai)
-    assert apelido is not None
-    assert apelido.instituicao_id == fica.id
-    assert apelido.nome == "Valor Econômico Zz76"
+    apelidos = _apelidos(sessao, nome_que_sai)
+    assert len(apelidos) == 1
+    assert apelidos[0].instituicao_id == fica.id
+    assert apelidos[0].nome == "Valor Econômico Zz76"
 
 
 def test_a_fusao_REAPONTA_os_apelidos_de_quem_sai(sessao):
@@ -682,9 +695,125 @@ def test_a_fusao_REAPONTA_os_apelidos_de_quem_sai(sessao):
     )
     sessao.flush()
 
-    apelido = sessao.get(InstituicaoApelido, nome_de_a)
-    assert apelido is not None, "o apelido de A foi embora com B"
-    assert apelido.instituicao_id == c.id
+    apelidos = _apelidos(sessao, nome_de_a)
+    assert apelidos, "o apelido de A foi embora com B"
+    assert [a.instituicao_id for a in apelidos] == [c.id]
+
+
+def test_o_apelido_AMBIGUO_e_REGISTRADO_e_nao_destruido(sessao):
+    """Dois atores com o MESMO nome, fundidos em sobreviventes diferentes.
+
+    DUAS VERSÕES ANTES DESTA, e as duas estavam erradas por motivos opostos:
+
+    * "o mais recente vence" mandava as menções que historicamente eram do
+      PRIMEIRO ator para o segundo — redirecionamento silencioso de dossiê;
+    * "nome ambíguo não aponta para ninguém" apagava o apelido — e aí o nome
+      saía de `nomes_da_lista`, e a reconciliação tirava as menções dele do
+      Mercado em TODOS os meses fechados. Uma fusão sem relação com mercado
+      mudava a série histórica.
+
+    A CHAVE É O PAR (nome, instituição), então as duas linhas coexistem: a
+    ambiguidade fica REGISTRADA. Cada leitura aplica a regra dela — ver
+    `test_o_apelido_de_DUAS_linhas_nao_resolve_o_ator` e
+    `test_o_apelido_AMBIGUO_continua_valendo_para_a_LISTA`.
+    """
+    um = _cadastrar(sessao, "Ambíguo Zz79", "entidade")
+    outro = _cadastrar(sessao, "Ambíguo Zz79", "orgao")
+    chave = um.nome_normalizado
+    assert chave == outro.nome_normalizado
+    casa_de_um = _cadastrar(sessao, "Casa Um Zz79", "entidade")
+    casa_de_outro = _cadastrar(sessao, "Casa Outra Zz79", "entidade")
+
+    atores_duplicados.fundir(
+        sessao, que_sai_id=um.id, sobrevivente_id=casa_de_um.id, contra_a_proposta=True
+    )
+    atores_duplicados.fundir(
+        sessao,
+        que_sai_id=outro.id,
+        sobrevivente_id=casa_de_outro.id,
+        contra_a_proposta=True,
+    )
+    sessao.flush()
+
+    donos = set(
+        sessao.scalars(
+            select(InstituicaoApelido.instituicao_id).where(
+                InstituicaoApelido.nome_normalizado == chave
+            )
+        )
+    )
+    assert donos == {casa_de_um.id, casa_de_outro.id}
+
+
+def test_a_MESMA_fusao_duas_vezes_nao_repete_o_apelido(sessao):
+    #: A chave do par recusaria a repetição com erro de integridade; a guarda
+    #: existe para a segunda fusão do mesmo par (que acontece quando alguém
+    #: refaz o gesto) não virar 500.
+    que_sai = _cadastrar(sessao, "Repetido Zz81", "entidade")
+    fica = _cadastrar(sessao, "Casa Repetida Zz81", "entidade")
+    chave = que_sai.nome_normalizado
+
+    atores_duplicados.fundir(
+        sessao, que_sai_id=que_sai.id, sobrevivente_id=fica.id, contra_a_proposta=True
+    )
+    sessao.flush()
+    #: O MESMO NOME de novo, noutro cadastro, para o MESMO sobrevivente.
+    de_novo = _cadastrar(sessao, "Repetido Zz81", "orgao")
+    atores_duplicados.fundir(
+        sessao, que_sai_id=de_novo.id, sobrevivente_id=fica.id, contra_a_proposta=True
+    )
+    sessao.flush()
+
+    quantas = sessao.scalar(
+        select(func.count())
+        .select_from(InstituicaoApelido)
+        .where(InstituicaoApelido.nome_normalizado == chave)
+    )
+    assert quantas == 1
+
+
+def test_a_fusao_RECUSA_tirar_um_veiculo_da_LISTA_da_lente(sessao):
+    """Fundir um veículo de lista dentro de quem não é veículo muda o índice.
+
+    ACHADO ALTO DE REVISÃO. `nomes_da_lista` exige `tipo='veiculo'`. A fusão faz o
+    sobrevivente herdar a SUBCATEGORIA, mas nunca o `tipo` — ele é identidade.
+    Então o cadastro ficava com a classificação certa e o tipo errado, e saía da
+    lente Mercado sem erro e sem aviso. Com a peça que faz a lista valer para o
+    passado, a saída ainda apagaria as menções dele de todos os meses.
+    """
+    from app.banco.tabelas_catalogo import CategoriaPublico, SubcategoriaPublico
+
+    alvo = sessao.scalar(
+        select(SubcategoriaPublico.id)
+        .join(
+            CategoriaPublico,
+            CategoriaPublico.id == SubcategoriaPublico.categoria_publico_id,
+        )
+        .where(
+            CategoriaPublico.nome == "Imprensa",
+            SubcategoriaPublico.nome == "Econômica e de negócios",
+        )
+    )
+    veiculo = _cadastrar(
+        sessao, "Valor Econômico Zz80", "veiculo", subcategoria_publico_id=alvo
+    )
+    perfil = _cadastrar(sessao, "valoreconomicozz80", "perfil_rede")
+
+    with pytest.raises(RegraViolada, match="lista de veículos"):
+        atores_duplicados.fundir(
+            sessao,
+            que_sai_id=veiculo.id,
+            sobrevivente_id=perfil.id,
+            contra_a_proposta=True,
+        )
+
+    #: E A OUTRA DIREÇÃO FUNCIONA — senão o teste passaria por a fusão estar
+    #: quebrada, e não pela guarda.
+    atores_duplicados.fundir(
+        sessao, que_sai_id=perfil.id, sobrevivente_id=veiculo.id
+    )
+    sessao.flush()
+    assert sessao.get(Instituicao, veiculo.id) is not None
 
 
 def test_o_nome_IGUAL_nao_vira_apelido(sessao):
@@ -700,7 +829,7 @@ def test_o_nome_IGUAL_nao_vira_apelido(sessao):
     )
     sessao.flush()
 
-    assert sessao.get(InstituicaoApelido, chave) is None
+    assert _apelidos(sessao, chave) == []
 
 
 def test_a_fusao_recusa_o_perfil_ligado_a_uma_pessoa(sessao):

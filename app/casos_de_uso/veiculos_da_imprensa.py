@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sqlalchemy import select
+from sqlalchemy import Text, func, select
 from sqlalchemy.orm import Session
 
 from app.banco.tabelas_catalogo import CategoriaPublico, Esfera, SubcategoriaPublico
@@ -310,14 +310,25 @@ def reconhecer(
     #: existe como entidade e como órgão), e um apelido que respondesse primeiro
     #: trocaria o ator de um cadastro VIVO pelo de uma fusão antiga. O apelido só
     #: fala sobre nome que não existe mais.
+    #: E SÓ O APELIDO DE UMA LINHA RESOLVE. A chave da tabela é o par (nome,
+    #: instituição), e o mesmo nome pode ter sido de dois cadastros fundidos em
+    #: sobreviventes diferentes. Escolher um deles seria mandar as menções de um
+    #: ator para o dossiê do outro — a mesma regra da concessionária: nunca
+    #: adivinhar quando há mais de uma candidata. O nome ambíguo segue para a
+    #: CONFERÊNCIA, que é onde gente decide.
     sem_cadastro = [chave for chave in nomes if chave not in existentes]
     if sem_cadastro:
-        for chave, ident in sessao.execute(
+        for chave, ident, quantos in sessao.execute(
             select(
-                InstituicaoApelido.nome_normalizado, InstituicaoApelido.instituicao_id
-            ).where(InstituicaoApelido.nome_normalizado.in_(sem_cadastro))
+                InstituicaoApelido.nome_normalizado,
+                func.min(InstituicaoApelido.instituicao_id.cast(Text)),
+                func.count(),
+            )
+            .where(InstituicaoApelido.nome_normalizado.in_(sem_cadastro))
+            .group_by(InstituicaoApelido.nome_normalizado)
         ).all():
-            existentes[chave] = str(ident)
+            if quantos == 1:
+                existentes[chave] = str(ident)
 
     #: O CADASTRO ATIVO INTEIRO, PELA CHAVE ACHATADA — uma consulta, e um
     #: dicionário consultado em O(1) por nome novo.
@@ -595,7 +606,39 @@ def nomes_da_lista(sessao: Session, lista: str) -> frozenset[str]:
         #: linhas com o mesmo par de nomes, o recorte inclui as duas — o que é
         #: mais seguro do que escolher uma e perder metade da lista.
     )
-    return frozenset(nome for nome in nomes if nome)
+    da_lista = {nome for nome in nomes if nome}
+
+    #: E OS APELIDOS DELES, que é conserto de um defeito ALTO achado na revisão
+    #: do apelido (`0102`).
+    #:
+    #: A LISTA É UM CONJUNTO DE NOMES, e o recorte casa o TEXTO da linha do
+    #: fornecedor contra ele. Quando dois cadastros se fundem, o nome de quem sai
+    #: deixa de existir em `instituicao` — então, sem esta união, TODA fusão que
+    #: levasse o nome de um veículo listado tirava as menções dele da lente
+    #: Mercado, em silêncio e para trás. O apelido já guarda esse nome apontando
+    #: para o cadastro que ficou; aqui ele volta a contar.
+    #:
+    #: E NÃO É SÓ A FUSÃO QUE TROCA DE TIPO: mesmo fundindo veículo em veículo, o
+    #: texto que o clipping manda todo mês é o de quem SAIU.
+    apelidos = sessao.scalars(
+        select(InstituicaoApelido.nome_normalizado)
+        .join(Instituicao, Instituicao.id == InstituicaoApelido.instituicao_id)
+        .join(
+            SubcategoriaPublico,
+            SubcategoriaPublico.id == Instituicao.subcategoria_publico_id,
+        )
+        .join(
+            CategoriaPublico,
+            CategoriaPublico.id == SubcategoriaPublico.categoria_publico_id,
+        )
+        .where(
+            Instituicao.tipo == "veiculo",
+            Instituicao.ativo.is_(True),
+            CategoriaPublico.nome == categoria,
+            SubcategoriaPublico.nome == subcategoria,
+        )
+    )
+    return frozenset(da_lista | {nome for nome in apelidos if nome})
 
 
 def _texto(valor: object) -> str | None:

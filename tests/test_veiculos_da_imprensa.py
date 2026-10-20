@@ -128,6 +128,175 @@ def test_sem_o_apelido_o_MESMO_nome_voltaria_a_nascer(sessao):
     assert [v.nome for v in reco.novos] == ["Veículo Fundido Zz11"]
 
 
+def test_o_APELIDO_de_um_veiculo_da_lista_CONTINUA_na_lista(sessao):
+    """A fusão não pode tirar o veículo da lente Mercado.
+
+    ACHADO ALTO DE REVISÃO, e é mais largo do que parecia: a lista é um conjunto
+    de NOMES, e o recorte casa o TEXTO da linha do fornecedor contra ele. Quando
+    dois cadastros se fundem, o nome de quem sai deixa de existir em
+    `instituicao` — então QUALQUER fusão que levasse o nome de um veículo listado
+    tirava as menções dele da lente, em silêncio. Não é só a fusão que troca de
+    tipo: mesmo veículo em veículo, o texto que o clipping manda todo mês é o de
+    quem SAIU.
+    """
+    from app.banco.tabelas_catalogo import CategoriaPublico, SubcategoriaPublico
+
+    alvo = sessao.scalar(
+        select(SubcategoriaPublico.id)
+        .join(
+            CategoriaPublico,
+            CategoriaPublico.id == SubcategoriaPublico.categoria_publico_id,
+        )
+        .where(
+            CategoriaPublico.nome == "Imprensa",
+            SubcategoriaPublico.nome == "Econômica e de negócios",
+        )
+    )
+    ficou = Instituicao(
+        nome="Valor Econômico SP zz13",
+        nome_normalizado=normalizar("Valor Econômico SP zz13"),
+        tipo="veiculo",
+        subcategoria_publico_id=alvo,
+    )
+    sessao.add(ficou)
+    sessao.flush()
+    sessao.add(
+        InstituicaoApelido(
+            nome_normalizado=normalizar("Valor Econômico zz13"),
+            nome="Valor Econômico zz13",
+            instituicao_id=ficou.id,
+        )
+    )
+    sessao.flush()
+
+    from app.casos_de_uso.veiculos_da_imprensa import nomes_da_lista
+
+    lista = nomes_da_lista(sessao, "imprensa_economica")
+
+    assert normalizar("Valor Econômico SP zz13") in lista
+    #: O NOME QUE A FUSÃO LEVOU continua recortando para a lente.
+    assert normalizar("Valor Econômico zz13") in lista
+
+
+def test_o_apelido_de_quem_NAO_esta_na_lista_fica_de_fora(sessao):
+    #: O controle: o apelido entra na lista PELO cadastro para onde ele aponta, e
+    #: não por ser apelido. Sem isto, um apelido qualquer alargaria a lente.
+    from app.casos_de_uso.veiculos_da_imprensa import nomes_da_lista
+
+    solto = Instituicao(
+        nome="Jornal Solto zz14",
+        nome_normalizado=normalizar("Jornal Solto zz14"),
+        tipo="veiculo",
+    )
+    sessao.add(solto)
+    sessao.flush()
+    sessao.add(
+        InstituicaoApelido(
+            nome_normalizado=normalizar("Jornalzinho zz14"),
+            nome="Jornalzinho zz14",
+            instituicao_id=solto.id,
+        )
+    )
+    sessao.flush()
+
+    assert normalizar("Jornalzinho zz14") not in nomes_da_lista(
+        sessao, "imprensa_economica"
+    )
+
+
+def test_o_apelido_de_DUAS_linhas_nao_resolve_o_ator(sessao):
+    """Nome ambíguo não vira menção no dossiê de ninguém.
+
+    A chave da tabela é o par (nome, instituição), então o MESMO nome pode ter
+    duas linhas — duas fusões de dois atores homônimos. Escolher uma delas
+    mandaria as menções de um ator para o dossiê do outro. A regra é a da
+    concessionária: nunca adivinhar com mais de uma candidata. O nome segue para
+    a conferência, que é onde gente decide.
+    """
+    uma = Instituicao(
+        nome="Casa Uma zz15", nome_normalizado=normalizar("Casa Uma zz15"), tipo="entidade"
+    )
+    outra = Instituicao(
+        nome="Casa Outra zz15",
+        nome_normalizado=normalizar("Casa Outra zz15"),
+        tipo="entidade",
+    )
+    sessao.add_all([uma, outra])
+    sessao.flush()
+    chave = normalizar("Homônimo zz15")
+    sessao.add_all(
+        [
+            InstituicaoApelido(
+                nome_normalizado=chave, nome="Homônimo zz15", instituicao_id=uma.id
+            ),
+            InstituicaoApelido(
+                nome_normalizado=chave, nome="Homônimo zz15", instituicao_id=outra.id
+            ),
+        ]
+    )
+    sessao.flush()
+
+    reco = reconhecer(sessao, _da_planilha("Homônimo zz15"))
+
+    assert reco.cadastrados == {}
+    assert [v.nome for v in reco.novos] == ["Homônimo zz15"]
+
+
+def test_o_apelido_AMBIGUO_continua_valendo_para_a_LISTA(sessao):
+    """A lente não perde o veículo por causa de uma fusão alheia.
+
+    É a outra metade do teste acima, e a razão de a ambiguidade ser REGISTRADA
+    em vez de apagada: a pergunta da lente não é "de quem é esta menção", é
+    "este texto é de um veículo da lista". Se UMA das linhas aponta para um
+    veículo listado, a resposta é sim — e as menções históricas continuam no
+    Mercado.
+
+    A versão que apagava o apelido ambíguo fazia uma fusão sem relação com
+    mercado mudar a série de meses fechados.
+    """
+    from app.banco.tabelas_catalogo import CategoriaPublico, SubcategoriaPublico
+    from app.casos_de_uso.veiculos_da_imprensa import nomes_da_lista
+
+    alvo = sessao.scalar(
+        select(SubcategoriaPublico.id)
+        .join(
+            CategoriaPublico,
+            CategoriaPublico.id == SubcategoriaPublico.categoria_publico_id,
+        )
+        .where(
+            CategoriaPublico.nome == "Imprensa",
+            SubcategoriaPublico.nome == "Econômica e de negócios",
+        )
+    )
+    listado = Instituicao(
+        nome="Veículo Listado zz16",
+        nome_normalizado=normalizar("Veículo Listado zz16"),
+        tipo="veiculo",
+        subcategoria_publico_id=alvo,
+    )
+    qualquer = Instituicao(
+        nome="Entidade Qualquer zz16",
+        nome_normalizado=normalizar("Entidade Qualquer zz16"),
+        tipo="entidade",
+    )
+    sessao.add_all([listado, qualquer])
+    sessao.flush()
+    chave = normalizar("Homônimo zz16")
+    sessao.add_all(
+        [
+            InstituicaoApelido(
+                nome_normalizado=chave, nome="Homônimo zz16", instituicao_id=listado.id
+            ),
+            InstituicaoApelido(
+                nome_normalizado=chave, nome="Homônimo zz16", instituicao_id=qualquer.id
+            ),
+        ]
+    )
+    sessao.flush()
+
+    assert chave in nomes_da_lista(sessao, "imprensa_economica")
+
+
 def test_o_apelido_NAO_vence_um_cadastro_vivo_de_mesmo_nome(sessao):
     """A ordem é cadastro exato primeiro, apelido depois.
 

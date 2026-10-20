@@ -33,28 +33,52 @@
 --: ele não depende de `grant delete` para `painel_app`.
 --:
 --: PERMISSÃO: `select`, `insert` e `update` vêm do default ACL do schema, como
---: em toda tabela nova; é o que a fusão precisa (criar o apelido e reapontar).
---: `delete` NÃO é concedido, e é deliberado — apagar apelido não é gesto do app,
---: e a memória deste projeto registra que tabela nova sem `grant` deixa a suíte
---: verde e quebra só no ambiente implantado. `tests/test_papel_restrito.py`
---: conecta como `painel_app` de verdade e exercita esta tabela por isso.
+--: em toda tabela nova, e é o que a fusão precisa — ela só acrescenta linha e
+--: reaponta. `delete` NÃO é concedido: o nome ambíguo passou a ser REGISTRADO
+--: como duas linhas em vez de apagado (ver a chave primária), então não há mais
+--: gesto de apagar no app. `tests/test_papel_restrito.py` conecta como
+--: `painel_app` de verdade e exercita a tabela, porque a memória deste projeto
+--: registra que tabela nova sem `grant` deixa a suíte verde e quebra só no
+--: ambiente implantado.
 --:
 --: Idempotente.
 
 begin;
 
 create table if not exists instituicao_apelido (
-    --: A CHAVE É O NOME JÁ NORMALIZADO (`dominio/texto.normalizar`: minúscula,
-    --: sem acento, espaço colapsado) — a MESMA com que `reconhecer` procura o
-    --: cadastro. Chave diferente da busca seria um apelido que nunca casa.
-    nome_normalizado   text  primary key,
+    --: O NOME JÁ NORMALIZADO (`dominio/texto.normalizar`: minúscula, sem acento,
+    --: espaço colapsado) — o MESMO com que `reconhecer` procura o cadastro.
+    --: Chave diferente da busca seria um apelido que nunca casa.
+    nome_normalizado   text  not null,
     --: A grafia como ela existia no cadastro que saiu, para a tela poder dizer
     --: "«Valor Econômico» agora é «valoreconomico»" em vez de mostrar a chave.
     nome               text  not null,
     --: O cadastro que FICOU.
     instituicao_id     uuid  not null
         references instituicao (id) on delete cascade,
-    criado_em          timestamptz not null default now()
+    criado_em          timestamptz not null default now(),
+    --: A CHAVE É O PAR, e não o nome sozinho — e esta é a decisão mais
+    --: importante da tabela.
+    --:
+    --: DOIS CADASTROS VIVOS PODEM TER O MESMO `nome_normalizado`: a coluna não é
+    --: única em `instituicao`, e ALMG existe como entidade e como órgão. Cada um
+    --: pode ser fundido num sobrevivente DIFERENTE, e aí o mesmo nome aponta
+    --: para dois lugares.
+    --:
+    --: A PRIMEIRA VERSÃO TINHA O NOME COMO CHAVE e resolvia o conflito
+    --: APAGANDO o apelido — "nome ambíguo não aponta para ninguém". Isso
+    --: protegia o dossiê (nunca adivinhar) e cobrava caro na lente: o nome saía
+    --: de `nomes_da_lista` e, com a reconciliação, as menções dele sumiam do
+    --: Mercado em TODOS os meses fechados. Uma fusão sem relação com mercado
+    --: mudava a série histórica.
+    --:
+    --: GUARDANDO O PAR, a ambiguidade fica REGISTRADA em vez de destruída, e
+    --: cada leitura aplica a regra DELA: `reconhecer` só resolve o nome que tem
+    --: UMA linha (nunca adivinha o ator), e `nomes_da_lista` inclui o nome se
+    --: QUALQUER uma das linhas aponta para um veículo da lista (o texto era, e
+    --: continua sendo, de um veículo listado). Duas perguntas diferentes sobre o
+    --: mesmo nome, duas respostas certas.
+    primary key (nome_normalizado, instituicao_id)
 );
 
 --: A BUSCA DE QUEM APONTA PARA UM CADASTRO acontece em toda fusão, para

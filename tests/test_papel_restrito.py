@@ -356,10 +356,21 @@ def test_fundir_grava_e_reaponta_o_apelido_com_o_papel_restrito(sessao_restrita,
     )
     sessao_restrita.flush()
 
-    assert (
-        sessao_restrita.get(InstituicaoApelido, "nome que saiu restrito").instituicao_id
-        == outro.id
-    )
+    assert sessao_restrita.scalars(
+        select(InstituicaoApelido.instituicao_id).where(
+            InstituicaoApelido.nome_normalizado == "nome que saiu restrito"
+        )
+    ).all() == [outro.id]
+
+    #: E `delete` NÃO É CONCEDIDO, de propósito: o nome ambíguo passou a ser
+    #: REGISTRADO como duas linhas em vez de apagado, então não há gesto de
+    #: apagar no app. A revogação é a que `test_nenhuma_trilha_e_gravavel...`
+    #: cobra de toda tabela nova — e aqui ela também diz que o desenho do apelido
+    #: não depende de apagar.
+    with pytest.raises(ProgrammingError, match="permission denied"), _isolado(
+        sessao_restrita
+    ):
+        sessao_restrita.execute(text("delete from instituicao_apelido"))
 
 
 def test_remover_porta_voz_funciona_com_o_papel_restrito(sessao_restrita, semente):
