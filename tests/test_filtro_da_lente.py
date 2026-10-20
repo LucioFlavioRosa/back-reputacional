@@ -127,7 +127,7 @@ def test_evolucao_fala_de_materia_e_nao_repete_a_manchete_da_nota(sessao, impren
 
     assert dossie.evolucao.titulo == "Evolução das matérias"
     assert dossie.evolucao.conclusao == (
-        "6 matérias em junho: 33% positivas, 33% neutras, 33% negativas."
+        "6 matérias em junho: 33% propositivas, 33% neutras, 33% reativas."
     )
     assert dossie.evolucao.conclusao != dossie.manchete
 
@@ -217,15 +217,15 @@ def test_opcoes_de_filtro_vazias_fora_do_mes_semeado(sessao, imprensa_de_junho):
 # -- o drill-down: últimas matérias ----------------------------------------------
 
 
-def test_materias_recentes_aparece_com_teto_de_cinco(sessao, imprensa_de_junho):
-    """Seis menções semeadas, teto de cinco — o recorte pedido para o
-    exercício não é "todas", é uma amostra pequena."""
+def test_materias_recentes_mostra_as_seis_abaixo_do_teto(sessao, imprensa_de_junho):
+    """Seis menções semeadas, teto de 15 (`TETO_DAS_ULTIMAS_MATERIAS`, por
+    pedido: o card rola e mostra as 15 últimas) — as seis aparecem."""
     dossie = _dossie(sessao)
 
     bloco = dossie.materias_recentes
     assert bloco.tipo == "tabela"
     assert bloco.subtipo == "materias"
-    assert len(bloco.dados) == 5
+    assert len(bloco.dados) == 6
     # Nenhuma das seis menções do fixture tem `data` — a ordenação cai para
     # `criado_em`, mas o que este teste trava é só o teto, não a ordem exata.
     assert {linha["veiculo"] for linha in bloco.dados} <= {"Veículo A", "Veículo B"}
@@ -775,20 +775,20 @@ def test_as_lentes_sem_veiculo_continuam_vazias_e_dizem_o_motivo(sessao):
 
 def test_materias_recentes_sobe_o_teto_quando_ha_recorte(sessao):
     """Clicar num veículo do placar de clima precisa mostrar TODAS as
-    matérias por trás daquele saldo, não só uma amostra de 5 — ver
+    matérias por trás daquele saldo, não só a amostra de 15 — ver
     `TETO_DE_MATERIAS_FILTRADO`."""
     clipei = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "clipei")).one()
-    for _ in range(7):
+    for _ in range(20):
         sessao.add(
             Mencao(fonte_id=clipei.id, mes=MES, sentimento="pos", veiculo="Veículo Único")
         )
     sessao.flush()
 
     sem_filtro = _dossie(sessao)
-    assert len(sem_filtro.materias_recentes.dados) == 5
+    assert len(sem_filtro.materias_recentes.dados) == 15
 
     com_filtro = _dossie(sessao, veiculo="Veículo Único")
-    assert len(com_filtro.materias_recentes.dados) == 7
+    assert len(com_filtro.materias_recentes.dados) == 20
 
 
 # =============================================================================
@@ -1333,3 +1333,27 @@ def test_DENTRO_de_um_tema_a_primeira_aba_e_o_SUBTEMA(sessao, sociedade_de_junho
     assert {linha["rotulo"] for linha in do_subtema.dados} == {"Falta de água", "Água turva"}
     #: E O TEMA NÃO SE REPETE dentro de si mesmo.
     assert "tema" not in [bloco.recorta for bloco in dentro.dentro]
+
+
+def test_o_top_tier1_so_traz_veiculo_tier_1_com_o_sentimento(sessao):
+    """Embaixo de "Tier do veículo × sentimento": os veículos TIER 1 com mais
+    matérias, em quantidade, e nenhum veículo de outro tier."""
+    clipei = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "clipei")).one()
+    for sentimento in ("pos", "pos", "neg"):
+        sessao.add(
+            Mencao(
+                fonte_id=clipei.id, mes=MES, sentimento=sentimento,
+                veiculo="Jornal Grande", tier="muito_relevante",
+            )
+        )
+    for _ in range(5):
+        sessao.add(
+            Mencao(fonte_id=clipei.id, mes=MES, sentimento="neu", veiculo="Blog", tier="relevante")
+        )
+    sessao.flush()
+
+    bloco = _dossie(sessao).veiculos_tier1
+    assert bloco is not None
+    assert [linha["rotulo"] for linha in bloco.dados] == ["Jornal Grande"]
+    assert bloco.dados[0]["positivo"] == 2 and bloco.dados[0]["negativo"] == 1
+    assert bloco.dados[0]["valor"] == 3

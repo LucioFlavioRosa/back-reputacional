@@ -167,6 +167,9 @@ class DossieSaida(BaseModel):
     top_veiculos: BlocoSaida
     #: O placar de clima por veículo — ver `veiculos`. Vazio na Institucional.
     clima_por_veiculos: BlocoSaida
+    #: Os 10 veículos Tier 1 com mais matérias, com o sentimento de cada um —
+    #: embaixo do painel "Tier do veículo × sentimento". Ver `veiculos_tier1`.
+    veiculos_tier1: BlocoSaida | None = None
     #: O que está puxando a lente pra cima ou pra baixo, por atributo
     #: reputacional — ver `drivers_e_riscos`. Vazio na Institucional.
     drivers_e_riscos: BlocoSaida
@@ -275,3 +278,35 @@ class OpcoesDeFiltroSaida(BaseModel):
     temas_n1: list[str] = []
     temas_n2: list[str] = []
     temas_n3: list[str] = []
+
+
+class GrupoDoExploradorSaida(BaseModel):
+    """Um pedaço do mês: N1, N2, N3 e UF, com contagem e peso por sentimento.
+
+    Nulo onde a menção não traz o campo — a tela deixa de fora da barra
+    daquele nível, mas a menção continua valendo nos outros.
+    """
+
+    n1: str | None
+    n2: str | None
+    n3: str | None
+    uf: str | None
+    positivo: int
+    neutro: int
+    negativo: int
+    peso_positivo: float
+    peso_neutro: float
+    peso_negativo: float
+
+
+class ExploradorSaida(BaseModel):
+    """Os grupos do mês e o denominador da nota — a tela soma o resto.
+
+    `impacto(S) = 50 × (Σ peso_positivo − Σ peso_negativo) ÷ denominador`, a
+    mesma regra de `impacto_do_recorte`; e a nota de uma UF sai dos pesos dela.
+    """
+
+    lente: str
+    mes: str
+    denominador: float
+    grupos: list[GrupoDoExploradorSaida]

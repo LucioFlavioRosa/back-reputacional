@@ -283,6 +283,22 @@ def test_o_rotulo_do_dicionario_resolve_para_o_CODIGO_gravado(sessao, semente):
     assert proposta.entrada.clima == semente["clima"].codigo
 
 
+@pytest.mark.parametrize(
+    ("nome_antigo", "codigo"),
+    [("Positivo", "propositivo"), ("Proativo", "propositivo"), ("Negativo", "tenso")],
+)
+def test_o_nome_ANTIGO_do_termometro_ainda_resolve(sessao, semente, nome_antigo, codigo):
+    """O rótulo virou Propositivo/Reativo (0106), mas planilhas preenchidas com
+    "Positivo", "Negativo" ou o ainda mais antigo "Proativo" seguem circulando —
+    e não podem virar divergência."""
+    conteudo = _preenchida(sessao, agendas=[_agenda(semente, **{"Clima": nome_antigo})])
+
+    (proposta,) = importar_agendas.propor(sessao, conteudo)
+
+    assert proposta.divergencias == []
+    assert proposta.entrada.clima == codigo
+
+
 def test_o_rotulo_do_dicionario_resolve_para_o_ID_quando_o_campo_e_id(sessao, semente):
     conteudo = _preenchida(
         sessao, agendas=[_agenda(semente, **{"Tipo de interação": semente["formato"].nome})]

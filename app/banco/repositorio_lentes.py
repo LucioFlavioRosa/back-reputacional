@@ -67,7 +67,7 @@ from app.dominio.consulta_profundidade import (
     Taxonomia,
     TemaDaTaxonomia,
 )
-from app.dominio.score import Calibracao, FiltroDeMencoes
+from app.dominio.score import Calibracao, FiltroDeMencoes, peso_da_mencao
 
 
 def meses_ate(mes: date, quantos: int) -> list[date]:
@@ -914,6 +914,85 @@ def _presenca_da_taxonomia(
     return Presenca(preenchidas=int(preenchidas or 0), distintas=int(distintas or 0))
 
 
+def grupos_do_explorador(
+    sessao: Session,
+    lente_id: int,
+    mes: date,
+    calibracao: Calibracao,
+    regua: str,
+    filtro: FiltroDeMencoes | None = None,
+) -> list[dict]:
+    """As menções do mês agrupadas por N1 (atributo), N2, N3 e UF — o que os
+    gráficos N1 › N2 › N3 e o mapa da Síntese executiva somam.
+
+    AGREGADO PRONTO PARA SER SOMADO NA TELA, e é o que faz o clique ser
+    instantâneo: escolher um N1 refaz o N2, o N3 e o mapa somando estas linhas
+    no navegador, sem nova ida ao servidor. Cada linha traz a contagem (o que a
+    barra desenha) e o peso por sentimento (o que a nota e o impacto usam) —
+    peso se soma, e o denominador do mês é um só.
+
+    O PESO É O DA NOTA (`peso_da_mencao`, régua do mês): a soma dos pesos de
+    todas as linhas é o denominador do mês, e é por isso que o impacto de cada
+    barra fecha com a nota.
+    """
+    consulta = (
+        select(
+            ATRIBUTO_SEM_PREFIXO.label("n1"),
+            MacroTema.nome.label("n2"),
+            Tema.nome.label("n3"),
+            Mencao.uf,
+            Mencao.sentimento,
+            Mencao.tier,
+            Mencao.cargo,
+            Mencao.engajamento,
+            func.count().label("quantas"),
+        )
+        .select_from(Mencao)
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .outerjoin(Tema, Tema.id == Mencao.tema_id)
+        .outerjoin(MacroTema, MacroTema.id == Tema.macro_tema_id)
+        .where(
+            ScoreFonte.lente_id == lente_id,
+            Mencao.mes == primeiro_dia(mes),
+            *so_fontes_ligadas(calibracao),
+            *condicoes_do_filtro(filtro),
+        )
+        .group_by(
+            ATRIBUTO_SEM_PREFIXO,
+            MacroTema.nome,
+            Tema.nome,
+            Mencao.uf,
+            Mencao.sentimento,
+            Mencao.tier,
+            Mencao.cargo,
+            Mencao.engajamento,
+        )
+    )
+    grupos: dict[tuple, dict] = {}
+    for linha in sessao.execute(consulta):
+        chave = (linha.n1 or None, linha.n2, linha.n3, linha.uf)
+        grupo = grupos.setdefault(
+            chave,
+            {
+                "n1": chave[0],
+                "n2": chave[1],
+                "n3": chave[2],
+                "uf": chave[3],
+                "positivo": 0,
+                "neutro": 0,
+                "negativo": 0,
+                "peso_positivo": 0.0,
+                "peso_neutro": 0.0,
+                "peso_negativo": 0.0,
+            },
+        )
+        lado = {"pos": "positivo", "neg": "negativo"}.get(linha.sentimento, "neutro")
+        peso = peso_da_mencao(linha.tier, linha.cargo, linha.engajamento, calibracao, regua)
+        grupo[lado] += int(linha.quantas)
+        grupo[f"peso_{lado}"] += peso * int(linha.quantas)
+    return list(grupos.values())
+
+
 def presenca_das_dimensoes(
     sessao: Session,
     campos: Sequence[str],
@@ -1232,9 +1311,13 @@ def veiculos_por_sentimento(
     calibracao: Calibracao,
     filtro: FiltroDeMencoes | None = None,
     quantos: int = 5,
+    so_do_tier: str | None = None,
 ) -> list[dict]:
     """Os veículos com mais matérias no mês — "quem é a cobertura" desta
     lente, e o saldo de sentimento de cada um.
+
+    `so_do_tier` restringe a um tier (`muito_relevante` para o Top 10 Tier 1 do
+    painel "Tier do veículo × sentimento"), somado ao filtro da tela.
 
     POR VOLUME, E NÃO POR SALDO — mesmo critério de `unidades_da_lente` e do
     placar de clima do Painel (CRM): o veículo que mais falou da companhia
@@ -1256,6 +1339,7 @@ def veiculos_por_sentimento(
             ScoreFonte.lente_id == lente_id,
             Mencao.mes == primeiro_dia(mes),
             Mencao.veiculo.is_not(None),
+            *((Mencao.tier == so_do_tier,) if so_do_tier else ()),
             *so_fontes_ligadas(calibracao),
             *condicoes_do_filtro(filtro),
         )
