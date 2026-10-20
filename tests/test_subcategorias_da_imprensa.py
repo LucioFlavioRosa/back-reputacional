@@ -94,6 +94,14 @@ def test_INSTITUCIONAL_e_uma_opcao_da_imprensa(sessao):
     #: NO FIM, PELO NÚMERO e não só pela posição na lista: `ordem` é o que a
     #: rota usa para ordenar, e as quatro de antes não podem ter se mexido.
     assert institucional.ordem == 5
+    #: E AS CINCO ORDENS SÃO DISTINTAS, que é a premissa silenciosa da asserção
+    #: de cima — ACHADO DA SEGUNDA REVISÃO. Não há unicidade em
+    #: (categoria_publico_id, ordem): só (categoria_publico_id, codigo). Com
+    #: duas linhas na mesma `ordem`, a lista acima passaria ou não conforme a
+    #: ordem FÍSICA do banco, e eu estaria afirmando uma posição que o esquema
+    #: não garante. A rota agora desempata pelo `id`, mas empate em `ordem`
+    #: continua sendo um erro de semeadura — e é aqui que ele aparece.
+    assert len({s.ordem for s in ativas}) == len(ativas)
 
 
 def test_INSTITUCIONAL_chega_na_TELA_pelos_dicionarios(cliente, sessao):
