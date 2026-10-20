@@ -1688,6 +1688,128 @@ def so_interacoes_visiveis() -> list:
     ]
 
 
+@dataclass(frozen=True, slots=True)
+class RegistroDaJanela:
+    """Uma menção do quadro da janela, como a tela a mostra."""
+
+    id: str
+    data: date
+    veiculo: str | None
+    titulo: str | None
+    link: str | None
+    sentimento: str
+    tier: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class RegistrosDaJanela:
+    itens: tuple[RegistroDaJanela, ...]
+    total: int
+    pagina: int
+    tamanho: int
+
+
+def registros_do_grupo_na_janela(
+    sessao: Session,
+    lente_id: int,
+    de: date,
+    ate: date,
+    grupo_id: int,
+    calibracao: Calibracao,
+    nivel: str = NIVEL_DO_TEMA,
+    pagina: int = 1,
+    tamanho: int = 50,
+) -> RegistrosDaJanela:
+    """As menções que compõem UM grupo do quadro, paginadas.
+
+    O RECORTE É O MESMO DE `somas_por_nivel_na_janela`, linha por linha, e isso
+    é o ponto inteiro desta função. A rota da Base das lentes já lista menções
+    por período e por tema — e não serve aqui, por três diferenças medidas:
+
+    * ela casa a data por `coalesce(data, mes)`, de propósito, para a linha sem
+      data continuar achável pelo mês. A janela faz o OPOSTO: exige `data` e
+      conta as sem data à parte, naquela linha "fora desta conta". Pela rota da
+      Base, o modal traria de volta justamente as que o quadro excluiu;
+    * ela não tira as fontes que a calibração desligou, e o impacto do quadro
+      tira — "contá-las faria o impacto de um pilar incluir o que a nota
+      ignorou";
+    * ela filtra o nível por NOME, e nome de N2 não é único no cadastro. O
+      quadro agrupa por id desde o achado dos homônimos; clicar em "Tarifa"
+      traria a "Tarifa" de outro pilar junto.
+
+    Qualquer uma das três faz a lista discordar do número que está ao lado dela
+    na mesma tela — e quem lê não tem como saber qual das duas está certa.
+
+    PAGINADA, e com o total: um pilar de janela cheia passa de centena, e a
+    tela precisa dizer "8 de 312" em vez de fingir que mostrou tudo.
+    """
+    if nivel not in NIVEIS_DA_JANELA:
+        raise ValueError(f"nível desconhecido: {nivel!r}")
+
+    coluna_da_mencao = (
+        Mencao.macro_tema_id if nivel == NIVEL_DO_TEMA else Mencao.bloco_tema_id
+    )
+    onde = [
+        ScoreFonte.lente_id == lente_id,
+        #: O MESMO PAR `mes`+`data` da janela: `mes` é quem tem índice, e sem
+        #: ele a consulta varre a tabela inteira.
+        Mencao.mes.in_(meses_da_janela(de, ate)),
+        Mencao.data.is_not(None),
+        Mencao.data >= de,
+        Mencao.data <= ate,
+        coluna_da_mencao == grupo_id,
+        *so_fontes_ligadas(calibracao),
+    ]
+
+    total = (
+        sessao.scalar(
+            select(func.count())
+            .select_from(Mencao)
+            .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+            .where(*onde)
+        )
+        or 0
+    )
+
+    linhas = sessao.execute(
+        select(
+            Mencao.id,
+            Mencao.data,
+            Mencao.veiculo,
+            Mencao.titulo_texto,
+            Mencao.link,
+            Mencao.sentimento,
+            Mencao.tier,
+        )
+        .select_from(Mencao)
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .where(*onde)
+        #: A MAIS NOVA PRIMEIRO, e o `id` fecha a ordem: várias matérias caem no
+        #: mesmo dia, e sem o desempate a página 2 pode repetir uma linha da 1.
+        .order_by(Mencao.data.desc(), Mencao.id)
+        .offset((pagina - 1) * tamanho)
+        .limit(tamanho)
+    ).all()
+
+    return RegistrosDaJanela(
+        itens=tuple(
+            RegistroDaJanela(
+                id=str(linha.id),
+                data=linha.data,
+                veiculo=linha.veiculo,
+                titulo=linha.titulo_texto,
+                link=linha.link,
+                sentimento=linha.sentimento,
+                tier=linha.tier,
+            )
+            for linha in linhas
+        ),
+        total=total,
+        pagina=pagina,
+        tamanho=tamanho,
+    )
+
+
 def so_fontes_ligadas(calibracao: Calibracao) -> list:
     """As condições que tiram do resultado as fontes que a calibração desligou.
 

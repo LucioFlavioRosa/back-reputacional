@@ -528,6 +528,66 @@ def test_O_PILAR_ALCANCA_O_QUE_O_TEMA_NAO_ALCANCA(sessao, clipei, temas, mes_com
     assert no_tema.negativos[0].contexto is not None
 
 
+def test_o_TOTAL_do_modal_e_o_NUMERO_do_quadro(sessao, clipei, temas, mes_com_base):
+    """A promessa inteira do modal dos registros, medida contra a fonte do número.
+
+    O QUADRO conta somando `linha.mencoes` por fonte ligada, aqui dentro; O MODAL
+    conta `count(*)` no repositório, com os mesmos predicados. Os dois números
+    ficam LADO A LADO na tela — a contagem na linha, o total no cabeçalho do que
+    ela abre — e divergir é afirmar duas contagens do mesmo recorte sem dizer
+    qual vale. Foi o defeito da 0098: a barra do N2 contava 29.701 e o clique
+    alcançava 30.932.
+
+    NOS DOIS NÍVEIS, COM A MENÇÃO SÓ-PILAR NO MEIO, que é o caso volumoso (72.590
+    na Clipei) e o único em que os dois lados leem colunas diferentes: o quadro
+    agrupa pelo nível pedido, e o modal filtra pela coluna dele.
+
+    ESTE TESTE MORA AQUI, e não junto dos outros do modal, porque o quadro só
+    existe com `mes_com_base`: sem a base o mês devolve listas vazias, e o teste
+    passaria comparando dois nadas — a armadilha que esta fixture documenta.
+    """
+    pai = sessao.scalars(select(BlocoTema).order_by(BlocoTema.id)).first()
+    com_tema = next(iter(temas))
+    #: DUAS COM TEMA (e com pilar, derivado) e DUAS SÓ COM PILAR.
+    for _ in range(2):
+        _mencao(sessao, clipei, sentimento="neg", n2=temas[com_tema], dia=CLICADO)
+        sessao.add(
+            Mencao(
+                fonte_id=clipei.id,
+                mes=MES,
+                data=CLICADO,
+                sentimento="neg",
+                bloco_tema_id=pai.id,
+                macro_tema_id=None,
+            )
+        )
+    #: E O QUE OS DOIS LADOS TÊM DE EXCLUIR: a de antes da janela e a sem data.
+    _mencao(sessao, clipei, sentimento="neg", n2=temas[com_tema], dia=date(2026, 5, 1))
+    _mencao(sessao, clipei, sentimento="neg", n2=temas[com_tema], dia=None)
+    sessao.flush()
+
+    for nivel, grupo_id in (("n1", pai.id), ("n2", temas[com_tema])):
+        quadro = impacto_na_janela.ler(sessao, ate=CLICADO, dias=15, nivel=nivel)
+        no_quadro = [
+            g for g in (*quadro.positivos, *quadro.negativos) if g.id == grupo_id
+        ]
+        assert no_quadro, f"o grupo pedido não apareceu no quadro do {nivel}"
+        no_modal = impacto_na_janela.registros(
+            sessao, ate=CLICADO, grupo=grupo_id, nivel=nivel
+        )
+        assert no_modal.total == no_quadro[0].mencoes, nivel
+        assert len(no_modal.itens) == no_modal.total
+
+    #: E OS DOIS NÍVEIS NÃO CONTAM O MESMO, que é o que prova que a menção
+    #: só-pilar entrou num e não no outro — sem isto, dois zeros também passariam.
+    assert impacto_na_janela.registros(
+        sessao, ate=CLICADO, grupo=pai.id, nivel="n1"
+    ).total == 4
+    assert impacto_na_janela.registros(
+        sessao, ate=CLICADO, grupo=temas[com_tema], nivel="n2"
+    ).total == 2
+
+
 def test_o_nivel_DESCONHECIDO_e_recusado(sessao, clipei):
     """Um nível que não existe devolveria a janela do padrão em silêncio, e a
     tela afirmaria estar mostrando o que pediu."""

@@ -224,6 +224,80 @@ def test_impacto_por_n2_devolve_os_PILARES_de_verdade(sessao):
     assert primeiro["mencoes"] == 1
 
 
+def test_os_REGISTROS_do_quadro_voltam_com_a_pagina_e_o_total(sessao):
+    """O que abre ao clicar num tema do quadro.
+
+    O PEDIDO: "se eu clicar em alguma dessas opções quero que abra um modal com
+    os registros do tema ou pilar, assim como fazemos nas lentes no KPI".
+
+    AQUI, E NÃO NUM CLIENTE PRÓPRIO: a rota mora no roteador do Mercado, atrás do
+    guarda do portal E da bandeira de lançamento. Um `TestClient` com sobrescrita
+    de sessão leva 403 das duas formas — e as duas dizem a mesma coisa, que foi o
+    teste meu que já passou por motivo errado neste arquivo.
+
+    SEMEIA DADO, pelo mesmo motivo do teste do impacto: a serialização de uma
+    LINHA é o que quebra, e com a lista vazia a compreensão nunca roda.
+    """
+    usuario = _usuario(sessao, alcanca_mercado=True)
+    clipei = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "clipei")).one()
+    tema = sessao.scalars(select(MacroTema)).first()
+    assert tema is not None, "o cadastro precisa de um N2"
+
+    sessao.add(
+        Mencao(
+            fonte_id=clipei.id,
+            mes=date(2026, 5, 1),
+            data=date(2026, 5, 18),
+            sentimento="pos",
+            macro_tema_id=tema.id,
+            veiculo="Valor Econômico",
+            titulo_texto="A matéria do quadro",
+            link="https://exemplo/materia",
+        )
+    )
+    sessao.flush()
+
+    cliente, _ = _cliente(sessao, usuario, lancado=True)
+    resposta = cliente.get(
+        f"/api/mercado/impacto-na-janela/registros?ate=2026-05-20&grupo={tema.id}"
+    )
+
+    assert resposta.status_code == 200, resposta.text
+    corpo = resposta.json()
+    assert corpo["total"] == 1
+    linha = corpo["itens"][0]
+    assert linha["titulo"] == "A matéria do quadro"
+    assert linha["veiculo"] == "Valor Econômico"
+    assert linha["link"] == "https://exemplo/materia"
+    assert linha["data"] == "2026-05-18"
+    assert linha["sentimento"] == "pos"
+
+
+def test_os_registros_SEM_o_grupo_sao_recusados(sessao):
+    #: Sem o grupo a rota não tem o que abrir, e um padrão devolveria a lista de
+    #: um grupo que ninguém pediu.
+    usuario = _usuario(sessao, alcanca_mercado=True)
+    cliente, _ = _cliente(sessao, usuario, lancado=True)
+
+    resposta = cliente.get("/api/mercado/impacto-na-janela/registros?ate=2026-05-20")
+
+    assert resposta.status_code == 422
+
+
+def test_os_registros_tambem_passam_pelo_guarda_do_portal(sessao):
+    #: A mesma afirmação que a rota do impacto tem a sua: "o guarda é do
+    #: roteador" para de valer no dia em que alguém montar a rota noutro lugar.
+    usuario = _usuario(sessao, alcanca_mercado=True)
+    cliente, _ = _cliente(sessao, usuario, lancado=False)
+
+    recusada = cliente.get(
+        "/api/mercado/impacto-na-janela/registros?ate=2026-05-20&grupo=1"
+    )
+
+    assert recusada.status_code == 403
+    assert "mercado" in recusada.json()["detalhe"].lower()
+
+
 def test_impacto_por_n2_SEM_a_data_e_recusado(sessao):
     """`ate` é o dia que a pessoa clicou. Um padrão aqui faria a tela mostrar uma
     janela que ninguém pediu quando o parâmetro se perdesse no caminho."""

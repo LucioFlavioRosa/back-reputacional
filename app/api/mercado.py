@@ -199,6 +199,78 @@ def _grupo(p: impacto_na_janela.ImpactoDoGrupo) -> GrupoNaJanelaSaida:
     )
 
 
+class RegistroDaJanelaSaida(BaseModel):
+    id: str
+    data: date
+    veiculo: str | None
+    titulo: str | None
+    link: str | None
+    sentimento: str
+    tier: str | None
+
+
+class RegistrosDaJanelaSaida(BaseModel):
+    itens: list[RegistroDaJanelaSaida]
+    total: int
+    pagina: int
+    tamanho: int
+
+
+@rotas.get("/impacto-na-janela/registros")
+def registros_da_janela(
+    sessao: Sessao,
+    usuario: UsuarioLogado,
+    ate: Annotated[date, Query()],
+    grupo: Annotated[int, Query(description="o id do pilar ou do tema do quadro")],
+    dias: Annotated[int, Query(ge=1, le=90)] = impacto_na_janela.DIAS_DA_JANELA,
+    nivel: Annotated[str, Query(pattern="^(n1|n2)$")] = impacto_na_janela.NIVEL_PADRAO,
+    pagina: Annotated[int, Query(ge=1)] = 1,
+    tamanho: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> RegistrosDaJanelaSaida:
+    """As menções que compõem um grupo do quadro — o que abre ao clicar nele.
+
+    O PEDIDO: "se eu clicar em alguma dessas opções quero que abra um modal com
+    os registros do tema ou pilar, assim como fazemos nas lentes no KPI".
+
+    `grupo` É O ID, e não o nome: nome de tema estratégico NÃO é único no
+    cadastro, e o quadro agrupa por id desde o achado dos homônimos. Pelo nome,
+    clicar em "Tarifa" traria junto a "Tarifa" de outro pilar — e a lista
+    discordaria da contagem que está ao lado dela, na mesma tela.
+
+    POR QUE NÃO A ROTA DA BASE DAS LENTES, que já lista menção por período e por
+    tema: ela casa a data por `coalesce(data, mes)` e não tira as fontes
+    desligadas. As duas diferenças são deliberadas lá e erradas aqui — ver
+    `registros_do_grupo_na_janela`.
+
+    MESMOS PARÂMETROS DA JANELA (`ate`, `dias`, `nivel`), e não um par de datas:
+    quem sabe o que é uma janela de quinze dias é o caso de uso, e duas contas
+    de data em dois lugares divergem na primeira mudança.
+    """
+    lidos = impacto_na_janela.registros(
+        sessao, ate=ate, grupo=grupo, dias=dias, nivel=nivel, pagina=pagina, tamanho=tamanho
+    )
+    #: CAMPO A CAMPO, e não `**vars(r)`: as dataclasses do repositório têm
+    #: `slots=True` e não têm `__dict__` — `vars()` levanta `TypeError`, e foi
+    #: assim que esta mesma tela devolveu 500 em produção.
+    return RegistrosDaJanelaSaida(
+        itens=[
+            RegistroDaJanelaSaida(
+                id=r.id,
+                data=r.data,
+                veiculo=r.veiculo,
+                titulo=r.titulo,
+                link=r.link,
+                sentimento=r.sentimento,
+                tier=r.tier,
+            )
+            for r in lidos.itens
+        ],
+        total=lidos.total,
+        pagina=lidos.pagina,
+        tamanho=lidos.tamanho,
+    )
+
+
 @rotas.get("/impacto-na-janela")
 def impacto_na_janela_(
     sessao: Sessao,
