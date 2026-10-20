@@ -33,7 +33,7 @@ from fastapi import (
     status,
 )
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from app.api.dependencias import (
     UsuarioLogado,
@@ -49,6 +49,7 @@ from app.casos_de_uso import (
     ingerir_mencoes,
     planilha_do_score,
     reconciliar_lista_de_veiculos,
+    veiculos_da_imprensa,
 )
 from app.casos_de_uso.ler_sinais_da_lente import regua_dos_sinais
 from app.dominio.erros import Conflito, NaoEncontrado, RegraViolada
@@ -1205,6 +1206,76 @@ class ConferenciaSaida(BaseModel):
 CATEGORIA_DA_IMPRENSA = "Imprensa"
 SUBCATEGORIA_DO_MERCADO = "Econômica e de negócios"
 
+#: A lista que as rotas antigas (`/veiculos-de-investidores`) sempre serviram.
+#: Elas continuam no ar como atalho para esta — ver `_rotas_antigas`.
+LISTA_DO_MERCADO = "imprensa_economica"
+
+#: O "namespace" da trava que serializa a gravação de uma lista
+#: (`pg_advisory_xact_lock` recebe dois inteiros). Número próprio, para não
+#: colidir com o 10_267 da aplicação retroativa, que é outra operação.
+_ESPACO_DA_TRAVA_DA_LISTA = 10_268
+
+
+def _chave_da_lista(lista: str) -> int:
+    """Um inteiro estável por nome de lista, para a trava.
+
+    `hash()` do Python NÃO serve: ele é aleatorizado por processo (PYTHONHASHSEED),
+    então dois trabalhadores do mesmo app calculariam chaves diferentes para a
+    mesma lista — e a trava não travaria nada. A ordem em
+    `LISTAS_DE_VEICULOS` também não serve, porque muda quando alguém acrescenta
+    uma lista no meio. Soma dos bytes do nome é estável entre processos e entre
+    versões; colidir com outra lista só faria duas listas se esperarem, que é
+    lento e correto — nunca errado.
+    """
+    return sum(lista.encode("utf-8"))
+
+
+def _par_da_lista(lista: str) -> tuple[str, str]:
+    """O par (categoria, subcategoria) que uma lista de veículos significa.
+
+    A TRADUÇÃO MORA EM UM LUGAR SÓ, e não é aqui: `veiculos_da_imprensa` é a
+    camada que a declara, e é a mesma que a ingestão consulta para recortar. Ter
+    uma segunda cópia na API faria a tela escrever num par e o recorte ler de
+    outro — e as duas pareceriam certas.
+    """
+    par = veiculos_da_imprensa.LISTAS_DE_VEICULOS.get(lista)
+    if par is None:
+        raise NaoEncontrado(
+            f"A lista de veículos {lista!r} não existe. "
+            f"Conhecidas: {sorted(veiculos_da_imprensa.LISTAS_DE_VEICULOS)}."
+        )
+    return par
+
+
+def _subcategoria_da_lista(sessao, lista: str) -> tuple[int, int | None]:
+    """O id da subcategoria que a lista define, e o da categoria dela."""
+    categoria_nome, subcategoria_nome = _par_da_lista(lista)
+    alvo = sessao.scalar(
+        select(SubcategoriaPublico.id)
+        .join(CategoriaPublico, CategoriaPublico.id == SubcategoriaPublico.categoria_publico_id)
+        .where(
+            CategoriaPublico.nome == categoria_nome,
+            SubcategoriaPublico.nome == subcategoria_nome,
+        )
+        #: DESEMPATE EXPLÍCITO: `categoria_publico.nome` e
+        #: `subcategoria_publico.nome` não têm índice único, e hoje nenhuma tela
+        #: os renomeia (as duas tabelas estão em `FECHADOS`) — mas migration
+        #: renomeia, e a 0061 renomeou. Sem ordem, duas linhas com o mesmo nome
+        #: fariam a rota e a ingestão escolherem subcategorias diferentes, cada
+        #: uma pela ordem que o banco devolvesse.
+        .order_by(SubcategoriaPublico.id)
+        .limit(1)
+    )
+    if alvo is None:
+        raise RegraViolada(
+            f"A subcategoria {subcategoria_nome!r} da {categoria_nome} "
+            "não está cadastrada. Cadastre-a antes de definir a lista."
+        )
+    categoria = sessao.scalar(
+        select(CategoriaPublico.id).where(CategoriaPublico.nome == categoria_nome)
+    )
+    return alvo, categoria
+
 
 class VeiculosDoMercadoEntrada(BaseModel):
     """A lista COMPLETA de veículos que a lente Mercado considera.
@@ -1308,6 +1379,55 @@ def _reconciliacao(medida: reconciliar_lista_de_veiculos.Reconciliacao) -> Recon
     )
 
 
+@rotas.get("/veiculos-da-lista/{lista}/reconciliacao")
+def previa_da_reconciliacao_da_lista(
+    sessao: Sessao, usuario: UsuarioQueAdministraCadastros, lista: str
+) -> list[ReconciliacaoSaida]:
+    """A prévia da lista pedida — ver `previa_da_reconciliacao`.
+
+    POR LISTA DESDE A `0107`, quando a Institucional passou a recortar a mesma
+    Clipei por outra subcategoria. O motor já era por lista e por fonte; o que
+    faltava era a rota parar de assumir a do Mercado.
+    """
+    _par_da_lista(lista)
+    return [
+        _reconciliacao(reconciliar_lista_de_veiculos.previa(sessao, fonte))
+        for fonte in reconciliar_lista_de_veiculos.fontes_que_recortam(sessao, lista)
+    ]
+
+
+@rotas.post("/veiculos-da-lista/{lista}/reconciliacao", status_code=200)
+def aplicar_a_reconciliacao_da_lista(
+    sessao: Sessao, usuario: UsuarioQueAdministraCadastros, lista: str
+) -> list[ReconciliacaoSaida]:
+    """Faz a lista pedida valer para trás — ver `aplicar_a_reconciliacao`."""
+    _par_da_lista(lista)
+    return [
+        _reconciliacao(reconciliar_lista_de_veiculos.aplicar(sessao, fonte))
+        for fonte in reconciliar_lista_de_veiculos.fontes_que_recortam(sessao, lista)
+    ]
+
+
+@rotas.put("/veiculos-da-lista/{lista}")
+def definir_veiculos_da_lista(
+    sessao: Sessao,
+    usuario: UsuarioQueAdministraCadastros,
+    lista: str,
+    entrada: VeiculosDoMercadoEntrada,
+) -> VeiculosDoMercadoSaida:
+    """Define quais veículos uma lista considera — ver `definir_veiculos_de_investidores`."""
+    return _definir_a_lista(sessao, lista, entrada)
+
+
+#: -- OS CAMINHOS ANTIGOS, que serviam só a lista do Mercado -------------------
+#:
+#: ELES FICAM, e não é indecisão: o back sobe ANTES do front, e nesse intervalo
+#: a tela de Veículos de investidores que está no ar ainda chama estes
+#: endereços. Removê-los junto faria a tela responder 404 por alguns minutos,
+#: num deploy que não tem nada a ver com ela. Saem quando o front novo estiver
+#: no ar em todos os ambientes.
+
+
 @rotas.get("/veiculos-de-investidores/reconciliacao")
 def previa_da_reconciliacao(
     sessao: Sessao, usuario: UsuarioQueAdministraCadastros
@@ -1328,10 +1448,7 @@ def previa_da_reconciliacao(
     existe porque duas fontes com a mesma lista são duas reconciliações — cada
     uma com o próprio espelho.
     """
-    return [
-        _reconciliacao(reconciliar_lista_de_veiculos.previa(sessao, fonte))
-        for fonte in reconciliar_lista_de_veiculos.fontes_que_recortam(sessao)
-    ]
+    return previa_da_reconciliacao_da_lista(sessao, usuario, LISTA_DO_MERCADO)
 
 
 @rotas.post("/veiculos-de-investidores/reconciliacao", status_code=200)
@@ -1348,10 +1465,7 @@ def aplicar_a_reconciliacao(
     reconciliação agora". Repetir o POST é inofensivo — a segunda vez não acha
     mês para mudar —, mas o gesto é um comando, e o verbo diz isso.
     """
-    return [
-        _reconciliacao(reconciliar_lista_de_veiculos.aplicar(sessao, fonte))
-        for fonte in reconciliar_lista_de_veiculos.fontes_que_recortam(sessao)
-    ]
+    return aplicar_a_reconciliacao_da_lista(sessao, usuario, LISTA_DO_MERCADO)
 
 
 @rotas.put("/veiculos-de-investidores")
@@ -1378,30 +1492,40 @@ def definir_veiculos_de_investidores(
     `mencao`, que aponta para veículo, e marcar um órgão como imprensa econômica
     seria cadastro errado sem efeito nenhum.
     """
-    alvo = sessao.scalar(
-        select(SubcategoriaPublico.id)
-        .join(CategoriaPublico, CategoriaPublico.id == SubcategoriaPublico.categoria_publico_id)
-        .where(
-            CategoriaPublico.nome == CATEGORIA_DA_IMPRENSA,
-            SubcategoriaPublico.nome == SUBCATEGORIA_DO_MERCADO,
-        )
-        #: DESEMPATE EXPLÍCITO: `categoria_publico.nome` e
-        #: `subcategoria_publico.nome` não têm índice único, e hoje nenhuma tela
-        #: os renomeia (as duas tabelas estão em `FECHADOS`) — mas migration
-        #: renomeia, e a 0061 renomeou. Sem ordem, duas linhas com o mesmo nome
-        #: fariam a rota e a ingestão escolherem subcategorias diferentes, cada
-        #: uma pela ordem que o banco devolvesse.
-        .order_by(SubcategoriaPublico.id)
-        .limit(1)
-    )
-    if alvo is None:
-        raise RegraViolada(
-            f"A subcategoria {SUBCATEGORIA_DO_MERCADO!r} da {CATEGORIA_DA_IMPRENSA} "
-            "não está cadastrada. Cadastre-a antes de definir a lista."
-        )
+    return _definir_a_lista(sessao, LISTA_DO_MERCADO, entrada)
 
-    categoria = sessao.scalar(
-        select(CategoriaPublico.id).where(CategoriaPublico.nome == CATEGORIA_DA_IMPRENSA)
+
+def _definir_a_lista(
+    sessao, lista: str, entrada: VeiculosDoMercadoEntrada
+) -> VeiculosDoMercadoSaida:
+    """O corpo da gravação, para QUALQUER lista de veículos.
+
+    A ÚNICA COISA QUE A LISTA MUDA É O ALVO — a subcategoria que entra e sai dos
+    veículos. Todo o resto (a trava, a conferência de concorrência, a recusa de
+    sobrescrever classificação alheia) é igual, e duplicar isso por lente seria
+    duplicar justamente as partes que levaram revisão.
+    """
+    alvo, categoria = _subcategoria_da_lista(sessao, lista)
+
+    #: A TRAVA DA LISTA INTEIRA, e ela é conserto de achado ALTO de revisão.
+    #:
+    #: A trava de linhas abaixo cobre `pedidos ∪ conhecidos` — as instituições
+    #: que esta gravação menciona. Com a LISTA VAZIA, duas pessoas acrescentando
+    #: veículos DIFERENTES não têm nenhuma linha em comum: as duas travam coisas
+    #: distintas, as duas leem a lista vazia, as duas passam pela conferência de
+    #: `conhecidos` e o resultado é {A, B} — quando cada uma afirmou que a lista
+    #: inteira era só o seu. A gravação é declarativa; esse resultado não é o
+    #: que nenhuma das duas pediu.
+    #:
+    #: O DEFEITO É ANTERIOR A ESTA ROTA, e estava dormente porque a lista do
+    #: Mercado nunca está vazia (a `0066` semeou 81). A lista Institucional
+    #: NASCE vazia — é exatamente o estado em que ele acorda.
+    #:
+    #: POR LISTA, e morre com a transação: duas listas diferentes não se
+    #: esperam. A chave é o nome da lista num espaço próprio, como
+    #: `reconciliar_lista_de_veiculos` já faz por fonte.
+    sessao.execute(
+        select(func.pg_advisory_xact_lock(_ESPACO_DA_TRAVA_DA_LISTA, _chave_da_lista(lista)))
     )
 
     pedidos = set(entrada.ids)
@@ -1428,10 +1552,14 @@ def definir_veiculos_de_investidores(
         )
     }
     if set(entrada.conhecidos) != set(atuais):
+        #: A MENSAGEM NOMEIA A LISTA, e não "a lista de veículos de
+        #: investidores": com duas telas gêmeas no ar, a frase genérica mandaria
+        #: a pessoa recarregar sem dizer qual das duas mudou.
+        _, subcategoria_nome = _par_da_lista(lista)
         raise Conflito(
-            "A lista de veículos de investidores mudou desde que esta tela "
-            f"carregou (agora são {len(atuais)}). Recarregue e refaça a edição — "
-            "salvar por cima desfaria o que a outra pessoa acabou de fazer."
+            f"A lista de veículos de {subcategoria_nome!r} mudou desde que esta "
+            f"tela carregou (agora são {len(atuais)}). Recarregue e refaça a "
+            "edição — salvar por cima desfaria o que a outra pessoa acabou de fazer."
         )
 
     marcados = 0
