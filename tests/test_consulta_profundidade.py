@@ -514,6 +514,29 @@ def test_imprensa_tem_drill_e_historia_mercado_nao_tem_drill_e_tem_divergentes()
     assert mercado["cartoesLaterais"][1]["rotulo"] == "Temas do Mercado"
 
 
+def test_a_institucional_TEM_apresentacao_desde_que_entrou_na_consulta():
+    """A metade que faltava, e é achado de revisão.
+
+    A `0108` pôs `institucional` em `LENTES_DA_CONSULTA` — e a apresentação
+    (público, cor, fonte, rótulo) é um dicionário SEPARADO. Entrar numa lista
+    sem entrar na outra é habilitar meia funcionalidade: a rota aceitaria a
+    lente e estouraria `KeyError` ao montar o cabeçalho dela.
+
+    AS DUAS DECLARAÇÕES TÊM DE BATER INTEIRAS, e é isso que a última linha
+    cobra — a próxima lente que alguém habilitar cai aqui em vez de cair na
+    tela de quem abriu o painel.
+    """
+    from app.dominio.consulta_profundidade import APRESENTACAO, LENTES_DA_CONSULTA
+
+    institucional = _consulta(_mes_misturado(), codigo="institucional")["lentes"][0]
+
+    assert institucional["publico"] == "Governo e entidades"
+    assert "imprensa institucional" in institucional["fonte"]
+    assert institucional["cartoesLaterais"][1]["rotulo"] == "Temas da Institucional"
+
+    assert set(LENTES_DA_CONSULTA) == set(APRESENTACAO)
+
+
 def test_o_que_mudou_vai_da_nota_anterior_para_a_atual():
     mencoes = _mes_misturado()
     medidas = _medidas(mencoes)

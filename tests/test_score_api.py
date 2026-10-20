@@ -19,6 +19,7 @@ from app.banco.tabelas_interacoes import InteracaoRegistro
 from app.banco.tabelas_score import Lente, Mencao, ScoreConfig, ScoreFonte, ScoreMesFonte
 from app.banco.tabelas_stakeholders import Instituicao
 from main import app
+from tests.apoio_da_fonte_interna import ligar_o_crm
 from tests.test_e2e_postgres import URL, corpo
 
 _engine = create_engine(URL, pool_pre_ping=True)
@@ -142,7 +143,13 @@ def test_a_lente_institucional_vem_das_interacoes_deste_banco(
     É o que garante que corrigir um registro no CRM corrige o índice — com o
     clima duplicado numa tabela de menções, o índice mentiria até alguém
     reprocessar.
+
+    COM O CRM RELIGADO (`0108`): ele saiu do índice por decisão de produto, e o
+    MECANISMO — ler o clima na hora, sem cópia — continua no código e continua
+    valendo. O teste que afirma a configuração de HOJE é
+    `test_o_crm_fora_do_indice_nao_move_a_institucional`, logo abaixo.
     """
+    ligar_o_crm(sessao)
     antes = cliente_do_score.get("/api/score?mes=2026-06").json()
     institucional_antes = next(
         lente for lente in antes["lentes"] if lente["codigo"] == "institucional"
@@ -164,6 +171,54 @@ def test_a_lente_institucional_vem_das_interacoes_deste_banco(
     assert institucional_depois["score"] != institucional_antes["score"] or (
         institucional_antes["score"] is None
     )
+
+
+def test_o_crm_fora_do_indice_nao_move_a_institucional(
+    cliente_do_score, sessao, semente, junho
+):
+    """A REGRA DE HOJE, e ela é o pedido do dono do produto (`0108`).
+
+    "A lente Institucional passa a ser Imprensa > Institucional, e o CRM sai do
+    índice." Registrar agenda nenhuma pode mexer na nota: o que move a lente
+    agora são as matérias dos veículos classificados como institucionais.
+
+    E A LENTE SAI DO ÍNDICE ENQUANTO NÃO HOUVER MATÉRIA, em vez de entrar como
+    zero. `calcular_indice` tira do DENOMINADOR a lente sem dado — as outras
+    quatro passam a dividir 85 em vez de 100 —, e é isso que faz o ISR não
+    despencar por falta de dado. Sem esta linha, "a nota não se moveu" poderia
+    estar escondendo um índice arrastado para baixo.
+    """
+    for clima in ("propositivo", "propositivo", "tenso"):
+        criada = cliente_do_score.post(
+            "/api/interacoes",
+            json={**corpo(semente), "data_interacao": "2026-06-15", "clima": clima},
+        )
+        assert criada.status_code == 201, criada.text
+
+    corpo_ = cliente_do_score.get("/api/score?mes=2026-06").json()
+    institucional = next(
+        lente for lente in corpo_["lentes"] if lente["codigo"] == "institucional"
+    )
+
+    #: SEM NOTA: as agendas não contam mais, e não há matéria institucional.
+    assert institucional["score"] is None
+    #: E NENHUMA FONTE TROUXE DADO — `fontes` na resposta são as que trouxeram,
+    #: não as cadastradas. Com o CRM ligado, esta lista traria `crm` e a nota
+    #: existiria: é o teste de cima, e a diferença entre os dois é uma coluna.
+    assert institucional["fontes"] == []
+    #: O ÍNDICE CONTINUA EXISTINDO, medido pelas lentes que têm dado.
+    assert corpo_["isr"] is not None
+
+    #: E A LENTE NÃO FICOU ÓRFÃ: ela tem fonte ativa cadastrada, esperando
+    #: classificação. "Sem nota" aqui é "ninguém foi classificado ainda", e não
+    #: "não há de onde vir nota" — que seriam duas situações bem diferentes
+    #: para quem abre a tela.
+    cadastradas = sessao.scalars(
+        select(ScoreFonte.codigo)
+        .join(Lente, Lente.id == ScoreFonte.lente_id)
+        .where(Lente.codigo == "institucional", ScoreFonte.ativo.is_(True))
+    ).all()
+    assert list(cadastradas) == ["clipei_institucional"]
 
 
 def test_a_leitura_diz_o_que_sustenta_e_o_que_corroi(cliente_do_score, junho):
@@ -657,9 +712,13 @@ def test_um_arquivo_alimenta_as_duas_fontes_que_o_leem(cliente_do_score, sessao)
     assert resposta.status_code == 201
 
     por_fonte = {resumo["fonte"]: resumo for resumo in resposta.json()}
-    assert set(por_fonte) == {"clipei", "clipei_investidores"}
+    assert set(por_fonte) == {"clipei", "clipei_investidores", "clipei_institucional"}
     assert por_fonte["clipei"]["ingeridas"] == 2
     assert por_fonte["clipei_investidores"]["ingeridas"] == 1
+    #: A TERCEIRA IRMÃ LÊ E NÃO FICA COM NADA: nenhum destes veículos está
+    #: classificado como institucional, e recorte vazio é resposta legítima.
+    assert por_fonte["clipei_institucional"]["ingeridas"] == 0
+    assert por_fonte["clipei_institucional"]["linhas"] == 2
     assert (
         por_fonte["clipei_investidores"]["descartes"]["fora_da_lista_de_veiculos"] == 1
     )
@@ -672,7 +731,7 @@ def test_subir_pela_fonte_irma_da_no_mesmo(cliente_do_score):
     o grupo é do arquivo, e não de quem clicou."""
     resposta = _subir(cliente_do_score, "clipei_investidores", _clipping(DUAS_MATERIAS))
     assert {resumo["fonte"] for resumo in resposta.json()} == {
-        "clipei", "clipei_investidores"
+        "clipei", "clipei_investidores", "clipei_institucional"
     }
 
 
@@ -1009,9 +1068,16 @@ def test_tudo_desligado_nao_e_o_mesmo_que_planilha_faltando(cliente_do_score):
             [_post_da_bites(date(2026, 6, 5), "Negativo", "Governança", "Corsan", "Tarifa")]
         ),
     )
+    #: AS FONTES VÊM DO SERVIDOR, e não de uma lista escrita aqui. Com a lista à
+    #: mão, "tudo desligado" significava "tudo o que existia no dia em que
+    #: escrevi": a `0107` acrescentou uma fonte, ela ficou LIGADA, e o teste
+    #: passou a afirmar zero medindo um. Quem conhece todas as fontes é o
+    #: cadastro.
     todas = [
-        "clipei", "clipei_investidores", "approach_sl", "approach_cm", "bites",
+        fonte["codigo"]
+        for fonte in cliente_do_score.get("/api/score/fontes?mes=2026-06").json()
     ]
+    assert len(todas) >= 6, "a listagem de fontes não respondeu o cadastro inteiro"
     cliente_do_score.put("/api/score/calibracao", json={"fontes_desligadas": todas})
 
     corpo_ = cliente_do_score.get("/api/score/drivers?mes=2026-06").json()
@@ -1047,7 +1113,12 @@ def test_a_tela_abre_no_mes_mais_completo_e_nao_no_ultimo(
     um mês na lista de meses com dado, mesmo sem planilha nenhuma. As planilhas
     dos fornecedores chegam com atraso — então o mês MAIS RECENTE é quase sempre
     um mês só de CRM, com quatro lentes vazias e um ISR que é o score de uma só.
+
+    COM O CRM RELIGADO (`0108`): aposentado, ele não põe mais mês na lista, e o
+    cenário deste teste deixa de existir. Religar é o que o mantém medindo o
+    defeito que ele descreve. A mesma regra sem o CRM está no teste seguinte.
     """
+    ligar_o_crm(sessao)
     # Junho com DUAS lentes: a `junho` traz a imprensa, e aqui entra a
     # sociedade. É o que faz dele o mês mais completo — com uma lente só,
     # empatado com setembro, o desempate pelo mais recente escolheria setembro,
@@ -1077,6 +1148,29 @@ def test_a_tela_abre_no_mes_mais_completo_e_nao_no_ultimo(
     assert opcoes["mes_sugerido"] == "2026-06"
 
 
+def test_o_mes_SO_DE_AGENDA_nao_entra_mais_na_lista(cliente_do_score, sessao, semente, junho):
+    """A outra ponta da `0108`, e é a configuração que vai para o ar.
+
+    Com o CRM fora do índice, interação registrada não alimenta lente nenhuma —
+    então um mês que só tem agenda não pode aparecer no seletor. Aparecendo, a
+    pessoa escolheria um mês em que a tela abre sem número nenhum, e sem nada na
+    tela explicando por quê. É o mesmo defeito que `mes_mais_completo` nasceu
+    para evitar, pelo outro lado.
+    """
+    criada = cliente_do_score.post(
+        "/api/interacoes",
+        json={**corpo(semente), "data_interacao": "2026-09-10", "clima": "propositivo"},
+    )
+    assert criada.status_code == 201, criada.text
+
+    opcoes = cliente_do_score.get("/api/score/opcoes").json()
+
+    assert "2026-09" not in opcoes["meses"]
+    #: E JUNHO CONTINUA LÁ: o que sumiu foi o mês sem lente medida, não a lista.
+    assert "2026-06" in opcoes["meses"]
+    assert opcoes["mes_sugerido"] == "2026-06"
+
+
 def test_registro_nao_visivel_nao_move_o_indice(cliente_do_score, sessao, semente, junho):
     """`visivel = false` é o registro que alguém tirou da vista de propósito.
 
@@ -1090,7 +1184,14 @@ def test_registro_nao_visivel_nao_move_o_indice(cliente_do_score, sessao, sement
     então esconde os mesmos registros. Se esconder de fato os tira da conta, o
     número volta ao que era. Comparar com um valor fixo provaria menos — passaria
     também se o cálculo tivesse parado de olhar para o CRM.
+
+    COM O CRM RELIGADO, desde a `0108`. A fonte interna saiu do índice por
+    decisão de produto, e sem religá-la este teste passaria por não haver conta
+    nenhuma — exatamente o "provaria menos" que o parágrafo acima recusa. A
+    garantia aqui é de PRIVACIDADE, não de configuração: ela tem de continuar
+    valendo no dia em que alguém puser o CRM de volta.
     """
+    ligar_o_crm(sessao)
 
     def institucional() -> int | None:
         corpo_ = cliente_do_score.get("/api/score?mes=2026-06").json()
@@ -1128,7 +1229,12 @@ def test_registro_nao_visivel_nao_nomeia_orgao_no_dossie(
 
     Um registro retirado da vista devolvia o nome da instituição dele por aqui —
     e este é o caminho que não passa por `condicoes`.
+
+    COM O CRM RELIGADO (`0108`), pela mesma razão do teste acima: o painel de
+    órgãos é da fonte interna, e sem ela não há painel onde o nome pudesse
+    vazar. O que se protege é o vazamento, não o arranjo de hoje.
     """
+    ligar_o_crm(sessao)
     criada = cliente_do_score.post(
         "/api/interacoes",
         json={**corpo(semente), "data_interacao": "2026-06-15", "clima": "propositivo"},

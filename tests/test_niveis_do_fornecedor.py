@@ -56,6 +56,7 @@ O_N3_DE_CADA_FONTE = {
     "bites": "N3",
     "clipei": "Subcategoria",
     "clipei_investidores": "Subcategoria",
+    "clipei_institucional": "Subcategoria",
 }
 
 #: O N2 DO FORNECEDOR, que nenhum campo deve receber. Nome exato: `Subcategoria`
@@ -199,7 +200,11 @@ def test_o_N1_do_fornecedor_so_sobrevive_na_clipei(mapeamentos: dict[str, dict])
         for codigo, mapeamento in mapeamentos.items()
         if (mapeamento.get("colunas") or {}).get("atributo")
     )
-    assert com_atributo == ["clipei", "clipei_investidores"], (
+    #: A TERCEIRA ENTROU PELA `0107` e herda a exceção com razão: ela lê o MESMO
+    #: export da Clipei, e a coluna `Atributo` significa ali o que sempre
+    #: significou. Uma recortada que lesse o `Atributo` de outro jeito que a
+    #: irmã é que seria o defeito.
+    assert com_atributo == ["clipei", "clipei_institucional", "clipei_investidores"], (
         "mudou quem lê o N1 do fornecedor: "
         f"hoje são {com_atributo}. Ver o comentário de `CAMPOS` em "
         "`app/dominio/ingestao_score.py`, seção 'a exceção que sobrou'."

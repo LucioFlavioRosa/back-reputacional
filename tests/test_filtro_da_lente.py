@@ -308,13 +308,39 @@ def test_drivers_e_temas_respeitam_o_filtro(sessao, imprensa_de_junho):
     assert [linha["rotulo"] for linha in dossie.temas_mais_falados.dados] == ["Tarifa"]
 
 
-def test_drivers_e_temas_vazios_na_institucional(sessao):
+def test_a_institucional_passou_a_ler_MENCAO_e_nao_o_CRM(sessao):
+    """A `0108` virou a lente do avesso, e o dossiê inteiro veio junto.
+
+    ANTES: os blocos vinham vazios COM LACUNA DECLARADA — "a lente Institucional
+    não tem atributo, ela lê o CRM" —, que é a frase honesta para um bloco de
+    clipping numa lente que não é de clipping.
+
+    AGORA ela É de clipping (a Clipei recortada por "Imprensa > Institucional"),
+    e os mesmos blocos vêm vazios SEM lacuna: não há impedimento nenhum, só não
+    há matéria ainda. A diferença importa na tela — lacuna é "não dá para
+    responder aqui", vazio é "ninguém foi classificado ainda".
+
+    E A FICHA NÃO NOMEIA MAIS O CRM. A procedência listava todas as fontes
+    cadastradas da lente, inclusive a interna aposentada: a tela dizia que o
+    dado vinha do "CRM dos Stakeholders" sobre um bloco em que ele não tem
+    parte nenhuma.
+    """
     dossie = obter_dossie(sessao=sessao, usuario=_QuemOlha(), codigo="institucional", mes="2026-06")
 
     assert dossie.drivers_e_riscos.dados == []
-    assert dossie.drivers_e_riscos.ficha.lacunas
+    assert dossie.drivers_e_riscos.ficha.lacunas == []
     assert dossie.temas_mais_falados.dados == []
-    assert dossie.temas_mais_falados.ficha.lacunas
+    #: A LACUNA QUE SOBROU NÃO É SOBRE O CRM, e é por isso que ela fica: "os
+    #: temas vêm do vocabulário de cada fornecedor, ainda não casado com o
+    #: dicionário de assuntos" vale para TODA lente de menção, e agora esta é
+    #: uma. O que tinha de sair era a lacuna que dizia que esta lente não tem
+    #: atributo porque lê o CRM.
+    lacunas = dossie.temas_mais_falados.ficha.lacunas
+    assert all("não tem atributo" not in lacuna for lacuna in lacunas)
+    assert any("vocabulário de cada fornecedor" in lacuna for lacuna in lacunas)
+
+    assert "CRM" not in dossie.drivers_e_riscos.ficha.fonte
+    assert "Clipei · imprensa institucional" in dossie.drivers_e_riscos.ficha.fonte
 
 
 # -- volume por tier, e top/clima dos veículos ------------------------------------

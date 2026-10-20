@@ -163,6 +163,18 @@ DIMENSOES_POR_LENTE: dict[str, tuple[Dimensao, ...]] = {
         Dimensao("empresa", "Concessionária", "unidade_texto"),
         Dimensao("uf", "UF", "uf"),
     ),
+    #: A INSTITUCIONAL ENTRA PELA MESMA PORTA QUE O MERCADO ENTROU, e pela mesma
+    #: razão: a premissa que a mantinha fora morreu. A nota acima dizia "a fonte
+    #: dela é agenda, não menção ingerida — ela tem ZERO menções"; desde a
+    #: `0107` ela é o clipping da Clipei recortado pela subcategoria
+    #: "Institucional", e desde a `0108` é SÓ isso. As dimensões são as do
+    #: Mercado porque o export é o mesmo, recortado de outro jeito.
+    "institucional": (
+        Dimensao("tema", "Pilar (N1)", "tema_texto"),
+        Dimensao("atributo", "Atributo", "atributo"),
+        Dimensao("veiculo", "Veículo", "veiculo"),
+        Dimensao("uf", "UF", "uf"),
+    ),
 }
 
 

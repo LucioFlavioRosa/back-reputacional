@@ -103,13 +103,26 @@ def ler_sinais(
     passar o filtro adiante, a manchete descreveria o mês inteiro enquanto o
     gráfico ao lado mostra um recorte, e ninguém perceberia o desencontro.
     """
+    #: O DETECTOR DO CRM É ESCOLHIDO PELO CADASTRO, e não pelo código da lente —
+    #: achado de revisão. `_do_institucional` lê temas e órgãos das INTERAÇÕES;
+    #: desde a `0108` a lente Institucional é clipping recortado, e mandá-la
+    #: para lá daria manchete de agenda sobre uma nota de matéria. Quando o CRM
+    #: voltar ao índice — é um `update` de uma coluna —, a escolha volta
+    #: sozinha, em vez de depender de alguém se lembrar deste dicionário.
+    #: E A INSTITUCIONAL USA OS DETECTORES DA IMPRENSA, que é o que ela passou a
+    #: ser: série em MATÉRIAS e composição por tier. Cair no padrão
+    #: (`_da_sociedade`) diria "menções" e procuraria sinal de rede numa lente
+    #: de clipping.
     detectores = {
         "imprensa": _da_imprensa,
         "mercado": _do_mercado,
         "clientes": _dos_clientes,
-        "institucional": _do_institucional,
+        "institucional": _da_imprensa,
     }
-    de = detectores.get(lente.codigo, _da_sociedade)
+    if repositorio_lentes.lente_e_interna(sessao, lente.id):
+        de = _do_institucional
+    else:
+        de = detectores.get(lente.codigo, _da_sociedade)
     achados = [
         sinal
         for sinal in de(sessao, lente, mes, meses, calibracao, limites, filtro)

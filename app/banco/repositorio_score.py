@@ -298,7 +298,17 @@ def catalogo_das_lentes(sessao: Session) -> list[LenteNoCadastro]:
             # receber importação, e o histórico dele continua valendo — ver o
             # comentário da 0048.
             fontes=tuple(f.codigo for f in por_lente.get(lente.id, ())),
-            tem_fonte_interna=any(f.interna for f in por_lente.get(lente.id, ())),
+            # A FONTE INTERNA É A EXCEÇÃO, e `ativo` conta nela. O histórico de
+            # uma fonte de planilha está gravado em `score_mes_fonte` e continua
+            # valendo depois de aposentada; o da fonte interna não existe — ela
+            # é recontada de `interacao_registro` a cada leitura. Aposentá-la só
+            # pode significar "para de contar", que é o que a `0108` fez com o
+            # CRM ao tirá-lo do índice. Ver `repositorio_lentes.lente_e_interna`,
+            # que precisa dizer o mesmo: as duas derivações divergindo partiriam
+            # a lente ao meio (nota de um lado, série do outro).
+            tem_fonte_interna=any(
+                f.interna and f.ativo for f in por_lente.get(lente.id, ())
+            ),
         )
         for lente in lentes
     ]
@@ -373,11 +383,23 @@ def medir_uma_lente(
 
 
 def _tem_fonte_interna(sessao: Session, lente_id: int) -> bool:
+    """A TERCEIRA derivação da mesma pergunta, e ela também tem de olhar `ativo`.
+
+    ACHADO DE REVISÃO, e no lugar exato onde eu tinha escrito que o perigo
+    estava: `catalogo_das_lentes` e `repositorio_lentes.lente_e_interna` já
+    exigiam `interna AND ativo`, e esta aqui não — então a nota da lente vinha
+    das matérias enquanto o dossiê e a composição ainda somavam o CRM
+    aposentado. Era a lente partida de novo, uma camada abaixo.
+    """
     return (
         sessao.scalar(
             select(func.count())
             .select_from(ScoreFonte)
-            .where(ScoreFonte.lente_id == lente_id, ScoreFonte.interna.is_(True))
+            .where(
+                ScoreFonte.lente_id == lente_id,
+                ScoreFonte.interna.is_(True),
+                ScoreFonte.ativo.is_(True),
+            )
         )
         > 0
     )
@@ -955,12 +977,16 @@ def meses_da_lente(
     é a que a tela mostra, inclusive quando é estimada.
 
     SÓ PARA LENTE DE PLANILHA. A fonte interna (CRM) não passa por
-    `score_mes_fonte`, e a consulta só existe para Imprensa e Mercado — uma
-    lente com fonte interna aqui teria a nota sem o CRM, e por isso a função
-    se recusa a medi-la.
+    `score_mes_fonte`: uma lente que a tenha ATIVA teria aqui a nota sem o CRM,
+    e por isso a função se recusa a medi-la.
+
+    `ativo` CONTA NA RECUSA, como conta em `_tem_fonte_interna` e em
+    `lente_e_interna` — achado de revisão. Sem isso, a Institucional continuava
+    recusada DEPOIS da `0108` por causa de uma fonte interna que não alimenta
+    mais nada, e a consulta de profundidade dela respondia erro.
     """
     fontes = list(sessao.scalars(select(ScoreFonte).where(ScoreFonte.lente_id == lente.id)))
-    if any(fonte.interna for fonte in fontes):
+    if any(fonte.interna and fonte.ativo for fonte in fontes):
         raise ValueError(f"A lente {lente.codigo!r} lê o CRM; meses_da_lente é só de planilha.")
     codigo_da_fonte = {fonte.id: fonte.codigo for fonte in fontes}
     meses = [primeiro_dia(m) for m in meses]
@@ -1303,7 +1329,15 @@ def mes_mais_completo(sessao: Session, calibracao: Calibracao) -> date | None:
     das_estimativas = select(
         ScoreEstimativa.mes.label("mes"), ScoreEstimativa.lente_id.label("lente_id")
     ).distinct()
-    # A institucional vem das interações, e não de `score_mes_fonte`.
+    # A fonte interna vem das interações, e não de `score_mes_fonte`.
+    #
+    # `ativo` ENTRA NA JUNÇÃO — achado de revisão. Com o CRM aposentado pela
+    # `0108`, um mês que só tivesse agenda registrada continuava aparecendo no
+    # seletor e podia virar o "mês mais completo": a tela abriria num mês em que
+    # nenhuma lente do Score foi medida, pela conta de uma fonte que não conta
+    # mais. A assimetria é a mesma dos outros três lugares, e pelo mesmo motivo:
+    # a fonte interna não tem agregado gravado, então aposentá-la é apagá-la da
+    # conta.
     do_crm = (
         select(
             func.date_trunc("month", InteracaoRegistro.data_interacao)
@@ -1313,7 +1347,10 @@ def mes_mais_completo(sessao: Session, calibracao: Calibracao) -> date | None:
         )
         .select_from(InteracaoRegistro)
         .join(Clima, Clima.id == InteracaoRegistro.clima_id)
-        .join(ScoreFonte, ScoreFonte.codigo == FONTE_INTERNA_DO_CRM)
+        .join(
+            ScoreFonte,
+            (ScoreFonte.codigo == FONTE_INTERNA_DO_CRM) & ScoreFonte.ativo.is_(True),
+        )
         .where(
             *so_interacoes_visiveis(),
             *so_fontes_ligadas(calibracao),
@@ -1336,6 +1373,11 @@ def meses_com_dado(sessao: Session) -> list[date]:
 
     É o que alimenta o seletor de mês: oferecer um mês vazio faria a tela
     abrir sem número e parecer quebrada.
+
+    E OFERECER UM MÊS QUE SÓ TEM AGENDA É O MESMO DEFEITO ao contrário, depois
+    da `0108`: o CRM aposentado não alimenta lente nenhuma, então um mês só
+    dele abriria a tela sem número — com a diferença de que ninguém saberia por
+    quê. Achado de revisão; a condição é a mesma dos outros quatro lugares.
     """
     das_planilhas = select(ScoreMesFonte.mes.label("mes")).distinct()
     das_estimativas = select(ScoreEstimativa.mes.label("mes")).distinct()
@@ -1354,10 +1396,33 @@ def meses_com_dado(sessao: Session) -> list[date]:
         .distinct()
     )
 
+    consultas = [das_planilhas, das_estimativas]
+    if _a_fonte_interna_conta(sessao):
+        consultas.append(do_crm)
+
     meses = set()
-    for consulta in (das_planilhas, das_estimativas, do_crm):
+    for consulta in consultas:
         meses.update(linha[0] for linha in sessao.execute(consulta) if linha[0])
     return sorted(meses)
+
+
+def _a_fonte_interna_conta(sessao: Session) -> bool:
+    """A fonte do CRM está ativa — ou seja, ainda alimenta alguma lente.
+
+    A `0108` a aposentou. Enquanto ela estiver assim, interação registrada não
+    entra em conta nenhuma do Score, e por isso também não põe mês no seletor.
+    """
+    return (
+        sessao.scalar(
+            select(func.count())
+            .select_from(ScoreFonte)
+            .where(
+                ScoreFonte.codigo == FONTE_INTERNA_DO_CRM,
+                ScoreFonte.ativo.is_(True),
+            )
+        )
+        > 0
+    )
 
 
 # -- a aba de Drivers e riscos --------------------------------------------------

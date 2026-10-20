@@ -289,8 +289,19 @@ def test_ARQUIVO_GRANDE_nao_fica_guardado(sessao, clipei, contador, monkeypatch)
 
     ingerir_mencoes.conferir(sessao, clipei, _planilha())
 
-    #: QUATRO DECODIFICAÇÕES, de novo — e aqui é o comportamento desejado.
-    assert len(contador) == 4, contador
+    #: UMA POR ETAPA, de novo — e aqui é o comportamento desejado.
+    #:
+    #: CINCO HOJE, E O QUE AS COMPÕE: a previsão de cada uma das TRÊS fontes que
+    #: leem o export da Clipei (a lente Imprensa, o recorte do Mercado e o
+    #: recorte Institucional, que a `0107` criou), mais os veículos e os
+    #: assuntos. Eram quatro com duas fontes.
+    #:
+    #: E ESTE É O PREÇO DA FONTE NOVA, dito em voz alta: acima do orçamento de
+    #: memória, cada irmã decodifica o arquivo de novo — uma terceira fonte é
+    #: uma decodificação a mais de um arquivo que pode ter 80 MB. Abaixo do
+    #: orçamento (o caso comum) nada mudou: o teste de cima continua exigindo
+    #: UMA decodificação para a conferência inteira, com as três fontes.
+    assert len(contador) == 5, contador
     #: E NADA FICA RETIDO, que é o ponto do teto.
     arquivo = ingerir_mencoes.ArquivoLido(b"xx")
     assert arquivo._guardar is False

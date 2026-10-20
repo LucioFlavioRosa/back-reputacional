@@ -136,7 +136,13 @@ def test_conferir_diz_o_que_seria_ingerido_em_cada_fonte_irma(sessao, clipei):
         sessao, clipei, _planilha([_linha("Veículo Irmãs 42")])
     )
 
-    assert {r.fonte for r in previsao} == {"clipei", "clipei_investidores"}
+    #: TRÊS DESDE A `0107`: a Clipei alimenta a Imprensa inteira, o recorte do
+    #: Mercado e o recorte Institucional — o mesmo anexo, lido três vezes.
+    assert {r.fonte for r in previsao} == {
+        "clipei",
+        "clipei_investidores",
+        "clipei_institucional",
+    }
     assert next(r for r in previsao if r.fonte == "clipei").ingeridas == 1
 
 
@@ -267,12 +273,16 @@ def test_nome_autorizado_que_a_planilha_NAO_tem_e_ignorado(sessao, clipei):
     )
 
 
-def test_os_veiculos_nascem_UMA_vez_para_as_duas_fontes_irmas(sessao, clipei):
+def test_os_veiculos_nascem_UMA_vez_para_TODAS_as_fontes_irmas(sessao, clipei):
     """E O NÚMERO NÃO PODE SER SOMADO.
 
     As irmãs leem o mesmo arquivo e veriam os mesmos veículos. Criar por fonte
     faria a segunda achar tudo cadastrado (inofensivo) e contaria a criação duas
     vezes — a tela mentiria o número que a pessoa acabou de autorizar.
+
+    SÃO TRÊS DESDE A `0107`, e é por isso que a conta importa mais do que
+    importava: com duas, somar daria o dobro; com três, o triplo. A invariante é
+    a mesma e não dependia do número — este teste a mede com o número de hoje.
     """
     antes = _quantos_veiculos(sessao)
 
@@ -284,8 +294,8 @@ def test_os_veiculos_nascem_UMA_vez_para_as_duas_fontes_irmas(sessao, clipei):
     )
 
     assert _quantos_veiculos(sessao) == antes + 1, "nasceu uma vez"
-    assert len(resumos) == 2, "as duas fontes responderam"
-    # O MESMO VALOR nos dois, e é da SUBIDA: somar daria 2 onde nasceu 1.
+    assert len(resumos) == 3, "as três fontes do arquivo responderam"
+    # O MESMO VALOR nos três, e é da SUBIDA: somar daria 3 onde nasceu 1.
     assert {r.veiculos_criados for r in resumos} == {1}
 
 

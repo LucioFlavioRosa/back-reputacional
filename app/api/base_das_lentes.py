@@ -55,8 +55,12 @@ rotas = APIRouter(
 Sessao = SessaoDoPedido
 
 #: As lentes que têm menção. Mercado também — o recorte de imprensa econômica.
-#: Institucional não: ela lê o CRM, que tem a Base dele.
-LENTES_DA_BASE = ("imprensa", "mercado", "sociedade", "clientes")
+#:
+#: A INSTITUCIONAL ENTROU na `0108`, quando deixou de ler o CRM: ela é hoje o
+#: clipping da Clipei recortado pela subcategoria "Institucional", e a Base é
+#: onde se confere menção a menção o que uma lente conta. Deixá-la de fora
+#: agora seria esconder justamente as linhas que passaram a formar a nota dela.
+LENTES_DA_BASE = ("imprensa", "mercado", "sociedade", "clientes", "institucional")
 
 #: O que se pode ordenar, e por qual coluna.
 ORDENAVEIS = {

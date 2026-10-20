@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session
 from app.api.lentes import MESES_DA_EVOLUCAO, obter_recorte
 from app.banco.tabelas_score import Mencao, ScoreFonte, ScoreMesFonte
 from app.dominio.score import FiltroDeMencoes, peso_do_cargo, peso_do_engajamento
+from tests.apoio_da_fonte_interna import ligar_o_crm
 from tests.test_e2e_postgres import URL
 
 _engine = create_engine(URL, pool_pre_ping=True)
@@ -283,7 +284,13 @@ def test_a_lente_que_NAO_vem_de_mencao_recusa_o_recorte(sessao):
 
     DUAS CONTAS DE UNIVERSOS DIFERENTES NO MESMO PAINEL é o pior resultado: cada
     número está certo no seu mundo, e lado a lado eles se contradizem sem que
-    nada na tela explique. Agora o painel diz que o recorte não se aplica."""
+    nada na tela explique. Agora o painel diz que o recorte não se aplica.
+
+    COM O CRM RELIGADO (`0108`): a Institucional deixou de ser a lente interna,
+    e a garantia aqui é sobre LENTE INTERNA, não sobre aquela lente. Religar é o
+    que mantém a regra medida — e ela volta a valer sozinha no dia em que
+    alguém puser o CRM de volta no índice."""
+    ligar_o_crm(sessao)
     recorte = obter_recorte(
         sessao=sessao, usuario=_QuemOlha(), codigo="institucional", mes="2026-06", uf="RJ"
     )
@@ -298,9 +305,36 @@ def test_a_lente_que_NAO_vem_de_mencao_recusa_o_recorte(sessao):
     assert [passo.chave for passo in recorte.trilha] == ["uf"]
 
 
+def test_a_institucional_PASSOU_a_aceitar_o_recorte(sessao):
+    """O outro lado da mesma regra, e é o pedido do dono do produto.
+
+    Sem o CRM no índice, a Institucional é menção da Clipei recortada por
+    "Imprensa > Institucional" — e filtro de menção se aplica a ela como se
+    aplica à Imprensa. Recusar continuaria dizendo "esta lente lê o CRM" sobre
+    uma lente que não lê mais.
+
+    ZERO AQUI É CONTAGEM, E NÃO RECUSA: não há veículo classificado no banco de
+    teste, então o recorte mede zero — mas mede. É a diferença entre "o recorte
+    não se aplica" (a ausência que o teste de cima exige) e "o recorte não
+    achou nada".
+    """
+    recorte = obter_recorte(
+        sessao=sessao, usuario=_QuemOlha(), codigo="institucional", mes="2026-06", uf="RJ"
+    )
+
+    assert recorte.ausencia is None or "CRM" not in recorte.ausencia
+    assert recorte.itens == 0
+    assert [passo.chave for passo in recorte.trilha] == ["uf"]
+
+
 def test_sem_filtro_a_lente_interna_responde_o_mes(sessao):
-    """O CONTRAPESO: sem recorte, a Institucional continua respondendo — é o que
-    a barra da Evolução abre quando alguém clica num mês dela."""
+    """O CONTRAPESO: sem recorte, a lente interna continua respondendo — é o que
+    a barra da Evolução abre quando alguém clica num mês dela.
+
+    COM O CRM RELIGADO (`0108`): sem isso o teste continuava passando, mas pelo
+    caminho das MENÇÕES — o nome dizia "lente interna" e o que ele media era
+    outra coisa. Achado de revisão."""
+    ligar_o_crm(sessao)
     recorte = obter_recorte(
         sessao=sessao, usuario=_QuemOlha(), codigo="institucional", mes="2026-06"
     )
