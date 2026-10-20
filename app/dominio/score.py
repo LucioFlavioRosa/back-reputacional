@@ -266,7 +266,7 @@ def formula_aplicada(lente: str, calibracao: Calibracao) -> str:
     `REGUAS_DE_TIER` e `REGUAS_DE_ENGAJAMENTO`, que já moram neste módulo — a
     mudança TIROU um import em vez de acrescentar.
     """
-    base = "NS = (positivas − negativas) ÷ total; score = (NS + 1) ÷ 2 × 100."
+    base = "NS = (propositivas − reativas) ÷ total; score = (NS + 1) ÷ 2 × 100."
     if lente in ("imprensa", "mercado"):
         pesos = REGUAS_DE_TIER[calibracao.regua_tier]
         return (

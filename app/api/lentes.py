@@ -63,6 +63,7 @@ from app.casos_de_uso.leitura_das_lentes import (
     temas_mais_falados,
     trilha_do_recorte,
     veiculos,
+    veiculos_tier1,
     volume_por_tier,
 )
 from app.casos_de_uso.ler_sinais_da_lente import ler_sinais, regua_dos_sinais
@@ -77,7 +78,9 @@ from app.dominio.score import FiltroDeMencoes, formula_aplicada
 from app.dominio.sinais_da_lente import Secao
 from app.esquemas.lentes import (
     DossieSaida,
+    ExploradorSaida,
     FatoSaida,
+    GrupoDoExploradorSaida,
     OpcoesDeFiltroSaida,
     RecorteSaida,
     SinalSaida,
@@ -220,6 +223,7 @@ def obter_dossie(
     blocos_dos_paineis = paineis(sessao, lente, alvo, meses, calibracao, filtro)
     bloco_do_volume = volume_por_tier(sessao, lente, alvo, calibracao, filtro)
     top_veiculos, clima_por_veiculos = veiculos(sessao, lente, alvo, calibracao, filtro)
+    tier1 = veiculos_tier1(sessao, lente, alvo, calibracao, filtro)
     drivers = drivers_e_riscos(sessao, lente, alvo, calibracao, filtro)
     temas_falados = temas_mais_falados(sessao, lente, alvo, calibracao, filtro)
     materias = materias_recentes(sessao, lente, alvo, calibracao, filtro)
@@ -311,6 +315,7 @@ def obter_dossie(
         volume_por_tier=bloco_do_volume,
         top_veiculos=top_veiculos,
         clima_por_veiculos=clima_por_veiculos,
+        veiculos_tier1=tier1,
         drivers_e_riscos=drivers,
         temas_mais_falados=temas_falados,
         materias_recentes=materias,
@@ -573,3 +578,68 @@ def obter_opcoes_de_filtro(
     if lente is None:
         raise NaoEncontrado("Lente não encontrada.")
     return OpcoesDeFiltroSaida(**repositorio_lentes.opcoes_de_filtro(sessao, lente.id, alvo))
+
+
+@rotas.get("/{codigo}/explorador")
+def obter_explorador(
+    sessao: Sessao,
+    usuario: UsuarioLogado,
+    codigo: str,
+    mes: Annotated[str, Query(description="AAAA-MM")],
+    tier: Annotated[str | None, Query()] = None,
+    veiculo: Annotated[str | None, Query()] = None,
+    atributo: Annotated[str | None, Query()] = None,
+    tema: Annotated[str | None, Query()] = None,
+    perfil_autor: Annotated[str | None, Query()] = None,
+    uf: Annotated[str | None, Query()] = None,
+    subtema: Annotated[str | None, Query()] = None,
+    autor: Annotated[str | None, Query()] = None,
+    empresa: Annotated[str | None, Query()] = None,
+    tema_n1: Annotated[str | None, Query(description="pilar (N1) da taxonomia, pelo nome")] = None,
+    tema_n2: Annotated[str | None, Query(description="tema estratégico (N2), pelo nome")] = None,
+    tema_n3: Annotated[str | None, Query(description="tema (N3) do cadastro, pelo nome")] = None,
+    sentimento: Annotated[str | None, Query(description="pos, neu ou neg")] = None,
+) -> ExploradorSaida:
+    """Os gráficos N1 › N2 › N3 e o mapa por UF da Síntese executiva.
+
+    UM PEDIDO POR MÊS E RECORTE DA TELA, e o filtro cruzado (clicar num N1
+    refaz N2, N3 e o mapa) acontece no navegador, somando os grupos — ver
+    `grupos_do_explorador`. Os mesmos parâmetros do dossiê: a barra de filtros
+    do topo vale aqui também.
+
+    A LENTE QUE LÊ O CRM NÃO TEM MENÇÃO, e volta vazia (sem erro): a tela só
+    pede para as lentes de clipping.
+    """
+    alvo = mes_de(mes)
+    lente = repositorio_lentes.lente_por_codigo(sessao, codigo)
+    if lente is None:
+        raise NaoEncontrado("Lente não encontrada.")
+    if repositorio_lentes.lente_e_interna(sessao, lente.id):
+        return ExploradorSaida(lente=lente.codigo, mes=f"{alvo:%Y-%m}", denominador=0, grupos=[])
+
+    filtro = FiltroDeMencoes(
+        tier=tier,
+        veiculo=veiculo,
+        atributo=atributo,
+        tema_texto=tema,
+        perfil_autor=perfil_autor,
+        uf=uf,
+        subtema=subtema,
+        autor=autor,
+        empresa=empresa,
+        tema_n1=tema_n1,
+        tema_n2=tema_n2,
+        tema_n3=tema_n3,
+        sentimento=sentimento,
+    )
+    calibracao = repositorio_score.calibracao_vigente(sessao)
+    regua, denominador = repositorio_score.denominador_do_mes(sessao, lente.id, alvo, calibracao)
+    grupos = repositorio_lentes.grupos_do_explorador(
+        sessao, lente.id, alvo, calibracao, regua, filtro
+    )
+    return ExploradorSaida(
+        lente=lente.codigo,
+        mes=f"{alvo:%Y-%m}",
+        denominador=denominador,
+        grupos=[GrupoDoExploradorSaida(**grupo) for grupo in grupos],
+    )

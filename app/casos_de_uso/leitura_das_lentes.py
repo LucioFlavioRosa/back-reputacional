@@ -56,7 +56,7 @@ from app.esquemas.lentes import (
 CONCEITO_NS = Conceito(
     termo="NS (saldo de sentimento)",
     texto=(
-        "(positivas − negativas) ÷ total. Vai de −1 a 1 e vira nota de 0 a 100 "
+        "(propositivas − reativas) ÷ total. Vai de −1 a 1 e vira nota de 0 a 100 "
         "por (NS + 1) ÷ 2 × 100. Total zero é sem dado, e não zero."
     ),
 )
@@ -145,7 +145,7 @@ def saida_da_ficha(ficha: Ficha) -> FichaSaida:
     )
 
 
-SENTIMENTO = ["Positivo", "Neutro", "Negativo"]
+SENTIMENTO = ["Propositivo", "Neutro", "Reativo"]
 
 
 #: MESMO VALOR DE `clima.cor_hex` (Turquesa Rio, Cinza 2, Vermelho Pitanga da
@@ -864,7 +864,7 @@ def frase_do_recorte(
     return (
         f"Este recorte {verbo} {pontos} ponto"
         f"{'s' if abs(impacto) >= 2 else ''} da nota de {lente.nome}, "
-        f"com {quantos} itens do mês e {negativas}% de negativas."
+        f"com {quantos} itens do mês e {negativas}% de reativas."
     )
 
 
@@ -1003,6 +1003,11 @@ def volume_por_tier(
                 "rotulo": _ROTULO_DO_TIER_DA_MATERIA.get(linha["tier"], linha["tier"]),
                 "total": linha["positivo"] + linha["neutro"] + linha["negativo"],
                 "cor": _CORES_DO_TIER.get(linha["tier"]),
+                #: O SENTIMENTO DE CADA TIER, para a coluna empilhada do card
+                #: (quantidade, não 100%) — já vinha na consulta.
+                "positivo": linha["positivo"],
+                "neutro": linha["neutro"],
+                "negativo": linha["negativo"],
             }
             for linha in tiers
         ],
@@ -1046,7 +1051,9 @@ def veiculos(
             _bloco("divergente_por_item", "Termômetro por veículos", [], vazio_ficha, None),
         )
 
-    veiculos = repositorio_lentes.veiculos_por_sentimento(sessao, lente.id, mes, calibracao, filtro)
+    veiculos = repositorio_lentes.veiculos_por_sentimento(
+        sessao, lente.id, mes, calibracao, filtro, quantos=QUANTOS_VEICULOS_NO_TOPO
+    )
     ficha = Ficha(
         origem=Procedencia.PLANILHA,
         fonte=_nomes_das_fontes(sessao, lente.id),
@@ -1055,10 +1062,20 @@ def veiculos(
     top_veiculos = _bloco(
         "barras_horizontais",
         "Top veículos",
-        [{"rotulo": linha["veiculo"], "valor": linha["total"]} for linha in veiculos],
+        [
+            {
+                "rotulo": linha["veiculo"],
+                "valor": linha["total"],
+                "positivo": linha["positivo"],
+                "neutro": linha["neutro"],
+                "negativo": linha["negativo"],
+            }
+            for linha in veiculos
+        ],
         ficha,
         None,
     )
+    no_termometro = veiculos[:QUANTOS_VEICULOS_NO_TERMOMETRO]
     # MESMO CÁLCULO DO PAINEL (CRM): (positivas − negativas) ÷ total × 100,
     # de −100 a 100 — não é o NS oficial do Score (que pondera por tier e vai
     # de 0 a 100). É o placar simples que a diretoria já conhece de lá.
@@ -1072,12 +1089,58 @@ def veiculos(
                 "total": linha["total"],
                 "score": round((linha["positivo"] - linha["negativo"]) / linha["total"] * 100),
             }
-            for linha in veiculos
+            for linha in no_termometro
         ],
         ficha,
         None,
     )
     return top_veiculos, clima_por_veiculos
+
+
+QUANTOS_VEICULOS_TIER1 = 10
+
+
+def veiculos_tier1(
+    sessao, lente, mes: date, calibracao: Calibracao, filtro: FiltroDeMencoes | None = None
+) -> BlocoSaida | None:
+    """Os 10 veículos TIER 1 com mais matérias no mês, com positivo, neutro e
+    negativo de cada um — em QUANTIDADE, não 100% (por pedido). Mora embaixo do
+    painel "Tier do veículo × sentimento": ele diz como o Tier 1 foi no total,
+    este diz quais veículos do Tier 1 formaram isso.
+
+    SÓ ONDE HÁ TIER (`LENTES_COM_VEICULO_E_TIER`); nas outras, nulo.
+    """
+    if lente.codigo not in LENTES_COM_VEICULO_E_TIER:
+        return None
+    veiculos = repositorio_lentes.veiculos_por_sentimento(
+        sessao,
+        lente.id,
+        mes,
+        calibracao,
+        filtro,
+        quantos=QUANTOS_VEICULOS_TIER1,
+        so_do_tier="muito_relevante",
+    )
+    return _bloco(
+        "barras_horizontais",
+        "Top 10 veículos Tier 1",
+        [
+            {
+                "rotulo": linha["veiculo"],
+                "valor": linha["total"],
+                "positivo": linha["positivo"],
+                "neutro": linha["neutro"],
+                "negativo": linha["negativo"],
+            }
+            for linha in veiculos
+        ],
+        Ficha(
+            origem=Procedencia.PLANILHA,
+            fonte=_nomes_das_fontes(sessao, lente.id),
+            colunas=("Veículo", "Aegea Tier", "Classificação"),
+        ),
+        None,
+    )
 
 
 def drivers_e_riscos(
@@ -1164,7 +1227,7 @@ def temas_mais_falados(
     )
 
 
-_ROTULO_DO_SENTIMENTO = {"pos": "Positivo", "neu": "Neutro", "neg": "Negativo"}
+_ROTULO_DO_SENTIMENTO = {"pos": "Propositivo", "neu": "Neutro", "neg": "Reativo"}
 
 
 _ROTULO_DO_TIER_DA_MATERIA = {
@@ -1180,6 +1243,12 @@ TETO_DE_MATERIAS = 5
 
 
 TETO_DE_MATERIAS_FILTRADO = 30
+#: "ÚLTIMAS MATÉRIAS" DA IMPRENSA E DO MERCADO MOSTRAM 15, por pedido: o card
+#: rola, e cada linha abre o detalhe da matéria num popup.
+TETO_DAS_ULTIMAS_MATERIAS = 15
+#: TOP 10 VEÍCULOS no card de tier, por pedido; o termômetro ao lado segue com 5.
+QUANTOS_VEICULOS_NO_TOPO = 10
+QUANTOS_VEICULOS_NO_TERMOMETRO = 5
 
 
 def _mencoes_da_sociedade(
@@ -1254,7 +1323,7 @@ def _mencoes_da_sociedade(
                 # versão desta frase: ela dizia "com data, autor e engajamento",
                 # e os três são nulos possíveis no modelo. Prometer o que o dado
                 # pode não ter é o mesmo erro, do outro lado.
-                "O texto e o link vêm numa amostra das menções (as negativas, "
+                "O texto e o link vêm numa amostra das menções (as reativas, "
                 "as de maior alcance e as mais engajadas). As demais aparecem "
                 "nesta lista com os metadados que vieram — classificação, "
                 "perfil, autor e engajamento quando houver — e não abrem a "
@@ -1319,7 +1388,9 @@ def materias_recentes(
     # ver AS matérias que formaram aquele saldo, não uma amostra delas. Um
     # veículo com recorte já é um universo pequeno (dezenas, não milhares),
     # então um teto mais alto continua seguro.
-    quantas = TETO_DE_MATERIAS_FILTRADO if filtro and filtro.ativo else TETO_DE_MATERIAS
+    quantas = (
+        TETO_DE_MATERIAS_FILTRADO if filtro and filtro.ativo else TETO_DAS_ULTIMAS_MATERIAS
+    )
     linhas = [
         {
             "quando": f"{linha['data']:%d/%m}" if linha["data"] else None,
@@ -1338,6 +1409,15 @@ def materias_recentes(
             #: `materias_recentes` que serve a Sociedade); só esta montagem o
             #: descartava.
             "link": linha["link"],
+            #: O DETALHE DO POPUP, por pedido — fora da grade (não estão em
+            #: `COLUNAS_DAS_MATERIAS`), só no `dados` que a tela abre ao clicar.
+            "data": f"{linha['data']:%Y-%m-%d}" if linha["data"] else None,
+            "texto": linha["titulo_texto"],
+            "autor": linha["autor"],
+            "uf": linha["uf"],
+            "engajamento": _num(linha["engajamento"])
+            if linha["engajamento"] is not None
+            else None,
         }
         for linha in repositorio_lentes.materias_recentes(
             sessao, lente.id, mes, calibracao, filtro, quantas=quantas
@@ -1420,14 +1500,14 @@ def _kpis_da_imprensa(
             ),
         ),
         KpiSaida(
-            rotulo="Positivas ou neutras",
+            rotulo="Propositivas ou neutras",
             valor=_pct((positivas + neutras) / total if total else None),
-            detalhe=f"{_num(positivas)} positivas",
+            detalhe=f"{_num(positivas)} propositivas",
         ),
         KpiSaida(
-            rotulo="Pico negativo",
+            rotulo="Pico reativo",
             valor=_num(pico["neg"]) if pico and pico["neg"] else "—",
-            detalhe=f"{pico['mes']:%Y-%m}" if pico and pico["neg"] else "sem negativa",
+            detalhe=f"{pico['mes']:%Y-%m}" if pico and pico["neg"] else "sem reativa",
         ),
         KpiSaida(
             rotulo="Veículos Tier 1",
@@ -1600,10 +1680,10 @@ def _kpis_da_sociedade(
         # quem lê uma nota que caiu: `autor_mais_negativo`, `figuras_publicas` e
         # `uf_mais_negativa` no vocabulário do pacote.
         KpiSaida(
-            rotulo="Autor mais negativo",
+            rotulo="Autor mais reativo",
             valor=autores[0]["autor"] if autores else "—",
             detalhe=(
-                f"{_num(autores[0]['negativo'])} menções negativas"
+                f"{_num(autores[0]['negativo'])} menções reativas"
                 if autores
                 else "sem autor informado"
             ),
@@ -1625,10 +1705,10 @@ def _kpis_da_sociedade(
             ),
         ),
         KpiSaida(
-            rotulo="UF mais negativa",
+            rotulo="UF mais reativa",
             valor=mais_negativa["uf"] if mais_negativa else "—",
             detalhe=(
-                f"{_num(mais_negativa['negativo'])} menções negativas"
+                f"{_num(mais_negativa['negativo'])} menções reativas"
                 if mais_negativa
                 else "sem UF informada"
             ),
