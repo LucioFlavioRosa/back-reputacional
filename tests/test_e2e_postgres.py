@@ -793,7 +793,10 @@ def test_dicionarios_vem_carregados(cliente):
     # 8, e nao 7: Bancos/Credores entrou como oitava frente
     # (0031_frente_bancos_credores.sql).
     assert len(dicionarios["frentes"]) == 8
-    assert len(dicionarios["unidades_negocio"]) == 29
+    # 56, e nao 29: a 0104 consolidou Águas do Rio/Ambiental Ceará/Águas do
+    # Pará (8 linhas -> 3) e acrescentou 32 unidades novas, por pedido
+    # (2026-10-19).
+    assert len(dicionarios["unidades_negocio"]) == 56
     assert {f["codigo"] for f in dicionarios["resultados"]} == {
         "avancou", "mantido", "recuou", "sem_definicao"
     }

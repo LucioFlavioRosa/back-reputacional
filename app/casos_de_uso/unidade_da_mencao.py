@@ -75,8 +75,13 @@ from app.dominio.texto import normalizar
 #: certo. Uma heurística que só melhora um texto não pode escolher um valor
 #: errado; se um dia ela passar a resolver, esta frase deixa de valer.
 #:
-#: Medido no cadastro de hoje: ele separa 8 das 29 unidades em 3 famílias
-#: (Águas do Rio, Ambiental Ceará, Águas do Pará) e deixa as outras 21 sozinhas.
+#: Até 19/10/2026 o cadastro tinha 3 famílias de verdade (Águas do Rio,
+#: Ambiental Ceará, Águas do Pará, 8 das 29 unidades) — a consolidação daquele
+#: dia (migration `0104`, por pedido) uniu cada uma numa linha só, e o
+#: cadastro de produção ficou sem nenhuma família. A heurística continua de
+#: pé para a PRÓXIMA vez que o cadastro ganhar nomes que colidam assim —
+#: `tests/test_unidade_da_mencao.py` testa o mecanismo com um par fictício
+#: (`duas_irmas`), não mais com um caso real.
 _SUFIXO_DA_IRMA = re.compile(r"\s*(?:[—–-]\s*Bloco\s+\S+|\d+)\s*$", re.IGNORECASE)
 
 
