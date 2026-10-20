@@ -1,7 +1,7 @@
 """As subcategorias de público da Imprensa — a linha editorial do veículo.
 
 O PEDIDO: "dentro da Categoria de público temos Imprensa e na subcategoria
-temos que adicionar uma nova opção Institucional" (20/10/2026, migration 0106).
+temos que adicionar uma nova opção Institucional" (20/10/2026, migration 0107).
 
 O QUE ESTES TESTES PROTEGEM, e são três coisas diferentes:
 
