@@ -313,12 +313,19 @@ class InstituicaoApelido(Tabela):
     A BUSCA EXATA VENCE O APELIDO, e a ordem importa: `instituicao`
     `nome_normalizado` NÃO é única (ALMG existe como entidade e como órgão), e um
     apelido que respondesse antes trocaria o ator de um cadastro vivo.
+
+    A CHAVE É O PAR (nome, instituição), e não o nome sozinho: o MESMO nome pode
+    ter sido de dois cadastros, fundidos em sobreviventes diferentes. Guardando
+    o par, a ambiguidade fica REGISTRADA em vez de destruída, e cada leitura
+    aplica a regra dela — `reconhecer` só resolve o nome de UMA linha (nunca
+    adivinha o ator), `nomes_da_lista` aceita o nome se QUALQUER linha aponta
+    para um veículo da lista (o texto era, e continua sendo, de um listado).
     """
 
     __tablename__ = "instituicao_apelido"
 
-    #: A chave é o nome já normalizado — a MESMA com que `reconhecer` procura.
-    #: Chave diferente da busca seria um apelido que nunca casa.
+    #: O nome já normalizado — o MESMO com que `reconhecer` procura. Chave
+    #: diferente da busca seria um apelido que nunca casa.
     nome_normalizado: Mapped[str] = mapped_column(Text, primary_key=True)
     #: A grafia como ela existia no cadastro que saiu, para a tela dizer o que
     #: foi absorvido em vez de devolver a chave achatada.
@@ -326,6 +333,7 @@ class InstituicaoApelido(Tabela):
     instituicao_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("instituicao.id", ondelete="CASCADE"),
+        primary_key=True,
     )
     criado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

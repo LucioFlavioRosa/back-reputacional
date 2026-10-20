@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sqlalchemy import select
+from sqlalchemy import Text, func, select
 from sqlalchemy.orm import Session
 
 from app.banco.tabelas_catalogo import CategoriaPublico, Esfera, SubcategoriaPublico
@@ -310,14 +310,25 @@ def reconhecer(
     #: existe como entidade e como órgão), e um apelido que respondesse primeiro
     #: trocaria o ator de um cadastro VIVO pelo de uma fusão antiga. O apelido só
     #: fala sobre nome que não existe mais.
+    #: E SÓ O APELIDO DE UMA LINHA RESOLVE. A chave da tabela é o par (nome,
+    #: instituição), e o mesmo nome pode ter sido de dois cadastros fundidos em
+    #: sobreviventes diferentes. Escolher um deles seria mandar as menções de um
+    #: ator para o dossiê do outro — a mesma regra da concessionária: nunca
+    #: adivinhar quando há mais de uma candidata. O nome ambíguo segue para a
+    #: CONFERÊNCIA, que é onde gente decide.
     sem_cadastro = [chave for chave in nomes if chave not in existentes]
     if sem_cadastro:
-        for chave, ident in sessao.execute(
+        for chave, ident, quantos in sessao.execute(
             select(
-                InstituicaoApelido.nome_normalizado, InstituicaoApelido.instituicao_id
-            ).where(InstituicaoApelido.nome_normalizado.in_(sem_cadastro))
+                InstituicaoApelido.nome_normalizado,
+                func.min(InstituicaoApelido.instituicao_id.cast(Text)),
+                func.count(),
+            )
+            .where(InstituicaoApelido.nome_normalizado.in_(sem_cadastro))
+            .group_by(InstituicaoApelido.nome_normalizado)
         ).all():
-            existentes[chave] = str(ident)
+            if quantos == 1:
+                existentes[chave] = str(ident)
 
     #: O CADASTRO ATIVO INTEIRO, PELA CHAVE ACHATADA — uma consulta, e um
     #: dicionário consultado em O(1) por nome novo.

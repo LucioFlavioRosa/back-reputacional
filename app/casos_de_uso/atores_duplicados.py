@@ -633,25 +633,28 @@ def fundir(
     #: NOME IGUAL NÃO VIRA APELIDO: `ALMG` (entidade) dentro de `ALMG` (órgão)
     #: não tira nome nenhum de circulação, e a linha só ocuparia a chave.
     if perfil.nome_normalizado != sobrevivente.nome_normalizado:
-        ja = sessao.get(InstituicaoApelido, perfil.nome_normalizado)
-        if ja is not None and ja.instituicao_id != sobrevivente.id:
-            #: NOME AMBÍGUO NÃO APONTA PARA NINGUÉM, e isto é conserto de achado
-            #: ALTO de revisão.
-            #:
-            #: O CASO: dois cadastros VIVOS podem ter o mesmo `nome_normalizado`
-            #: (ALMG é entidade e órgão), e cada um pode ser fundido num
-            #: sobrevivente DIFERENTE. A primeira versão fazia "o mais recente
-            #: vence" — e com isso as menções que historicamente eram do primeiro
-            #: ator passavam, todas, para o segundo. Redirecionamento silencioso
-            #: de dossiê é pior que nome não resolvido.
-            #:
-            #: A REGRA É A MESMA DA CONCESSIONÁRIA: nunca adivinhar quando há mais
-            #: de uma candidata (`unidade_da_mencao`). Sem apelido, o nome volta a
-            #: não casar e aparece na CONFERÊNCIA da próxima subida, que é onde
-            #: gente decide — e é por isso que o apelido antigo também sai: deixá-
-            #: lo de pé manteria metade do redirecionamento.
-            sessao.delete(ja)
-        elif ja is None:
+        #: A AMBIGUIDADE É REGISTRADA, E NÃO RESOLVIDA NEM DESTRUÍDA.
+        #:
+        #: O CASO: dois cadastros VIVOS podem ter o mesmo `nome_normalizado`
+        #: (ALMG é entidade e órgão), e cada um pode ser fundido num sobrevivente
+        #: DIFERENTE. A primeira versão fazia "o mais recente vence", e as
+        #: menções que eram do primeiro ator passavam todas para o segundo. A
+        #: segunda APAGAVA o apelido — e aí o nome saía de `nomes_da_lista`, e a
+        #: reconciliação tirava as menções dele do Mercado em todos os meses
+        #: fechados: uma fusão sem relação com mercado mudava a série histórica.
+        #:
+        #: AGORA A CHAVE É O PAR, então as duas linhas coexistem e cada leitura
+        #: aplica a regra dela: `reconhecer` só resolve nome de UMA linha,
+        #: `nomes_da_lista` aceita o nome se QUALQUER linha for de um listado.
+        #:
+        #: SEM REPETIR: a mesma fusão rodada duas vezes não acrescenta linha.
+        ja = sessao.scalar(
+            select(InstituicaoApelido).where(
+                InstituicaoApelido.nome_normalizado == perfil.nome_normalizado,
+                InstituicaoApelido.instituicao_id == sobrevivente.id,
+            )
+        )
+        if ja is None:
             sessao.add(
                 InstituicaoApelido(
                     nome_normalizado=perfil.nome_normalizado,

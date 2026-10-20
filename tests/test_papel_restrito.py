@@ -356,21 +356,21 @@ def test_fundir_grava_e_reaponta_o_apelido_com_o_papel_restrito(sessao_restrita,
     )
     sessao_restrita.flush()
 
-    assert (
-        sessao_restrita.get(InstituicaoApelido, "nome que saiu restrito").instituicao_id
-        == outro.id
-    )
+    assert sessao_restrita.scalars(
+        select(InstituicaoApelido.instituicao_id).where(
+            InstituicaoApelido.nome_normalizado == "nome que saiu restrito"
+        )
+    ).all() == [outro.id]
 
-    #: E O `delete`, que a 0102 concede EXPLICITAMENTE: quando o mesmo nome seria
-    #: apelido de dois sobreviventes diferentes, a fusão APAGA o apelido em vez de
-    #: redirecioná-lo — nome ambíguo não aponta para ninguém. Sem o `grant`, essa
-    #: fusão passaria aqui em desenvolvimento e quebraria só no implantado.
-    sessao_restrita.delete(
-        sessao_restrita.get(InstituicaoApelido, "nome que saiu restrito")
-    )
-    sessao_restrita.flush()
-
-    assert sessao_restrita.get(InstituicaoApelido, "nome que saiu restrito") is None
+    #: E `delete` NÃO É CONCEDIDO, de propósito: o nome ambíguo passou a ser
+    #: REGISTRADO como duas linhas em vez de apagado, então não há gesto de
+    #: apagar no app. A revogação é a que `test_nenhuma_trilha_e_gravavel...`
+    #: cobra de toda tabela nova — e aqui ela também diz que o desenho do apelido
+    #: não depende de apagar.
+    with pytest.raises(ProgrammingError, match="permission denied"), _isolado(
+        sessao_restrita
+    ):
+        sessao_restrita.execute(text("delete from instituicao_apelido"))
 
 
 def test_remover_porta_voz_funciona_com_o_papel_restrito(sessao_restrita, semente):
