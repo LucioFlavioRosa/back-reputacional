@@ -19,8 +19,8 @@ O QUE ESTE ARQUIVO PROTEGE:
    dono do produto pediu ao dizer "para fazer essa deduplicação, depois da
    normalização os nomes devem ser iguais";
 2. que o conjunto novo seja SUPERCONJUNTO do antigo: a menção que o cadastro
-   não resolve ("Águas do Rio", 9.411) continua sendo achada pelo texto cru.
-   Acrescentar disjunção só ganha linha;
+   não resolve continua sendo achada pelo texto cru. Acrescentar disjunção só
+   ganha linha;
 3. que O SELETOR E O RECORTE CONTEM O MESMO. É a lição da `0098`: lá a barra do
    N2 mostrava 29.701 e o clique nela alcançava 30.932, porque a leitura
    agrupava por um caminho e o filtro recortava por outro;
@@ -51,8 +51,12 @@ MES = date(2026, 1, 1)
 #: AS DUAS GRAFIAS QUE A `0099` UNE, e a unidade do cadastro que elas são.
 NOME_DO_CADASTRO = "Corsan"
 RAZAO_SOCIAL = "Companhia Riograndense de Saneamento (Corsan)"
-#: O nome AMBÍGUO: certo na planilha, e sem chave de propósito (dois blocos).
-SEM_CHAVE = "Águas do Rio"
+#: UM NOME QUE O CADASTRO NÃO TEM, sem chave de propósito — "Águas de Trevo"
+#: não é concessão de verdade. Até 19/10/2026 este constante era "Águas do
+#: Rio", um nome ambíguo de verdade (duas linhas do cadastro, "1" e "4"); a
+#: migration `0104` (por pedido) consolidou as duas numa só, e "Águas do Rio"
+#: passou a RESOLVER — deixou de servir de exemplo de "sem chave" aqui.
+SEM_CHAVE = "Águas de Trevo"
 
 
 @pytest.fixture
@@ -144,10 +148,10 @@ def test_o_recorte_pela_razao_social_tambem_acha_as_duas(sessao, fonte, corsan):
 def test_o_recorte_ainda_acha_PELO_TEXTO_CRU(sessao, fonte):
     """A menção SEM chave continua sendo achada pelo nome do fornecedor.
 
-    É a verificação de superconjunto na forma que importa: são 28.549 menções
-    hoje — as ambíguas ("Águas do Rio") e as ~45 grafias de operação que o
-    cadastro não tem. Se alguém "simplificar" a condição trocando o `or` pela
-    coluna nova, estas somem do filtro que as acha hoje.
+    É a verificação de superconjunto na forma que importa: a menção cuja
+    grafia o cadastro não resolve continua achável pelo texto cru. Se alguém
+    "simplificar" a condição trocando o `or` pela coluna nova, estas somem do
+    filtro que as acha hoje.
     """
     ident = _mencao(sessao, fonte, unidade_texto=SEM_CHAVE)
     assert sessao.scalar(
@@ -397,8 +401,8 @@ def test_o_ranking_do_MES_agrupa_as_duas_grafias_numa_barra(sessao, fonte, corsa
 def test_o_ranking_do_MES_ainda_mostra_quem_o_cadastro_nao_resolve(sessao, fonte):
     """O `outerjoin` não pode sumir com a menção sem chave.
 
-    `Águas do Rio` são dois blocos e fica sem chave DE PROPÓSITO. Um `join` em
-    vez de `outerjoin` a tiraria do ranking — e sumir do painel "onde está o
+    `SEM_CHAVE` fica sem chave DE PROPÓSITO, de novo. Um `join` em vez de
+    `outerjoin` a tiraria do ranking — e sumir do painel "onde está o
     problema" é pior que aparecer com a palavra do fornecedor.
     """
     _mencao(sessao, fonte, unidade_texto=SEM_CHAVE)
