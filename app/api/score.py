@@ -45,7 +45,11 @@ from app.banco.sessao import SessaoDoPedido
 from app.banco.tabelas_catalogo import CategoriaPublico, SubcategoriaPublico
 from app.banco.tabelas_score import Lente, ScoreConfig, ScoreFato, ScoreFonte, ScoreMesFonte
 from app.banco.tabelas_stakeholders import Instituicao
-from app.casos_de_uso import ingerir_mencoes, planilha_do_score
+from app.casos_de_uso import (
+    ingerir_mencoes,
+    planilha_do_score,
+    reconciliar_lista_de_veiculos,
+)
 from app.casos_de_uso.ler_sinais_da_lente import regua_dos_sinais
 from app.dominio.erros import Conflito, NaoEncontrado, RegraViolada
 from app.dominio.ingestao_score import rotulo_do_cargo
@@ -1249,6 +1253,105 @@ class VeiculosDoMercadoSaida(BaseModel):
     #: limpava a edição. A pessoa achava que salvou, e a lente seguia sem o
     #: veículo. Nome, e não id: é o que ela reconhece na frase.
     recusados: list[str] = []
+
+
+class VeiculoDaReconciliacaoSaida(BaseModel):
+    nome: str
+    mencoes: int
+
+
+class MesDaReconciliacaoSaida(BaseModel):
+    mes: date
+    antes: int
+    depois: int
+    #: SE O MÊS SERÁ REESCRITO, e NÃO é `antes != depois`: um veículo que sai e
+    #: outro que entra com a mesma contagem deixam o total igual e o conjunto
+    #: diferente. Ver `reconciliar_lista_de_veiculos`.
+    mudou: bool
+
+
+class ReconciliacaoSaida(BaseModel):
+    """O que muda — ou o que mudou — quando a lista passa a valer para trás."""
+
+    fonte: str
+    espelho: str
+    lista: str
+    meses: list[MesDaReconciliacaoSaida]
+    entram: list[VeiculoDaReconciliacaoSaida]
+    saem: list[VeiculoDaReconciliacaoSaida]
+    aplicada: bool
+
+
+def _reconciliacao(medida: reconciliar_lista_de_veiculos.Reconciliacao) -> ReconciliacaoSaida:
+    #: CAMPO A CAMPO, e não `**vars(medida)`: as dataclasses do caso de uso têm
+    #: `slots=True` e não têm `__dict__` — `vars()` levanta `TypeError`, e foi
+    #: assim que uma rota desta casa devolveu 500 em produção.
+    return ReconciliacaoSaida(
+        fonte=medida.fonte,
+        espelho=medida.espelho,
+        lista=medida.lista,
+        meses=[
+            MesDaReconciliacaoSaida(
+                mes=mes.mes, antes=mes.antes, depois=mes.depois, mudou=mes.mudou
+            )
+            for mes in medida.meses
+        ],
+        entram=[
+            VeiculoDaReconciliacaoSaida(nome=v.nome, mencoes=v.mencoes)
+            for v in medida.entram
+        ],
+        saem=[
+            VeiculoDaReconciliacaoSaida(nome=v.nome, mencoes=v.mencoes)
+            for v in medida.saem
+        ],
+        aplicada=medida.aplicada,
+    )
+
+
+@rotas.get("/veiculos-de-investidores/reconciliacao")
+def previa_da_reconciliacao(
+    sessao: Sessao, usuario: UsuarioQueAdministraCadastros
+) -> list[ReconciliacaoSaida]:
+    """O que mudaria se a lista de AGORA valesse para os meses já ingeridos.
+
+    NÃO ESCREVE. É a prévia, e ela existe porque aplicar reescreve
+    `score_mes_fonte` de meses FECHADOS: o índice daqueles meses muda, e com ele
+    o número que já foi citado em reunião. "Mostre antes" é a mesma regra que a
+    conferência da subida de planilha segue.
+
+    A MESMA PERMISSÃO DA LISTA (`UsuarioQueAdministraCadastros`): quem decide
+    quais veículos a lente considera é quem decide que isso valha para trás. São
+    o mesmo gesto em dois tempos, e pedir uma permissão diferente para a segunda
+    metade deixaria a lista editável por quem não pode torná-la efetiva.
+
+    UMA POR FONTE QUE RECORTA. Hoje é uma só (`clipei_investidores`), e a lista
+    existe porque duas fontes com a mesma lista são duas reconciliações — cada
+    uma com o próprio espelho.
+    """
+    return [
+        _reconciliacao(reconciliar_lista_de_veiculos.previa(sessao, fonte))
+        for fonte in reconciliar_lista_de_veiculos.fontes_que_recortam(sessao)
+    ]
+
+
+@rotas.post("/veiculos-de-investidores/reconciliacao", status_code=200)
+def aplicar_a_reconciliacao(
+    sessao: Sessao, usuario: UsuarioQueAdministraCadastros
+) -> list[ReconciliacaoSaida]:
+    """Faz a lista de agora valer para TODOS os meses já ingeridos.
+
+    REESCREVE MESES FECHADOS, e é por isso que a tela mostra a prévia antes. O
+    pedido do dono do produto foi explícito nos dois sentidos: classificar move
+    os registros para a lente, desclassificar os tira.
+
+    POST E NÃO PUT: não é "deixe a reconciliação neste estado", é "execute esta
+    reconciliação agora". Repetir o POST é inofensivo — a segunda vez não acha
+    mês para mudar —, mas o gesto é um comando, e o verbo diz isso.
+    """
+    return [
+        _reconciliacao(reconciliar_lista_de_veiculos.aplicar(sessao, fonte))
+        for fonte in reconciliar_lista_de_veiculos.fontes_que_recortam(sessao)
+    ]
 
 
 @rotas.put("/veiculos-de-investidores")
