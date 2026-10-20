@@ -45,12 +45,21 @@ begin
     --: A CONFERÊNCIA É PELA PERGUNTA QUE O CÓDIGO FAZ: "esta lente tem fonte
     --: interna ATIVA?". Se sobrar uma, o índice continua somando agendas e esta
     --: migration não fez o que diz.
+    --:
+    --: SÓ NESTA LENTE, e é correção de revisão: eu contava as fontes internas
+    --: do sistema INTEIRO, então o dia em que alguém criasse uma fonte interna
+    --: legítima em outra lente esta migration abortaria — reclamando de algo
+    --: que não tem nada a ver com o CRM, que ela acabou de aposentar
+    --: corretamente.
     select count(*) into ainda_interna
-      from score_fonte
-     where interna and ativo;
+      from score_fonte f
+      join lente l on l.id = f.lente_id
+     where l.codigo = 'institucional' and f.interna and f.ativo;
 
     if ainda_interna > 0 then
-        raise exception 'ainda há % fonte(s) interna(s) ativa(s) depois da 0108', ainda_interna;
+        raise exception
+            'a lente institucional ainda tem % fonte(s) interna(s) ativa(s) depois da 0108',
+            ainda_interna;
     end if;
 
     --: E A LENTE PRECISA TER COM QUE SE MEDIR DEPOIS: sem a fonte da `0107`,

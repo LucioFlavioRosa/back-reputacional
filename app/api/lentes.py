@@ -250,7 +250,10 @@ def obter_dossie(
         else {
             secao
             for indice, secao in ((0, Secao.PAINEL_A), (1, Secao.PAINEL_B))
-            if nomeia_o_diretorio(lente.codigo, blocos_dos_paineis[indice])
+            if nomeia_o_diretorio(
+                repositorio_lentes.lente_e_interna(sessao, lente.id),
+                blocos_dos_paineis[indice],
+            )
         }
     )
     leitura = ler_sinais(

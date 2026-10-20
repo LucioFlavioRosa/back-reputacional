@@ -890,7 +890,7 @@ def frase_do_recorte(
     )
 
 
-def nomeia_o_diretorio(codigo_da_lente: str, bloco: BlocoSaida) -> bool:
+def nomeia_o_diretorio(lente_e_interna: bool, bloco: BlocoSaida) -> bool:
     """Este painel publica NOME de gente ou de instituição de fora?
 
     É a pergunta que separa o que `ve_diretorio` guarda do que ele não guarda, e
@@ -899,10 +899,17 @@ def nomeia_o_diretorio(codigo_da_lente: str, bloco: BlocoSaida) -> bool:
     recusa a este papel — quanto "Concessionárias com maior repercussão", que é
     unidade de negócio da própria Aegea e não é cadastro de terceiro. Gatilhar
     pelo tipo esconderia da lente errada um dado que é da casa.
+
+    E NÃO SE RESPONDE PELO CÓDIGO DA LENTE — achado de revisão. A pergunta era
+    "é a Institucional?", porque ali o bloco horizontal era o de órgãos. Depois
+    da `0108` o bloco horizontal DELA é "Concessionárias com maior
+    repercussão", que é dado da casa: quem não vê o diretório perdia um painel
+    por uma regra de privacidade que não tinha mais o que proteger. Quem
+    responde é a procedência — o painel de órgãos só existe na lente interna.
     """
     if bloco.tipo == "matriz_prioridade":
         return True
-    return codigo_da_lente == "institucional" and bloco.tipo == "barras_horizontais"
+    return lente_e_interna and bloco.tipo == "barras_horizontais"
 
 
 #: As cores do tier, na mesma paleta oficial da Aegea que o resto do produto
@@ -1488,7 +1495,16 @@ def kpis(
     total = sum(linha["pos"] + linha["neu"] + linha["neg"] for linha in serie)
     com_base = [linha for linha in serie if not linha["sem_base"]]
 
-    if lente.codigo == "imprensa":
+    #: OS KPIs DO CRM SÃO ESCOLHIDOS PELO CADASTRO — achado de revisão. Eles
+    #: dizem "Agendas no período" e "Termômetro propositivo/tenso", que é a
+    #: semântica da fonte interna; depois da `0108` a Institucional mede
+    #: matérias, e manter a escolha pelo código da lente poria rótulo de agenda
+    #: sobre contagem de clipping. A pergunta certa é de onde o número vem.
+    if repositorio_lentes.lente_e_interna(sessao, lente.id):
+        return _kpis_do_institucional(serie, do_mes, total)
+    if lente.codigo in ("imprensa", "institucional"):
+        #: A INSTITUCIONAL USA OS KPIs DA IMPRENSA, que é o que ela passou a
+        #: ser: clipping recortado, medido em matérias e tiers.
         return _kpis_da_imprensa(
             sessao, lente, meses, calibracao, serie, com_base, do_mes, total, filtro
         )
@@ -1496,8 +1512,6 @@ def kpis(
         return _kpis_do_mercado(sessao, mes, meses)
     if lente.codigo == "clientes":
         return _kpis_dos_clientes(sessao, lente, alvo, meses, calibracao)
-    if lente.codigo == "institucional":
-        return _kpis_do_institucional(serie, do_mes, total)
     return _kpis_da_sociedade(sessao, lente, alvo, meses, calibracao, serie, do_mes, total)
 
 

@@ -328,8 +328,13 @@ def test_a_institucional_PASSOU_a_aceitar_o_recorte(sessao):
 
 
 def test_sem_filtro_a_lente_interna_responde_o_mes(sessao):
-    """O CONTRAPESO: sem recorte, a Institucional continua respondendo — é o que
-    a barra da Evolução abre quando alguém clica num mês dela."""
+    """O CONTRAPESO: sem recorte, a lente interna continua respondendo — é o que
+    a barra da Evolução abre quando alguém clica num mês dela.
+
+    COM O CRM RELIGADO (`0108`): sem isso o teste continuava passando, mas pelo
+    caminho das MENÇÕES — o nome dizia "lente interna" e o que ele media era
+    outra coisa. Achado de revisão."""
+    ligar_o_crm(sessao)
     recorte = obter_recorte(
         sessao=sessao, usuario=_QuemOlha(), codigo="institucional", mes="2026-06"
     )

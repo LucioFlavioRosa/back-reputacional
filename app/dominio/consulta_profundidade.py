@@ -185,6 +185,17 @@ APRESENTACAO: dict[str, Apresentacao] = {
         contraida="do Mercado",
         cartao="divergentes",
     ),
+    #: A TERCEIRA, DESDE A `0108`. Sem esta entrada a rota responderia `KeyError`
+    #: para uma lente que `LENTES_DA_CONSULTA` passou a aceitar — foi achado de
+    #: revisão, e é o par que faltava: incluir a lente na lista sem lhe dar
+    #: apresentação é habilitar meia funcionalidade.
+    "institucional": Apresentacao(
+        publico="Governo e entidades",
+        cor="#A11FFF",
+        fonte="Clipei, imprensa institucional de todos os tiers",
+        contraida="da Institucional",
+        cartao="divergentes",
+    ),
 }
 
 FILTRO_DE_TIER = {

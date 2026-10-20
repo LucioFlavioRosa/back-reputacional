@@ -1113,7 +1113,12 @@ def test_a_tela_abre_no_mes_mais_completo_e_nao_no_ultimo(
     um mês na lista de meses com dado, mesmo sem planilha nenhuma. As planilhas
     dos fornecedores chegam com atraso — então o mês MAIS RECENTE é quase sempre
     um mês só de CRM, com quatro lentes vazias e um ISR que é o score de uma só.
+
+    COM O CRM RELIGADO (`0108`): aposentado, ele não põe mais mês na lista, e o
+    cenário deste teste deixa de existir. Religar é o que o mantém medindo o
+    defeito que ele descreve. A mesma regra sem o CRM está no teste seguinte.
     """
+    ligar_o_crm(sessao)
     # Junho com DUAS lentes: a `junho` traz a imprensa, e aqui entra a
     # sociedade. É o que faz dele o mês mais completo — com uma lente só,
     # empatado com setembro, o desempate pelo mais recente escolheria setembro,
@@ -1140,6 +1145,29 @@ def test_a_tela_abre_no_mes_mais_completo_e_nao_no_ultimo(
     assert "2026-09" in opcoes["meses"], "setembro precisa estar na lista"
     assert opcoes["meses"][-1] == "2026-09", "e ser o último — é o que tornava o defeito possível"
     # Mas não é nele que a tela abre.
+    assert opcoes["mes_sugerido"] == "2026-06"
+
+
+def test_o_mes_SO_DE_AGENDA_nao_entra_mais_na_lista(cliente_do_score, sessao, semente, junho):
+    """A outra ponta da `0108`, e é a configuração que vai para o ar.
+
+    Com o CRM fora do índice, interação registrada não alimenta lente nenhuma —
+    então um mês que só tem agenda não pode aparecer no seletor. Aparecendo, a
+    pessoa escolheria um mês em que a tela abre sem número nenhum, e sem nada na
+    tela explicando por quê. É o mesmo defeito que `mes_mais_completo` nasceu
+    para evitar, pelo outro lado.
+    """
+    criada = cliente_do_score.post(
+        "/api/interacoes",
+        json={**corpo(semente), "data_interacao": "2026-09-10", "clima": "propositivo"},
+    )
+    assert criada.status_code == 201, criada.text
+
+    opcoes = cliente_do_score.get("/api/score/opcoes").json()
+
+    assert "2026-09" not in opcoes["meses"]
+    #: E JUNHO CONTINUA LÁ: o que sumiu foi o mês sem lente medida, não a lista.
+    assert "2026-06" in opcoes["meses"]
     assert opcoes["mes_sugerido"] == "2026-06"
 
 

@@ -893,7 +893,13 @@ def test_a_agenda_sensivel_nao_entra_no_score_nem_nomeia_o_orgao(sessao):
     nome apareceria. O Score é índice da companhia: duas pessoas lendo notas
     diferentes para o mesmo mês é pior do que o custo de a agenda restrita não
     pesar no índice.
+
+    COM O CRM RELIGADO (`0108`): a fonte interna saiu do índice, e sem religá-la
+    este teste passaria porque não há painel de órgão nem conta de agenda — ou
+    seja, passaria sem medir o vazamento. A marca que ele protege é a mais
+    pesada do CRM e tem de continuar valendo no dia em que a fonte voltar.
     """
+    ligar_o_crm(sessao)
     restrita = _agenda_do_crm(
         sessao, instituicao="Agência Reservada do Teste", sensivel=True
     )
