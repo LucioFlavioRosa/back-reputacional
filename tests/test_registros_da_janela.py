@@ -173,6 +173,29 @@ def test_a_PAGINA_e_uma_fatia_do_TOTAL(sessao, imprensa, tema):
     assert {i.id for i in primeira.itens}.isdisjoint({i.id for i in segunda.itens})
 
 
+def test_a_mencao_COM_PILAR_E_SEM_TEMA_entra_no_n1_e_so_nele(sessao, imprensa, tema):
+    """O caso dos 72.590 que a 0098 mediu, e a razão de este teste existir.
+
+    A menção classificada no PILAR e não no TEMA é a maior população da base. No
+    nível do pilar ela conta; no nível do tema ela não tem grupo, e o quadro a
+    diz na linha "sem o nível pedido". Se a lista a trouxesse no n2, o modal
+    mostraria mais linhas do que o número que a pessoa clicou; se a deixasse de
+    fora no n1, mostraria menos.
+    """
+    pilar = sessao.get(BlocoTema, tema.bloco_tema_id)
+    so_pilar = _mencao(sessao, imprensa, None, data=date(2026, 9, 4), titulo="Só pilar")
+    so_pilar.bloco_tema_id = pilar.id
+    com_tema = _mencao(sessao, imprensa, tema.id, data=date(2026, 9, 5), titulo="Com tema")
+    com_tema.bloco_tema_id = pilar.id
+    sessao.flush()
+
+    no_pilar = impacto_na_janela.registros(sessao, ate=ATE, grupo=pilar.id, nivel="n1")
+    no_tema = impacto_na_janela.registros(sessao, ate=ATE, grupo=tema.id)
+
+    assert {i.titulo for i in no_pilar.itens} == {"Só pilar", "Com tema"}
+    assert [i.titulo for i in no_tema.itens] == ["Com tema"]
+
+
 def test_o_PILAR_tambem_abre(sessao, imprensa, tema):
     #: A chave N1/N2 vale aqui como vale no quadro: o nível pedido escolhe a
     #: coluna da menção.
