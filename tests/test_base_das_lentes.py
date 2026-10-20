@@ -424,6 +424,45 @@ def test_a_edicao_fica_na_trilha_de_auditoria(sessao, materia_do_globo):
     assert linha.valor_novo == "Dani Souza"
 
 
+def test_a_trilha_NAO_impede_apagar_a_mencao(sessao, materia_do_globo):
+    """A subida mensal apaga o mês — e a trilha não pode barrar isso.
+
+    O DEFEITO QUE ISTO FECHA, e ele estava NO AR (`0103`). A `0101` criou
+    `mencao_auditoria.mencao_id` com chave estrangeira SEM `on delete cascade`, e
+    um gatilho `after update on mencao` que audita toda coluna que muda. As duas
+    juntas fechavam a porta: qualquer UPDATE numa menção criava linha de trilha,
+    e a partir dali aquela menção não podia mais ser apagada —
+    `ForeignKeyViolation`.
+
+    E QUEM APAGA MENÇÃO É `ingerir_mencoes.regravar`: a subida substitui o mês.
+    Bastava alguém ter fundido dois cadastros (a fila move as menções com um
+    `update`) para a PRÓXIMA SUBIDA daquele mês falhar inteira.
+
+    A SUÍTE NÃO PEGAVA porque nenhum teste atualizava e depois apagava a MESMA
+    menção. É por isso que este teste faz as duas coisas, nesta ordem.
+    """
+    materia, jornalista_do_globo, _ = materia_do_globo
+    _editar(sessao, materia.id, jornalista_do_globo.id)
+    trilha = sessao.execute(
+        text("select count(*) from mencao_auditoria where mencao_id = :id"),
+        {"id": str(materia.id)},
+    ).scalar()
+    assert trilha, "sem trilha, este teste não prova nada"
+
+    sessao.execute(
+        text("delete from mencao where id = :id"), {"id": str(materia.id)}
+    )
+    sessao.flush()
+
+    #: E A TRILHA FICA, que é a razão de tirar a chave em vez de pôr `cascade`:
+    #: uma trilha que some na subida de rotina não é trilha.
+    sobrou = sessao.execute(
+        text("select count(*) from mencao_auditoria where mencao_id = :id"),
+        {"id": str(materia.id)},
+    ).scalar()
+    assert sobrou == trilha
+
+
 # -- o rótulo do pilar depois da 0098 -----------------------------------------
 
 
