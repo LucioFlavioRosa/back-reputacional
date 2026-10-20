@@ -464,15 +464,12 @@ def fundir(
 
     * o `cargo` de quem sai — o CHECK `instituicao_cargo_so_de_perfil` existe de
       propósito, e um jornal não tem cargo;
-    * o `nome` e o `nome_normalizado`, que são a identidade do sobrevivente. ISTO
-      TEM CONSEQUÊNCIA ALÉM DA TELA: a ingestão casa menção com cadastro por
-      `nome_normalizado` exato (`veiculos_da_imprensa.reconhecer`), então o nome
-      que desaparece daqui volta a NÃO casar na próxima subida — e o veículo pode
-      nascer de novo, recriando a duplicata que alguém acabou de resolver. É um
-      buraco que não nasceu com a escolha de direção, mas que ela alcança mais
-      vezes. O conserto é apelido de instituição, como
-      `unidade_negocio_apelido` fez para a concessionária, e está fora desta
-      mudança;
+    * o `nome` e o `nome_normalizado`, que são a identidade do sobrevivente — mas
+      o nome NÃO sai de circulação: ele vira APELIDO do cadastro que fica
+      (`instituicao_apelido`, migration `0102`), e é por isso que a ingestão
+      continua reconhecendo o texto que o fornecedor manda todo mês. Sem o
+      apelido, o veículo nasceria de novo na subida seguinte e a duplicata que
+      alguém acabou de resolver voltaria;
     * `criado_em`, que é a data da linha que sai e não diz nada sobre a que fica.
 
     E DUAS COISAS QUE PASSARAM A NÃO SE PERDER, por este mesmo achado: a pendência
