@@ -73,10 +73,14 @@ class MudancaDoMes:
     antes: int
     #: Quantas ela terá quando a lista de agora valer para ele.
     depois: int
-
-    @property
-    def mudou(self) -> bool:
-        return self.antes != self.depois
+    #: SE O MÊS PRECISA SER REESCRITO, e NÃO é `antes != depois`.
+    #:
+    #: Era uma propriedade derivada das contagens, e isso tinha um buraco: num
+    #: mês em que um veículo de 3 menções sai da lista e outro de 3 entra, o
+    #: total não muda e o mês ficava intacto — com as menções do veículo que já
+    #: não pertence à lente. A comparação verdadeira é entre os CONJUNTOS de
+    #: veículos, e quem a faz é `_por_mes_e_veiculo`.
+    mudou: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,32 +180,49 @@ def _textos_na_lista(
     return {texto for texto in distintos if normalizar(texto) in permitidos}
 
 
-def _contagem_por_veiculo(
+def _por_mes_e_veiculo(
     sessao: Session, fonte: ScoreFonte, textos: set[str] | None = None
-) -> dict[str, int]:
-    consulta = (
-        select(Mencao.veiculo, func.count())
-        .where(Mencao.fonte_id == fonte.id, Mencao.veiculo.is_not(None))
-        .group_by(Mencao.veiculo)
-    )
-    if textos is not None:
-        if not textos:
-            return {}
-        consulta = consulta.where(Mencao.veiculo.in_(list(textos)))
-    return {veiculo: quantas for veiculo, quantas in sessao.execute(consulta)}
+) -> dict[date, dict[str | None, int]]:
+    """`{mês: {veículo: quantas}}` — o grão em que a comparação é honesta.
 
+    POR VEÍCULO E NÃO SÓ POR MÊS, e isto é conserto de um defeito que a primeira
+    versão tinha: eu decidia quais meses reescrever comparando a CONTAGEM do mês.
+    Num mês em que um veículo de 3 menções sai da lista e outro de 3 entra, o
+    total não muda — e o mês ficava intacto, com as menções do veículo que já não
+    pertence à lente. Nada daria sinal.
 
-def _por_mes(sessao: Session, fonte: ScoreFonte, textos: set[str] | None = None) -> dict[date, int]:
+    `None` É UMA CHAVE LEGÍTIMA aqui: a fonte recortada pode ter menções SEM
+    veículo, gravadas pelo critério anterior (antes da `0067` o recorte era a
+    coluna `Público-alvo`, que não exigia veículo). O alvo nunca as tem, então o
+    mês em que elas existem difere e é reescrito — que é o certo.
+    """
     consulta = (
-        select(Mencao.mes, func.count())
+        select(Mencao.mes, Mencao.veiculo, func.count())
         .where(Mencao.fonte_id == fonte.id)
-        .group_by(Mencao.mes)
+        .group_by(Mencao.mes, Mencao.veiculo)
     )
     if textos is not None:
         if not textos:
             return {}
         consulta = consulta.where(Mencao.veiculo.in_(list(textos)))
-    return {mes: quantas for mes, quantas in sessao.execute(consulta)}
+    mapa: dict[date, dict[str | None, int]] = {}
+    for mes, veiculo, quantas in sessao.execute(consulta):
+        mapa.setdefault(mes, {})[veiculo] = quantas
+    return mapa
+
+
+def _somado(por_mes: dict[date, dict[str | None, int]]) -> dict[str, int]:
+    """O total por veículo, somando os meses.
+
+    `None` FICA DE FORA: linha sem veículo não é um veículo que entra ou sai da
+    lista, e mostrá-la no quadro de "passam a contar" seria inventar um nome.
+    """
+    total: dict[str, int] = {}
+    for veiculos in por_mes.values():
+        for veiculo, quantas in veiculos.items():
+            if veiculo is not None:
+                total[veiculo] = total.get(veiculo, 0) + quantas
+    return total
 
 
 def _medir(
@@ -218,8 +239,10 @@ def _medir(
     permitidos = nomes_da_lista(sessao, lista)
     alvo = _textos_na_lista(sessao, espelho, permitidos)
 
-    hoje_por_veiculo = _contagem_por_veiculo(sessao, fonte)
-    alvo_por_veiculo = _contagem_por_veiculo(sessao, espelho, alvo)
+    hoje = _por_mes_e_veiculo(sessao, fonte)
+    depois = _por_mes_e_veiculo(sessao, espelho, alvo)
+    hoje_por_veiculo = _somado(hoje)
+    alvo_por_veiculo = _somado(depois)
 
     entram = tuple(
         MudancaDoVeiculo(nome=nome, mencoes=quantas)
@@ -236,15 +259,20 @@ def _medir(
         )
     )
 
-    antes = _por_mes(sessao, fonte)
-    depois = _por_mes(sessao, espelho, alvo)
     #: A UNIÃO DOS DOIS, e não só os meses do espelho: um mês que hoje tem
     #: menções na lente e deixa de ter (porque o único veículo dele saiu da
     #: lista) é exatamente o caso que o sentido inverso precisa alcançar. Pelos
     #: meses do espelho ele não apareceria, e ficaria com o recorte velho.
     meses = tuple(
-        MudancaDoMes(mes=mes, antes=antes.get(mes, 0), depois=depois.get(mes, 0))
-        for mes in sorted(set(antes) | set(depois))
+        MudancaDoMes(
+            mes=mes,
+            antes=sum(hoje.get(mes, {}).values()),
+            depois=sum(depois.get(mes, {}).values()),
+            #: A COMPARAÇÃO É DOS CONJUNTOS, e não dos totais — ver
+            #: `_por_mes_e_veiculo`.
+            mudou=hoje.get(mes, {}) != depois.get(mes, {}),
+        )
+        for mes in sorted(set(hoje) | set(depois))
     )
 
     return (

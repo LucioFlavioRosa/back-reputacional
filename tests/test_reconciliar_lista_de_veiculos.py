@@ -54,12 +54,25 @@ def sessao():
         conexao.close()
 
 
-_CABECALHO = ["Data", "Classificação", "Veículo"]
+_CABECALHO = ["Data", "Classificação", "Veículo", "Aegea Tier", "Engajamento", "Cargo"]
 
 #: O MAPEAMENTO É O MESMO NAS DUAS FONTES, menos a lista — é o que a `0063` diz
 #: do par real (`clipei`/`clipei_investidores`): "as duas fontes recebem o mesmo
 #: mapeamento, porque leem o mesmo arquivo; a irmã conserva o filtro dela".
-_COLUNAS = {"data": "Data", "sentimento": "Classificação", "veiculo": "Veículo"}
+#:
+#: TIER, ENGAJAMENTO E CARGO ENTRAM DE PROPÓSITO, e é conserto de um buraco que a
+#: revisão apontou: sem eles, as quatro somas do agregado seriam `mencoes` e três
+#: zeros, e o teste que compara a reconciliação com a resubida passaria mesmo se
+#: `soma_log`, `soma_engajamento` ou `soma_cargo` divergissem. São justamente as
+#: três que dependem de `somar` fazer a mesma conta nos dois caminhos.
+_COLUNAS = {
+    "data": "Data",
+    "sentimento": "Classificação",
+    "veiculo": "Veículo",
+    "tier": "Aegea Tier",
+    "engajamento": "Engajamento",
+    "cargo": "Cargo",
+}
 
 
 def _planilha(linhas: list[list[object]]) -> bytes:
@@ -168,11 +181,16 @@ def _agregado(sessao, fonte: ScoreFonte) -> dict[tuple, tuple]:
     }
 
 
+#: TIERS, ENGAJAMENTOS E CARGOS DIFERENTES, para o agregado ter o que somar: o
+#: grão de `score_mes_fonte` é (mês, sentimento, tier), e as três somas vêm de
+#: engajamento e cargo. Com tudo nulo, a comparação entre a reconciliação e a
+#: resubida seria entre duas linhas de zeros.
 _DOIS_MESES = [
-    [date(2026, 8, 3), "Positiva", "Valor Econômico zz90"],
-    [date(2026, 8, 4), "Negativa", "Valor Econômico zz90"],
-    [date(2026, 9, 5), "Positiva", "Valor Econômico zz90"],
-    [date(2026, 8, 6), "Positiva", "Jornal do Bairro zz90"],
+    [date(2026, 8, 3), "Positiva", "Valor Econômico zz90", "Muito relevante", 120, "Imprensa"],
+    [date(2026, 8, 4), "Negativa", "Valor Econômico zz90", "Relevante", 7, "Jornalista"],
+    [date(2026, 8, 5), "Positiva", "Valor Econômico zz90", "Relevante", 0, None],
+    [date(2026, 9, 5), "Positiva", "Valor Econômico zz90", "Muito relevante", 45, "Imprensa"],
+    [date(2026, 8, 6), "Positiva", "Jornal do Bairro zz90", "Relevante", 3, "Imprensa"],
 ]
 
 
@@ -192,12 +210,12 @@ def test_classificar_faz_o_veiculo_entrar_em_TODOS_os_meses_ja_ingeridos(sessao,
     _subir(sessao, espelho)
     #: O veículo NÃO estava classificado quando a planilha subiu.
     assert _quantas(sessao, recorte) == 0
-    assert _quantas(sessao, espelho) == 4
+    assert _quantas(sessao, espelho) == 5
 
     _marcar(sessao, "Valor Econômico zz90")
     reconciliar_lista_de_veiculos.aplicar(sessao, recorte)
 
-    assert _quantas(sessao, recorte, date(2026, 8, 1)) == 2
+    assert _quantas(sessao, recorte, date(2026, 8, 1)) == 3
     assert _quantas(sessao, recorte, date(2026, 9, 1)) == 1
     #: E o que NÃO está na lista continua fora.
     veiculos = set(
@@ -227,6 +245,12 @@ def test_o_AGREGADO_reconciliado_e_igual_ao_que_a_subida_escreveria(sessao, par)
     reconciliar_lista_de_veiculos.aplicar(sessao, recorte)
     pela_reconciliacao = _agregado(sessao, recorte)
     assert pela_reconciliacao, "a reconciliação não escreveu agregado nenhum"
+    #: E AS SOMAS NÃO SÃO TRIVIAIS: sem isto, um dia em que a planilha de teste
+    #: perdesse o engajamento e o cargo, a igualdade abaixo passaria a comparar
+    #: duas linhas de zeros — e o teste pararia de proteger as três somas sem
+    #: ninguém notar.
+    assert any(soma_log > 0 for _, soma_log, _, _ in pela_reconciliacao.values())
+    assert any(cargo > 0 for *_, cargo in pela_reconciliacao.values())
 
     #: A MESMA planilha, de novo — agora a lista já existe, então a ingestão
     #: recorta por conta própria.
@@ -252,6 +276,52 @@ def test_a_RECONCILIACAO_e_IDEMPOTENTE(sessao, par):
     assert _agregado(sessao, recorte) == depois_da_primeira
 
 
+def test_o_mes_em_que_UM_SAI_e_OUTRO_ENTRA_na_mesma_conta(sessao, par):
+    """O defeito que a contagem por mês escondia.
+
+    A primeira versão decidia quais meses reescrever comparando o TOTAL do mês.
+    Aqui um veículo de 2 menções sai da lista e outro de 2 entra, no mesmo mês:
+    antes = 2, depois = 2, e o mês ficava intacto — com as menções do veículo que
+    já não pertence à lente. Nada daria sinal, e a nota do mês seguiria apoiada
+    em matéria que o cadastro diz não ser de mercado.
+
+    A comparação verdadeira é entre os CONJUNTOS de veículos do mês.
+    """
+    espelho, recorte = par
+    sai = _marcar(sessao, "Sai da lista zz92")
+    ingerir_mencoes.ingerir(
+        sessao,
+        espelho,
+        _planilha(
+            [
+                [date(2026, 8, 3), "Positiva", "Sai da lista zz92"],
+                [date(2026, 8, 4), "Positiva", "Sai da lista zz92"],
+                [date(2026, 8, 5), "Negativa", "Entra na lista zz92"],
+                [date(2026, 8, 6), "Negativa", "Entra na lista zz92"],
+            ]
+        ),
+    )
+    assert _quantas(sessao, recorte) == 2
+
+    #: A troca: um sai do cadastro da lista, o outro entra.
+    sai.subcategoria_publico_id = None
+    _marcar(sessao, "Entra na lista zz92")
+    sessao.flush()
+
+    previa = reconciliar_lista_de_veiculos.previa(sessao, recorte)
+    #: O TOTAL DO MÊS NÃO MUDA — e mesmo assim o mês tem de ser reescrito.
+    mes = next(m for m in previa.meses if m.mes == date(2026, 8, 1))
+    assert (mes.antes, mes.depois) == (2, 2)
+    assert mes.mudou is True
+
+    reconciliar_lista_de_veiculos.aplicar(sessao, recorte)
+
+    veiculos = set(
+        sessao.scalars(select(Mencao.veiculo).where(Mencao.fonte_id == recorte.id))
+    )
+    assert veiculos == {"Entra na lista zz92"}
+
+
 # ============================================================== o sentido de SAIR
 def test_DESclassificar_tira_as_mencoes_da_lente(sessao, par):
     """O sentido inverso, por decisão do dono do produto (19/10/2026).
@@ -263,7 +333,7 @@ def test_DESclassificar_tira_as_mencoes_da_lente(sessao, par):
     espelho, recorte = par
     veiculo = _marcar(sessao, "Valor Econômico zz90")
     _subir(sessao, espelho)
-    assert _quantas(sessao, recorte) == 3
+    assert _quantas(sessao, recorte) == 4
 
     #: Tirar a classificação é exatamente o que a tela de cadastro faz.
     veiculo.subcategoria_publico_id = None
@@ -284,7 +354,7 @@ def test_o_veiculo_DESATIVADO_tambem_sai(sessao, par):
     espelho, recorte = par
     veiculo = _marcar(sessao, "Valor Econômico zz90")
     _subir(sessao, espelho)
-    assert _quantas(sessao, recorte) == 3
+    assert _quantas(sessao, recorte) == 4
 
     veiculo.ativo = False
     sessao.flush()
@@ -302,10 +372,10 @@ def test_a_PREVIA_nao_escreve_e_diz_quem_entra(sessao, par):
     previa = reconciliar_lista_de_veiculos.previa(sessao, recorte)
 
     assert previa.aplicada is False
-    assert [(v.nome, v.mencoes) for v in previa.entram] == [("Valor Econômico zz90", 3)]
+    assert [(v.nome, v.mencoes) for v in previa.entram] == [("Valor Econômico zz90", 4)]
     assert previa.saem == ()
     assert [(m.mes, m.antes, m.depois) for m in previa.meses_que_mudam] == [
-        (date(2026, 8, 1), 0, 2),
+        (date(2026, 8, 1), 0, 3),
         (date(2026, 9, 1), 0, 1),
     ]
     #: E NADA FOI ESCRITO: é a razão de a prévia existir.
@@ -321,9 +391,9 @@ def test_a_PREVIA_diz_quem_SAI(sessao, par):
     sessao.flush()
     previa = reconciliar_lista_de_veiculos.previa(sessao, recorte)
 
-    assert [(v.nome, v.mencoes) for v in previa.saem] == [("Valor Econômico zz90", 3)]
+    assert [(v.nome, v.mencoes) for v in previa.saem] == [("Valor Econômico zz90", 4)]
     assert previa.entram == ()
-    assert _quantas(sessao, recorte) == 3
+    assert _quantas(sessao, recorte) == 4
 
 
 # ================================================= o casamento, igual ao da subida
