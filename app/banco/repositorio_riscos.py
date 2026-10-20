@@ -63,7 +63,7 @@ from app.dominio.riscos import (
 SENTIMENTO_DO_INCIDENTE = "neg"
 
 #: O CLIMA QUE FAZ UM INCIDENTE no CRM. `tenso` é o código; o rótulo que a tela
-#: mostra é "Negativo" (ver a tabela `clima`), e é por isso que se compara pelo
+#: mostra é "Reativo" (ver a tabela `clima`), e é por isso que se compara pelo
 #: CÓDIGO: o rótulo é editável pela coordenação.
 CLIMA_DO_INCIDENTE = "tenso"
 

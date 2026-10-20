@@ -305,20 +305,21 @@ def test_a_tabela_manda_as_proprias_colunas_e_o_subtipo(sessao):
 
 
 def test_a_legenda_e_a_cor_da_institucional_vem_do_dicionario_de_clima(sessao):
-    """O rótulo de clima já mudou duas vezes (Propositivo/Tenso na fundação,
-    Proativo/Reativo na 0030, Positivo/Negativo na 0047) sem o `codigo` nunca
-    mudar — e a lente institucional não pode repetir o rótulo velho num texto
-    fixo, tem de ler o dicionário a cada vez, a mesma fonte que pinta o Painel
-    (`clima.cor_hex`)."""
+    """O rótulo de clima já mudou três vezes (Propositivo/Tenso na fundação,
+    Proativo/Reativo na 0030, Positivo/Negativo na 0047, Proativo/Reativo de
+    novo na 0105) sem o `codigo` nunca mudar — e a lente institucional não
+    pode repetir o rótulo velho num texto fixo, tem de ler o dicionário a
+    cada vez, a mesma fonte que pinta o Painel (`clima.cor_hex`)."""
     institucional = _dossie(sessao, "institucional")
-    assert institucional.evolucao.legenda == ["Positivo", "Neutro", "Negativo"]
+    assert institucional.evolucao.legenda == ["Proativo", "Neutro", "Reativo"]
     assert institucional.evolucao.cores == ["#17E3CB", "#8C91A4", "#FF5C60"]
 
-    # A imprensa mede sentimento de mídia, não clima — mesma palavra hoje
-    # (as duas renomeações convergiram) e a MESMA cor: positivo/neutro/
-    # negativo é a mesma pergunta por fonte diferente, e a resposta visual
-    # não muda por isso. Só que fixa (CORES_DO_SENTIMENTO), e não lida de um
-    # dicionário — não existe uma tabela "sentimento" como existe "clima".
+    # A imprensa mede sentimento de mídia, não clima — e a 0105 volta a
+    # separar as palavras (clima é Proativo/Reativo, sentimento continua
+    # Positivo/Negativo), prova de que são dois vocabulários independentes
+    # que só coincidiram enquanto a 0047 esteve valendo. A cor continua a
+    # MESMA, fixa (CORES_DO_SENTIMENTO) e não lida de um dicionário — não
+    # existe uma tabela "sentimento" como existe "clima".
     imprensa = _dossie(sessao, "imprensa")
     assert imprensa.evolucao.legenda == ["Positivo", "Neutro", "Negativo"]
     assert imprensa.evolucao.cores == ["#17E3CB", "#8C91A4", "#FF5C60"]
