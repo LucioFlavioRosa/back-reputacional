@@ -274,8 +274,9 @@ def test_o_modal_traz_AS_TRES_LENTES_e_cada_linha_diz_a_sua(
         ("Do mercado", "mercado"),
         ("Da institucional", "institucional"),
     }
-    #: E O NOME VEM DO CADASTRO, não de um dicionário na tela: a `0061` já
-    #: renomeou uma lente por migration, e um mapa no front envelheceria calado.
+    #: E O NOME VEM DO CADASTRO (`lente.nome`), não de um dicionário na tela:
+    #: um mapa no front seria uma segunda fonte do mesmo nome, e as duas só
+    #: divergem calado. É o que `repositorio_riscos` já faz, com este rótulo.
     nomes = {
         codigo: nome
         for codigo, nome in sessao.execute(select(Lente.codigo, Lente.nome)).all()
