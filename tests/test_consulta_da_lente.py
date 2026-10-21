@@ -532,6 +532,24 @@ def test_o_explorador_fecha_com_o_impacto_do_mes_e_o_denominador(sessao):
     assert {g.uf for g in saida.grupos} == {"RJ", "SP", "MT", None}
 
 
+def test_o_explorador_devolve_a_UF_em_SIGLA_mesmo_gravada_pelo_NOME(sessao):
+    """O TERMÔMETRO POR UF FICAVA VAZIO com a base reimportada (21/10/2026).
+
+    `mencao.uf` guarda o NOME do estado desde 09/10/2026 ("Rio de Janeiro"), e o
+    mapa e a lista da tela procuram a SIGLA. O explorador converte; o estado
+    estrangeiro, que não tem sigla, continua com o nome do fornecedor.
+    """
+    linhas = _linhas_da_imprensa(sessao)
+    nomes = ["Rio de Janeiro", "Rio de Janeiro", "São Paulo", "SP", "Comunidade de Madrid", None]
+    for linha, uf in zip(linhas, nomes, strict=True):
+        linha["uf"] = uf
+    _gravar(sessao, "clipei", linhas)
+
+    saida = _explorador(sessao)
+
+    assert {g.uf for g in saida.grupos} == {"RJ", "SP", "Comunidade de Madrid", None}
+
+
 def test_o_explorador_segue_o_filtro_da_tela(sessao):
     _gravar(sessao, "clipei", _linhas_da_imprensa(sessao))
     saida = _explorador(sessao, sentimento="neg")
