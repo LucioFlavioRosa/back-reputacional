@@ -44,7 +44,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-from sqlalchemy import delete, func, insert, select
+from sqlalchemy import delete, func, insert, or_, select
+from sqlalchemy import true as sa_true
 from sqlalchemy.orm import Session
 
 from app.banco.tabelas_score import Mencao, ScoreFonte, ScoreMesFonte
@@ -294,6 +295,14 @@ def _medir(
 
     hoje = _por_mes_e_veiculo(sessao, fonte)
     depois = _do_universo(sessao, espelho, fonte, alvo)
+    #: O QUE O ESPELHO AINDA TEM DO ALVO, e é a METADE QUE EU TINHA ESQUECIDO —
+    #: achado ALTO de revisão. A partição tem dois lados, e eu comparava só o
+    #: da recortada: no estado de hoje (espelho com o arquivo inteiro, recortada
+    #: com a cópia) o lado dela já está certo, `mudou` dava `False` e o
+    #: `aplicar` não fazia nada. A duplicação do histórico — que é o motivo
+    #: desta mudança existir — ficava intacta, e a Imprensa continuava contando
+    #: o veículo que virou Mercado.
+    sobrando = _por_mes_e_veiculo(sessao, espelho, alvo)
     hoje_por_veiculo = _somado(hoje)
     alvo_por_veiculo = _somado(depois)
 
@@ -323,9 +332,13 @@ def _medir(
             depois=sum(depois.get(mes, {}).values()),
             #: A COMPARAÇÃO É DOS CONJUNTOS, e não dos totais — ver
             #: `_por_mes_e_veiculo`.
-            mudou=hoje.get(mes, {}) != depois.get(mes, {}),
+            #:
+            #: E OS DOIS LADOS DA PARTIÇÃO: o mês muda quando a recortada está
+            #: diferente do alvo OU quando o espelho ainda tem veículo do alvo.
+            #: Só o primeiro deixava o histórico duplicado parado.
+            mudou=hoje.get(mes, {}) != depois.get(mes, {}) or bool(sobrando.get(mes)),
         )
-        for mes in sorted(set(hoje) | set(depois))
+        for mes in sorted(set(hoje) | set(depois) | set(sobrando))
     )
 
     return (
@@ -369,52 +382,109 @@ def _devolver_ao_espelho(
     tinha saído de lá. Com a partição, a linha existe num lugar só: apagá-la
     sem devolver apagaria a matéria do sistema.
 
-    E NÃO DEVOLVE O QUE JÁ ESTÁ LÁ: um mês ainda não migrado tem a linha nos
-    dois lados, e copiar de volta criaria a terceira. A conferência é por
-    (mês, veículo), que é o grão em que a cópia foi feita.
+    DEVOLVE A DIFERENÇA DE CONTAGEM, e não "o que falta por nome" — correção de
+    achado ALTO de revisão. Conferir só a PRESENÇA do veículo no espelho perdia
+    linha: com a recortada tendo 2 e o espelho 1, nada era devolvido e as duas
+    eram apagadas em seguida. A conta é por (mês, veículo): devolve
+    `max(0, quantas_na_recortada - quantas_no_espelho)`.
+
+    E A LINHA SEM VEÍCULO ENTRA NA CONTA, que era o outro achado. Ela não está
+    no alvo (`na_lista(None)` é falso, de propósito) e ficava fora da devolução
+    por causa de um `is_not(None)` — então o `delete` do mês a apagava e ela não
+    existia em lugar nenhum. Pela regra da ingestão, linha sem veículo pertence
+    ao espelho; a `0067` registra que elas existem na recortada, gravadas pelo
+    critério antigo da coluna `Público-alvo`.
     """
-    de_volta = [
-        texto
-        for texto in sessao.scalars(
-            select(Mencao.veiculo)
+    na_recortada = _por_mes_e_veiculo(sessao, fonte).get(mes, {})
+    no_espelho = _por_mes_e_veiculo(sessao, espelho).get(mes, {})
+
+    for veiculo, quantas in na_recortada.items():
+        if veiculo is not None and veiculo in alvo:
+            continue
+        faltam = quantas - no_espelho.get(veiculo, 0)
+        if faltam <= 0:
+            #: O ESPELHO JÁ TEM TUDO ISTO: são as cópias que a transição vai
+            #: apagar da recortada, e devolvê-las criaria a terceira linha.
+            continue
+        #: `limit(faltam)` COM ORDEM DETERMINÍSTICA: sem o `order_by`, duas
+        #: execuções do mesmo mês poderiam copiar linhas diferentes — e o
+        #: resultado seria o mesmo em contagem, mas não em id.
+        de_onde = (
+            select(Mencao.id)
             .where(
                 Mencao.fonte_id == fonte.id,
                 Mencao.mes == mes,
-                Mencao.veiculo.is_not(None),
+                Mencao.veiculo.is_(None) if veiculo is None else Mencao.veiculo == veiculo,
             )
-            .distinct()
-        ).all()
-        if texto not in alvo
-    ]
-    if not de_volta:
-        return
+            .order_by(Mencao.id)
+            .limit(faltam)
+            .scalar_subquery()
+        )
+        origem = select(
+            func.gen_random_uuid(),
+            espelho.id,
+            *[Mencao.__table__.c[nome] for nome in copiaveis],
+        ).where(Mencao.id.in_(de_onde))
+        sessao.execute(insert(Mencao).from_select(["id", "fonte_id", *copiaveis], origem))
 
-    #: OS QUE O ESPELHO JÁ TEM NESTE MÊS ficam de fora da devolução.
-    ja_no_espelho = set(
-        sessao.scalars(
-            select(Mencao.veiculo)
+
+def _nao_e_do_alvo(alvo: set[str]):
+    """A condição "esta linha não pertence à lista".
+
+    A LINHA SEM VEÍCULO ENTRA AQUI: ela não é de veículo listado nenhum, e
+    `veiculo in (...)` em SQL é NULO para ela — nem verdadeiro nem falso. Sem o
+    `is_(None)` explícito, ela não seria apagada da recortada e ficaria para
+    sempre numa lente que não é dela.
+    """
+    if not alvo:
+        return sa_true()
+    return or_(Mencao.veiculo.is_(None), Mencao.veiculo.notin_(list(alvo)))
+
+
+def _trazer_do_espelho(
+    sessao: Session,
+    fonte: ScoreFonte,
+    espelho: ScoreFonte,
+    mes: date,
+    alvo: set[str],
+    copiaveis: list[str],
+) -> None:
+    """As menções do alvo que o espelho tem além do que a recortada já tem.
+
+    PELA DIFERENÇA DE CONTAGEM, por (mês, veículo), e é a mesma conta da
+    devolução — só no sentido oposto. Copiar do espelho sem olhar o que a
+    recortada já tem duplicaria o veículo que já se mudou; e copiar só "o que
+    falta por nome" perderia linha quando as contagens diferem.
+    """
+    na_recortada = _por_mes_e_veiculo(sessao, fonte).get(mes, {})
+    no_espelho = _por_mes_e_veiculo(sessao, espelho).get(mes, {})
+
+    for veiculo, quantas in no_espelho.items():
+        if veiculo is None or veiculo not in alvo:
+            continue
+        faltam = quantas - na_recortada.get(veiculo, 0)
+        if faltam <= 0:
+            continue
+        de_onde = (
+            select(Mencao.id)
             .where(
                 Mencao.fonte_id == espelho.id,
                 Mencao.mes == mes,
-                Mencao.veiculo.in_(de_volta),
+                Mencao.veiculo == veiculo,
             )
-            .distinct()
-        ).all()
-    )
-    faltando = [texto for texto in de_volta if texto not in ja_no_espelho]
-    if not faltando:
-        return
-
-    origem = select(
-        func.gen_random_uuid(),
-        espelho.id,
-        *[Mencao.__table__.c[nome] for nome in copiaveis],
-    ).where(
-        Mencao.fonte_id == fonte.id,
-        Mencao.mes == mes,
-        Mencao.veiculo.in_(faltando),
-    )
-    sessao.execute(insert(Mencao).from_select(["id", "fonte_id", *copiaveis], origem))
+            .order_by(Mencao.id)
+            .limit(faltam)
+            .scalar_subquery()
+        )
+        origem = select(
+            #: `gen_random_uuid()` no banco porque o padrão de `Mencao.id` é do
+            #: Python, e `insert ... select` nunca o chamaria: as linhas sairiam
+            #: sem id.
+            func.gen_random_uuid(),
+            fonte.id,
+            *[Mencao.__table__.c[nome] for nome in copiaveis],
+        ).where(Mencao.id.in_(de_onde))
+        sessao.execute(insert(Mencao).from_select(["id", "fonte_id", *copiaveis], origem))
 
 
 def _regravar_o_agregado(sessao: Session, fonte: ScoreFonte, mes: date) -> None:
@@ -491,11 +561,22 @@ def aplicar(sessao: Session, fonte: ScoreFonte) -> Reconciliacao:
     para uma operação que simplesmente já tinha sido feita. Com a trava, ela
     espera, remede, e não acha mês para mudar.
     """
-    #: A TRAVA É POR FONTE e morre com a transação (`xact`): duas
-    #: reconciliações de fontes diferentes não se esperam, e nada fica preso se
-    #: o processo cair. A chave é o id da fonte num espaço próprio — o primeiro
-    #: argumento é o "namespace", para não colidir com outra trava desta casa.
-    sessao.execute(select(func.pg_advisory_xact_lock(_ESPACO_DA_TRAVA, fonte.id)))
+    #: A TRAVA É DO ARQUIVO, e não da fonte — correção de achado de revisão.
+    #:
+    #: Ela era pelo `fonte.id` da recortada, e isso bastava enquanto o espelho
+    #: era só origem: duas recortadas podiam aplicar ao mesmo tempo sem se
+    #: tocar. Agora as duas ESCREVEM no mesmo espelho (apagam o que foi para o
+    #: recorte delas e devolvem o que saiu), e o `score_mes_fonte` dele é
+    #: reescrito pelas duas — rodar juntas mediria estados obsoletos e poderia
+    #: duplicar na sobreposição. A chave é o id do ESPELHO, que é a identidade
+    #: do arquivo: as reconciliações de arquivos diferentes continuam não se
+    #: esperando.
+    #:
+    #: `xact` porque ela morre com a transação, e nada fica preso se o processo
+    #: cair. O primeiro argumento é o "namespace", para não colidir com outra
+    #: trava desta casa.
+    espelho = espelho_de(sessao, fonte)
+    sessao.execute(select(func.pg_advisory_xact_lock(_ESPACO_DA_TRAVA, espelho.id)))
 
     espelho, alvo, medida = _medir(sessao, fonte)
 
@@ -531,31 +612,28 @@ def aplicar(sessao: Session, fonte: ScoreFonte) -> Reconciliacao:
         #: dele — o `delete` abaixo não distingue quem fica de quem volta.
         _devolver_ao_espelho(sessao, fonte, espelho, mes, alvo, copiaveis)
 
+        #: APAGA DA RECORTADA SÓ O QUE NÃO É DELA, e não o mês inteiro — e esta
+        #: é a correção do achado mais perigoso da revisão.
+        #:
+        #: A primeira versão substituía o mês: apagava tudo e recopiava do
+        #: espelho. Isso funcionava quando o espelho tinha o arquivo inteiro.
+        #: Com a partição, as linhas de um veículo LISTADO vivem só na
+        #: recortada — apagar o mês e recopiar do espelho as apagaria de vez,
+        #: porque o espelho já não as tem. A perda apareceria em qualquer mês
+        #: que entrasse em `mudam` por causa de OUTRO veículo.
         sessao.execute(
-            delete(Mencao).where(Mencao.fonte_id == fonte.id, Mencao.mes == mes)
-        )
-        sessao.execute(
-            delete(ScoreMesFonte).where(
-                ScoreMesFonte.fonte_id == fonte.id, ScoreMesFonte.mes == mes
+            delete(Mencao).where(
+                Mencao.fonte_id == fonte.id,
+                Mencao.mes == mes,
+                _nao_e_do_alvo(alvo),
             )
         )
         if alvo:
-            origem = select(
-                #: `gen_random_uuid()` no banco porque o padrão de `Mencao.id` é
-                #: do Python, e `insert ... select` nunca o chamaria: as linhas
-                #: sairiam sem id.
-                func.gen_random_uuid(),
-                fonte.id,
-                *[Mencao.__table__.c[nome] for nome in copiaveis],
-            ).where(
-                Mencao.fonte_id == espelho.id,
-                Mencao.mes == mes,
-                Mencao.veiculo.in_(list(alvo)),
-            )
-            sessao.execute(
-                insert(Mencao).from_select(["id", "fonte_id", *copiaveis], origem)
-            )
-            #: E SAEM DO ESPELHO: o recorte é EXCLUSIVO. Era aqui que a lente
+            #: E TRAZ DO ESPELHO O QUE FALTA, pela DIFERENÇA DE CONTAGEM: o que
+            #: já está na recortada fica onde está. Copiar tudo outra vez
+            #: duplicaria o veículo que já se mudou.
+            _trazer_do_espelho(sessao, fonte, espelho, mes, alvo, copiaveis)
+            #: E SAI DO ESPELHO: o recorte é EXCLUSIVO. Era aqui que a lente
             #: Imprensa continuava contando o Valor Econômico depois de ele
             #: virar veículo de Mercado — a cópia ia para o recorte e o
             #: original ficava, e as duas lentes contavam a mesma matéria.

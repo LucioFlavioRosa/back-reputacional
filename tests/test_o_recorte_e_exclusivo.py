@@ -227,6 +227,91 @@ def test_a_IDA_E_VOLTA_nao_duplica_nem_perde(sessao):
     assert _por_lente(sessao) == {"imprensa": 2}
 
 
+def _mencao_crua(sessao, fonte_codigo: str, veiculo: str | None) -> None:
+    """Uma menção posta à mão numa fonte, para montar estados que a ingestão
+    de hoje não produz mais — a duplicação antiga e a cópia parcial."""
+    fonte = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == fonte_codigo)).one()
+    sessao.add(
+        Mencao(
+            fonte_id=fonte.id,
+            mes=MES,
+            data=date(2026, 7, 3),
+            sentimento="pos",
+            veiculo=veiculo,
+            titulo_texto=f"Posta à mão — {veiculo}",
+        )
+    )
+    sessao.flush()
+
+
+def test_a_TRANSICAO_do_historico_duplicado_e_corrigida(sessao):
+    """ACHADO ALTO DE REVISÃO, e o que fazia a mudança não servir para nada.
+
+    O ESTADO DE HOJE em dev e em produção: o espelho tem o arquivo inteiro e a
+    recortada tem a cópia do veículo listado — a mesma matéria nas duas lentes.
+    A primeira versão media só o lado da recortada, que já estava certo, e
+    concluía "nada mudou": o `aplicar` não fazia nada e a duplicação do
+    histórico ficava intacta. Ou seja, a exclusividade só valia para dado
+    ingerido DEPOIS da mudança, e o pedido era justamente o contrário.
+    """
+    sessao.add(
+        Instituicao(
+            nome=DO_MERCADO,
+            nome_normalizado=normalizar(DO_MERCADO),
+            tipo="veiculo",
+            subcategoria_publico_id=_subcategoria(sessao, "Econômica e de negócios"),
+        )
+    )
+    sessao.flush()
+    #: O ESPELHO COM AS DUAS (como a Clipei sempre teve) e a recortada com a
+    #: cópia da listada: exatamente o estado que o banco tem hoje.
+    _mencao_crua(sessao, "clipei", DO_MERCADO)
+    _mencao_crua(sessao, "clipei", QUALQUER)
+    _mencao_crua(sessao, "clipei_investidores", DO_MERCADO)
+    assert _por_lente(sessao) == {"imprensa": 2, "mercado": 1}
+
+    _reconciliar(sessao)
+
+    #: 1 E 1: a duplicação sumiu, e nada se perdeu.
+    assert _por_lente(sessao) == {"imprensa": 1, "mercado": 1}
+    assert _agregado(sessao) == {"imprensa": 1.0, "mercado": 1.0}
+
+
+def test_a_COPIA_PARCIAL_nao_perde_linha(sessao):
+    """O outro achado: a devolução conferia PRESENÇA, e não contagem.
+
+    Com a recortada tendo duas linhas de um veículo que saiu da lista e o
+    espelho tendo uma, nada era devolvido — e o `delete` seguinte apagava as
+    duas. Uma linha do sistema desaparecia.
+    """
+    _mencao_crua(sessao, "clipei_investidores", QUALQUER)
+    _mencao_crua(sessao, "clipei_investidores", QUALQUER)
+    _mencao_crua(sessao, "clipei", QUALQUER)
+    assert _por_lente(sessao) == {"imprensa": 1, "mercado": 2}
+
+    _reconciliar(sessao)
+
+    #: O QUALQUER NÃO ESTÁ NA LISTA: as duas linhas dele saem do Mercado, e a
+    #: que o espelho ainda não tinha é devolvida. Nada desaparece.
+    assert _por_lente(sessao) == {"imprensa": 2}
+
+
+def test_a_mencao_SEM_VEICULO_na_recortada_volta_para_o_espelho(sessao):
+    """O terceiro achado. A linha sem veículo não está na lista (nenhuma
+    recortada a aceita), ficava fora da devolução por um `is_not(None)`, e o
+    `delete` do mês a apagava. Pela regra da ingestão ela é do espelho.
+
+    A `0067` registra que elas existem na recortada: foram gravadas pelo
+    critério antigo, a coluna `Público-alvo`, que não exigia veículo.
+    """
+    _mencao_crua(sessao, "clipei_investidores", None)
+    assert _por_lente(sessao) == {"mercado": 1}
+
+    _reconciliar(sessao)
+
+    assert _por_lente(sessao) == {"imprensa": 1}
+
+
 def test_reconciliar_DUAS_VEZES_nao_muda_nada(sessao):
     #: A idempotência do gesto: a segunda aplicação não acha mês para mudar, e
     #: nada se move. Sem isto, cada clique no Salvar duplicaria ou apagaria.
