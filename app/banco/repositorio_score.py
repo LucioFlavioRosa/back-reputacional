@@ -1855,7 +1855,26 @@ def registros_do_grupo_na_janela(
     coluna_da_mencao = coluna_da_mencao_no_nivel(nivel)
     onde = [
         ScoreFonte.lente_id.in_(list(lentes_id)),
-        #: SÓ FONTE ATIVA — e isto entra junto com a lista de lentes, não antes.
+        #: A FONTE INTERNA APOSENTADA SAI; a de planilha, NÃO — e a diferença é
+        #: a correção de um defeito meu, achado ao revisar o impacto da janela.
+        #:
+        #: EU TINHA ESCRITO `ScoreFonte.ativo.is_(True)`, genérico, raciocinando
+        #: que "fonte aposentada saiu do índice". Isso vale para a INTERNA: o
+        #: score dela é recontado a cada leitura, e a `0112` a aposentou para
+        #: tirar as agendas da nota — `lente_e_interna` respeita `ativo` por
+        #: isso. Para fonte de PLANILHA é falso, e a própria `0112` diz: ali
+        #: `ativo = false` é "parou de receber importação", e o histórico
+        #: continua valendo porque está gravado em `score_mes_fonte`.
+        #:
+        #: `denominador_do_mes` CONFIRMA: ele filtra por `calibracao.ligada`, e
+        #: não por `ativo`. Então a planilha aposentada ainda pesa na nota — e o
+        #: filtro genérico escondia deste modal justamente a menção que a
+        #: compõe. Hoje não mudava contagem (o CRM não tem linha em `mencao`),
+        #: mas quebraria no primeiro fornecedor trocado.
+        #:
+        #: A MESMA CONDIÇÃO DE `leitura_das_lentes._nomes_das_fontes`
+        #: (`fonte.ativo or not fonte.interna`), e não uma terceira forma de
+        #: dizer a mesma regra.
         #: Com uma lente só, a Imprensa, a sua única fonte estava ativa e a
         #: condição era desnecessária. Agora a Institucional tem DUAS fontes
         #: cadastradas: a Clipei recortada, ativa, e o CRM, que a `0108`
@@ -1868,7 +1887,7 @@ def registros_do_grupo_na_janela(
         #: condição não muda nenhuma contagem — ACHADO DE REVISÃO: aquilo é uma
         #: premissa operacional, não uma garantia do banco. Um `insert` à mão ou
         #: um seed futuro a quebraria, e a consulta pode se garantir sozinha.
-        ScoreFonte.ativo.is_(True),
+        or_(ScoreFonte.interna.is_(False), ScoreFonte.ativo.is_(True)),
         #: O MESMO PAR `mes`+`data` da janela: `mes` é quem tem índice, e sem
         #: ele a consulta varre a tabela inteira.
         Mencao.mes.in_(meses_da_janela(de, ate)),

@@ -201,7 +201,9 @@ class ImpactoNaJanelaSaida(BaseModel):
     nivel: str
     sem_data: int
     mes_sem_base: bool
-    lente: str
+    #: As lentes que a conta somou, e quanto elas pesaram no índice do mês.
+    lentes: list[str]
+    fatia_das_lentes: float
     dias: int
 
 
@@ -304,7 +306,7 @@ def impacto_na_janela_(
     dias: Annotated[int, Query(ge=1, le=90)] = impacto_na_janela.DIAS_DA_JANELA,
     nivel: Annotated[str, Query(pattern="^(n1|n2|n3)$")] = impacto_na_janela.NIVEL_PADRAO,
 ) -> ImpactoNaJanelaSaida:
-    """Os temas estratégicos (N2) que mais empurraram a nota da imprensa na janela.
+    """Os temas que mais empurraram o ÍNDICE na janela — em pontos do score geral.
 
     NESTE ROTEADOR, E NÃO NO DO SCORE, por causa do guarda: a pergunta nasce no
     Painel de Inteligência de Mercado e quem pode fazê-la é quem tem o portal —
@@ -349,7 +351,14 @@ def impacto_na_janela_(
         nivel=lida.nivel,
         sem_data=lida.sem_data,
         mes_sem_base=lida.mes_sem_base,
-        lente=impacto_na_janela.LENTE,
+        #: AS LENTES QUE A CONTA SOMOU, e a fatia delas no índice do mês. Era
+        #: `lente=impacto_na_janela.LENTE` — uma constante, de quando a leitura
+        #: media só a Imprensa. Agora o impacto é em ponto do SCORE GERAL e soma
+        #: as três de clipping, cada uma pelo peso dela; a tela precisa das duas
+        #: coisas para a conta ser conferível, e vêm da RESPOSTA e não de uma
+        #: constante, porque a lente sem dado no mês não entrou.
+        lentes=list(lida.lentes),
+        fatia_das_lentes=lida.fatia_das_lentes,
         dias=dias,
     )
 
