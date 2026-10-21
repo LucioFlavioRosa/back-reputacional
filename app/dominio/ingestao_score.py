@@ -944,10 +944,17 @@ def ler_planilha(
 ) -> Leitura:
     """A planilha inteira, com a contagem do que ficou de fora.
 
-    `veiculo_na_lista` RESPONDE SE O VEÍCULO DAQUELA LINHA ESTÁ NA LISTA da
-    fonte, e só é usado quando o mapeamento declara `lista_de_veiculos`. Entra
-    por parâmetro porque a resposta está no banco, e este módulo é o motor:
-    quem tem sessão monta o predicado (ver `casos_de_uso/ingerir_mencoes`).
+    `veiculo_na_lista` RESPONDE SE A LINHA PERTENCE A ESTA FONTE. Entra por
+    parâmetro porque a resposta está no banco, e este módulo é o motor: quem
+    tem sessão monta o predicado (ver `casos_de_uso/ingerir_mencoes`).
+
+    ELE MANDA MESMO QUANDO A FONTE NÃO DECLARA LISTA, e isto mudou em
+    20/10/2026, quando o recorte passou a ser EXCLUSIVO. Antes a condição era
+    "só recorta quem declara", e o espelho — que não declara nada — lia o
+    arquivo inteiro: a matéria de um veículo listado virava linha na lente dele
+    E na do espelho. Agora o espelho recebe o predicado INVERSO (tudo o que não
+    está nas listas das irmãs), e ignorá-lo por ele não declarar lista faria a
+    duplicação voltar em silêncio.
     """
     if mapeamento.lista_de_veiculos and veiculo_na_lista is None:
         #: FALHA ALTO em vez de ingerir sem recorte. Uma fonte que declara
@@ -967,7 +974,7 @@ def ler_planilha(
     meses_do_arquivo: set[date] = set()
     coluna_do_tier = mapeamento.colunas.get("tier")
     coluna_do_veiculo = mapeamento.colunas.get("veiculo")
-    recorta = bool(mapeamento.lista_de_veiculos) and veiculo_na_lista is not None
+    recorta = veiculo_na_lista is not None
     total = 0
     for linha in linhas:
         total += 1
