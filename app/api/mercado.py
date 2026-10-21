@@ -224,6 +224,12 @@ class RegistroDaJanelaSaida(BaseModel):
     link: str | None
     sentimento: str
     tier: str | None
+    #: DE QUAL LENTE VEM ESTE REGISTRO. O código serve à tela (cor, ordem) e o
+    #: nome é o que a pessoa lê — mandar só o código faria a tela guardar um
+    #: dicionário de nomes, e o nome de uma lente mora no cadastro (`lente.nome`).
+    #: É o que `repositorio_riscos` já faz, com este mesmo rótulo.
+    lente: str
+    lente_nome: str
 
 
 class RegistrosDaJanelaSaida(BaseModel):
@@ -279,6 +285,8 @@ def registros_da_janela(
                 link=r.link,
                 sentimento=r.sentimento,
                 tier=r.tier,
+                lente=r.lente,
+                lente_nome=r.lente_nome,
             )
             for r in lidos.itens
         ],

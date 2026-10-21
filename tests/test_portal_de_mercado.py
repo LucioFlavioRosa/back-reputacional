@@ -33,7 +33,7 @@ from sqlalchemy.orm import Session
 from app.banco.sessao import obter_sessao
 from app.banco.tabelas_acesso import Papel, Usuario
 from app.banco.tabelas_catalogo import MacroTema
-from app.banco.tabelas_score import Mencao, ScoreFonte, ScoreMesFonte
+from app.banco.tabelas_score import Lente, Mencao, ScoreFonte, ScoreMesFonte
 from app.configuracao import Configuracao, obter_configuracao
 from app.seguranca import sessao_assinada
 from app.seguranca.cache_de_autorizacao import limpar_todos
@@ -274,24 +274,33 @@ def test_os_REGISTROS_do_quadro_voltam_com_a_pagina_e_o_total(sessao):
 
     SEMEIA DADO, pelo mesmo motivo do teste do impacto: a serialização de uma
     LINHA é o que quebra, e com a lista vazia a compreensão nunca roda.
+
+    DUAS LENTES DESDE 20/10/2026, e a coluna que as distingue. A rota monta a
+    saída CAMPO A CAMPO (as dataclasses do repositório têm `slots=True`, e
+    `vars()` nelas já devolveu 500 nesta mesma tela), então campo novo que não
+    chega ao fio é justamente o que este teste existe para pegar.
     """
     usuario = _usuario(sessao, alcanca_mercado=True)
     clipei = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "clipei")).one()
+    recortada = sessao.scalars(
+        select(ScoreFonte).where(ScoreFonte.codigo == "clipei_investidores")
+    ).one()
     tema = sessao.scalars(select(MacroTema)).first()
     assert tema is not None, "o cadastro precisa de um N2"
 
-    sessao.add(
-        Mencao(
-            fonte_id=clipei.id,
-            mes=date(2026, 5, 1),
-            data=date(2026, 5, 18),
-            sentimento="pos",
-            macro_tema_id=tema.id,
-            veiculo="Valor Econômico",
-            titulo_texto="A matéria do quadro",
-            link="https://exemplo/materia",
+    for fonte, titulo in ((clipei, "A matéria do quadro"), (recortada, "A do mercado")):
+        sessao.add(
+            Mencao(
+                fonte_id=fonte.id,
+                mes=date(2026, 5, 1),
+                data=date(2026, 5, 18),
+                sentimento="pos",
+                macro_tema_id=tema.id,
+                veiculo="Valor Econômico",
+                titulo_texto=titulo,
+                link="https://exemplo/materia",
+            )
         )
-    )
     sessao.flush()
 
     cliente, _ = _cliente(sessao, usuario, lancado=True)
@@ -301,13 +310,19 @@ def test_os_REGISTROS_do_quadro_voltam_com_a_pagina_e_o_total(sessao):
 
     assert resposta.status_code == 200, resposta.text
     corpo = resposta.json()
-    assert corpo["total"] == 1
-    linha = corpo["itens"][0]
-    assert linha["titulo"] == "A matéria do quadro"
+    assert corpo["total"] == 2
+    por_titulo = {linha["titulo"]: linha for linha in corpo["itens"]}
+    linha = por_titulo["A matéria do quadro"]
     assert linha["veiculo"] == "Valor Econômico"
     assert linha["link"] == "https://exemplo/materia"
     assert linha["data"] == "2026-05-18"
     assert linha["sentimento"] == "pos"
+    #: A LENTE CHEGA AO FIO, código e nome, e cada linha com a sua.
+    assert linha["lente"] == "imprensa"
+    assert por_titulo["A do mercado"]["lente"] == "mercado"
+    assert por_titulo["A do mercado"]["lente_nome"] == sessao.scalars(
+        select(Lente.nome).where(Lente.codigo == "mercado")
+    ).one()
 
 
 def test_os_registros_SEM_o_grupo_sao_recusados(sessao):

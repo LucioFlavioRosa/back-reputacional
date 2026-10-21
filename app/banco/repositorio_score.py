@@ -1764,6 +1764,13 @@ class RegistroDaJanela:
     link: str | None
     sentimento: str
     tier: str | None
+    #: DE QUAL LENTE VEM ESTE REGISTRO — pedido de 20/10/2026, junto com o de
+    #: listar as três. É coluna na tela, e não enfeite: A LENTE DE UMA LINHA É
+    #: DECIDIDA PELO VEÍCULO QUE PUBLICOU, então a mesma matéria publicada por
+    #: dois veículos — um na lista do Mercado, outro não — aparece em duas
+    #: lentes, com o mesmo título. Sem a coluna, isso parece erro do sistema.
+    lente: str
+    lente_nome: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -1776,7 +1783,7 @@ class RegistrosDaJanela:
 
 def registros_do_grupo_na_janela(
     sessao: Session,
-    lente_id: int,
+    lentes_id: Sequence[int],
     de: date,
     ate: date,
     grupo_id: int,
@@ -1807,15 +1814,43 @@ def registros_do_grupo_na_janela(
 
     PAGINADA, e com o total: um pilar de janela cheia passa de centena, e a
     tela precisa dizer "8 de 312" em vez de fingir que mostrou tudo.
+
+    VÁRIAS LENTES DESDE 20/10/2026, por pedido ("quero adicionar os registros de
+    mercado e institucional também"). Cada linha diz de qual lente veio, porque
+    a MESMA matéria pode aparecer duas vezes com o mesmo título: a lente de uma
+    linha é decidida pelo VEÍCULO que publicou, e duas publicações da mesma
+    matéria — uma do Valor Econômico, que está na lista do Mercado, outra de um
+    veículo que não está — caem em lentes diferentes. Sem a coluna, isso parece
+    erro.
+
+    O TOTAL DEIXA DE SER O NÚMERO DA LINHA DO QUADRO, e isso é consequência
+    direta do pedido: o quadro mede UMA lente (a Imprensa) e esta lista mostra
+    três. Quem chama precisa dizer isso na tela — ver o cabeçalho do modal.
     """
     if nivel not in NIVEIS_DA_JANELA:
         raise ValueError(f"nível desconhecido: {nivel!r}")
+    if not lentes_id:
+        return RegistrosDaJanela(itens=(), total=0, pagina=pagina, tamanho=tamanho)
 
     coluna_da_mencao = (
         Mencao.macro_tema_id if nivel == NIVEL_DO_TEMA else Mencao.bloco_tema_id
     )
     onde = [
-        ScoreFonte.lente_id == lente_id,
+        ScoreFonte.lente_id.in_(list(lentes_id)),
+        #: SÓ FONTE ATIVA — e isto entra junto com a lista de lentes, não antes.
+        #: Com uma lente só, a Imprensa, a sua única fonte estava ativa e a
+        #: condição era desnecessária. Agora a Institucional tem DUAS fontes
+        #: cadastradas: a Clipei recortada, ativa, e o CRM, que a `0108`
+        #: aposentou por `ativo = false` sem apagar. A fonte aposentada saiu do
+        #: índice, então a menção dela não pode voltar num modal que existe para
+        #: explicar o número do índice.
+        #:
+        #: HOJE O CRM NÃO TEM LINHA EM `mencao` (a ingestão recusa fonte interna,
+        #: e só ela, a reconciliação e o semeador escrevem lá), então esta
+        #: condição não muda nenhuma contagem — ACHADO DE REVISÃO: aquilo é uma
+        #: premissa operacional, não uma garantia do banco. Um `insert` à mão ou
+        #: um seed futuro a quebraria, e a consulta pode se garantir sozinha.
+        ScoreFonte.ativo.is_(True),
         #: O MESMO PAR `mes`+`data` da janela: `mes` é quem tem índice, e sem
         #: ele a consulta varre a tabela inteira.
         Mencao.mes.in_(meses_da_janela(de, ate)),
@@ -1845,9 +1880,16 @@ def registros_do_grupo_na_janela(
             Mencao.link,
             Mencao.sentimento,
             Mencao.tier,
+            Lente.codigo.label("lente"),
+            Lente.nome.label("lente_nome"),
         )
         .select_from(Mencao)
         .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        #: A LENTE VEM NA MESMA CONSULTA, e não num dicionário montado depois:
+        #: `mencao -> score_fonte -> lente` é o caminho que define a lente de
+        #: uma menção em todo o sistema, e resolvê-lo noutro lugar abriria a
+        #: chance de a coluna da tela discordar do filtro que trouxe a linha.
+        .join(Lente, Lente.id == ScoreFonte.lente_id)
         .where(*onde)
         #: A MAIS NOVA PRIMEIRO, e o `id` fecha a ordem: várias matérias caem no
         #: mesmo dia, e sem o desempate a página 2 pode repetir uma linha da 1.
@@ -1866,6 +1908,8 @@ def registros_do_grupo_na_janela(
                 link=linha.link,
                 sentimento=linha.sentimento,
                 tier=linha.tier,
+                lente=linha.lente,
+                lente_nome=linha.lente_nome,
             )
             for linha in linhas
         ),
