@@ -190,8 +190,31 @@ DIMENSOES_POR_LENTE: dict[str, tuple[Dimensao, ...]] = {
 #:
 #: O CARTÃO "ONDE ESTÁ A CAUSA" DA SÍNTESE CONTINUA com as abas de
 #: `DIMENSOES_POR_LENTE`: o pedido foi para o painel, não para o cartão.
+#:
+#: O MERCADO ENTROU AQUI (20/10/2026, por pedido de paridade visual com a
+#: Imprensa): é a mesma Clipei, com atributo e tema_id gravados pela MESMA
+#: ingestão (`temas_da_mencao`) — ver a medição em `DIMENSOES_POR_LENTE`
+#: acima (atributo 100% preenchido no Mercado).
+#:
+#: A INSTITUCIONAL ENTROU LOGO DEPOIS, no mesmo dia: a nota acima ("lê o CRM,
+#: tem zero menções") morreu com a `0111`/`0112` — ela também é a Clipei,
+#: recortada pela subcategoria "Institucional" em vez de "Investidores", pela
+#: MESMA fonte `clipei_institucional` que espelha a `clipei` por inteiro (ver
+#: `test_a_fonte_institucional_ESPELHA_a_clipei`). Atributo e tema_id vêm da
+#: mesma ingestão do Mercado; não há razão para a Institucional ficar de fora
+#: de uma tela que as outras duas lentes de clipping já têm.
 DIMENSOES_DO_APROFUNDAMENTO: dict[str, tuple[Dimensao, ...]] = {
     "imprensa": (
+        Dimensao("atributo", "N1 Atributo Reputacional", "atributo", todos=True),
+        Dimensao("tema_n2", "N2 Temas estratégicos", "tema_id", todos=True),
+        Dimensao("tema_n3", "N3 Subtemas", "tema_id", todos=True),
+    ),
+    "mercado": (
+        Dimensao("atributo", "N1 Atributo Reputacional", "atributo", todos=True),
+        Dimensao("tema_n2", "N2 Temas estratégicos", "tema_id", todos=True),
+        Dimensao("tema_n3", "N3 Subtemas", "tema_id", todos=True),
+    ),
+    "institucional": (
         Dimensao("atributo", "N1 Atributo Reputacional", "atributo", todos=True),
         Dimensao("tema_n2", "N2 Temas estratégicos", "tema_id", todos=True),
         Dimensao("tema_n3", "N3 Subtemas", "tema_id", todos=True),

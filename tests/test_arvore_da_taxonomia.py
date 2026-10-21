@@ -18,6 +18,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.api.arvore_da_taxonomia import obter_arvore
+from app.banco.sessao import obter_sessao
 from app.banco.tabelas_catalogo import BlocoTema, MacroTema, Tema
 from tests.test_e2e_postgres import URL
 
@@ -151,3 +152,28 @@ def test_a_rota_esta_registrada(sessao):
     from main import app
 
     assert "/api/taxonomia/arvore" in app.openapi()["paths"]
+
+
+def test_a_rota_nao_exige_portal_score(sessao):
+    """SÓ LOGIN (20/10/2026, por pedido): a árvore saiu da Metodologia do
+    Score e ganhou cartão próprio na Início, aberto a qualquer pessoa logada.
+
+    `cliente`, aqui, roda como `crm_edicao` — que NÃO acessa Score
+    (`acessa_score=False`, ver `tests/test_e2e_postgres.py::cliente`). Antes
+    desta mudança a rota exigia `exigir_portal_score` e este papel recebia
+    403; a regressão que este teste existe para travar é alguém devolver
+    `exigir_portal_score` ao router por achar que "é do Score" só porque
+    o arquivo um dia morou lá.
+    """
+    from fastapi.testclient import TestClient
+
+    from main import app as aplicacao
+
+    aplicacao.dependency_overrides[obter_sessao] = lambda: sessao
+    try:
+        cliente = TestClient(aplicacao)
+        resposta = cliente.get("/api/taxonomia/arvore")
+    finally:
+        aplicacao.dependency_overrides.clear()
+
+    assert resposta.status_code == 200

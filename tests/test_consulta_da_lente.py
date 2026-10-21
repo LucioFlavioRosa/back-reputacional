@@ -291,7 +291,7 @@ def test_pelo_http_lente_fora_da_consulta_e_404(cliente):
 # -- o painel de aprofundamento da Imprensa: N1 › N2 › N3 -----------------------
 
 
-def _recorte(sessao, **filtro):
+def _recorte(sessao, codigo: str = "imprensa", **filtro):
     from app.api.lentes import obter_recorte
 
     parametros = dict(
@@ -301,7 +301,7 @@ def _recorte(sessao, **filtro):
     )
     parametros.update(filtro)
     return obter_recorte(
-        sessao=sessao, usuario=_QuemOlha(), codigo="imprensa", mes=TEXTO_DO_MES, **parametros
+        sessao=sessao, usuario=_QuemOlha(), codigo=codigo, mes=TEXTO_DO_MES, **parametros
     )
 
 
@@ -323,6 +323,38 @@ def test_o_painel_da_imprensa_desce_pela_taxonomia_n1_n2_n3(sessao):
     # N2 e N3 pelo vínculo com o cadastro: só a menção com tema_id entra.
     assert [linha["rotulo"] for linha in n3.dados] == ["Atendimento ao cliente"]
     assert len(n2.dados) == 1
+    assert n1.recorta == "atributo" and n2.recorta == "tema_n2" and n3.recorta == "tema_n3"
+
+
+def test_o_painel_do_mercado_tambem_desce_pela_taxonomia_n1_n2_n3(sessao):
+    """O MERCADO ENTROU AQUI (20/10/2026, por pedido de paridade visual com a
+    Imprensa): mesma Clipei, mesmas colunas, só a fonte muda
+    (`clipei_investidores`) — ver `DIMENSOES_DO_APROFUNDAMENTO` em
+    `causa_da_lente.py`."""
+    _gravar(sessao, "clipei_investidores", _linhas_da_imprensa(sessao))
+    recorte = _recorte(sessao, codigo="mercado")
+    assert [bloco.titulo for bloco in recorte.dentro] == [
+        "N1 Atributo Reputacional",
+        "N2 Temas estratégicos",
+        "N3 Subtemas",
+    ]
+    n1, n2, n3 = recorte.dentro
+    assert n1.recorta == "atributo" and n2.recorta == "tema_n2" and n3.recorta == "tema_n3"
+
+
+def test_o_painel_da_institucional_tambem_desce_pela_taxonomia_n1_n2_n3(sessao):
+    """A INSTITUCIONAL ENTROU AQUI (20/10/2026, no mesmo pedido do Mercado):
+    desde a 0111/0112 ela também é a Clipei, só recortada pela subcategoria
+    "Institucional" em vez de "Investidores" — ver `DIMENSOES_DO_APROFUNDAMENTO`
+    em `causa_da_lente.py`."""
+    _gravar(sessao, "clipei_institucional", _linhas_da_imprensa(sessao))
+    recorte = _recorte(sessao, codigo="institucional")
+    assert [bloco.titulo for bloco in recorte.dentro] == [
+        "N1 Atributo Reputacional",
+        "N2 Temas estratégicos",
+        "N3 Subtemas",
+    ]
+    n1, n2, n3 = recorte.dentro
     assert n1.recorta == "atributo" and n2.recorta == "tema_n2" and n3.recorta == "tema_n3"
 
 
