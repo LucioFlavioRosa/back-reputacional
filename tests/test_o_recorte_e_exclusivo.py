@@ -87,6 +87,26 @@ def _planilha() -> bytes:
     return memoria.getvalue()
 
 
+def _veiculos_por_lente(sessao) -> dict[str, list[str | None]]:
+    """QUAL veículo está em qual lente, e não só quantos.
+
+    LACUNA QUE A TERCEIRA REVISÃO APONTOU NUM TESTE MEU: conferir contagem por
+    lente deixa passar a TROCA — as linhas têm pesos iguais, então "imprensa 1,
+    mercado 1" vale tanto para o certo quanto para o avesso. Num
+    reparticionamento, trocar duas linhas de lugar é exatamente o defeito
+    plausível.
+    """
+    por_lente: dict[str, list[str | None]] = {}
+    for codigo, veiculo in sessao.execute(
+        select(Lente.codigo, Mencao.veiculo)
+        .select_from(Mencao)
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .join(Lente, Lente.id == ScoreFonte.lente_id)
+    ).all():
+        por_lente.setdefault(codigo, []).append(veiculo)
+    return {codigo: sorted(nomes, key=str) for codigo, nomes in por_lente.items()}
+
+
 def _por_lente(sessao) -> dict[str, int]:
     return {
         codigo: total
@@ -177,7 +197,12 @@ def test_CLASSIFICAR_move_o_historico_e_TIRA_da_imprensa(sessao):
 
     #: O MERCADO GANHOU, A IMPRENSA PERDEU. Era a segunda metade que não
     #: acontecia: a Imprensa continuava com 2.
-    assert _por_lente(sessao) == {"imprensa": 1, "mercado": 1}
+    #:
+    #: POR VEÍCULO: a contagem sozinha não distingue o certo da troca.
+    assert _veiculos_por_lente(sessao) == {
+        "imprensa": [QUALQUER],
+        "mercado": [DO_MERCADO],
+    }
     #: E O AGREGADO ACOMPANHA, que é quem carrega a NOTA. Mexer em `mencao` e
     #: esquecer `score_mes_fonte` deixaria a lista certa e a nota errada.
     assert _agregado(sessao) == {"imprensa": 1.0, "mercado": 1.0}
@@ -378,8 +403,45 @@ def test_de_UMA_LISTA_PARA_A_OUTRA_nao_depende_da_ordem(sessao, ordem):
     for lista in ordem:
         _reconciliar_lista(sessao, lista)
 
-    assert _por_lente(sessao) == {"imprensa": 1, "institucional": 1}
+    #: POR VEÍCULO, E NÃO POR CONTAGEM — lacuna que a revisão apontou neste
+    #: teste: "imprensa 1, institucional 1" vale tanto para o certo quanto para
+    #: o avesso, porque as duas linhas pesam igual. Num reparticionamento,
+    #: trocar duas linhas de lugar é justamente o defeito plausível.
+    assert _veiculos_por_lente(sessao) == {
+        "imprensa": [QUALQUER],
+        "institucional": [DO_MERCADO],
+    }
     assert _agregado(sessao) == {"imprensa": 1.0, "institucional": 1.0}
+
+
+def test_DOIS_TEXTOS_que_normalizam_igual_vao_os_DOIS(sessao):
+    """O caso mais sutil, e a revisão o verificou antes de eu testar.
+
+    O DONO é decidido pelo texto NORMALIZADO ("VALOR ECONOMICO" e "Valor
+    Econômico" são o mesmo veículo), mas o `delete` e a cópia são pelo texto
+    CRU. Se os dois fossem tratados como um, um deles ficaria órfão na irmã
+    errada — ou seria apagado sem ter sido copiado.
+    """
+    sessao.add(
+        Instituicao(
+            nome=DO_MERCADO,
+            nome_normalizado=normalizar(DO_MERCADO),
+            tipo="veiculo",
+            subcategoria_publico_id=_subcategoria(sessao, "Econômica e de negócios"),
+        )
+    )
+    sessao.flush()
+    #: O MESMO VEÍCULO EM DUAS GRAFIAS, como o clipping manda ao longo dos
+    #: meses — é o motivo de o sistema comparar normalizado em todo lugar.
+    cru = DO_MERCADO.upper()
+    _mencao_crua(sessao, "clipei", DO_MERCADO)
+    _mencao_crua(sessao, "clipei", cru)
+
+    _reconciliar(sessao)
+
+    #: OS DOIS TEXTOS no Mercado, e NENHUM sobrando na Imprensa — e são DOIS,
+    #: não um: tratá-los como uma linha só perderia uma matéria.
+    assert _veiculos_por_lente(sessao) == {"mercado": sorted([DO_MERCADO, cru])}
 
 
 def test_reconciliar_DUAS_VEZES_nao_muda_nada(sessao):
