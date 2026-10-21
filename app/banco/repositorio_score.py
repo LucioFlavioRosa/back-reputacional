@@ -637,7 +637,23 @@ class GrupoNaJanela:
 #: trabalho que está em curso com eles.
 NIVEL_DO_PILAR = "n1"
 NIVEL_DO_TEMA = "n2"
-NIVEIS_DA_JANELA = (NIVEL_DO_PILAR, NIVEL_DO_TEMA)
+#: O SUBTEMA (N3), por pedido de 21/10/2026: a aba Bonds e reputação lê os
+#: quadros no N3. `mencao.tema_id` já existia; faltava a janela agrupar por ele.
+NIVEL_DO_SUBTEMA = "n3"
+NIVEIS_DA_JANELA = (NIVEL_DO_PILAR, NIVEL_DO_TEMA, NIVEL_DO_SUBTEMA)
+
+
+def coluna_da_mencao_no_nivel(nivel: str):
+    """A coluna de `mencao` que diz o grupo no nível pedido.
+
+    UM LUGAR SÓ para o quadro e o modal dos registros: se os dois escolhessem a
+    coluna cada um do seu jeito, a lista do modal deixaria de ser a da linha.
+    """
+    if nivel == NIVEL_DO_SUBTEMA:
+        return Mencao.tema_id
+    if nivel == NIVEL_DO_TEMA:
+        return Mencao.macro_tema_id
+    return Mencao.bloco_tema_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -737,13 +753,14 @@ def somas_por_nivel_na_janela(
 
     meses = meses_da_janela(de, ate)
     no_tema = nivel == NIVEL_DO_TEMA
-    #: NO TEMA, O CONTEXTO É O PAI DELE; no pilar não há contexto, porque ele já
-    #: é o topo da árvore — e `null()` mantém a forma da linha igual nos dois
-    #: casos, em vez de duas consultas quase iguais que divergem na primeira
-    #: mudança.
-    coluna_do_grupo = MacroTema if no_tema else BlocoTema
-    coluna_da_mencao = Mencao.macro_tema_id if no_tema else Mencao.bloco_tema_id
-    contexto = BlocoTema.nome if no_tema else null()
+    no_subtema = nivel == NIVEL_DO_SUBTEMA
+    #: O CONTEXTO É O PAI: o pilar do tema, o tema do subtema. No pilar não há
+    #: contexto, porque ele já é o topo da árvore — e `null()` mantém a forma da
+    #: linha igual nos três casos, em vez de consultas quase iguais que divergem
+    #: na primeira mudança.
+    coluna_do_grupo = Tema if no_subtema else MacroTema if no_tema else BlocoTema
+    coluna_da_mencao = coluna_da_mencao_no_nivel(nivel)
+    contexto = MacroTema.nome if no_subtema else BlocoTema.nome if no_tema else null()
 
     consulta = (
         select(
@@ -772,6 +789,9 @@ def somas_por_nivel_na_janela(
         #: que dá contexto à linha, e a coluna da menção pode estar preenchida
         #: por uma resolução que parou no pilar — aí ela fala de outro nível.
         consulta = consulta.outerjoin(BlocoTema, BlocoTema.id == MacroTema.bloco_tema_id)
+    if no_subtema:
+        #: O MESMO NO SUBTEMA: o tema estratégico vem do cadastro do subtema.
+        consulta = consulta.outerjoin(MacroTema, MacroTema.id == Tema.macro_tema_id)
 
     sem_grupo = 0
     grupos: dict[int, GrupoNaJanela] = {}
@@ -1832,9 +1852,7 @@ def registros_do_grupo_na_janela(
     if not lentes_id:
         return RegistrosDaJanela(itens=(), total=0, pagina=pagina, tamanho=tamanho)
 
-    coluna_da_mencao = (
-        Mencao.macro_tema_id if nivel == NIVEL_DO_TEMA else Mencao.bloco_tema_id
-    )
+    coluna_da_mencao = coluna_da_mencao_no_nivel(nivel)
     onde = [
         ScoreFonte.lente_id.in_(list(lentes_id)),
         #: SÓ FONTE ATIVA — e isto entra junto com a lista de lentes, não antes.

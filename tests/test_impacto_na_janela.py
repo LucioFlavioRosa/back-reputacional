@@ -25,7 +25,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.banco import repositorio_score
-from app.banco.tabelas_catalogo import BlocoTema, MacroTema
+from app.banco.tabelas_catalogo import BlocoTema, MacroTema, Tema
 from app.banco.tabelas_score import Lente, Mencao, ScoreFonte, ScoreMesFonte
 from app.casos_de_uso import impacto_na_janela
 from app.dominio.erros import RegraViolada
@@ -647,7 +647,7 @@ def test_o_nivel_DESCONHECIDO_e_recusado(sessao, clipei):
     """Um nível que não existe devolveria a janela do padrão em silêncio, e a
     tela afirmaria estar mostrando o que pediu."""
     with pytest.raises(RegraViolada):
-        impacto_na_janela.ler(sessao, ate=CLICADO, dias=15, nivel="n3")
+        impacto_na_janela.ler(sessao, ate=CLICADO, dias=15, nivel="n4")
 
 
 def test_o_mes_SEM_BASE_diz_isso_em_vez_de_dizer_zero(sessao, clipei, temas):
@@ -702,3 +702,46 @@ def test_o_sem_data_conta_TODOS_os_meses_da_janela(sessao, clipei, temas, mes_co
 
     assert lida.de == date(2026, 4, 19)
     assert lida.sem_data == 2
+
+
+def test_o_SUBTEMA_N3_agrupa_pelo_tema_da_mencao_com_o_N2_de_contexto(
+    sessao, clipei, mes_com_base
+):
+    """O PEDIDO DE 21/10/2026: a aba Bonds e reputação lê os quadros no N3.
+
+    O GRUPO É `mencao.tema_id`, e o CONTEXTO é o tema estratégico (N2) do
+    cadastro do subtema — o mesmo molde do N2, que leva o pilar. A menção sem
+    N3 (só com N2, o caso comum de hoje) fica fora da conta e é contada.
+    E O MODAL dos registros conta o MESMO grupo pela MESMA coluna.
+    """
+    subtema = sessao.scalars(
+        select(Tema).where(Tema.macro_tema_id.is_not(None)).order_by(Tema.id)
+    ).first()
+    assert subtema is not None, "o banco de teste não tem subtema com N2"
+    pai = sessao.scalars(select(MacroTema).where(MacroTema.id == subtema.macro_tema_id)).one()
+    for _ in range(2):
+        sessao.add(
+            Mencao(
+                fonte_id=clipei.id,
+                mes=MES,
+                data=CLICADO,
+                sentimento="neg",
+                tema_id=subtema.id,
+                macro_tema_id=pai.id,
+                bloco_tema_id=pai.bloco_tema_id,
+            )
+        )
+    #: só com N2, sem N3
+    _mencao(sessao, clipei, sentimento="neg", n2=pai.id, dia=CLICADO)
+    sessao.flush()
+
+    lida = impacto_na_janela.ler(sessao, ate=CLICADO, dias=15, nivel="n3")
+
+    assert lida.nivel == "n3"
+    assert [g.rotulo for g in lida.negativos] == [subtema.nome]
+    assert lida.negativos[0].contexto == pai.nome
+    assert lida.negativos[0].mencoes == 2
+    assert lida.sem_grupo == 1
+    assert impacto_na_janela.registros(
+        sessao, ate=CLICADO, grupo=subtema.id, nivel="n3"
+    ).total == 2

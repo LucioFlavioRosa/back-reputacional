@@ -67,6 +67,7 @@ from app.dominio.consulta_profundidade import (
     Taxonomia,
     TemaDaTaxonomia,
 )
+from app.dominio.ingestao_score import para_sigla
 from app.dominio.score import Calibracao, FiltroDeMencoes, peso_da_mencao
 
 
@@ -987,7 +988,13 @@ def grupos_do_explorador(
     )
     grupos: dict[tuple, dict] = {}
     for linha in sessao.execute(consulta):
-        chave = (linha.n1 or None, linha.n2, linha.n3, linha.uf)
+        #: A UF SAI EM SIGLA, que é o que o mapa e a lista da tela procuram.
+        #: Desde 09/10/2026 `mencao.uf` guarda o NOME ("Santa Catarina", ver
+        #: `para_uf`), e a tela não achava estado nenhum: o Termômetro por UF
+        #: ficava vazio com a base reimportada. Estado estrangeiro não tem
+        #: sigla e continua com o nome que o fornecedor deu.
+        uf = para_sigla(linha.uf) or linha.uf
+        chave = (linha.n1 or None, linha.n2, linha.n3, uf)
         grupo = grupos.setdefault(
             chave,
             {

@@ -1275,9 +1275,10 @@ TETO_DE_MATERIAS_FILTRADO = 30
 #: "ÚLTIMAS MATÉRIAS" DA IMPRENSA E DO MERCADO MOSTRAM 15, por pedido: o card
 #: rola, e cada linha abre o detalhe da matéria num popup.
 TETO_DAS_ULTIMAS_MATERIAS = 15
-#: TOP 10 VEÍCULOS no card de tier, por pedido; o termômetro ao lado segue com 5.
+#: TOP 10 VEÍCULOS no card de tier, por pedido; e o TERMÔMETRO AO LADO também
+#: passou a 10 (21/10/2026), para os dois cards terem o mesmo tamanho.
 QUANTOS_VEICULOS_NO_TOPO = 10
-QUANTOS_VEICULOS_NO_TERMOMETRO = 5
+QUANTOS_VEICULOS_NO_TERMOMETRO = 10
 
 
 def _mencoes_da_sociedade(

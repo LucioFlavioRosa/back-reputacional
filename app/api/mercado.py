@@ -246,7 +246,7 @@ def registros_da_janela(
     ate: Annotated[date, Query()],
     grupo: Annotated[int, Query(description="o id do pilar ou do tema do quadro")],
     dias: Annotated[int, Query(ge=1, le=90)] = impacto_na_janela.DIAS_DA_JANELA,
-    nivel: Annotated[str, Query(pattern="^(n1|n2)$")] = impacto_na_janela.NIVEL_PADRAO,
+    nivel: Annotated[str, Query(pattern="^(n1|n2|n3)$")] = impacto_na_janela.NIVEL_PADRAO,
     pagina: Annotated[int, Query(ge=1)] = 1,
     tamanho: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> RegistrosDaJanelaSaida:
@@ -302,7 +302,7 @@ def impacto_na_janela_(
     usuario: UsuarioLogado,
     ate: Annotated[date, Query()],
     dias: Annotated[int, Query(ge=1, le=90)] = impacto_na_janela.DIAS_DA_JANELA,
-    nivel: Annotated[str, Query(pattern="^(n1|n2)$")] = impacto_na_janela.NIVEL_PADRAO,
+    nivel: Annotated[str, Query(pattern="^(n1|n2|n3)$")] = impacto_na_janela.NIVEL_PADRAO,
 ) -> ImpactoNaJanelaSaida:
     """Os temas estratégicos (N2) que mais empurraram a nota da imprensa na janela.
 
