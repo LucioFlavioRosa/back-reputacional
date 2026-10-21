@@ -33,10 +33,14 @@ conjuntos de linhas diferentes, mesmo com as mesmas colunas.
 
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 from sqlalchemy import create_engine, text
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Session
 
+from app.api import base_das_lentes
 from tests.test_e2e_postgres import URL
 
 _engine = create_engine(URL)
@@ -121,6 +125,49 @@ def test_o_indice_trigrama_nao_e_acusado(sessao):
     acusados = {c for _, c, _ in sessao.execute(_COBERTOS).all()}
     assert "interlocutor_nome_trgm_idx" not in acusados
     assert "instituicao_nome_trgm_idx" not in acusados
+
+
+def test_o_indice_do_PERIODO_casa_com_a_expressao_QUE_A_BASE_FILTRA(sessao):
+    """O índice da `0109`, e o jeito silencioso de ele deixar de servir.
+
+    A Base de dados das lentes recorta o período por `coalesce(data, mes)` — a
+    data da menção, com o mês de reserva para a linha que veio sem data. Índice
+    de EXPRESSÃO só é usado quando a expressão da consulta é IDÊNTICA à dele.
+    Trocar a ordem dos argumentos, ou envolver num `cast`, não muda o resultado
+    da consulta e faz o índice parar de ser usado: nada quebra, nenhum teste
+    fica vermelho, e a tela volta a varrer a tabela inteira.
+
+    FOI O QUE A TELA FEZ ATÉ A `0109`, e doeu: `GET .../mencoes -> 200 em
+    48507ms` no ambiente, por dois `Seq Scan` de 104 mil linhas por requisição
+    num Postgres de 1 vCPU.
+
+    Este teste compara o `indexdef` com a expressão compilada DO PRÓPRIO CÓDIGO,
+    e não com um texto que eu escreva aqui — um literal meu envelheceria junto
+    com o defeito que ele deveria pegar.
+
+    O QUE ELE PROTEGE É A MIGRATION, e não o banco à mão: a suíte faz `drop
+    database` / `create database` e reaplica as migrations a cada execução (ver
+    `test_e2e_postgres._preparar_banco_de_teste`). Apagar o índice no banco de
+    teste para ver o teste falhar NÃO funciona — a reconstrução o traz de volta,
+    e eu tentei. Falha quando a `0109` sai, ou quando a expressão dela deixa de
+    casar com a do código.
+    """
+    definicao = sessao.execute(
+        text("select indexdef from pg_indexes where indexname = 'mencao_por_data_efetiva'")
+    ).scalar_one_or_none()
+    assert definicao is not None, (
+        "sem este índice, a Base das lentes varre `mencao` inteira a cada abertura"
+    )
+
+    #: A EXPRESSÃO QUE O CÓDIGO FILTRA, compilada como o Postgres a escreve.
+    da_consulta = str(
+        base_das_lentes._onde(1, date(2026, 1, 1), date(2026, 1, 31))[1]
+        .compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
+    )
+    #: `coalesce(data, mes)` aparece dos dois lados; comparo o miolo, porque o
+    #: `indexdef` traz `USING btree (...)` em volta e a condição traz o `>=`.
+    assert "coalesce(data, mes)" in definicao.lower().replace('"', "")
+    assert "coalesce(mencao.data, mencao.mes)" in da_consulta.lower()
 
 
 def test_os_quatro_indices_que_cobriam_o_removido_continuam_la(sessao):
