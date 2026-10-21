@@ -20,14 +20,19 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.api.dependencias import UsuarioLogado, exigir_portal_score
+from app.api.dependencias import UsuarioLogado, obter_usuario_atual
 from app.banco.sessao import SessaoDoPedido as Sessao
 from app.banco.tabelas_catalogo import BlocoTema, MacroTema, Risco, RiskCluster, Tema, TemaRisco
 from app.dominio.arvore_da_taxonomia import DIMENSOES_DE_COR
 
-#: Mesma porta da Metodologia, que mora no Score.
+#: SÓ LOGIN, SEM PORTAL (20/10/2026, por pedido) — a árvore saiu da Metodologia
+#: do Score e ganhou cartão e endereço próprios na Início, abertos a qualquer
+#: pessoa logada. Ela não é leitura de índice nem de CRM: é o Cadastro de
+#: Temas em modo consulta, para a empresa inteira entender a organização —
+#: `exigir_portal_score` só estava aqui porque a rota nasceu dentro do Score.
+#: Mesmo padrão de `catalogo.py`/`dicionarios.py`/`fila_de_revisao.py`.
 rotas = APIRouter(
-    prefix="/api/taxonomia", tags=["taxonomia"], dependencies=[Depends(exigir_portal_score)]
+    prefix="/api/taxonomia", tags=["taxonomia"], dependencies=[Depends(obter_usuario_atual)]
 )
 
 
