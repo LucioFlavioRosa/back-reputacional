@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from app.banco import repositorio_score
 from app.banco.tabelas_catalogo import BlocoTema, MacroTema
-from app.banco.tabelas_score import Mencao, ScoreFonte, ScoreMesFonte
+from app.banco.tabelas_score import Lente, Mencao, ScoreFonte, ScoreMesFonte
 from app.casos_de_uso import impacto_na_janela
 from app.dominio.erros import RegraViolada
 from tests.test_e2e_postgres import URL
@@ -528,15 +528,23 @@ def test_O_PILAR_ALCANCA_O_QUE_O_TEMA_NAO_ALCANCA(sessao, clipei, temas, mes_com
     assert no_tema.negativos[0].contexto is not None
 
 
-def test_o_TOTAL_do_modal_e_o_NUMERO_do_quadro(sessao, clipei, temas, mes_com_base):
-    """A promessa inteira do modal dos registros, medida contra a fonte do número.
+def test_o_RECORTE_do_modal_e_o_do_quadro_na_lente_DA_IMPRENSA(
+    sessao, clipei, temas, mes_com_base
+):
+    """O recorte de data, grupo e calibração, medido contra a fonte do número.
 
     O QUADRO conta somando `linha.mencoes` por fonte ligada, aqui dentro; O MODAL
     conta `count(*)` no repositório, com os mesmos predicados. Os dois números
     ficam LADO A LADO na tela — a contagem na linha, o total no cabeçalho do que
-    ela abre — e divergir é afirmar duas contagens do mesmo recorte sem dizer
-    qual vale. Foi o defeito da 0098: a barra do N2 contava 29.701 e o clique
-    alcançava 30.932.
+    ela abre — e divergir no RECORTE é afirmar duas contagens do mesmo conjunto
+    sem dizer qual vale. Foi o defeito da 0098: a barra do N2 contava 29.701 e o
+    clique alcançava 30.932.
+
+    A IGUALDADE DOS NÚMEROS CAIU EM 20/10/2026, e de propósito: o modal passou a
+    listar as TRÊS lentes de clipping e o quadro continua medindo a Imprensa. O
+    que este teste ainda prova — e é o que importava nele — é que, OLHANDO SÓ A
+    IMPRENSA, os dois lados recortam igual. Ver
+    `test_o_quadro_NAO_MUDA_quando_as_outras_lentes_entram`, que mede o resto.
 
     NOS DOIS NÍVEIS, COM A MENÇÃO SÓ-PILAR NO MEIO, que é o caso volumoso (72.590
     na Clipei) e o único em que os dois lados leem colunas diferentes: o quadro
@@ -586,6 +594,53 @@ def test_o_TOTAL_do_modal_e_o_NUMERO_do_quadro(sessao, clipei, temas, mes_com_ba
     assert impacto_na_janela.registros(
         sessao, ate=CLICADO, grupo=temas[com_tema], nivel="n2"
     ).total == 2
+
+
+def test_o_quadro_NAO_MUDA_quando_as_outras_lentes_entram(
+    sessao, clipei, temas, mes_com_base
+):
+    """O outro lado da igualdade que caiu: o quadro continua medindo a Imprensa.
+
+    O MODAL PASSOU A LISTAR TRÊS LENTES, e o risco imediato é o número do quadro
+    ir atrás — bastaria o impacto ler as menções sem filtrar a lente para o
+    gráfico começar a somar matéria recortada e a nota do mês mudar sozinha. Este
+    teste mede exatamente isso: as mesmas menções, com e sem as outras duas
+    lentes presentes no banco.
+
+    A LISTA CRESCE, O QUADRO NÃO. É a divergência que a tela precisa explicar, e
+    é por isso que o cabeçalho do modal deixou de repetir o número da linha.
+    """
+    com_tema = next(iter(temas))
+    _mencao(sessao, clipei, sentimento="neg", n2=temas[com_tema], dia=CLICADO)
+
+    antes = impacto_na_janela.ler(sessao, ate=CLICADO, dias=15, nivel="n2")
+    no_quadro_antes = [g for g in antes.negativos if g.id == temas[com_tema]]
+    assert no_quadro_antes, "o grupo pedido não apareceu no quadro"
+
+    #: AS OUTRAS DUAS LENTES, no mesmo dia e no mesmo tema — o pior caso para o
+    #: quadro: tudo igual menos a fonte.
+    for codigo in ("mercado", "institucional"):
+        lente = sessao.scalars(select(Lente).where(Lente.codigo == codigo)).one()
+        fonte = sessao.scalars(
+            select(ScoreFonte)
+            .where(ScoreFonte.lente_id == lente.id, ScoreFonte.ativo.is_(True))
+            .order_by(ScoreFonte.ordem)
+        ).first()
+        assert fonte is not None, f"a lente {codigo} tinha de ter fonte ativa"
+        _mencao(sessao, fonte, sentimento="neg", n2=temas[com_tema], dia=CLICADO)
+
+    depois = impacto_na_janela.ler(sessao, ate=CLICADO, dias=15, nivel="n2")
+    no_quadro_depois = [g for g in depois.negativos if g.id == temas[com_tema]]
+
+    #: O QUADRO, IDÊNTICO: contagem e impacto.
+    assert no_quadro_depois[0].mencoes == no_quadro_antes[0].mencoes == 1
+    assert no_quadro_depois[0].impacto == no_quadro_antes[0].impacto
+    #: E A LISTA, COM AS TRÊS.
+    no_modal = impacto_na_janela.registros(
+        sessao, ate=CLICADO, grupo=temas[com_tema], nivel="n2"
+    )
+    assert no_modal.total == 3
+    assert {i.lente for i in no_modal.itens} == {"imprensa", "mercado", "institucional"}
 
 
 def test_o_nivel_DESCONHECIDO_e_recusado(sessao, clipei):

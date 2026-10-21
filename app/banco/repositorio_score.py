@@ -1764,6 +1764,13 @@ class RegistroDaJanela:
     link: str | None
     sentimento: str
     tier: str | None
+    #: DE QUAL LENTE VEM ESTE REGISTRO — pedido de 20/10/2026, junto com o de
+    #: listar as três. É coluna na tela, e não enfeite: hoje a mesma matéria
+    #: pode estar na Imprensa E no recorte (Mercado ou Institucional), porque o
+    #: recorte é a MESMA Clipei lida de novo com a lista. Sem a coluna, a
+    #: repetição parece erro do sistema.
+    lente: str
+    lente_nome: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -1776,7 +1783,7 @@ class RegistrosDaJanela:
 
 def registros_do_grupo_na_janela(
     sessao: Session,
-    lente_id: int,
+    lentes_id: Sequence[int],
     de: date,
     ate: date,
     grupo_id: int,
@@ -1807,15 +1814,27 @@ def registros_do_grupo_na_janela(
 
     PAGINADA, e com o total: um pilar de janela cheia passa de centena, e a
     tela precisa dizer "8 de 312" em vez de fingir que mostrou tudo.
+
+    VÁRIAS LENTES DESDE 20/10/2026, por pedido ("quero adicionar os registros de
+    mercado e institucional também"). Cada linha diz de qual lente veio, porque
+    a MESMA matéria pode aparecer duas vezes: o recorte é a Clipei lida de novo
+    com a lista de veículos, então o Valor Econômico está na Imprensa e no
+    Mercado. Sem a coluna, a repetição parece erro.
+
+    O TOTAL DEIXA DE SER O NÚMERO DA LINHA DO QUADRO, e isso é consequência
+    direta do pedido: o quadro mede UMA lente (a Imprensa) e esta lista mostra
+    três. Quem chama precisa dizer isso na tela — ver o cabeçalho do modal.
     """
     if nivel not in NIVEIS_DA_JANELA:
         raise ValueError(f"nível desconhecido: {nivel!r}")
+    if not lentes_id:
+        return RegistrosDaJanela(itens=(), total=0, pagina=pagina, tamanho=tamanho)
 
     coluna_da_mencao = (
         Mencao.macro_tema_id if nivel == NIVEL_DO_TEMA else Mencao.bloco_tema_id
     )
     onde = [
-        ScoreFonte.lente_id == lente_id,
+        ScoreFonte.lente_id.in_(list(lentes_id)),
         #: O MESMO PAR `mes`+`data` da janela: `mes` é quem tem índice, e sem
         #: ele a consulta varre a tabela inteira.
         Mencao.mes.in_(meses_da_janela(de, ate)),
@@ -1845,9 +1864,16 @@ def registros_do_grupo_na_janela(
             Mencao.link,
             Mencao.sentimento,
             Mencao.tier,
+            Lente.codigo.label("lente"),
+            Lente.nome.label("lente_nome"),
         )
         .select_from(Mencao)
         .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        #: A LENTE VEM NA MESMA CONSULTA, e não num dicionário montado depois:
+        #: `mencao -> score_fonte -> lente` é o caminho que define a lente de
+        #: uma menção em todo o sistema, e resolvê-lo noutro lugar abriria a
+        #: chance de a coluna da tela discordar do filtro que trouxe a linha.
+        .join(Lente, Lente.id == ScoreFonte.lente_id)
         .where(*onde)
         #: A MAIS NOVA PRIMEIRO, e o `id` fecha a ordem: várias matérias caem no
         #: mesmo dia, e sem o desempate a página 2 pode repetir uma linha da 1.
@@ -1866,6 +1892,8 @@ def registros_do_grupo_na_janela(
                 link=linha.link,
                 sentimento=linha.sentimento,
                 tier=linha.tier,
+                lente=linha.lente,
+                lente_nome=linha.lente_nome,
             )
             for linha in linhas
         ),

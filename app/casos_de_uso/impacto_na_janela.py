@@ -48,6 +48,18 @@ from app.dominio.tema_do_mes import PONTOS_POR_NS
 #: A lente desta leitura. Ver o cabeçalho do módulo.
 LENTE = "imprensa"
 
+#: AS LENTES QUE O MODAL DOS REGISTROS LISTA — pedido de 20/10/2026: "quero
+#: adicionar os registros de mercado e institucional também".
+#:
+#: AS TRÊS DE CLIPPING, e não todas: são as que leem o export da Clipei
+#: (inteiro ou recortado), e é por isso que uma matéria pode aparecer em mais de
+#: uma. Sociedade e Clientes leem OUTROS fornecedores, com outro vocabulário de
+#: tema — listá-las aqui misturaria universos no mesmo modal.
+#:
+#: O QUADRO CONTINUA MEDINDO SÓ A IMPRENSA (`LENTE`), e esta lista mostra o tema
+#: inteiro: são coisas diferentes de propósito, e a tela diz qual é qual.
+LENTES_DOS_REGISTROS = ("imprensa", "mercado", "institucional")
+
 #: Quantos dias a janela cobre, contados para trás a partir do dia clicado.
 DIAS_DA_JANELA = 15
 
@@ -120,21 +132,33 @@ def registros(
     que alguém mudar o tamanho da janela. A tela manda o que ela clicou (o dia e
     o grupo); quem sabe o que é uma janela é este módulo.
 
-    O RECORTE É O MESMO DO QUADRO — ver `registros_do_grupo_na_janela`, que
-    explica por que a rota da Base das lentes não serve.
+    O RECORTE DE DATA, GRUPO E CALIBRAÇÃO É O MESMO DO QUADRO — ver
+    `registros_do_grupo_na_janela`, que explica por que a rota da Base das
+    lentes não serve.
+
+    AS TRÊS LENTES DE CLIPPING, E NÃO SÓ A IMPRENSA (pedido de 20/10/2026:
+    "quero adicionar os registros de mercado e institucional também"). O quadro
+    continua medindo a Imprensa; esta lista mostra o tema inteiro, e cada linha
+    diz de qual lente veio.
+
+    POR ISSO O TOTAL DAQUI NÃO É MAIS O NÚMERO DA LINHA DO QUADRO, e a tela diz
+    o que está listando em vez de repetir aquele número. Era uma igualdade que
+    eu construí e testei quando o modal nasceu; ela cai junto com a premissa de
+    uma lente só, e fingir que continua valendo seria pior do que perdê-la.
     """
     if dias < 1:
         raise RegraViolada("A janela precisa de pelo menos um dia.")
     if nivel not in repositorio_score.NIVEIS_DA_JANELA:
         raise RegraViolada(f"Nivel desconhecido: {nivel}.")
 
-    lente = sessao.execute(select(Lente).where(Lente.codigo == LENTE)).scalar_one_or_none()
-    if lente is None:
+    lentes = sessao.scalars(select(Lente).where(Lente.codigo.in_(LENTES_DOS_REGISTROS))).all()
+    achadas = {lente.codigo for lente in lentes}
+    if LENTE not in achadas:
         raise NaoEncontrado(f"A lente {LENTE} não está cadastrada.")
 
     return repositorio_score.registros_do_grupo_na_janela(
         sessao,
-        lente.id,
+        [lente.id for lente in lentes],
         de=ate - timedelta(days=dias - 1),
         ate=ate,
         grupo_id=grupo,
