@@ -44,6 +44,17 @@ com `pontos na nota dela × fatia dela no índice`, e a fatia sai de
 saindo do numerador E do denominador. A conta é POR LENTE e somada depois: as
 menções das três num denominador só apagariam que uma matéria do Mercado e uma
 da Imprensa não valem o mesmo no score geral.
+
+O QUE ESTE NÚMERO É, COM PRECISÃO — e a ressalva é correção de revisão, porque
+eu havia afirmado mais do que ele entrega. Ele é a contribuição no ÍNDICE
+CONTÍNUO, antes dos arredondamentos: `calcular_indice` arredonda o score de cada
+lente e depois o ISR, então a soma dos impactos NÃO fecha necessariamente com a
+diferença do inteiro que a tela mostra. "Quanto este tema empurrou o índice" é
+verdade; "exatamente quanto o ISR exibido mudou" seria forte demais.
+
+E ELE COBRE AS TRÊS LENTES DE CLIPPING, não o índice inteiro: Sociedade e
+Clientes pesam no ISR e ficam fora desta conta, por pedido. Por isso a tela diz
+QUANTO do índice a soma representa — ver `fatia_das_lentes`.
 """
 
 from __future__ import annotations
@@ -341,6 +352,19 @@ def ler(
         #: SEM DENOMINADOR OU FORA DO ÍNDICE, a lente não tem como contribuir em
         #: ponto do score geral — e multiplicar por zero esconderia que ela foi
         #: pulada. Ela sai da conta e da soma das fatias, que é o que a tela diz.
+        #:
+        #: A LENTE ESTIMADA CAI AQUI, e é LIMITE e não descuido — achado de
+        #: revisão. `medir_lentes` dá score a quem tem `score_estimativa`, então
+        #: ela pondera no índice (`fatia > 0`) sem ter `score_mes_fonte`
+        #: (`total_do_mes == 0`). Não há como repartir o impacto dela por tema:
+        #: aquele score é um NS de resumo semestral, sem nenhuma das dimensões
+        #: do tema — é o que `somas_da_lente_filtradas` já diz ao deixá-la de
+        #: fora de propósito. Inventar uma decomposição seria responder a
+        #: pergunta errada com a aparência de ter acertado.
+        #:
+        #: O QUE A TELA DEVE ENTÃO: dizer quanto do índice a conta COBRE. É para
+        #: isso que `fatia_das_lentes` existe e aparece na linha da régua — com
+        #: 65%, quem lê sabe que não está vendo o índice inteiro decomposto.
         if not total_do_mes or not fatia:
             continue
         fatia_das_lentes += fatia
@@ -402,5 +426,10 @@ def ler(
         total_negativos=len(abaixo),
         sem_grupo=sem_grupo,
         nivel=nivel,
-        sem_data=somas.sem_data,
+        #: O ACUMULADO DAS LENTES, e não `somas.sem_data` — achado de revisão, e
+        #: era defeito meu de verdade: eu somava no laço e devolvia o valor da
+        #: ÚLTIMA lente que não foi pulada. Com uma menção sem data na Imprensa
+        #: e nenhuma no Mercado, a tela dizia zero. O `sem_grupo` logo acima já
+        #: estava certo, o que torna o deslize mais fácil de passar na leitura.
+        sem_data=sem_data,
     )

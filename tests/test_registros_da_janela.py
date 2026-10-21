@@ -302,6 +302,34 @@ def test_a_lente_DE_OUTRO_FORNECEDOR_fica_de_fora(sessao, imprensa, sociedade, t
     assert lidos.total == 1
 
 
+def test_a_fonte_de_PLANILHA_aposentada_CONTINUA_na_lista(sessao, imprensa, tema):
+    """ACHADO DE REVISÃO, e era defeito meu — do mesmo dia.
+
+    EU TINHA ESCRITO `ScoreFonte.ativo.is_(True)`, genérico, para tirar daqui a
+    fonte interna que a `0112` aposentou. O raciocínio ("fonte aposentada saiu do
+    índice") vale para a INTERNA, cujo score é recontado a cada leitura. Para
+    fonte de PLANILHA é falso, e a própria `0112` diz: ali `ativo = false` é
+    "parou de receber importação", e o histórico continua valendo porque está
+    gravado em `score_mes_fonte`.
+
+    A PROVA ESTÁ EM `denominador_do_mes`: ele filtra `calibracao.ligada`, e não
+    `ativo`. A planilha aposentada ainda pesa na nota — então esconder a menção
+    dela deste modal seria esconder justamente o que compõe o número.
+
+    NÃO MUDAVA CONTAGEM NO DIA EM QUE EU ESCREVI (o CRM não tem linha em
+    `mencao`), e quebraria no primeiro fornecedor trocado. É por isso que este
+    teste aposenta a fonte da IMPRENSA, que tem menção.
+    """
+    _mencao(sessao, imprensa, tema.id, data=date(2026, 9, 2), titulo="Da aposentada")
+    imprensa.ativo = False
+    sessao.flush()
+
+    lidos = impacto_na_janela.registros(sessao, ate=ATE, grupo=tema.id)
+
+    assert [i.titulo for i in lidos.itens] == ["Da aposentada"]
+    assert lidos.total == 1
+
+
 def test_a_fonte_DESLIGADA_de_OUTRA_lente_tambem_fica_de_fora(
     sessao, imprensa, mercado, tema
 ):
@@ -322,8 +350,13 @@ def test_a_fonte_DESLIGADA_de_OUTRA_lente_tambem_fica_de_fora(
     assert [i.titulo for i in lidos.itens] == ["Da imprensa"]
 
 
-def test_a_fonte_APOSENTADA_fica_de_fora(sessao, institucional, tema):
-    """A `0108` aposentou o CRM por `ativo = false`, sem apagar.
+def test_a_fonte_INTERNA_aposentada_fica_de_fora(sessao, institucional, tema):
+    """A `0112` (ex-`0108`) aposentou o CRM por `ativo = false`, sem apagar.
+
+    SÓ A INTERNA, e o nome deste teste foi corrigido junto com a condição: eu o
+    havia escrito como "a fonte APOSENTADA fica de fora", genérico, e era o
+    genérico que estava errado — ver
+    `test_a_fonte_de_PLANILHA_aposentada_CONTINUA_na_lista`.
 
     ACHADO DE REVISÃO. Eu havia concluído que não havia risco: a ingestão recusa
     fonte interna, e só ela, a reconciliação e o semeador escrevem `mencao` —

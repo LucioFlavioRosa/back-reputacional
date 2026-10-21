@@ -306,7 +306,7 @@ def impacto_na_janela_(
     dias: Annotated[int, Query(ge=1, le=90)] = impacto_na_janela.DIAS_DA_JANELA,
     nivel: Annotated[str, Query(pattern="^(n1|n2|n3)$")] = impacto_na_janela.NIVEL_PADRAO,
 ) -> ImpactoNaJanelaSaida:
-    """Os temas estratégicos (N2) que mais empurraram a nota da imprensa na janela.
+    """Os temas que mais empurraram o ÍNDICE na janela — em pontos do score geral.
 
     NESTE ROTEADOR, E NÃO NO DO SCORE, por causa do guarda: a pergunta nasce no
     Painel de Inteligência de Mercado e quem pode fazê-la é quem tem o portal —
