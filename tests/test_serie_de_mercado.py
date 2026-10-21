@@ -235,6 +235,29 @@ def test_o_indice_e_o_MESMO_que_a_rota_do_score_calcularia(sessao, mes_com_dado)
     assert {p.mes: p.isr for p in lida.indice} == esperado
 
 
+def test_o_ponto_do_indice_traz_o_SCORE_DE_CADA_LENTE(sessao, mes_com_dado):
+    """O pedido de 20/10/2026: o gráfico de bonds mostra a nota de uma lente.
+
+    DA MESMA MEDIÇÃO QUE O ISR, e é por isso que não há rota nova: o índice de
+    um mês já mede as cinco lentes para somá-las, e este campo é o que antes
+    era jogado fora. Duas rotas fariam a mesma conta duas vezes — e a tela
+    mostraria uma curva de lente que não é a que formou o índice ao lado.
+    """
+    calibracao = repositorio_score.calibracao_vigente(sessao)
+    catalogo = repositorio_score.catalogo_das_lentes(sessao)
+    medido = repositorio_score.indice_do_mes(sessao, mes_com_dado, calibracao, catalogo)
+
+    lida = serie_de_mercado.ler(sessao)
+    ponto = next(p for p in lida.indice if p.mes == mes_com_dado)
+
+    assert ponto.lentes == {lente.codigo: lente.score for lente in medido.lentes}
+    #: AS LENTES DA TELA ESTÃO LÁ, pelos códigos que ela vai pedir.
+    assert {"imprensa", "mercado", "institucional"} <= set(ponto.lentes)
+    #: E O NULO SOBREVIVE: lente sem dado no mês é `None`, e não zero — zero
+    #: desenharia uma reputação péssima onde não houve medição.
+    assert all(v is None or isinstance(v, int) for v in ponto.lentes.values())
+
+
 def test_o_periodo_recorta_o_indice_PELO_MES_que_contem_a_data(sessao, mes_com_dado):
     """Pedir de 15/03 a 20/08 inclui março e agosto INTEIROS.
 
