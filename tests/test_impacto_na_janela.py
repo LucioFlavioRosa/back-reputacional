@@ -597,19 +597,25 @@ def test_o_RECORTE_do_modal_e_o_do_quadro_na_lente_DA_IMPRENSA(
     ).total == 2
 
 
-def test_o_quadro_NAO_MUDA_quando_as_outras_lentes_entram(
+def test_a_lente_SEM_BASE_no_mes_fica_fora_do_quadro_e_DENTRO_da_lista(
     sessao, clipei, temas, mes_com_base
 ):
-    """O outro lado da igualdade que caiu: o quadro continua medindo a Imprensa.
+    """O único caso em que o quadro e a lista do modal divergem — e por quê.
 
-    O MODAL PASSOU A LISTAR TRÊS LENTES, e o risco imediato é o número do quadro
-    ir atrás — bastaria o impacto ler as menções sem filtrar a lente para o
-    gráfico começar a somar matéria recortada e a nota do mês mudar sozinha. Este
-    teste mede exatamente isso: as mesmas menções, com e sem as outras duas
-    lentes presentes no banco.
+    ESTE TESTE AFIRMAVA O CONTRÁRIO, e era verdade quando foi escrito: "o quadro
+    NÃO muda quando as outras lentes entram", porque ele media só a Imprensa.
+    Virou falso POR DESENHO em 21/10/2026, quando o impacto passou a ser em ponto
+    do score geral e a conta passou a somar as três lentes de clipping. ACHADO DE
+    REVISÃO: ele continuava passando, mas por acidente — mercado e institucional
+    não têm `score_mes_fonte` neste cenário, e lente sem base é pulada.
 
-    A LISTA CRESCE, O QUADRO NÃO. É a divergência que a tela precisa explicar, e
-    é por isso que o cabeçalho do modal deixou de repetir o número da linha.
+    O QUE VALE AGORA: a lente SEM BASE DE MÊS não entra no quadro, porque sem
+    denominador ela não tem como contribuir em ponto do índice — multiplicar por
+    zero esconderia que ela foi pulada. Mas a LISTA mostra as menções dela, que
+    existem. É daí que vem a divergência que o cabeçalho do modal nomeia.
+
+    COM BASE, O QUADRO SOMA AS TRÊS — ver
+    `test_o_impacto_SOMA_as_tres_lentes_cada_uma_pelo_PESO_dela`.
     """
     com_tema = next(iter(temas))
     _mencao(sessao, clipei, sentimento="neg", n2=temas[com_tema], dia=CLICADO)
@@ -618,25 +624,28 @@ def test_o_quadro_NAO_MUDA_quando_as_outras_lentes_entram(
     no_quadro_antes = [g for g in antes.negativos if g.id == temas[com_tema]]
     assert no_quadro_antes, "o grupo pedido não apareceu no quadro"
 
-    #: AS OUTRAS DUAS LENTES, no mesmo dia e no mesmo tema — o pior caso para o
-    #: quadro: tudo igual menos a fonte.
+    #: AS OUTRAS DUAS LENTES, no mesmo dia e no mesmo tema, e SEM BASE DE MÊS —
+    #: que é o estado que este teste existe para medir.
     for codigo in ("mercado", "institucional"):
-        lente = sessao.scalars(select(Lente).where(Lente.codigo == codigo)).one()
-        fonte = sessao.scalars(
-            select(ScoreFonte)
-            .where(ScoreFonte.lente_id == lente.id, ScoreFonte.ativo.is_(True))
-            .order_by(ScoreFonte.ordem)
-        ).first()
-        assert fonte is not None, f"a lente {codigo} tinha de ter fonte ativa"
-        _mencao(sessao, fonte, sentimento="neg", n2=temas[com_tema], dia=CLICADO)
+        _mencao(
+            sessao,
+            _fonte_da_lente(sessao, codigo),
+            sentimento="neg",
+            n2=temas[com_tema],
+            dia=CLICADO,
+        )
 
     depois = impacto_na_janela.ler(sessao, ate=CLICADO, dias=15, nivel="n2")
     no_quadro_depois = [g for g in depois.negativos if g.id == temas[com_tema]]
 
-    #: O QUADRO, IDÊNTICO: contagem e impacto.
+    #: O QUADRO, IDÊNTICO, porque as duas novas não têm denominador.
     assert no_quadro_depois[0].mencoes == no_quadro_antes[0].mencoes == 1
     assert no_quadro_depois[0].impacto == no_quadro_antes[0].impacto
-    #: E A LISTA, COM AS TRÊS.
+    #: E A RESPOSTA DIZ QUE SÓ UMA LENTE ENTROU, que é o que torna o número
+    #: parcial legível em vez de silenciosamente incompleto.
+    assert depois.lentes == ("imprensa",)
+    #: A LISTA, COM AS TRÊS: as menções existem, e esconder as delas seria
+    #: esconder o que a pessoa veria na Base de dados.
     no_modal = impacto_na_janela.registros(
         sessao, ate=CLICADO, grupo=temas[com_tema], nivel="n2"
     )
@@ -738,6 +747,44 @@ def test_o_impacto_SOMA_as_tres_lentes_cada_uma_pelo_PESO_dela(sessao, clipei, t
     assert no_quadro[0].impacto == pytest.approx(esperado)
     #: E AS MENÇÕES SOMAM AS DUAS, que é o que o modal vai listar.
     assert no_quadro[0].mencoes == 2
+
+
+def test_a_fonte_INTERNA_aposentada_fica_fora_DO_QUADRO_tambem(sessao, clipei, temas):
+    """O defeito que a revisão REPRODUZIU, e o estado adverso que faltava.
+
+    O modal já filtrava a fonte interna aposentada; o quadro, não. Com uma
+    menção indevida no `crm` aposentado, a medição dele deu `quadro = 104.001`
+    contra `modal = 104.000` — o número da linha e a lista que ela abre
+    discordando de um.
+
+    OS DOIS LADOS TÊM DE CONTAR O MESMO CONJUNTO, e a fonte interna aposentada
+    saiu do índice (`0112`): ela não pode voltar em nenhum dos dois. Ver
+    `test_a_fonte_de_PLANILHA_aposentada_CONTINUA_na_lista`, que é o outro lado
+    da mesma regra — aquela fica, porque o histórico dela ainda pesa na nota.
+    """
+    _com_base(sessao, clipei)
+    com_tema = next(iter(temas))
+    _mencao(sessao, clipei, sentimento="neg", n2=temas[com_tema], dia=CLICADO)
+
+    aposentada = sessao.scalars(
+        select(ScoreFonte).where(ScoreFonte.interna.is_(True), ScoreFonte.ativo.is_(False))
+    ).first()
+    assert aposentada is not None, "a 0112 tinha de ter deixado o CRM aposentado"
+    #: A MENÇÃO INDEVIDA: a ingestão recusa fonte interna, então isto só chega
+    #: por `insert` à mão ou seed — e é exatamente o caso que o filtro cobre.
+    _mencao(sessao, aposentada, sentimento="neg", n2=temas[com_tema], dia=CLICADO)
+
+    lida = impacto_na_janela.ler(sessao, ate=CLICADO, dias=15, nivel="n2")
+    no_quadro = [g for g in lida.negativos if g.id == temas[com_tema]]
+
+    assert no_quadro, "o tema tinha de aparecer pela menção da Imprensa"
+    #: UMA, E NÃO DUAS: a aposentada não conta aqui nem na lista.
+    assert no_quadro[0].mencoes == 1
+    no_modal = impacto_na_janela.registros(
+        sessao, ate=CLICADO, grupo=temas[com_tema], nivel="n2"
+    )
+    assert no_modal.total == 1
+    assert no_modal.total == no_quadro[0].mencoes
 
 
 def test_o_nivel_DESCONHECIDO_e_recusado(sessao, clipei):

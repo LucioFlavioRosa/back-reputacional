@@ -83,8 +83,10 @@ LENTE = "imprensa"
 #: Approach), com outro vocabulário — listá-las aqui misturaria universos no
 #: mesmo modal.
 #:
-#: O QUADRO CONTINUA MEDINDO SÓ A IMPRENSA (`LENTE`), e esta lista mostra o tema
-#: inteiro: são coisas diferentes de propósito, e a tela diz qual é qual.
+#: E O QUADRO MEDE AS MESMAS TRÊS desde 21/10/2026, quando o impacto virou ponto
+#: do score geral — por um dia esta lista mostrou três lentes e o quadro media a
+#: Imprensa, e era por isso que o cabeçalho do modal nomeava os dois números.
+#: Hoje a lista é o universo da conta, e não um superconjunto dela.
 LENTES_DOS_REGISTROS = ("imprensa", "mercado", "institucional")
 
 #: Quantos dias a janela cobre, contados para trás a partir do dia clicado.
