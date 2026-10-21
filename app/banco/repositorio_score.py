@@ -1835,6 +1835,20 @@ def registros_do_grupo_na_janela(
     )
     onde = [
         ScoreFonte.lente_id.in_(list(lentes_id)),
+        #: SÓ FONTE ATIVA — e isto entra junto com a lista de lentes, não antes.
+        #: Com uma lente só, a Imprensa, a sua única fonte estava ativa e a
+        #: condição era desnecessária. Agora a Institucional tem DUAS fontes
+        #: cadastradas: a Clipei recortada, ativa, e o CRM, que a `0108`
+        #: aposentou por `ativo = false` sem apagar. A fonte aposentada saiu do
+        #: índice, então a menção dela não pode voltar num modal que existe para
+        #: explicar o número do índice.
+        #:
+        #: HOJE O CRM NÃO TEM LINHA EM `mencao` (a ingestão recusa fonte interna,
+        #: e só ela, a reconciliação e o semeador escrevem lá), então esta
+        #: condição não muda nenhuma contagem — ACHADO DE REVISÃO: aquilo é uma
+        #: premissa operacional, não uma garantia do banco. Um `insert` à mão ou
+        #: um seed futuro a quebraria, e a consulta pode se garantir sozinha.
+        ScoreFonte.ativo.is_(True),
         #: O MESMO PAR `mes`+`data` da janela: `mes` é quem tem índice, e sem
         #: ele a consulta varre a tabela inteira.
         Mencao.mes.in_(meses_da_janela(de, ate)),
