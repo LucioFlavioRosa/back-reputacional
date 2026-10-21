@@ -778,6 +778,17 @@ def somas_por_nivel_na_janela(
         .outerjoin(coluna_do_grupo, coluna_do_grupo.id == coluna_da_mencao)
         .where(
             ScoreFonte.lente_id == lente_id,
+            #: A MESMA CONDIÇÃO DO MODAL, e é conserto de uma assimetria que a
+            #: revisão REPRODUZIU: uma menção na fonte interna aposentada dava
+            #: `quadro = 104.001` contra `modal = 104.000`. O quadro e a lista
+            #: que ele abre têm de contar o mesmo conjunto, e a fonte interna
+            #: aposentada saiu do índice (`0112`) — ela não pode voltar aqui.
+            #:
+            #: A DE PLANILHA APOSENTADA FICA, pelo mesmo motivo de ficar no
+            #: modal: ali `ativo = false` é "parou de receber importação", e o
+            #: histórico continua pesando na nota — `denominador_do_mes` filtra
+            #: `calibracao.ligada`, não `ativo`.
+            or_(ScoreFonte.interna.is_(False), ScoreFonte.ativo.is_(True)),
             Mencao.mes.in_(meses),
             Mencao.data.is_not(None),
             Mencao.data >= de,
@@ -1843,9 +1854,15 @@ def registros_do_grupo_na_janela(
     veículo que não está — caem em lentes diferentes. Sem a coluna, isso parece
     erro.
 
-    O TOTAL DEIXA DE SER O NÚMERO DA LINHA DO QUADRO, e isso é consequência
-    direta do pedido: o quadro mede UMA lente (a Imprensa) e esta lista mostra
-    três. Quem chama precisa dizer isso na tela — ver o cabeçalho do modal.
+    O TOTAL VOLTOU A SER O NÚMERO DA LINHA DO QUADRO, e isso é consequência de
+    o impacto ter virado ponto do score geral (21/10/2026): o quadro passou a
+    somar as MESMAS três lentes desta lista. Por um dia ele media uma só, e era
+    por isso que o cabeçalho do modal nomeava os dois números.
+
+    ELES AINDA PODEM DIVERGIR num caso: a lente sem base de mês não entra no
+    quadro, porque sem denominador ela não contribui em ponto do índice — e esta
+    lista mostra as menções dela, que existem. O cabeçalho do modal nomeia os
+    dois números quando isso acontece.
     """
     if nivel not in NIVEIS_DA_JANELA:
         raise ValueError(f"nível desconhecido: {nivel!r}")
