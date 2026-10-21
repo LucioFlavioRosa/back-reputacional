@@ -99,7 +99,7 @@ def test_a_fonte_institucional_ESPELHA_a_clipei(sessao):
     """Mesmo arquivo e mesma aba — é o que faz a reconciliação ter de onde copiar."""
     nova = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == FONTE))
     clipei = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == "clipei"))
-    assert nova is not None, "a 0107 cria a fonte"
+    assert nova is not None, "a 0111 cria a fonte"
 
     assert nova.mapeamento_colunas["arquivo"] == clipei.mapeamento_colunas["arquivo"]
     assert nova.mapeamento_colunas["aba"] == clipei.mapeamento_colunas["aba"]

@@ -58,11 +58,11 @@ begin
 
     if ainda_interna > 0 then
         raise exception
-            'a lente institucional ainda tem % fonte(s) interna(s) ativa(s) depois da 0108',
+            'a lente institucional ainda tem % fonte(s) interna(s) ativa(s) depois da 0112',
             ainda_interna;
     end if;
 
-    --: E A LENTE PRECISA TER COM QUE SE MEDIR DEPOIS: sem a fonte da `0107`,
+    --: E A LENTE PRECISA TER COM QUE SE MEDIR DEPOIS: sem a fonte da `0111`,
     --: esta migration deixaria a Institucional sem fonte nenhuma — não vazia à
     --: espera de classificação, mas impossível de preencher.
     if not exists (
@@ -72,7 +72,7 @@ begin
            and f.mapeamento_colunas ->> 'lista_de_veiculos' = 'imprensa_institucional'
     ) then
         raise exception
-            'a lente institucional ficaria sem fonte: a 0107 não criou clipei_institucional';
+            'a lente institucional ficaria sem fonte: a 0111 não criou clipei_institucional';
     end if;
 
     raise notice 'CRM fora do indice; a lente Institucional agora e imprensa recortada';
