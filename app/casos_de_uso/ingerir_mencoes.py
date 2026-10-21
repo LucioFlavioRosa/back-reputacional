@@ -783,6 +783,17 @@ def regravar(
     Uma segunda cópia desta função seria a segunda definição de "o que é um mês
     no banco".
     """
+    #: A TRAVA DO ARQUIVO, E A INGESTÃO TAMBÉM A TOMA — correção de achado ALTO
+    #: de revisão. A reconciliação já se serializava por ela, mas a subida não
+    #: participava: a reconciliação copiava uma linha para o espelho e uma
+    #: subida cuja exclusão começara antes do commit dela não via essa linha e
+    #: inseria outra cópia. O resultado era duplicação no espelho e no
+    #: agregado — justamente o defeito que esta mudança existe para acabar.
+    #:
+    #: A MESMA CHAVE das duas: o id do espelho do arquivo. Fonte sem irmã que
+    #: recorte trava por si mesma, e arquivos diferentes não se esperam.
+    travar_o_arquivo(sessao, fonte)
+
     mapeamento = _mapeamento_de(fonte)
     if mapeamento.lista_de_veiculos and not leitura.recortada_por_lista:
         #: A GUARDA MORA AQUI, e não só em `ler_planilha`, porque é AQUI que a
@@ -1169,6 +1180,31 @@ def _ingerir_uma(
             if normalizar(mencao.tema_texto or "") in temas
         ),
     )
+
+
+#: O "namespace" da trava do arquivo (`pg_advisory_xact_lock` recebe dois
+#: inteiros). O MESMO NÚMERO que `reconciliar_lista_de_veiculos` usa, de
+#: propósito: as duas operações precisam se esperar, e travas em espaços
+#: diferentes não se veem. Está declarado aqui porque é aqui que a ingestão
+#: mora, e importá-lo de lá criaria ciclo.
+ESPACO_DA_TRAVA_DO_ARQUIVO = 10_267
+
+
+def travar_o_arquivo(sessao: Session, fonte: ScoreFonte) -> None:
+    """Serializa quem escreve os meses deste arquivo — subida e reconciliação.
+
+    A CHAVE É O ESPELHO (a irmã que não recorta), que é a identidade do
+    arquivo; sem irmã que recorte, a fonte trava por si mesma. Arquivos
+    diferentes não se esperam.
+
+    `xact`: morre com a transação, e nada fica preso se o processo cair.
+    """
+    irmas = fontes_do_mesmo_arquivo(sessao, fonte)
+    espelhos = [
+        irma for irma in irmas if not (irma.mapeamento_colunas or {}).get("lista_de_veiculos")
+    ]
+    chave = espelhos[0].id if espelhos else fonte.id
+    sessao.execute(select(func.pg_advisory_xact_lock(ESPACO_DA_TRAVA_DO_ARQUIVO, chave)))
 
 
 def fontes_do_mesmo_arquivo(sessao: Session, fonte: ScoreFonte) -> list[ScoreFonte]:

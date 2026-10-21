@@ -23,7 +23,7 @@ from datetime import date
 
 import pytest
 from openpyxl import Workbook
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, delete, func, select
 from sqlalchemy.orm import Session
 
 from app.banco.tabelas_catalogo import CategoriaPublico, SubcategoriaPublico
@@ -229,7 +229,14 @@ def test_a_IDA_E_VOLTA_nao_duplica_nem_perde(sessao):
 
 def _mencao_crua(sessao, fonte_codigo: str, veiculo: str | None) -> None:
     """Uma menção posta à mão numa fonte, para montar estados que a ingestão
-    de hoje não produz mais — a duplicação antiga e a cópia parcial."""
+    de hoje não produz mais — a duplicação antiga e a cópia parcial.
+
+    E O AGREGADO VAI COM ELA, porque na vida real a ingestão escreve os dois. A
+    primeira versão da fixture só punha a menção, e aí um teste cobrava do
+    motor que ele CRIASSE o agregado de uma fonte cujas menções não mudaram —
+    exigência que o código não tem e nem deveria ter: agregado de fonte intacta
+    já está certo.
+    """
     fonte = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == fonte_codigo)).one()
     sessao.add(
         Mencao(
@@ -239,6 +246,30 @@ def _mencao_crua(sessao, fonte_codigo: str, veiculo: str | None) -> None:
             sentimento="pos",
             veiculo=veiculo,
             titulo_texto=f"Posta à mão — {veiculo}",
+        )
+    )
+    sessao.flush()
+
+    quantas = sessao.scalar(
+        select(func.count())
+        .select_from(Mencao)
+        .where(Mencao.fonte_id == fonte.id, Mencao.mes == MES)
+    )
+    sessao.execute(
+        delete(ScoreMesFonte).where(
+            ScoreMesFonte.fonte_id == fonte.id, ScoreMesFonte.mes == MES
+        )
+    )
+    sessao.add(
+        ScoreMesFonte(
+            fonte_id=fonte.id,
+            mes=MES,
+            sentimento="pos",
+            tier="",
+            mencoes=quantas,
+            soma_log=quantas,
+            soma_engajamento=0,
+            soma_cargo=0,
         )
     )
     sessao.flush()
@@ -310,6 +341,45 @@ def test_a_mencao_SEM_VEICULO_na_recortada_volta_para_o_espelho(sessao):
     _reconciliar(sessao)
 
     assert _por_lente(sessao) == {"imprensa": 1}
+
+
+def _reconciliar_lista(sessao, lista: str) -> None:
+    for fonte in reconciliar_lista_de_veiculos.fontes_que_recortam(sessao, lista):
+        reconciliar_lista_de_veiculos.aplicar(sessao, fonte)
+
+
+@pytest.mark.parametrize(
+    "ordem",
+    [
+        ("imprensa_economica", "imprensa_institucional"),
+        ("imprensa_institucional", "imprensa_economica"),
+    ],
+)
+def test_de_UMA_LISTA_PARA_A_OUTRA_nao_depende_da_ordem(sessao, ordem):
+    """ACHADO ALTO DA SEGUNDA REVISÃO, e um caso que eu não tinha imaginado.
+
+    Um veículo que vai do Mercado para a Institucional: aplicando a
+    Institucional PRIMEIRO, ela não achava a linha (o universo era `fonte +
+    espelho`, e a linha estava na recortada do Mercado); depois o Mercado a
+    devolvia ao espelho, e ela terminava na IMPRENSA. Na ordem inversa
+    funcionava — o resultado dependia de quem aplicasse primeiro, e as duas
+    listas se aplicam por cliques separados na tela.
+
+    AGORA O REPARTICIONAMENTO É DO ARQUIVO: cada linha tem um dono (a lista que
+    contém o veículo dela), e a ordem deixa de importar.
+    """
+    _subir(sessao)
+    _classificar(sessao, DO_MERCADO, _subcategoria(sessao, "Econômica e de negócios"))
+    _reconciliar(sessao)
+    assert _por_lente(sessao) == {"imprensa": 1, "mercado": 1}
+
+    #: E AGORA ELE VIRA INSTITUCIONAL.
+    _classificar(sessao, DO_MERCADO, _subcategoria(sessao, "Institucional"))
+    for lista in ordem:
+        _reconciliar_lista(sessao, lista)
+
+    assert _por_lente(sessao) == {"imprensa": 1, "institucional": 1}
+    assert _agregado(sessao) == {"imprensa": 1.0, "institucional": 1.0}
 
 
 def test_reconciliar_DUAS_VEZES_nao_muda_nada(sessao):

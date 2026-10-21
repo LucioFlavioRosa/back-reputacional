@@ -44,12 +44,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-from sqlalchemy import delete, func, insert, or_, select
-from sqlalchemy import true as sa_true
+from sqlalchemy import delete, func, insert, select
 from sqlalchemy.orm import Session
 
 from app.banco.tabelas_score import Mencao, ScoreFonte, ScoreMesFonte
-from app.casos_de_uso.ingerir_mencoes import fontes_do_mesmo_arquivo
+from app.casos_de_uso.ingerir_mencoes import fontes_do_mesmo_arquivo, travar_o_arquivo
 from app.casos_de_uso.veiculos_da_imprensa import nomes_da_lista
 from app.dominio.erros import RegraViolada
 from app.dominio.ingestao_score import Mapeamento, MencaoLida, somar
@@ -61,7 +60,10 @@ LISTA_PADRAO = "imprensa_economica"
 #: O "namespace" da trava de aplicação (`pg_advisory_xact_lock` recebe dois
 #: inteiros). Um número desta casa, para a trava desta operação não colidir com
 #: outra que alguém venha a pôr no mesmo banco.
-_ESPACO_DA_TRAVA = 10_267
+#: A TRAVA MORA EM `ingerir_mencoes.travar_o_arquivo`, e o espaço dela também:
+#: a subida e a reconciliação escrevem os mesmos meses do mesmo arquivo e
+#: precisam se esperar. Duas travas com a mesma intenção em lugares diferentes
+#: é como elas divergem — e divergir aqui significa duplicar menção.
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,6 +170,64 @@ def espelho_de(sessao: Session, fonte: ScoreFonte) -> ScoreFonte:
     return irmas[0]
 
 
+def _donos_do_arquivo(
+    sessao: Session, fonte: ScoreFonte
+) -> tuple[ScoreFonte, dict[int, frozenset[str]], list[ScoreFonte]]:
+    """Quem é dono de quê no arquivo: o espelho, as listas das recortadas, e todas.
+
+    O ARQUIVO É O OBJETO, E NÃO O PAR recortada–espelho — correção do segundo
+    achado ALTO de revisão, e a terceira vez que esta engrenagem me ensina a
+    mesma coisa. Eu media `fonte + espelho`, e com DUAS recortadas no mesmo
+    arquivo o resultado passava a depender da ORDEM: um veículo que vai do
+    Mercado para a Institucional, aplicando a Institucional primeiro, não era
+    achado (a linha estava na recortada do Mercado) e depois o Mercado a
+    devolvia ao espelho — ela terminava na Imprensa. O revisor reproduziu no
+    Postgres.
+
+    COM O ARQUIVO INTEIRO A OPERAÇÃO COMUTA: cada linha tem UM dono, dado pela
+    lista que contém o veículo dela (e o espelho quando nenhuma contém), e
+    reparticionar é levar cada uma ao seu dono. A ordem deixa de importar
+    porque o destino não depende de quem aplica.
+    """
+    irmas = fontes_do_mesmo_arquivo(sessao, fonte)
+    espelhos = [
+        irma for irma in irmas if not (irma.mapeamento_colunas or {}).get("lista_de_veiculos")
+    ]
+    if len(espelhos) != 1:
+        #: Sem espelho não há dono para a linha de fora das listas; com dois não
+        #: há como escolher. Os dois casos são cadastro mal configurado.
+        raise RegraViolada(
+            f"A fonte {fonte.codigo!r} precisa de exatamente uma fonte irmã que "
+            f"leia o mesmo arquivo sem recortar; achei {len(espelhos)}."
+        )
+    listas = {
+        irma.id: nomes_da_lista(
+            sessao, str((irma.mapeamento_colunas or {})["lista_de_veiculos"])
+        )
+        for irma in irmas
+        if (irma.mapeamento_colunas or {}).get("lista_de_veiculos")
+    }
+    return espelhos[0], listas, irmas
+
+
+def _dono_de(veiculo: str | None, espelho: ScoreFonte, listas: dict[int, frozenset[str]]) -> int:
+    """De quem é esta linha: a recortada cuja lista a contém, senão o espelho.
+
+    SEM VEÍCULO É DO ESPELHO: nenhuma recortada aceita linha sem veículo (ver
+    `na_lista`), e é a mesma regra que a ingestão aplica.
+
+    A PRIMEIRA QUE CASAR, e um veículo em duas listas é cadastro impossível
+    hoje — a subcategoria é uma só. Se um dia for possível, isto escolhe de
+    forma determinística em vez de depender da ordem do dicionário.
+    """
+    if veiculo is not None:
+        normalizado = normalizar(veiculo)
+        for fonte_id in sorted(listas):
+            if normalizado in listas[fonte_id]:
+                return fonte_id
+    return espelho.id
+
+
 def _textos_no_universo(
     sessao: Session,
     espelho: ScoreFonte,
@@ -185,10 +245,13 @@ def _textos_no_universo(
     recortada não aparece mais no espelho, e olhar só para lá o faria sumir do
     alvo — o que apagaria as menções dele na reconciliação seguinte.
     """
+    _, _, irmas = _donos_do_arquivo(sessao, fonte)
     distintos = sessao.scalars(
         select(Mencao.veiculo)
         .where(
-            Mencao.fonte_id.in_([espelho.id, fonte.id]),
+            #: TODAS AS IRMÃS, e não só `fonte` e `espelho`: a linha pode estar
+            #: na OUTRA recortada — é o caso do veículo que muda de lista.
+            Mencao.fonte_id.in_([irma.id for irma in irmas]),
             Mencao.veiculo.is_not(None),
         )
         .distinct()
@@ -207,20 +270,18 @@ def _do_universo(
     dois — a cópia antiga no espelho e a cópia nova na recortada —, e aí o que
     vale é a da RECORTADA: ela é o destino, e contar as duas inventaria menção.
     """
-    da_recortada = _por_mes_e_veiculo(sessao, fonte, alvo)
-    do_espelho = _por_mes_e_veiculo(sessao, espelho, alvo)
-
-    juntos: dict[date, dict[str | None, int]] = {
-        mes: dict(veiculos) for mes, veiculos in da_recortada.items()
-    }
-    for mes, veiculos in do_espelho.items():
-        no_mes = juntos.setdefault(mes, {})
-        for veiculo, quantas in veiculos.items():
-            #: SÓ SE A RECORTADA AINDA NÃO TEM ESTE VEÍCULO NESTE MÊS. Com ela
-            #: tendo, as linhas do espelho são a cópia velha que a transição
-            #: vai apagar — somá-las dobraria o veículo na lente.
-            if veiculo not in no_mes:
-                no_mes[veiculo] = quantas
+    _, _, irmas = _donos_do_arquivo(sessao, fonte)
+    juntos: dict[date, dict[str | None, int]] = {}
+    for irma in irmas:
+        for mes, veiculos in _por_mes_e_veiculo(sessao, irma, alvo).items():
+            no_mes = juntos.setdefault(mes, {})
+            for veiculo, quantas in veiculos.items():
+                #: O MAIOR, E NÃO A SOMA. Para um veículo do alvo, as linhas
+                #: estão numa irmã só — exceto no mês ainda não migrado, em que
+                #: a cópia velha está no espelho e a nova na recortada. Somar
+                #: dobraria o veículo na lente; o maior é a contagem real do
+                #: arquivo, e é ela que o reparticionamento persegue.
+                no_mes[veiculo] = max(no_mes.get(veiculo, 0), quantas)
     return juntos
 
 
@@ -367,124 +428,93 @@ def previa(sessao: Session, fonte: ScoreFonte) -> Reconciliacao:
     return medida
 
 
-def _devolver_ao_espelho(
+def _reparticionar_o_mes(
     sessao: Session,
-    fonte: ScoreFonte,
     espelho: ScoreFonte,
+    listas: dict[int, frozenset[str]],
+    irmas: list[ScoreFonte],
     mes: date,
-    alvo: set[str],
     copiaveis: list[str],
 ) -> None:
-    """As menções da recortada cujo veículo saiu da lista voltam ao espelho.
+    """Cada linha do mês vai para o dono dela, e sai de todas as outras irmãs.
 
-    O SENTIDO INVERSO DO RECORTE EXCLUSIVO. Enquanto o espelho guardava o
-    arquivo inteiro, sair da lista era só apagar a cópia — o original nunca
-    tinha saído de lá. Com a partição, a linha existe num lugar só: apagá-la
-    sem devolver apagaria a matéria do sistema.
+    É UMA OPERAÇÃO SÓ, SOBRE O ARQUIVO, e é o que faz o resultado não depender
+    da ordem em que as recortadas são aplicadas — o segundo achado alto da
+    revisão. O dono de uma linha é a lista que contém o veículo dela, e o
+    espelho quando nenhuma contém: a conta não olha "quem está aplicando".
 
-    DEVOLVE A DIFERENÇA DE CONTAGEM, e não "o que falta por nome" — correção de
-    achado ALTO de revisão. Conferir só a PRESENÇA do veículo no espelho perdia
-    linha: com a recortada tendo 2 e o espelho 1, nada era devolvido e as duas
-    eram apagadas em seguida. A conta é por (mês, veículo): devolve
-    `max(0, quantas_na_recortada - quantas_no_espelho)`.
+    A CONTAGEM-ALVO É O MAIOR entre as irmãs, e não a soma: para um veículo, as
+    linhas vivem numa irmã só — exceto no mês ainda não migrado, em que a cópia
+    velha está no espelho e a nova na recortada. Somar dobraria a matéria.
 
-    E A LINHA SEM VEÍCULO ENTRA NA CONTA, que era o outro achado. Ela não está
-    no alvo (`na_lista(None)` é falso, de propósito) e ficava fora da devolução
-    por causa de um `is_not(None)` — então o `delete` do mês a apagava e ela não
-    existia em lugar nenhum. Pela regra da ingestão, linha sem veículo pertence
-    ao espelho; a `0067` registra que elas existem na recortada, gravadas pelo
-    critério antigo da coluna `Público-alvo`.
+    E A ORDEM É COPIAR ANTES DE APAGAR, sempre: com a partição, uma linha existe
+    num lugar só, e apagar antes de ter copiado a perderia.
     """
-    na_recortada = _por_mes_e_veiculo(sessao, fonte).get(mes, {})
-    no_espelho = _por_mes_e_veiculo(sessao, espelho).get(mes, {})
-
-    for veiculo, quantas in na_recortada.items():
-        if veiculo is not None and veiculo in alvo:
-            continue
-        faltam = quantas - no_espelho.get(veiculo, 0)
-        if faltam <= 0:
-            #: O ESPELHO JÁ TEM TUDO ISTO: são as cópias que a transição vai
-            #: apagar da recortada, e devolvê-las criaria a terceira linha.
-            continue
-        #: `limit(faltam)` COM ORDEM DETERMINÍSTICA: sem o `order_by`, duas
-        #: execuções do mesmo mês poderiam copiar linhas diferentes — e o
-        #: resultado seria o mesmo em contagem, mas não em id.
-        de_onde = (
-            select(Mencao.id)
-            .where(
-                Mencao.fonte_id == fonte.id,
-                Mencao.mes == mes,
-                Mencao.veiculo.is_(None) if veiculo is None else Mencao.veiculo == veiculo,
-            )
-            .order_by(Mencao.id)
-            .limit(faltam)
-            .scalar_subquery()
+    #: `{veículo: {fonte_id: quantas}}` do mês, lido uma vez.
+    onde: dict[str | None, dict[int, int]] = {}
+    for fonte_id, veiculo, quantas in sessao.execute(
+        select(Mencao.fonte_id, Mencao.veiculo, func.count())
+        .where(
+            Mencao.fonte_id.in_([irma.id for irma in irmas]),
+            Mencao.mes == mes,
         )
-        origem = select(
-            func.gen_random_uuid(),
-            espelho.id,
-            *[Mencao.__table__.c[nome] for nome in copiaveis],
-        ).where(Mencao.id.in_(de_onde))
-        sessao.execute(insert(Mencao).from_select(["id", "fonte_id", *copiaveis], origem))
+        .group_by(Mencao.fonte_id, Mencao.veiculo)
+    ).all():
+        onde.setdefault(veiculo, {})[fonte_id] = quantas
 
+    tocadas: set[int] = set()
+    for veiculo, por_fonte in onde.items():
+        dono = _dono_de(veiculo, espelho, listas)
+        alvo_de_linhas = max(por_fonte.values())
+        tem = por_fonte.get(dono, 0)
 
-def _nao_e_do_alvo(alvo: set[str]):
-    """A condição "esta linha não pertence à lista".
-
-    A LINHA SEM VEÍCULO ENTRA AQUI: ela não é de veículo listado nenhum, e
-    `veiculo in (...)` em SQL é NULO para ela — nem verdadeiro nem falso. Sem o
-    `is_(None)` explícito, ela não seria apagada da recortada e ficaria para
-    sempre numa lente que não é dela.
-    """
-    if not alvo:
-        return sa_true()
-    return or_(Mencao.veiculo.is_(None), Mencao.veiculo.notin_(list(alvo)))
-
-
-def _trazer_do_espelho(
-    sessao: Session,
-    fonte: ScoreFonte,
-    espelho: ScoreFonte,
-    mes: date,
-    alvo: set[str],
-    copiaveis: list[str],
-) -> None:
-    """As menções do alvo que o espelho tem além do que a recortada já tem.
-
-    PELA DIFERENÇA DE CONTAGEM, por (mês, veículo), e é a mesma conta da
-    devolução — só no sentido oposto. Copiar do espelho sem olhar o que a
-    recortada já tem duplicaria o veículo que já se mudou; e copiar só "o que
-    falta por nome" perderia linha quando as contagens diferem.
-    """
-    na_recortada = _por_mes_e_veiculo(sessao, fonte).get(mes, {})
-    no_espelho = _por_mes_e_veiculo(sessao, espelho).get(mes, {})
-
-    for veiculo, quantas in no_espelho.items():
-        if veiculo is None or veiculo not in alvo:
-            continue
-        faltam = quantas - na_recortada.get(veiculo, 0)
-        if faltam <= 0:
-            continue
-        de_onde = (
-            select(Mencao.id)
-            .where(
-                Mencao.fonte_id == espelho.id,
-                Mencao.mes == mes,
-                Mencao.veiculo == veiculo,
+        if tem < alvo_de_linhas:
+            #: DE QUEM TEM MAIS, para a cópia vir de uma irmã que realmente as
+            #: tenha: num mês meio migrado, a de maior contagem é a que ainda
+            #: guarda o conjunto completo.
+            de_onde_id = max(por_fonte, key=lambda fid: por_fonte[fid])
+            faltam = alvo_de_linhas - tem
+            quais = (
+                select(Mencao.id)
+                .where(
+                    Mencao.fonte_id == de_onde_id,
+                    Mencao.mes == mes,
+                    Mencao.veiculo.is_(None) if veiculo is None else Mencao.veiculo == veiculo,
+                )
+                .order_by(Mencao.id)
+                .limit(faltam)
+                .scalar_subquery()
             )
-            .order_by(Mencao.id)
-            .limit(faltam)
-            .scalar_subquery()
-        )
-        origem = select(
-            #: `gen_random_uuid()` no banco porque o padrão de `Mencao.id` é do
-            #: Python, e `insert ... select` nunca o chamaria: as linhas sairiam
-            #: sem id.
-            func.gen_random_uuid(),
-            fonte.id,
-            *[Mencao.__table__.c[nome] for nome in copiaveis],
-        ).where(Mencao.id.in_(de_onde))
-        sessao.execute(insert(Mencao).from_select(["id", "fonte_id", *copiaveis], origem))
+            origem = select(
+                #: `gen_random_uuid()` no banco porque o padrão de `Mencao.id` é
+                #: do Python, e `insert ... select` nunca o chamaria.
+                func.gen_random_uuid(),
+                dono,
+                *[Mencao.__table__.c[nome] for nome in copiaveis],
+            ).where(Mencao.id.in_(quais))
+            sessao.execute(
+                insert(Mencao).from_select(["id", "fonte_id", *copiaveis], origem)
+            )
+            tocadas.add(dono)
+
+        for fonte_id in por_fonte:
+            if fonte_id == dono:
+                continue
+            sessao.execute(
+                delete(Mencao).where(
+                    Mencao.fonte_id == fonte_id,
+                    Mencao.mes == mes,
+                    Mencao.veiculo.is_(None) if veiculo is None else Mencao.veiculo == veiculo,
+                )
+            )
+            tocadas.add(fonte_id)
+
+    #: O AGREGADO DE TODA IRMÃ TOCADA, e é ele que carrega a nota: mexer em
+    #: `mencao` e esquecer `score_mes_fonte` deixaria a lista certa e o NÚMERO
+    #: errado — e é o número que a diretoria cita.
+    for irma in irmas:
+        if irma.id in tocadas:
+            _regravar_o_agregado(sessao, irma, mes)
 
 
 def _regravar_o_agregado(sessao: Session, fonte: ScoreFonte, mes: date) -> None:
@@ -575,8 +605,11 @@ def aplicar(sessao: Session, fonte: ScoreFonte) -> Reconciliacao:
     #: `xact` porque ela morre com a transação, e nada fica preso se o processo
     #: cair. O primeiro argumento é o "namespace", para não colidir com outra
     #: trava desta casa.
-    espelho = espelho_de(sessao, fonte)
-    sessao.execute(select(func.pg_advisory_xact_lock(_ESPACO_DA_TRAVA, espelho.id)))
+    #: A MESMA FUNÇÃO QUE A INGESTÃO USA, e é o ponto: as duas escrevem os meses
+    #: deste arquivo e precisam se esperar. Duas travas com a mesma intenção em
+    #: lugares diferentes é como elas divergem — e divergir aqui significa
+    #: duplicar menção.
+    travar_o_arquivo(sessao, fonte)
 
     espelho, alvo, medida = _medir(sessao, fonte)
 
@@ -601,56 +634,11 @@ def aplicar(sessao: Session, fonte: ScoreFonte) -> Reconciliacao:
         if coluna.name not in ("id", "fonte_id")
     ]
 
+    espelho_do_arquivo, listas, irmas = _donos_do_arquivo(sessao, fonte)
     for mes in mudam:
-        #: O QUE VOLTA PARA O ESPELHO, E ISTO É O SENTIDO INVERSO DO RECORTE
-        #: EXCLUSIVO (pedido de 20/10/2026: "se voltar a ser imprensa o
-        #: histórico deve ser movido também de volta").
-        #:
-        #: ANTES DE APAGAR A RECORTADA, porque é dela que estas linhas saem: o
-        #: veículo que deixou a lista tem as menções dele AQUI, e em lugar
-        #: nenhum mais. Apagar primeiro e copiar depois perderia o histórico
-        #: dele — o `delete` abaixo não distingue quem fica de quem volta.
-        _devolver_ao_espelho(sessao, fonte, espelho, mes, alvo, copiaveis)
-
-        #: APAGA DA RECORTADA SÓ O QUE NÃO É DELA, e não o mês inteiro — e esta
-        #: é a correção do achado mais perigoso da revisão.
-        #:
-        #: A primeira versão substituía o mês: apagava tudo e recopiava do
-        #: espelho. Isso funcionava quando o espelho tinha o arquivo inteiro.
-        #: Com a partição, as linhas de um veículo LISTADO vivem só na
-        #: recortada — apagar o mês e recopiar do espelho as apagaria de vez,
-        #: porque o espelho já não as tem. A perda apareceria em qualquer mês
-        #: que entrasse em `mudam` por causa de OUTRO veículo.
-        sessao.execute(
-            delete(Mencao).where(
-                Mencao.fonte_id == fonte.id,
-                Mencao.mes == mes,
-                _nao_e_do_alvo(alvo),
-            )
+        _reparticionar_o_mes(
+            sessao, espelho_do_arquivo, listas, irmas, mes, copiaveis
         )
-        if alvo:
-            #: E TRAZ DO ESPELHO O QUE FALTA, pela DIFERENÇA DE CONTAGEM: o que
-            #: já está na recortada fica onde está. Copiar tudo outra vez
-            #: duplicaria o veículo que já se mudou.
-            _trazer_do_espelho(sessao, fonte, espelho, mes, alvo, copiaveis)
-            #: E SAI DO ESPELHO: o recorte é EXCLUSIVO. Era aqui que a lente
-            #: Imprensa continuava contando o Valor Econômico depois de ele
-            #: virar veículo de Mercado — a cópia ia para o recorte e o
-            #: original ficava, e as duas lentes contavam a mesma matéria.
-            sessao.execute(
-                delete(Mencao).where(
-                    Mencao.fonte_id == espelho.id,
-                    Mencao.mes == mes,
-                    Mencao.veiculo.in_(list(alvo)),
-                )
-            )
-
-        _regravar_o_agregado(sessao, fonte, mes)
-        #: O AGREGADO DO ESPELHO TAMBÉM, e é ele que carrega a nota: a Imprensa
-        #: só deixa de contar o veículo quando `score_mes_fonte` for refeito.
-        #: Mexer em `mencao` e esquecer o agregado deixaria a lista certa e a
-        #: NOTA errada — e é a nota que a diretoria cita.
-        _regravar_o_agregado(sessao, espelho, mes)
 
     sessao.flush()
     #: REMEDE DEPOIS DE ESCREVER: `meses` passa a descrever o estado de AGORA, e
