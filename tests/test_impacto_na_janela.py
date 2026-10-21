@@ -29,6 +29,7 @@ from app.banco.tabelas_catalogo import BlocoTema, MacroTema, Tema
 from app.banco.tabelas_score import Lente, Mencao, ScoreFonte, ScoreMesFonte
 from app.casos_de_uso import impacto_na_janela
 from app.dominio.erros import RegraViolada
+from app.dominio.tema_do_mes import PONTOS_POR_NS
 from tests.test_e2e_postgres import URL
 
 _engine = create_engine(URL, pool_pre_ping=True)
@@ -641,6 +642,102 @@ def test_o_quadro_NAO_MUDA_quando_as_outras_lentes_entram(
     )
     assert no_modal.total == 3
     assert {i.lente for i in no_modal.itens} == {"imprensa", "mercado", "institucional"}
+
+
+def _fonte_da_lente(sessao: Session, codigo: str) -> ScoreFonte:
+    lente = sessao.scalars(select(Lente).where(Lente.codigo == codigo)).one()
+    fonte = sessao.scalars(
+        select(ScoreFonte)
+        .where(ScoreFonte.lente_id == lente.id, ScoreFonte.ativo.is_(True))
+        .order_by(ScoreFonte.ordem)
+    ).first()
+    assert fonte is not None, f"a lente {codigo} tinha de ter fonte ativa"
+    return fonte
+
+
+def _com_base(sessao: Session, fonte: ScoreFonte, mencoes: int = BASE_DO_MES) -> None:
+    """Dá base de mês a uma fonte — o denominador de onde o impacto divide."""
+    sessao.add(
+        ScoreMesFonte(
+            fonte_id=fonte.id,
+            mes=MES,
+            sentimento="pos",
+            tier="",
+            mencoes=mencoes,
+            soma_log=mencoes,
+            soma_engajamento=0,
+            soma_cargo=0,
+        )
+    )
+    sessao.flush()
+
+
+def test_o_impacto_e_em_PONTOS_DO_INDICE_e_nao_da_nota_da_lente(sessao, clipei, temas):
+    """O pedido de 21/10/2026, e o teste que a fixture de uma lente NÃO pega.
+
+    "o impacto deve ser em relação à nota geral", e "esse impacto deve levar em
+    consideração a fórmula de pesos que definimos no projeto".
+
+    POR QUE PRECISA DE DUAS LENTES COM BASE: com só a Imprensa medida, ela é a
+    ÚNICA no índice e pesa 100% dele — a conversão multiplica por 1 e um teste
+    de uma lente passa igual, antes e depois da mudança. Foi o que aconteceu com
+    os outros testes deste arquivo quando eu rodei a primeira vez: 59 passando
+    sem nenhum medir o que eu tinha acabado de mudar.
+
+    COM A IMPRENSA (peso 30) E O MERCADO (peso 20) MEDIDOS, a Imprensa pondera
+    30 de 50 = 60% do índice. Uma matéria negativa que move a nota dela em
+    −`PONTOS_POR_NS`/base pontos move o índice em 60% disso.
+    """
+    mercado = _fonte_da_lente(sessao, "mercado")
+    _com_base(sessao, clipei)
+    _com_base(sessao, mercado)
+    com_tema = next(iter(temas))
+    _mencao(sessao, clipei, sentimento="neg", n2=temas[com_tema], dia=CLICADO)
+
+    lida = impacto_na_janela.ler(sessao, ate=CLICADO, dias=15, nivel="n2")
+
+    #: AS DUAS ENTRARAM, e a fatia soma 100 porque são as únicas medidas.
+    assert set(lida.lentes) == {"imprensa", "mercado"}
+    assert lida.fatia_das_lentes == pytest.approx(100.0)
+
+    no_quadro = [g for g in lida.negativos if g.id == temas[com_tema]]
+    assert no_quadro, "o tema pedido não apareceu no quadro"
+    #: A CONTA À MÃO: a menção move a nota da Imprensa em PONTOS_POR_NS/10, e a
+    #: Imprensa pesa 30/(30+20) = 60% do índice.
+    na_imprensa = PONTOS_POR_NS / BASE_DO_MES
+    assert no_quadro[0].impacto == pytest.approx(-na_imprensa * 0.6)
+
+
+def test_o_impacto_SOMA_as_tres_lentes_cada_uma_pelo_PESO_dela(sessao, clipei, temas):
+    """O outro lado do mesmo pedido: "tem que pegar tanto registros que vêm de
+    imprensa, mercado e institucional".
+
+    O MESMO TEMA EM DUAS LENTES soma num grupo só, porque a taxonomia é uma —
+    "Tarifa" é o mesmo tema tenha a matéria vindo de onde vier. E cada lado
+    entra pelo PESO da sua lente: é isso que uma soma de menções num denominador
+    só apagaria.
+    """
+    mercado = _fonte_da_lente(sessao, "mercado")
+    _com_base(sessao, clipei)
+    _com_base(sessao, mercado)
+    com_tema = next(iter(temas))
+    #: UMA NEGATIVA NA IMPRENSA e UMA POSITIVA NO MERCADO, no mesmo tema.
+    _mencao(sessao, clipei, sentimento="neg", n2=temas[com_tema], dia=CLICADO)
+    _mencao(sessao, mercado, sentimento="pos", n2=temas[com_tema], dia=CLICADO)
+
+    lida = impacto_na_janela.ler(sessao, ate=CLICADO, dias=15, nivel="n2")
+
+    por_ponto = PONTOS_POR_NS / BASE_DO_MES
+    #: −60% pela Imprensa e +40% pelo Mercado: o saldo é NEGATIVO, porque a
+    #: lente que pesa mais puxou para baixo. Com os pesos ignorados, as duas se
+    #: anulariam e o tema desapareceria do quadro — é essa a diferença.
+    esperado = -por_ponto * 0.6 + por_ponto * 0.4
+    assert esperado < 0
+    no_quadro = [g for g in lida.negativos if g.id == temas[com_tema]]
+    assert no_quadro, "o tema tinha de sobrar no lado negativo"
+    assert no_quadro[0].impacto == pytest.approx(esperado)
+    #: E AS MENÇÕES SOMAM AS DUAS, que é o que o modal vai listar.
+    assert no_quadro[0].mencoes == 2
 
 
 def test_o_nivel_DESCONHECIDO_e_recusado(sessao, clipei):

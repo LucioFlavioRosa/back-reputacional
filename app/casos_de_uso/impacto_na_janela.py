@@ -24,11 +24,26 @@ está dito na tela, e o que NÃO custa é a ordem: como todos os pilares dividem
 pelo mesmo denominador, o ranking dos cinco é exato de qualquer forma. O
 denominador só escala o número exibido.
 
-SÓ A LENTE DE IMPRENSA, também por pedido ("considere nesse momento somente dados
-da lente de impressa"). Fixa no código em vez de parâmetro: um parâmetro que
-ninguém passa é generalidade especulativa, e a lente certa aqui não é detalhe de
-chamada — é o recorte que faz a pergunta ter resposta. Quando a segunda lente
-chegar, ela chega com o pedido que a justifica.
+ERA SÓ A LENTE DE IMPRENSA ("considere nesse momento somente dados da lente de
+impressa"), e desde 21/10/2026 são as TRÊS DE CLIPPING, com o impacto medido em
+pontos do SCORE GERAL: "o impacto deve ser em relação à nota geral, e daí por
+isso tem que pegar nesse caso tanto registros que vêm de imprensa, mercado e
+institucional".
+
+AS DUAS MUDANÇAS SÃO UMA SÓ, e é o que torna o número conferível. Antes o
+impacto era em pontos da NOTA DA IMPRENSA — a tela dizia isso, em resposta a uma
+pergunta que ele já tinha feito ("esse desconto de pontos de cada pilar ou tema é
+em relação à pontuação total? ou só da lente?"). Agora que o número é do índice,
+o universo tem de ser o do índice: medir uma lente e chamar o resultado de
+"impacto no score geral" omitiria as outras duas que também o movem.
+
+A FÓRMULA É A DO PROJETO, por pedido explícito ("esse impacto deve levar em
+consideração a fórmula de pesos que definimos no projeto"): cada lente contribui
+com `pontos na nota dela × fatia dela no índice`, e a fatia sai de
+`pesos_exatos`, que é o mesmo `Σ score×peso / Σ peso` do ISR — com lente sem dado
+saindo do numerador E do denominador. A conta é POR LENTE e somada depois: as
+menções das três num denominador só apagariam que uma matéria do Mercado e uma
+da Imprensa não valem o mesmo no score geral.
 """
 
 from __future__ import annotations
@@ -42,7 +57,7 @@ from sqlalchemy.orm import Session
 from app.banco import repositorio_score
 from app.banco.tabelas_score import Lente
 from app.dominio.erros import NaoEncontrado, RegraViolada
-from app.dominio.score import Contagem, ponderar
+from app.dominio.score import Contagem, pesos_exatos, ponderar
 from app.dominio.tema_do_mes import PONTOS_POR_NS
 
 #: A lente desta leitura. Ver o cabeçalho do módulo.
@@ -97,6 +112,19 @@ class ImpactoNaJanela:
     #: A régua de engajamento vigente no mês — a tela a diz, porque ela muda o
     #: que "peso" significa.
     regua: str
+    #: QUANTO POR CENTO DO ÍNDICE AS LENTES DESTA LEITURA PESARAM NO MÊS, sem
+    #: arredondar e somando as que entraram. É o fator que converte o impacto
+    #: para pontos do score geral, e a tela o diz: sem o número à vista, a conta
+    #: não é conferível.
+    #:
+    #: ZERO QUANDO NENHUMA DELAS ENTROU no índice do mês. Aí não há impacto em
+    #: ponto do índice para dizer, e a tela precisa dizer ISSO em vez de mostrar
+    #: dois quadros vazios — é o que `mes_sem_base` sinaliza.
+    fatia_das_lentes: float = 0.0
+    #: AS LENTES QUE ENTRARAM NA SOMA, na ordem do cadastro — e não as três
+    #: fixas: a lente sem dado no mês não contribui, e dizer que ela entrou
+    #: faria a tela prometer um universo que a conta não cobriu.
+    lentes: tuple[str, ...] = ()
     positivos: list[ImpactoDoGrupo] = field(default_factory=list)
     negativos: list[ImpactoDoGrupo] = field(default_factory=list)
     #: Quantos temas com impacto existem de cada lado, para a tela poder dizer
@@ -112,6 +140,80 @@ class ImpactoNaJanela:
     #: Zero quando o mês não tem base: sem denominador não há pergunta a
     #: responder, e é diferente de "nenhum pilar impactou".
     mes_sem_base: bool = False
+
+
+@dataclass
+class _GrupoSomado:
+    """O que um grupo acumulou ATRAVESSANDO as lentes.
+
+    Mutável de propósito: é um acumulador de laço, não um valor que viaja.
+    """
+
+    rotulo: str
+    contexto: str | None
+    impacto: float = 0.0
+    mencoes: int = 0
+
+
+def _acumular(
+    somado: dict[int, _GrupoSomado],
+    somas: repositorio_score.SomasNaJanela,
+    calibracao,
+    regua: str,
+    total_do_mes: float,
+    fatia: float,
+) -> None:
+    """Soma a contribuição de UMA lente ao acumulado por grupo.
+
+    A CONVERSÃO ACONTECE AQUI, dentro da lente, e é o ponto inteiro desta
+    função: o grupo moveu a nota DESTA lente em `na_lente` pontos, e isso vale
+    `na_lente × fatia / 100` pontos do índice, porque é com essa fatia que a
+    lente pondera nele. É a mesma conta de `pontos_no_indice` em "Temas que
+    pesaram" — duas contas diferentes para a mesma pergunta fariam duas telas
+    discordarem.
+
+    SOMAR ANTES DE CONVERTER SERIA O DEFEITO: as menções das três lentes num
+    denominador só apagariam que uma matéria do Mercado e uma da Imprensa não
+    valem o mesmo no score geral.
+    """
+    for id_do_grupo, por_fonte in somas.por_grupo.items():
+        grupo = somas.grupos[id_do_grupo]
+        #: AS FONTES DESLIGADAS NA CALIBRAÇÃO SAEM, como em toda leitura do
+        #: índice: a nota não as conta, e contá-las aqui faria o impacto de um
+        #: pilar incluir o que a nota ignorou.
+        ligadas = [linhas for fonte, linhas in por_fonte.items() if calibracao.ligada(fonte)]
+        if not ligadas:
+            continue
+        contagem = Contagem()
+        mencoes = 0
+        for linhas in ligadas:
+            #: A MESMA RÉGUA DO DENOMINADOR DESTA LENTE, passada de fora: deixar
+            #: `ponderar` escolher a dele mediria um pilar em menções contra um
+            #: mês medido em curtidas — ver `composicao_da_lente`.
+            contagem = contagem + ponderar(linhas, calibracao, regua)
+            mencoes += sum(int(linha.mencoes) for linha in linhas)
+        na_lente = PONTOS_POR_NS * (contagem.positivo - contagem.negativo) / total_do_mes
+        acumulado = somado.setdefault(
+            id_do_grupo, _GrupoSomado(rotulo=grupo.nome, contexto=grupo.contexto)
+        )
+        acumulado.impacto += na_lente * fatia / 100
+        acumulado.mencoes += mencoes
+
+
+def _regua_das_lentes(reguas: list[str]) -> str:
+    """A régua que a tela diz, agora que a conta atravessa lentes.
+
+    AS TRÊS LEEM O MESMO EXPORT DA CLIPEI, então na prática a régua é uma só e
+    esta função devolve ela. Mas isso é propriedade do cadastro de hoje, não
+    garantia: se uma lente passar a medir em engajamento e outra em menções,
+    dizer só a primeira seria afirmar uma régua que não vale para a conta
+    inteira. Aí a tela nomeia as duas, e quem lê sabe que está olhando uma soma
+    de réguas diferentes.
+    """
+    distintas = sorted(set(reguas))
+    if not distintas:
+        return ""
+    return " e ".join(distintas)
 
 
 def registros(
@@ -138,14 +240,15 @@ def registros(
     lentes não serve.
 
     AS TRÊS LENTES DE CLIPPING, E NÃO SÓ A IMPRENSA (pedido de 20/10/2026:
-    "quero adicionar os registros de mercado e institucional também"). O quadro
-    continua medindo a Imprensa; esta lista mostra o tema inteiro, e cada linha
-    diz de qual lente veio.
+    "quero adicionar os registros de mercado e institucional também"). Cada
+    linha diz de qual lente veio, porque a lente é decidida pelo VEÍCULO que
+    publicou e a mesma matéria publicada por dois veículos cai em duas.
 
-    POR ISSO O TOTAL DAQUI NÃO É MAIS O NÚMERO DA LINHA DO QUADRO, e a tela diz
-    o que está listando em vez de repetir aquele número. Era uma igualdade que
-    eu construí e testei quando o modal nasceu; ela cai junto com a premissa de
-    uma lente só, e fingir que continua valendo seria pior do que perdê-la.
+    E O QUADRO VOLTOU A MEDIR O MESMO UNIVERSO (21/10/2026): quando o impacto
+    passou a ser em pontos do score geral, `ler` passou a somar as três lentes.
+    Por um dia esta lista mostrou três lentes e o quadro media uma — foi por isso
+    que o cabeçalho do modal passou a nomear os dois números. Agora os dois
+    contam o mesmo recorte, e a igualdade que eu tinha desmontado volta a valer.
     """
     if dias < 1:
         raise RegraViolada("A janela precisa de pelo menos um dia.")
@@ -176,12 +279,40 @@ def ler(
     dias: int = DIAS_DA_JANELA,
     nivel: str = NIVEL_PADRAO,
 ) -> ImpactoNaJanela:
-    """Os temas (N2) que mais empurraram a nota na janela que termina em `ate`."""
+    """Os temas que mais empurraram o ÍNDICE na janela que termina em `ate`.
+
+    EM PONTOS DO SCORE GERAL, E SOMANDO AS TRÊS LENTES DE CLIPPING (pedido de
+    21/10/2026): "o impacto deve ser em relação à nota geral, e daí por isso tem
+    que pegar nesse caso tanto registros que vêm de imprensa, mercado e
+    institucional".
+
+    AS DUAS COISAS SÃO UMA SÓ, e é o que torna este número conferível: se o
+    impacto é em ponto do índice, o universo tem de ser o do índice — medir só a
+    Imprensa e chamar o resultado de "impacto no score geral" seria omitir as
+    outras duas lentes que também o movem.
+
+    A CONTA É POR LENTE E SOMADA DEPOIS, nunca com as menções das três num
+    mesmo denominador: cada lente tem o denominador DELA (o volume ponderado do
+    mês) e o PESO dela no índice. Uma matéria do Mercado e uma da Imprensa não
+    valem o mesmo no score geral, e somá-las antes de converter apagaria
+    exatamente essa diferença.
+
+    O GRUPO É O MESMO NAS TRÊS porque a taxonomia é uma: "Tarifa" é o mesmo tema
+    tenha a matéria vindo de onde vier. É isso que permite somar por grupo.
+
+    E AGORA O QUADRO E O MODAL MEDEM O MESMO UNIVERSO: o modal dos registros já
+    lista as três lentes desde 20/10/2026, e o quadro media uma. A igualdade que
+    eu tinha desmontado volta a existir — ver `registros` e o cabeçalho do modal.
+    """
     if dias < 1:
         raise RegraViolada("A janela precisa de pelo menos um dia.")
+    if nivel not in repositorio_score.NIVEIS_DA_JANELA:
+        raise RegraViolada(f"Nivel desconhecido: {nivel}.")
 
-    lente = sessao.execute(select(Lente).where(Lente.codigo == LENTE)).scalar_one_or_none()
-    if lente is None:
+    lentes = sessao.scalars(select(Lente).where(Lente.codigo.in_(LENTES_DOS_REGISTROS))).all()
+    #: A IMPRENSA É O CHÃO, como em `registros`: é o quadro dela que a tela abre.
+    #: As outras duas podem faltar que a soma encurta.
+    if LENTE not in {lente.codigo for lente in lentes}:
         raise NaoEncontrado(f"A lente {LENTE} não está cadastrada.")
 
     #: INCLUSIVA NAS DUAS PONTAS, e `dias - 1` é o que faz "15 dias" serem quinze
@@ -190,56 +321,61 @@ def ler(
     de = ate - timedelta(days=dias - 1)
     mes = repositorio_score.primeiro_dia(ate)
     calibracao = repositorio_score.calibracao_vigente(sessao)
+    #: `indice_do_mes` mede as cinco lentes; `pesos_exatos` devolve a fração com
+    #: que CADA UMA ponderou de fato, já descontando as que ficaram sem dado — a
+    #: Imprensa pesa 30 de 85 num mês em que falta uma lente, e 30 de 100 noutro.
+    #: Fixar os 30% do cadastro mentiria nos meses incompletos.
+    fatias = pesos_exatos(repositorio_score.indice_do_mes(sessao, mes, calibracao))
 
-    regua, total_do_mes = repositorio_score.denominador_do_mes(sessao, lente.id, mes, calibracao)
-    if nivel not in repositorio_score.NIVEIS_DA_JANELA:
-        raise RegraViolada(f"Nivel desconhecido: {nivel}.")
-    somas = repositorio_score.somas_por_nivel_na_janela(
-        sessao, lente.id, de=de, ate=ate, nivel=nivel
-    )
+    somado: dict[int, _GrupoSomado] = {}
+    fatia_das_lentes = 0.0
+    reguas: list[str] = []
+    contaram: list[str] = []
+    sem_grupo = 0
+    sem_data = 0
+    for lente in lentes:
+        regua_da_lente, total_do_mes = repositorio_score.denominador_do_mes(
+            sessao, lente.id, mes, calibracao
+        )
+        fatia = fatias.get(lente.codigo, 0.0)
+        #: SEM DENOMINADOR OU FORA DO ÍNDICE, a lente não tem como contribuir em
+        #: ponto do score geral — e multiplicar por zero esconderia que ela foi
+        #: pulada. Ela sai da conta e da soma das fatias, que é o que a tela diz.
+        if not total_do_mes or not fatia:
+            continue
+        fatia_das_lentes += fatia
+        reguas.append(regua_da_lente)
+        contaram.append(lente.codigo)
+        somas = repositorio_score.somas_por_nivel_na_janela(
+            sessao, lente.id, de=de, ate=ate, nivel=nivel
+        )
+        sem_grupo += somas.sem_grupo
+        sem_data += somas.sem_data
+        _acumular(somado, somas, calibracao, regua_da_lente, total_do_mes, fatia)
 
-    if not total_do_mes:
+    if not fatia_das_lentes:
         return ImpactoNaJanela(
             de=de,
             ate=ate,
             mes=mes,
-            regua=regua,
-            sem_grupo=somas.sem_grupo,
-        nivel=nivel,
-            sem_data=somas.sem_data,
+            regua=_regua_das_lentes(reguas),
+            sem_grupo=sem_grupo,
+            nivel=nivel,
+            sem_data=sem_data,
             mes_sem_base=True,
         )
 
-    medidos: list[ImpactoDoGrupo] = []
-    for id_do_grupo, por_fonte in somas.por_grupo.items():
-        grupo = somas.grupos[id_do_grupo]
-        #: AS FONTES DESLIGADAS NA CALIBRAÇÃO SAEM, como em toda leitura do
-        #: índice: a nota não as conta, e contá-las aqui faria o impacto de um
-        #: pilar incluir o que a nota ignorou.
-        ligadas = [
-            linhas for fonte, linhas in por_fonte.items() if calibracao.ligada(fonte)
-        ]
-        if not ligadas:
-            continue
-        contagem = Contagem()
-        mencoes = 0
-        for linhas in ligadas:
-            #: A MESMA RÉGUA DO DENOMINADOR, passada de fora: deixar `ponderar`
-            #: escolher a dele mediria um pilar em menções contra um mês medido
-            #: em curtidas — ver o comentário de `composicao_da_lente`.
-            contagem = contagem + ponderar(linhas, calibracao, regua)
-            mencoes += sum(int(linha.mencoes) for linha in linhas)
-        impacto = PONTOS_POR_NS * (contagem.positivo - contagem.negativo) / total_do_mes
-        if impacto:
-            medidos.append(
-                ImpactoDoGrupo(
-                    id=grupo.id,
-                    rotulo=grupo.nome,
-                    contexto=grupo.contexto,
-                    impacto=impacto,
-                    mencoes=mencoes,
-                )
-            )
+    medidos = [
+        ImpactoDoGrupo(
+            id=id_do_grupo,
+            rotulo=item.rotulo,
+            contexto=item.contexto,
+            impacto=item.impacto,
+            mencoes=item.mencoes,
+        )
+        for id_do_grupo, item in somado.items()
+        if item.impacto
+    ]
 
     #: O DESEMPATE É PELO NOME, e é conserto de achado de revisão: a ordenação
     #: usava só o impacto, e dois temas empatados ficavam na ordem que o banco
@@ -257,12 +393,14 @@ def ler(
         de=de,
         ate=ate,
         mes=mes,
-        regua=regua,
+        regua=_regua_das_lentes(reguas),
+        fatia_das_lentes=fatia_das_lentes,
+        lentes=tuple(contaram),
         positivos=acima[:QUANTOS_NO_QUADRO],
         negativos=abaixo[:QUANTOS_NO_QUADRO],
         total_positivos=len(acima),
         total_negativos=len(abaixo),
-        sem_grupo=somas.sem_grupo,
+        sem_grupo=sem_grupo,
         nivel=nivel,
         sem_data=somas.sem_data,
     )

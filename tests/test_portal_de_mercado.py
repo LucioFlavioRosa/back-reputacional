@@ -156,7 +156,13 @@ def test_a_rota_de_impacto_por_n2_tambem_passa_pelo_guarda(sessao):
     atendida = cliente.get("/api/mercado/impacto-na-janela?ate=2026-05-20")
     assert atendida.status_code == 200
     corpo = atendida.json()
-    assert corpo["lente"] == "imprensa"
+    #: AS LENTES QUE A CONTA SOMOU, e não uma constante. Era `lente ==
+    #: "imprensa"` de quando a leitura media uma só; o impacto passou a ser em
+    #: ponto do score geral e a soma atravessa as três de clipping. Sem base
+    #: neste cenário, nenhuma entrou — e a lista vazia é a resposta honesta.
+    assert corpo["lentes"] == []
+    assert corpo["fatia_das_lentes"] == 0
+    assert corpo["mes_sem_base"] is True
     assert corpo["dias"] == 15
     #: A JANELA VOLTA NA RESPOSTA, e tem quinze dias contados nas duas pontas.
     assert corpo["ate"] == "2026-05-20"
