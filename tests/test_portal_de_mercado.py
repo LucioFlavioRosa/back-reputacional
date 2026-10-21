@@ -224,6 +224,43 @@ def test_impacto_por_n2_devolve_os_PILARES_de_verdade(sessao):
     assert primeiro["mencoes"] == 1
 
 
+def test_a_serie_de_bonds_publica_o_SCORE_DE_CADA_LENTE(sessao):
+    """O pedido de 20/10/2026, medido na ROTA e não só no caso de uso.
+
+    O caso de uso passou a trazer as lentes junto do ISR; a saída da rota é
+    montada CAMPO A CAMPO, e um campo novo que ninguém mapeia simplesmente não
+    chega à tela — sem erro nenhum, que é o que torna esse esquecimento caro.
+    """
+    usuario = _usuario(sessao, alcanca_mercado=True)
+    clipei = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "clipei")).one()
+    mes = date(2026, 5, 1)
+    sessao.add(
+        ScoreMesFonte(
+            fonte_id=clipei.id,
+            mes=mes,
+            sentimento="pos",
+            tier="",
+            mencoes=10,
+            soma_log=10,
+            soma_engajamento=0,
+            soma_cargo=0,
+        )
+    )
+    sessao.flush()
+
+    cliente, _ = _cliente(sessao, usuario, lancado=True)
+    resposta = cliente.get("/api/mercado/bonds/serie")
+
+    assert resposta.status_code == 200, resposta.text
+    pontos = resposta.json()["indice"]
+    assert pontos, "o mês semeado tem de aparecer no índice"
+    do_mes = next(p for p in pontos if p["mes"] == "2026-05-01")
+    #: AS TRÊS QUE A TELA LIGA, pelos códigos que ela vai pedir.
+    assert {"imprensa", "mercado", "institucional"} <= set(do_mes["lentes"])
+    #: E A IMPRENSA TEM NOTA neste mês — foi o que a fixture semeou.
+    assert isinstance(do_mes["lentes"]["imprensa"], int)
+
+
 def test_os_REGISTROS_do_quadro_voltam_com_a_pagina_e_o_total(sessao):
     """O que abre ao clicar num tema do quadro.
 

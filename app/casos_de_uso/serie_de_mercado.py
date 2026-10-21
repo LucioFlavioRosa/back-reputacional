@@ -72,6 +72,23 @@ class PontoDoIndice:
     #: mensal. Ver o docstring do módulo.
     mes: date
     isr: int | None
+    #: O SCORE DE CADA LENTE no mesmo mês, por código ("imprensa", "mercado",
+    #: "institucional", ...). Pedido de 20/10/2026: o gráfico de bonds passa a
+    #: poder mostrar a nota de uma lente ao lado do índice.
+    #:
+    #: VEM DE GRAÇA, e é a razão de estar aqui e não numa rota nova:
+    #: `indice_do_mes` já mede as cinco lentes para somar o ISR, e este campo é
+    #: o que antes era descartado. Uma rota separada para as lentes refaria a
+    #: mesma conta e abriria a chance de as duas discordarem.
+    #:
+    #: TODAS AS MEDIDAS, e não só as três que a tela liga hoje: o dado já está
+    #: na mão, e incluir mais uma lente passa a ser mudança de tela.
+    #:
+    #: `None` É "NÃO MEDIDA NESTE MÊS", e é diferente de zero — a mesma
+    #: distinção que o `isr` faz. A lente sem dado sai do índice (e do
+    #: denominador dos pesos); desenhar zero afirmaria que a reputação dela
+    #: foi péssima naquele mês.
+    lentes: dict[str, int | None] = field(default_factory=dict)
 
 
 @dataclass
@@ -191,12 +208,17 @@ def _indice(
 
     calibracao = repositorio_score.calibracao_vigente(sessao)
     catalogo_das_lentes = repositorio_score.catalogo_das_lentes(sessao)
-    return [
-        PontoDoIndice(
-            mes=mes,
-            isr=repositorio_score.indice_do_mes(
-                sessao, mes, calibracao, catalogo_das_lentes
-            ).isr,
+    pontos = []
+    for mes in meses:
+        medido = repositorio_score.indice_do_mes(sessao, mes, calibracao, catalogo_das_lentes)
+        pontos.append(
+            PontoDoIndice(
+                mes=mes,
+                isr=medido.isr,
+                #: AS LENTES DA MESMA MEDIÇÃO, e não de outra chamada: é o que
+                #: garante que a curva de uma lente e o ISR do mesmo mês falem
+                #: do mesmo cálculo, com a mesma calibração.
+                lentes={lente.codigo: lente.score for lente in medido.lentes},
+            )
         )
-        for mes in meses
-    ]
+    return pontos

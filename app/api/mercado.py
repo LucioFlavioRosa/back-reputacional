@@ -66,6 +66,17 @@ class PontoDoIndiceSaida(BaseModel):
     #: interpolar uma linha diária que não existe.
     mes: date
     isr: int | None
+    #: O SCORE DE CADA LENTE no mês, por código. Pedido de 20/10/2026: o gráfico
+    #: passa a poder mostrar a nota da Imprensa, do Mercado e da Institucional
+    #: ao lado do índice.
+    #:
+    #: SAI DA MESMA MEDIÇÃO QUE O `isr`, e é por isso que não há rota nova: o
+    #: índice de um mês já mede as cinco lentes para somá-las. Duas rotas
+    #: fariam a mesma conta duas vezes e poderiam discordar.
+    #:
+    #: NULO É "NÃO MEDIDA", como no `isr`: a lente sem dado fica fora do
+    #: índice, e desenhar zero diria que a reputação dela foi péssima.
+    lentes: dict[str, int | None] = {}
 
 
 class SerieDeMercadoSaida(BaseModel):
@@ -156,7 +167,13 @@ def serie_dos_bonds(
             )
             for s in lida.bonds
         ],
-        indice=[PontoDoIndiceSaida(**vars(p)) for p in lida.indice],
+        #: CAMPO A CAMPO, e não `**vars`: o ponto do índice ganhou `lentes`, e
+        #: um dia ganha outro campo. `**vars` publica o que for acrescentado
+        #: no caso de uso sem ninguém decidir publicar — foi assim que uma
+        #: coluna de controle vazou para a tela em `api/catalogo`.
+        indice=[
+            PontoDoIndiceSaida(mes=p.mes, isr=p.isr, lentes=p.lentes) for p in lida.indice
+        ],
         metrica=lida.metrica,
     )
 
