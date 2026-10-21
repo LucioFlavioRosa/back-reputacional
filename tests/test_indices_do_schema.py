@@ -127,6 +127,20 @@ def test_o_indice_trigrama_nao_e_acusado(sessao):
     assert "instituicao_nome_trgm_idx" not in acusados
 
 
+def _normalizada(expressao: str) -> str:
+    """A expressão sem o que não muda o que ela calcula.
+
+    O Postgres devolve `COALESCE(data, mes)` e o SQLAlchemy compila
+    `coalesce(mencao.data, mencao.mes)`: caixa, espaços, aspas e o prefixo da
+    tabela diferem sem que a expressão seja outra. O resto — ordem dos
+    argumentos, um `cast` em volta, uma coluna trocada — sobrevive à
+    normalização, que é exatamente o que precisa ser comparado.
+    """
+    return (
+        expressao.lower().replace('"', "").replace(" ", "").replace("mencao.", "")
+    )
+
+
 def test_o_indice_do_PERIODO_casa_com_a_expressao_QUE_A_BASE_FILTRA(sessao):
     """O índice da `0109`, e o jeito silencioso de ele deixar de servir.
 
@@ -152,22 +166,41 @@ def test_o_indice_do_PERIODO_casa_com_a_expressao_QUE_A_BASE_FILTRA(sessao):
     e eu tentei. Falha quando a `0109` sai, ou quando a expressão dela deixa de
     casar com a do código.
     """
-    definicao = sessao.execute(
-        text("select indexdef from pg_indexes where indexname = 'mencao_por_data_efetiva'")
-    ).scalar_one_or_none()
-    assert definicao is not None, (
+    do_indice = sessao.execute(
+        text("""
+            select pg_get_expr(indexprs, indrelid), indnkeyatts, indnatts
+            from pg_index
+            where indexrelid = 'mencao_por_data_efetiva'::regclass
+        """)
+    ).one_or_none()
+    assert do_indice is not None, (
         "sem este índice, a Base das lentes varre `mencao` inteira a cada abertura"
     )
+    expressao, chaves, colunas = do_indice
 
-    #: A EXPRESSÃO QUE O CÓDIGO FILTRA, compilada como o Postgres a escreve.
+    #: A EXPRESSÃO QUE O CÓDIGO FILTRA: o lado esquerdo da condição de período,
+    #: compilado. `_onde(...)[1]` é `coalesce(data, mes) >= :de`; o que o índice
+    #: guarda é só o `coalesce`.
     da_consulta = str(
-        base_das_lentes._onde(1, date(2026, 1, 1), date(2026, 1, 31))[1]
-        .compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
+        base_das_lentes._onde(1, date(2026, 1, 1), date(2026, 1, 31))[1].left.compile(
+            dialect=postgresql.dialect()
+        )
     )
-    #: `coalesce(data, mes)` aparece dos dois lados; comparo o miolo, porque o
-    #: `indexdef` traz `USING btree (...)` em volta e a condição traz o `>=`.
-    assert "coalesce(data, mes)" in definicao.lower().replace('"', "")
-    assert "coalesce(mencao.data, mencao.mes)" in da_consulta.lower()
+
+    #: ESTRUTURAL, E NÃO SUBSTRING — correção de um achado de revisão contra a
+    #: primeira versão deste teste. Com dois `in` independentes ele passaria com
+    #: `(coalesce(data, mes), outra_coluna)` ou com a consulta envolvendo o
+    #: `coalesce` num `cast`: nos dois casos o índice deixa de servir, e o teste
+    #: diria que está tudo bem. `pg_get_expr` devolve a expressão REAL, e
+    #: `indnkeyatts` garante que o índice é dessa expressão e de mais nada.
+    assert _normalizada(expressao) == _normalizada(da_consulta), (
+        f"o índice guarda {expressao!r} e a rota filtra {da_consulta!r} — "
+        "expressões diferentes não casam, e o índice para de ser usado em silêncio"
+    )
+    assert (chaves, colunas) == (1, 1), (
+        "o índice tem de ser só da expressão do período: coluna a mais muda o "
+        "que ele serve"
+    )
 
 
 def test_os_quatro_indices_que_cobriam_o_removido_continuam_la(sessao):
