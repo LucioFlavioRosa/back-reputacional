@@ -52,9 +52,10 @@ LENTE = "imprensa"
 #: adicionar os registros de mercado e institucional também".
 #:
 #: AS TRÊS DE CLIPPING, e não todas: são as que leem o export da Clipei
-#: (inteiro ou recortado), e é por isso que uma matéria pode aparecer em mais de
-#: uma. Sociedade e Clientes leem OUTROS fornecedores, com outro vocabulário de
-#: tema — listá-las aqui misturaria universos no mesmo modal.
+#: (inteiro ou recortado), então falam do mesmo universo de matéria e do mesmo
+#: vocabulário de tema. Sociedade e Clientes leem OUTROS fornecedores (Bites,
+#: Approach), com outro vocabulário — listá-las aqui misturaria universos no
+#: mesmo modal.
 #:
 #: O QUADRO CONTINUA MEDINDO SÓ A IMPRENSA (`LENTE`), e esta lista mostra o tema
 #: inteiro: são coisas diferentes de propósito, e a tela diz qual é qual.

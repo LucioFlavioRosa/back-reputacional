@@ -255,10 +255,10 @@ def test_o_modal_traz_AS_TRES_LENTES_e_cada_linha_diz_a_sua(
     "quero adicionar os registros de mercado e institucional também. e deve ter
     uma coluna extra no modal para identificar de qual lente vem o registro."
 
-    A COLUNA NÃO É ENFEITE: as três lentes leem o MESMO export da Clipei (a
-    Imprensa inteiro, as outras duas recortadas pela lista de veículos), então
-    a mesma matéria pode aparecer duas vezes na lista. Sem dizer de onde cada
-    linha veio, a repetição parece erro do sistema.
+    A COLUNA NÃO É ENFEITE: a lente de uma linha é decidida pelo VEÍCULO que
+    publicou, então a mesma matéria publicada por dois veículos — um na lista do
+    Mercado, outro não — aparece em duas lentes com o mesmo título. Sem dizer de
+    onde cada linha veio, isso parece erro do sistema.
     """
     _mencao(sessao, imprensa, tema.id, data=date(2026, 9, 2), titulo="Da imprensa")
     _mencao(sessao, mercado, tema.id, data=date(2026, 9, 3), titulo="Do mercado")

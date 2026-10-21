@@ -1765,10 +1765,10 @@ class RegistroDaJanela:
     sentimento: str
     tier: str | None
     #: DE QUAL LENTE VEM ESTE REGISTRO — pedido de 20/10/2026, junto com o de
-    #: listar as três. É coluna na tela, e não enfeite: hoje a mesma matéria
-    #: pode estar na Imprensa E no recorte (Mercado ou Institucional), porque o
-    #: recorte é a MESMA Clipei lida de novo com a lista. Sem a coluna, a
-    #: repetição parece erro do sistema.
+    #: listar as três. É coluna na tela, e não enfeite: A LENTE DE UMA LINHA É
+    #: DECIDIDA PELO VEÍCULO QUE PUBLICOU, então a mesma matéria publicada por
+    #: dois veículos — um na lista do Mercado, outro não — aparece em duas
+    #: lentes, com o mesmo título. Sem a coluna, isso parece erro do sistema.
     lente: str
     lente_nome: str
 
@@ -1817,9 +1817,11 @@ def registros_do_grupo_na_janela(
 
     VÁRIAS LENTES DESDE 20/10/2026, por pedido ("quero adicionar os registros de
     mercado e institucional também"). Cada linha diz de qual lente veio, porque
-    a MESMA matéria pode aparecer duas vezes: o recorte é a Clipei lida de novo
-    com a lista de veículos, então o Valor Econômico está na Imprensa e no
-    Mercado. Sem a coluna, a repetição parece erro.
+    a MESMA matéria pode aparecer duas vezes com o mesmo título: a lente de uma
+    linha é decidida pelo VEÍCULO que publicou, e duas publicações da mesma
+    matéria — uma do Valor Econômico, que está na lista do Mercado, outra de um
+    veículo que não está — caem em lentes diferentes. Sem a coluna, isso parece
+    erro.
 
     O TOTAL DEIXA DE SER O NÚMERO DA LINHA DO QUADRO, e isso é consequência
     direta do pedido: o quadro mede UMA lente (a Imprensa) e esta lista mostra
