@@ -783,6 +783,17 @@ def regravar(
     Uma segunda cópia desta função seria a segunda definição de "o que é um mês
     no banco".
     """
+    #: A TRAVA DO ARQUIVO, E A INGESTÃO TAMBÉM A TOMA — correção de achado ALTO
+    #: de revisão. A reconciliação já se serializava por ela, mas a subida não
+    #: participava: a reconciliação copiava uma linha para o espelho e uma
+    #: subida cuja exclusão começara antes do commit dela não via essa linha e
+    #: inseria outra cópia. O resultado era duplicação no espelho e no
+    #: agregado — justamente o defeito que esta mudança existe para acabar.
+    #:
+    #: A MESMA CHAVE das duas: o id do espelho do arquivo. Fonte sem irmã que
+    #: recorte trava por si mesma, e arquivos diferentes não se esperam.
+    travar_o_arquivo(sessao, fonte)
+
     mapeamento = _mapeamento_de(fonte)
     if mapeamento.lista_de_veiculos and not leitura.recortada_por_lista:
         #: A GUARDA MORA AQUI, e não só em `ler_planilha`, porque é AQUI que a
@@ -963,30 +974,75 @@ def _mapeamento_de(fonte: ScoreFonte) -> Mapeamento:
 
 
 def _recorte_por_lista(
-    sessao: Session, mapeamento: Mapeamento
+    sessao: Session, fonte: ScoreFonte, mapeamento: Mapeamento
 ) -> Callable[[str | None], bool] | None:
-    """O predicado que diz se o veículo da linha está na lista desta fonte.
+    """O predicado que diz se a linha pertence a ESTA fonte.
 
-    `None` quando a fonte não recorta por lista — e aí `ler_planilha` lê tudo,
-    como sempre leu.
+    SÃO DOIS LADOS DA MESMA PARTIÇÃO, desde que o recorte passou a ser
+    EXCLUSIVO (pedido de 20/10/2026: "se o Valor Econômico é um veículo de
+    imprensa de mercado, absolutamente todas as matérias dele vão para a lente
+    de mercado"):
+
+        a fonte que DECLARA uma lista  fica com os veículos dela
+        a fonte irmã que não declara   fica com todo o RESTO do arquivo
+
+    ANTES O ESPELHO FICAVA COM TUDO, e a recortada era uma cópia do subconjunto
+    — a mesma matéria contava nas duas lentes. Foi o que a medição mostrou:
+    uma subida com duas matérias deixava `clipei` com 2 e `clipei_investidores`
+    com 1, e a do Valor Econômico estava nas duas.
+
+    A EXCLUSÃO É DERIVADA DAS IRMÃS, e não declarada no cadastro da fonte. É a
+    decisão que importa aqui: declarada, ela sairia de sincronia no dia em que
+    alguém criasse um recorte novo e esquecesse de atualizar o espelho — e o
+    sintoma seria a matéria voltando a contar duas vezes, em silêncio.
+    Derivada, a partição é exata por construção: o que uma inclui, a outra
+    exclui, pela MESMA função (`nomes_da_lista`, com os apelidos).
+
+    `None` quando a fonte não recorta nem tem irmã que recorte — e aí
+    `ler_planilha` lê tudo, como sempre leu.
 
     LÊ O CADASTRO UMA VEZ, e não uma consulta por linha: o export da Clipei tem
     25.597 linhas, e perguntar ao banco por cada uma faria da subida um
     problema de rede. São 2.670 veículos cadastrados; o conjunto cabe na
     memória com folga.
     """
-    if not mapeamento.lista_de_veiculos:
+    if mapeamento.lista_de_veiculos:
+        permitidos = nomes_da_lista(sessao, mapeamento.lista_de_veiculos)
+
+        def na_lista(veiculo: str | None) -> bool:
+            #: SEM VEÍCULO NÃO ENTRA: não há como afirmar que a linha é de um
+            #: veículo de mercado, e supor que é inventaria menção na lente.
+            if not veiculo:
+                return False
+            return normalizar(veiculo) in permitidos
+
+        return na_lista
+
+    recortadas = [
+        irma
+        for irma in fontes_do_mesmo_arquivo(sessao, fonte)
+        if irma.id != fonte.id and (irma.mapeamento_colunas or {}).get("lista_de_veiculos")
+    ]
+    if not recortadas:
         return None
-    permitidos = nomes_da_lista(sessao, mapeamento.lista_de_veiculos)
 
-    def na_lista(veiculo: str | None) -> bool:
-        #: SEM VEÍCULO NÃO ENTRA: não há como afirmar que a linha é de um
-        #: veículo de mercado, e supor que é inventaria menção na lente.
+    das_irmas: set[str] = set()
+    for irma in recortadas:
+        das_irmas |= nomes_da_lista(
+            sessao, str((irma.mapeamento_colunas or {})["lista_de_veiculos"])
+        )
+    if not das_irmas:
+        return None
+
+    def fora_das_listas(veiculo: str | None) -> bool:
+        #: SEM VEÍCULO FICA AQUI: a linha sem veículo não pertence a lista
+        #: nenhuma (nenhuma recortada a aceita — ver `na_lista`), e tirá-la
+        #: daqui também a faria sumir do sistema.
         if not veiculo:
-            return False
-        return normalizar(veiculo) in permitidos
+            return True
+        return normalizar(veiculo) not in das_irmas
 
-    return na_lista
+    return fora_das_listas
 
 
 def _ingerir_uma(
@@ -1006,7 +1062,7 @@ def _ingerir_uma(
     leitura = ler_planilha(
         _linhas_da_aba(conteudo, mapeamento),
         mapeamento,
-        _recorte_por_lista(sessao, mapeamento),
+        _recorte_por_lista(sessao, fonte, mapeamento),
     )
     #: RECORTAR POR LISTA JÁ FAZ DA FONTE UM RECORTE, mesmo que tenha sido ela
     #: a escolhida na tela: um mês em que nenhum veículo da lista foi mencionado
@@ -1124,6 +1180,31 @@ def _ingerir_uma(
             if normalizar(mencao.tema_texto or "") in temas
         ),
     )
+
+
+#: O "namespace" da trava do arquivo (`pg_advisory_xact_lock` recebe dois
+#: inteiros). O MESMO NÚMERO que `reconciliar_lista_de_veiculos` usa, de
+#: propósito: as duas operações precisam se esperar, e travas em espaços
+#: diferentes não se veem. Está declarado aqui porque é aqui que a ingestão
+#: mora, e importá-lo de lá criaria ciclo.
+ESPACO_DA_TRAVA_DO_ARQUIVO = 10_267
+
+
+def travar_o_arquivo(sessao: Session, fonte: ScoreFonte) -> None:
+    """Serializa quem escreve os meses deste arquivo — subida e reconciliação.
+
+    A CHAVE É O ESPELHO (a irmã que não recorta), que é a identidade do
+    arquivo; sem irmã que recorte, a fonte trava por si mesma. Arquivos
+    diferentes não se esperam.
+
+    `xact`: morre com a transação, e nada fica preso se o processo cair.
+    """
+    irmas = fontes_do_mesmo_arquivo(sessao, fonte)
+    espelhos = [
+        irma for irma in irmas if not (irma.mapeamento_colunas or {}).get("lista_de_veiculos")
+    ]
+    chave = espelhos[0].id if espelhos else fonte.id
+    sessao.execute(select(func.pg_advisory_xact_lock(ESPACO_DA_TRAVA_DO_ARQUIVO, chave)))
 
 
 def fontes_do_mesmo_arquivo(sessao: Session, fonte: ScoreFonte) -> list[ScoreFonte]:
@@ -1380,7 +1461,7 @@ def contagens_da_planilha(
     leitura = ler_planilha(
         _linhas_da_aba(conteudo, mapeamento),
         mapeamento,
-        _recorte_por_lista(sessao, mapeamento),
+        _recorte_por_lista(sessao, fonte, mapeamento),
     )
     assuntos: dict[str, int] = {}
     unidades: dict[str, int] = {}
@@ -1527,7 +1608,7 @@ def _prever_uma(
     leitura = ler_planilha(
         _linhas_da_aba(conteudo, mapeamento),
         mapeamento,
-        _recorte_por_lista(sessao, mapeamento),
+        _recorte_por_lista(sessao, fonte, mapeamento),
     )
     return Resumo(
         fonte=fonte.codigo,

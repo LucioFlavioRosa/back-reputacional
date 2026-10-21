@@ -713,8 +713,14 @@ def test_um_arquivo_alimenta_as_duas_fontes_que_o_leem(cliente_do_score, sessao)
 
     por_fonte = {resumo["fonte"]: resumo for resumo in resposta.json()}
     assert set(por_fonte) == {"clipei", "clipei_investidores", "clipei_institucional"}
-    assert por_fonte["clipei"]["ingeridas"] == 2
+    #: O RECORTE É EXCLUSIVO desde 20/10/2026, e esta é a asserção que mudou: a
+    #: matéria do Valor Econômico (que está na lista) vai para o Mercado E SAI
+    #: da Imprensa. Antes a Imprensa ficava com as duas, e a mesma matéria
+    #: contava nas duas lentes — ver `test_o_recorte_e_exclusivo`.
+    assert por_fonte["clipei"]["ingeridas"] == 1
     assert por_fonte["clipei_investidores"]["ingeridas"] == 1
+    #: AS DUAS SOMAM O ARQUIVO: duas linhas legíveis, cada uma numa lente.
+    assert por_fonte["clipei"]["linhas"] == 2
     #: A TERCEIRA IRMÃ LÊ E NÃO FICA COM NADA: nenhum destes veículos está
     #: classificado como institucional, e recorte vazio é resposta legítima.
     assert por_fonte["clipei_institucional"]["ingeridas"] == 0
