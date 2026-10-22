@@ -250,29 +250,37 @@ MEMORIA_POR_CELULA = 140
 #:     células materializadas  3.797.780      pico real      36,6 MB
 #:     dessas, com valor          12.598      estimado então  507,1 MB   13,9x
 #:
-#: 36,6 MB / 3,8 M células são 9,7 B/célula com TUDO incluído. 12 arredonda para
-#: cima, como os outros coeficientes deste bloco.
+#: 36,6 MB / 3,8 M células são 9,7 B/célula pelo openpyxl. Mas esta conta é
+#: COMPARTILHADA, e o outro leitor é mais caro — foi achado de revisão, e a
+#: primeira versão deste coeficiente (12) subestimava por causa dele.
 #:
-#: E O OUTRO LEITOR? Esta conta é compartilhada, e quem mede um caminho e
-#: conclui pelos dois erra. Medi o MESMO arquivo pelo calamine, que é por onde
-#: as lentes leem (`_pelo_calamine`):
+#: O QUE EU HAVIA ESCRITO AQUI E ESTÁ ERRADO: que o calamine "nunca produz
+#: preenchimento". Ele ignora a dimensão DECLARADA, mas materializa o retângulo
+#: da área REALMENTE usada — e basta uma célula no canto para que esse retângulo
+#: seja enorme. Construí o caso e medi:
 #:
-#:     openpyxl   54.254 linhas   3.797.780 células   36,6 MB
-#:     calamine    1.755 linhas     121.095 células    2,3 MB
+#:     o que o arquivo tem        leitor     células      pico
+#:     o export do Q&A            openpyxl   3.797.780   36,6 MB   ( 9,7 B)
+#:     o export do Q&A            calamine     121.095    2,3 MB
+#:     só `A1=1` e `BR54254=2`    calamine   3.797.780   63,8 MB   (16,8 B)
+#:     só `A1=1` e `A1000000=2`   openpyxl   1.000.000    8,2 MB   ( 8,6 B)
 #:
-#: O calamine IGNORA a dimensão declarada e devolve só a área usada — os dados
-#: de verdade são 1.755 linhas. Ele custa mais por célula (20 B contra 9,7,
-#: porque a lista de listas do `to_python()` coexiste com a lista de tuplas),
-#: mas nunca produz o preenchimento: a contagem dele é limitada pelo conteúdo
-#: real, que é o mesmo que o XML comporta. Como `ocupadas` sai do XML e é
-#: cobrada a 140, a estimativa cobre com folga os ~20 B/célula do calamine em
-#: toda a área usada. Por isso o coeficiente da vaga, medido no openpyxl, não
-#: subestima o caminho das lentes.
+#: A ÚLTIMA LINHA DERRUBA A OUTRA METADE DO ACHADO, e por isso ficou aqui: a
+#: revisão supôs 56 B pela tupla de uma célula e ~64 B/célula em linha estreita,
+#: o que tornaria este modelo por célula insustentável. Medido, são 8,6 — o
+#: openpyxl REAPROVEITA a tupla da linha vazia em vez de criar uma por linha.
+#: Linha estreita não é o caso caro; o caro é o calamine, a 16,8, porque a lista
+#: de listas do `to_python()` coexiste com a lista de tuplas.
+#:
+#: 24 É O DOBRO DO QUE A PIOR MEDIÇÃO PEDE, na régua dos outros coeficientes
+#: deste bloco (folga de 1,08x a 1,45x). Com ele o caso do canto estima 91 MB
+#: contra 63,8 reais, e o arquivo do Q&A estima 109 MB contra 204 de orçamento —
+#: continua passando, que é o ponto de tudo isto.
 #:
 #: A ASSIMETRIA ERA O ESTRAGO: superestimar nas lentes só derruba para o caminho
 #: lento, que continua correto; em `ingerir_bonds` não há caminho lento, e a
 #: mesma conta recusava o arquivo na cara de quem subia.
-MEMORIA_POR_CELULA_VAZIA = 12
+MEMORIA_POR_CELULA_VAZIA = 24
 
 #: O TEXTO COMO CADA CÉLULA O MATERIALIZA (`sharedStrings × count/uniqueCount`).
 #: 0,55 porque o byte de XML vira caractere Python com overhead, e a

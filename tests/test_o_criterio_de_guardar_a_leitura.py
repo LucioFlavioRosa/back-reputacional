@@ -213,10 +213,19 @@ def test_a_aba_ESPARSA_nao_e_cobrada_como_se_estivesse_cheia():
     )
 
     #: E O CUSTO SAI ABAIXO DO ORÇAMENTO DE UM CONTÊINER DE 512 MiB, que é o do
-    #: ambiente onde isto apareceu. Com o preço único eram 507 MB contra 204.
+    #: ambiente onde isto apareceu.
+    orcamento = int(512 * 1024 * 1024 * ingerir_mencoes.FRACAO_DO_CONTEINER)
     custo = ingerir_mencoes.custo_da_leitura(conteudo)
     assert custo is not None
-    assert custo < int(512 * 1024 * 1024 * ingerir_mencoes.FRACAO_DO_CONTEINER)
+    assert custo < orcamento
+
+    #: O PREÇO ANTIGO RECUSAVA ESTE MESMO ARQUIVO, e dizer isso aqui é achado de
+    #: revisão: sem esta linha, o teste falhava no código anterior por
+    #: `AttributeError` — um motivo fraco, que não demonstra que a recusa
+    #: existia. A conta antiga era `materializadas × MEMORIA_POR_CELULA`.
+    antes = celulas.materializadas * ingerir_mencoes.MEMORIA_POR_CELULA
+    assert antes > orcamento, "a forma do arquivo não reproduz mais a recusa"
+    assert antes > custo * 4, "a correção deixou de ser a ordem de grandeza que era"
 
 
 def test_a_aba_CHEIA_continua_custando_o_mesmo_de_antes():
@@ -238,6 +247,34 @@ def test_a_aba_CHEIA_continua_custando_o_mesmo_de_antes():
     assert celulas.materializadas * ingerir_mencoes.MEMORIA_POR_CELULA == pytest.approx(
         ingerir_mencoes.custo_da_leitura(conteudo), rel=0.01
     )
+
+
+def test_a_celula_NO_CANTO_tambem_e_paga():
+    """O achado da revisão do Codex contra a primeira versão deste coeficiente.
+
+    EU HAVIA ESCRITO que o calamine "nunca produz preenchimento", e por isso 12
+    bastaria. Ele ignora a dimensão DECLARADA, mas materializa o retângulo da
+    área REALMENTE usada — e basta uma célula no canto para o retângulo ser
+    enorme. Construí o caso e medi:
+
+        arquivo com só `A1=1` e `BR54254=2`
+        calamine -> 54.254 linhas, 3.797.780 células, pico 63,8 MB
+        estimado com o coeficiente 12 -> 43,5 MB      SUBESTIMAVA
+
+    Subestimar é o lado que mata o processo, e é o único erro que esta conta não
+    pode cometer. O coeficiente foi a 24.
+
+    O NÚMERO MEDIDO ESTÁ NA ASSERÇÃO de propósito: um teste que só exigisse
+    "abaixo do orçamento" passaria com qualquer coeficiente, que foi a outra
+    fragilidade apontada na mesma revisão.
+    """
+    conteudo = _zip_com_abas({"sheet1.xml": _aba("A1:BR54254", recheio=600)})
+
+    custo = ingerir_mencoes.custo_da_leitura(conteudo)
+
+    assert custo is not None
+    pico_medido = int(63.8 * 1024 * 1024)
+    assert custo > pico_medido, "a estimativa voltou a subestimar o caso do canto"
 
 
 # -- o orçamento vem do contêiner --------------------------------------------
