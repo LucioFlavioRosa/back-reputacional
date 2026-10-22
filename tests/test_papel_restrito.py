@@ -672,7 +672,15 @@ def test_a_subida_de_bonds_abre_e_descarta_com_o_papel_restrito(
     sessao_restrita.flush()
     assert segunda.caminho_substituido is not None, "não substituiu a anterior"
 
-    # E a importação descarta a linha — segundo `delete`.
+    # E a importação descarta a linha — segundo `delete`. A subida precisa
+    # estar MONTADA: `descartar` recusa a que ainda sobe, para não apagar o que
+    # outra aba está enviando.
+    linha = sessao_restrita.scalar(
+        select(PlanilhaDeBondsRecebida).where(PlanilhaDeBondsRecebida.id == segunda.id)
+    )
+    planilha_de_bonds.concluir(linha, tamanho=20)
+    sessao_restrita.flush()
+
     assert (
         planilha_de_bonds.descartar(
             sessao_restrita, subida_id=segunda.id, usuario_id=semente.id

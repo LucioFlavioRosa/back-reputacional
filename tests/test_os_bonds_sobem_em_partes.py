@@ -164,6 +164,34 @@ def _subir(cliente, conteudo: bytes, *, nome: str = "bonds.xlsx"):
     return subida_id, len(pedacos)
 
 
+def test_a_rota_da_PARTE_fica_fora_do_teto_generico_de_corpo():
+    """ACHADO DE REVISÃO, e ele ia doer em produção sem a suíte notar.
+
+    O middleware recusa corpo acima de 1 MiB (1.048.576 bytes). A parte tem
+    1 MB de arquivo, e o `Content-Length` do multipart que a carrega passa
+    disso por causa das fronteiras e dos nomes de campo — então a PRIMEIRA
+    parte seria recusada.
+
+    E NÃO COMO 413: o middleware fecha a conexão enquanto o navegador ainda
+    envia, o `fetch` falha em nível de rede, e a tela diz "não foi possível
+    falar com o servidor" — mandando procurar um backend derrubado quando o
+    problema é o tamanho.
+
+    POR QUE OS OUTROS TESTES DESTE ARQUIVO NÃO PEGAM: eles cortam a parte em
+    2048 bytes, para o arquivo de teste ser pequeno. O multipart cabe no teto e
+    a rota passa. Este aqui mede o CAMINHO, e não o tamanho — é a única forma
+    de a suíte ver o defeito sem carregar um megabyte.
+    """
+    from app.seguranca.protecao_http import _fora_do_limite_de_corpo
+
+    assert _fora_do_limite_de_corpo(
+        "/api/mercado/bonds/upload/af190c19-b11d-4711-88a8-741bbf8f9816/parte/0"
+    )
+    #: E A ABERTURA NÃO PRECISA DA ISENÇÃO: ela manda dois campos de formulário.
+    #: Isentá-la seria abrir uma rota a corpo ilimitado sem motivo.
+    assert not _fora_do_limite_de_corpo("/api/mercado/bonds/upload")
+
+
 def test_o_caminho_inteiro_abre_sobe_confere_e_importa(cliente, sessao, armazenamento):
     """O que a tela faz, de ponta a ponta — e a prova de que o arquivo montado
     é o mesmo que entrou: as cotações chegam ao banco."""
@@ -289,6 +317,84 @@ def test_abrir_SUBIDA_NOVA_descarta_a_pendente_da_mesma_pessoa(
     assert primeira != segunda
     em_voo = sessao.scalars(select(PlanilhaDeBondsRecebida)).all()
     assert [str(linha.id) for linha in em_voo] == [segunda]
+
+
+def test_IMPORTAR_a_subida_de_outra_pessoa_e_recusado(cliente, sessao, armazenamento):
+    """COBERTURA QUE FALTAVA, apontada em revisão: sem o filtro de dono em
+    `recuperar`, conhecer o id bastaria para importar o arquivo de outra pessoa
+    com a própria sessão — e o código quebrado passaria em todos os outros
+    testes deste arquivo, porque neles o dono é sempre o mesmo.
+
+    A SUBIDA AQUI ESTÁ MONTADA, e não em voo: é o estado em que a importação é
+    legítima. Sem isso, a recusa viria da guarda de "ainda subindo" e este
+    teste passaria sem olhar para o dono.
+    """
+    from uuid import uuid4
+
+    conteudo = _planilha(DO_CADASTRO, {date(2026, 1, 5): (95.5, 9.1, 0, 0)})
+    subida_id, partes = _subir(cliente, conteudo)
+    assert (
+        cliente.post(
+            f"/api/mercado/bonds/upload/{subida_id}/conferencia", data={"partes": partes}
+        ).status_code
+        == 200
+    )
+
+    papel = sessao.scalars(select(Papel).where(Papel.codigo == "plataforma_edicao")).one()
+    outra = Usuario(
+        entra_object_id=f"oid-{uuid4().hex[:8]}",
+        email=f"{uuid4().hex[:8]}@aegea.com.br",
+        nome="Outra Pessoa",
+        papel_id=papel.id,
+        acesso_irrestrito=True,
+    )
+    sessao.add(outra)
+    sessao.flush()
+    subida = sessao.scalar(
+        select(PlanilhaDeBondsRecebida).where(PlanilhaDeBondsRecebida.id == subida_id)
+    )
+    subida.criado_por = outra.id
+    sessao.flush()
+
+    resposta = cliente.post(f"/api/mercado/bonds/upload/{subida_id}/importar")
+
+    assert resposta.status_code == 404, resposta.text
+    #: E A LINHA CONTINUA LÁ, da outra pessoa: recusar não pode apagar o que é
+    #: de quem pediu — seria negação de serviço com o id de terceiro.
+    assert sessao.scalar(
+        select(PlanilhaDeBondsRecebida).where(PlanilhaDeBondsRecebida.id == subida_id)
+    )
+
+
+def test_abrir_subida_nova_DEPOIS_DE_CONFERIR_descarta_a_conferida(
+    cliente, sessao, armazenamento
+):
+    """O comportamento é DELIBERADO e copiado da planilha do Score, que faz o
+    mesmo desde a `0094`: abrir subida nova descarta a pendente daquela pessoa,
+    conferida ou não, byte inclusive.
+
+    O QUE ISSO CUSTA, e está aqui para quem vier depois não descobrir sozinho:
+    quem confere, deixa a aba aberta, começa outra subida e volta para a aba
+    antiga leva 404 ao importar. A alternativa — guardar a conferida — faria as
+    linhas se acumularem sem ninguém para limpá-las, porque só a importação as
+    tira. Uma revisão levantou isto; a escolha é a mesma do Score, de propósito.
+    """
+    conteudo = _planilha(DO_CADASTRO, {date(2026, 1, 5): (95.5, 9.1, 0, 0)})
+    primeira, partes = _subir(cliente, conteudo)
+    assert (
+        cliente.post(
+            f"/api/mercado/bonds/upload/{primeira}/conferencia", data={"partes": partes}
+        ).status_code
+        == 200
+    )
+
+    segunda, _ = _subir(cliente, conteudo, nome="outro.xlsx")
+
+    em_voo = sessao.scalars(select(PlanilhaDeBondsRecebida)).all()
+    assert [str(linha.id) for linha in em_voo] == [segunda], (
+        "sobrou linha da subida anterior"
+    )
+    assert cliente.post(f"/api/mercado/bonds/upload/{primeira}/importar").status_code == 404
 
 
 def test_a_parte_FALTANDO_vira_recusa_com_nome(cliente, sessao, armazenamento):

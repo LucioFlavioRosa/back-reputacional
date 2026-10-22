@@ -225,16 +225,23 @@ def recuperar(
 
 
 def descartar(sessao: Session, *, subida_id: UUID, usuario_id: UUID) -> str | None:
-    """Apaga a linha e devolve o caminho do byte, para quem chama apagá-lo.
+    """Apaga a linha MONTADA e devolve o caminho do byte, para quem chama apagá-lo.
 
     DEVOLVE O CAMINHO em vez de apagar aqui: apagar byte é ida à rede, e ela
     não pertence à transação — quem chama põe numa tarefa de fundo, como a
     abertura faz com o substituído.
+
+    SÓ A JÁ MONTADA, e isto é endurecimento vindo de revisão. Pela rota não há
+    como chegar aqui com uma subida em voo — `recuperar` roda antes e a recusa.
+    Mas esta é função pública de caso de uso, e sem a guarda ela apaga a subida
+    que outra aba da mesma pessoa está no meio de enviar. Guarda de estado que
+    depende da ordem das chamadas é guarda que o próximo refator desfaz.
     """
     subida = sessao.scalar(
         select(PlanilhaDeBondsRecebida).where(
             PlanilhaDeBondsRecebida.id == subida_id,
             PlanilhaDeBondsRecebida.criado_por == usuario_id,
+            PlanilhaDeBondsRecebida.completa_em.is_not(None),
         )
     )
     if subida is None:
