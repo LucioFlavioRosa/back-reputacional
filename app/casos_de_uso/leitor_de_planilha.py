@@ -42,6 +42,51 @@ import io
 from app.dominio.erros import RegraViolada
 
 
+#: O QUE O EXCEL ESCREVE NUMA CÉLULA QUE DEU ERRO (`<c t="e"><v>#N/A</v></c>`).
+#:
+#: OS DOIS LEITORES DISCORDAM AQUI, e foi achado de revisão. Medido em
+#: 22/10/2026 com uma aba onde B1 e B2 são células de erro:
+#:
+#:     openpyxl   '#N/A'   '#DIV/0!'      (a string, como o Excel a escreveu)
+#:     calamine   ''       ''             (vazio — o erro não sobrevive)
+#:
+#: O ESTRAGO ERA SILENCIOSO: um ticker com `#N/A` no catálogo dos bonds some
+#: pelo caminho rápido e vira `PapelLido(ticker="#N/A")` pelo de reserva. Dois
+#: caminhos discordando sobre o mesmo arquivo é pior que qualquer um sozinho.
+#:
+#: E A ESCOLHA É FORÇADA: o calamine não diz QUAL erro era, então não há como
+#: fazer o rápido parecer com o antigo — que é a convenção do resto deste
+#: módulo. Só dá para ir no outro sentido, e ele é o certo de qualquer forma:
+#: célula que deu erro não tem valor, e tratá-la como o texto "#N/A" é deixar
+#: lixo de planilha virar dado.
+ERROS_DO_EXCEL = frozenset(
+    {
+        "#N/A",
+        "#DIV/0!",
+        "#VALUE!",
+        "#REF!",
+        "#NAME?",
+        "#NUM!",
+        "#NULL!",
+        "#SPILL!",
+        "#CALC!",
+        "#GETTING_DATA",
+    }
+)
+
+
+def sem_erro_do_excel(linha: tuple) -> tuple:
+    """A linha do openpyxl com as células de erro viradas `None`.
+
+    É o lado openpyxl de `ERROS_DO_EXCEL` — ver lá por que o acerto é neste
+    sentido. Devolve a MESMA tupla quando não há erro nenhum, que é o caso de
+    quase toda linha: comparar é mais barato que reconstruir.
+    """
+    if not any(type(c) is str and c in ERROS_DO_EXCEL for c in linha):
+        return linha
+    return tuple(None if type(c) is str and c in ERROS_DO_EXCEL else c for c in linha)
+
+
 def como_o_openpyxl(celula: object) -> object:
     """Uma célula do calamine na forma que o openpyxl entregava.
 

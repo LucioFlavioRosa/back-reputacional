@@ -60,6 +60,7 @@ from app.casos_de_uso.leitor_de_planilha import (
     abrir_pelo_openpyxl,
     celulas_pelo_calamine,
     como_o_openpyxl,
+    sem_erro_do_excel,
 )
 from app.casos_de_uso.veiculos_da_imprensa import nomes_da_lista
 from app.configuracao import obter_configuracao
@@ -675,7 +676,12 @@ class ArquivoLido:
         #: SEM GUARDAR: a planilha é grande, e cada etapa decodifica a sua.
         planilha, aba = self._abrir(mapeamento)
         try:
-            yield from self._dicionarios(aba.iter_rows(values_only=True), mapeamento)
+            #: A MESMA NORMALIZAÇÃO DO CAMINHO RÁPIDO, célula a célula. Este
+            #: caminho é o de arquivo grande, e era o único em que a célula de
+            #: erro chegava como texto — o que fazia a MESMA planilha produzir
+            #: dados diferentes conforme coubesse ou não na memória.
+            cru = aba.iter_rows(values_only=True)
+            yield from self._dicionarios((sem_erro_do_excel(l) for l in cru), mapeamento)
         finally:
             planilha.close()
 
@@ -714,7 +720,13 @@ class ArquivoLido:
             #: causa de uma otimização.
             planilha, aba = self._abrir(mapeamento)
             try:
-                self._lido[chave] = list(aba.iter_rows(values_only=True))
+                #: `sem_erro_do_excel` PARA OS DOIS LEITORES CONCORDAREM: o
+                #: calamine entrega célula de erro como vazio, o openpyxl como
+                #: a string "#N/A". Sem isto, cair na reserva mudava o DADO —
+                #: um veículo chamado "#N/A" entrava por aqui e não pelo outro.
+                self._lido[chave] = [
+                    sem_erro_do_excel(linha) for linha in aba.iter_rows(values_only=True)
+                ]
             finally:
                 planilha.close()
         return self._lido[chave]

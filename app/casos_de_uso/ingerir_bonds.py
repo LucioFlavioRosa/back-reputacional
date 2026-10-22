@@ -52,7 +52,7 @@ from app.casos_de_uso.ingerir_mencoes import (
     custo_da_leitura,
     orcamento_de_leitura,
 )
-from app.casos_de_uso.leitor_de_planilha import celulas_pelo_calamine
+from app.casos_de_uso.leitor_de_planilha import celulas_pelo_calamine, sem_erro_do_excel
 from app.dominio.erros import RegraViolada
 from app.dominio.leitura_de_bonds import Leitura, ler
 
@@ -116,6 +116,27 @@ def ler_arquivo(conteudo: bytes) -> Leitura:
     if not conteudo.startswith(ASSINATURA_ZIP):
         raise RegraViolada("O arquivo não é um .xlsx — os primeiros bytes não são de ZIP.")
 
+    #: A MEMÓRIA É MEDIDA ANTES DE QUALQUER LEITOR, e isto voltou atrás numa
+    #: decisão minha. Eu havia movido esta guarda para dentro do leitor de
+    #: reserva, com o argumento de que o calamine "não produz preenchimento" —
+    #: e esse argumento é falso: ele ignora a dimensão DECLARADA, mas
+    #: materializa o retângulo da área usada. Um `.xlsx` de 4,7 KB com `A1=1` e
+    #: `BR54254=2` custa 63,8 MB pelo caminho rápido, medido. Deixar o caminho
+    #: rápido sem guarda era trocar uma recusa indevida por um processo morto.
+    #:
+    #: O QUE CONSERTOU O DEFEITO DO Q&A NÃO FOI TIRAR A GUARDA, foi corrigir o
+    #: PREÇO da célula vazia (`MEMORIA_POR_CELULA_VAZIA`): com ele, o arquivo
+    #: dele estima 104 MB contra 204 de orçamento e passa. A guarda podia ter
+    #: ficado onde estava desde o começo.
+    custo = custo_da_leitura(conteudo)
+    orcamento = orcamento_de_leitura()
+    if custo is not None and custo > orcamento:
+        raise RegraViolada(
+            "A planilha de bonds é grande demais para a memória deste ambiente: "
+            f"a leitura pediria ~{custo // (1024 * 1024)} MB e o orçamento é de "
+            f"~{orcamento // (1024 * 1024)} MB."
+        )
+
     try:
         linhas = celulas_pelo_calamine(conteudo)
     except RegraViolada:
@@ -135,32 +156,14 @@ def ler_arquivo(conteudo: bytes) -> Leitura:
 def _pelo_leitor_de_reserva(conteudo: bytes) -> list[tuple]:
     """O openpyxl, para quando o calamine recusa o arquivo.
 
-    E É AQUI, E SÓ AQUI, QUE A MEMÓRIA É MEDIDA — a mudança de 22/10/2026.
+    A MEMÓRIA JÁ FOI MEDIDA em `ler_arquivo`, antes dos dois leitores — ver a
+    nota lá sobre por que ela não pode valer só aqui.
 
-    A guarda valia para o caminho inteiro, e recusou um export de 649 KB do Q&A
-    dizendo que a leitura pediria 507 MB contra 204 de orçamento. A conta não
-    era absurda: o openpyxl obedece à `<dimension>` declarada e materializa a
-    linha até a última coluna. O que passou a estar errado foi aplicá-la SEMPRE,
-    depois que o caminho normal virou o calamine — que devolve só a área usada.
-    Medido no arquivo dele:
-
-        openpyxl   54.254 linhas   3.797.780 células   36,6 MB
-        calamine    1.755 linhas     121.095 células    2,3 MB
-
-    A ÁREA USADA, E NÃO "POUCA CÉLULA": basta um valor no canto para o retângulo
-    do calamine ser tão grande quanto o do openpyxl — ver o caso medido em
-    `MEMORIA_POR_CELULA_VAZIA`. Por isso a guarda continua existindo, e por isso
-    ela vale neste caminho: quando o calamine recusa o arquivo, quem lê é o
-    leitor que obedece à dimensão declarada, que é o teto de todos os casos.
-
-    `custo_da_leitura` estima sem descomprimir (~9 ms) e `orcamento_de_leitura`
-    DEDUZ o teto do contêiner em vez de fixá-lo — é o que faz a decisão viajar
-    entre o Container Apps de 4 GiB e o cluster do cliente.
-
-    AQUI RECUSA, não degrada. A ingestão de menções tem um caminho lento de
-    memória constante para cair quando não cabe; esta não tem, e inventar um
-    seria código sem usuário. O número vai na mensagem, porque quem opera o
-    cluster precisa dele para decidir.
+    NORMALIZA AS CÉLULAS como o leitor rápido normaliza, e isto é achado de
+    revisão: sem isso, um `#N/A` no catálogo some pelo caminho rápido (o
+    calamine entrega vazio) e vira um papel de ticker "#N/A" pelo de reserva.
+    Dois caminhos que discordam sobre o mesmo arquivo é pior que qualquer um
+    dos dois sozinho.
     """
     try:
         pasta = load_workbook(io.BytesIO(conteudo), read_only=True, data_only=True)
@@ -180,16 +183,7 @@ def _pelo_leitor_de_reserva(conteudo: bytes) -> list[tuple]:
         #: analista deu à folha ("Planilha2 (2)" no arquivo medido), e exigir um
         #: nome recusaria o arquivo certo por um detalhe que ninguém controla.
         folha = pasta[pasta.sheetnames[0]]
-
-        custo = custo_da_leitura(conteudo)
-        orcamento = orcamento_de_leitura()
-        if custo is not None and custo > orcamento:
-            raise RegraViolada(
-                "A planilha de bonds é grande demais para a memória deste ambiente: "
-                f"a leitura pediria ~{custo // (1024 * 1024)} MB e o orçamento é de "
-                f"~{orcamento // (1024 * 1024)} MB."
-            )
-        return list(folha.iter_rows(values_only=True))
+        return [sem_erro_do_excel(linha) for linha in folha.iter_rows(values_only=True)]
     finally:
         pasta.close()
 

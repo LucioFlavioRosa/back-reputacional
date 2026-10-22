@@ -380,25 +380,43 @@ def test_a_guarda_de_MEMORIA_vale_SO_no_leitor_de_reserva(monkeypatch):
         modulo.ler_arquivo(conteudo)
 
 
-def test_com_o_LEITOR_RAPIDO_o_orcamento_nao_recusa_mais(monkeypatch):
-    """O outro lado do teste acima, e o conserto que o Q&A pediu.
+def test_a_guarda_de_MEMORIA_vale_TAMBEM_no_leitor_rapido(monkeypatch):
+    """ACHADO DE REVISÃO contra a minha primeira versão deste PR.
 
-    MESMO orçamento impossível, MESMA planilha: pelo caminho normal ela é lida,
-    porque o leitor que de fato roda não materializa preenchimento nenhum. Sem
-    esta asserção, alguém "restauraria" a guarda para o arquivo inteiro achando
-    que a estava consertando, e o defeito voltaria inteiro.
+    Eu havia movido a guarda para dentro do leitor de reserva, com o argumento
+    de que o calamine "não produz preenchimento". O argumento é falso: ele
+    ignora a dimensão DECLARADA, mas materializa o retângulo da área usada.
+    Medido num `.xlsx` de 4,7 KB com só `A1=1` e `BR54254=2`: 54.254 × 70
+    células, pico de 63,8 MB — pelo caminho RÁPIDO, sem guarda nenhuma.
+
+    Ou seja: eu havia trocado uma recusa indevida por um processo morto. E o
+    que consertou o defeito do Q&A não foi tirar a guarda, foi corrigir o PREÇO
+    da célula vazia — com ele o arquivo dele passa com a guarda no lugar.
     """
     from app.casos_de_uso import ingerir_bonds as modulo
 
     conteudo = _planilha(DO_CADASTRO, {date(2026, 1, 5): (95.5, 9.1, 0, 0)})
     monkeypatch.setattr(modulo, "orcamento_de_leitura", lambda: 1)
 
-    leitura = modulo.ler_arquivo(conteudo)
+    #: SEM quebrar o calamine: é o caminho rápido que precisa estar guardado.
+    with pytest.raises(RegraViolada, match="grande demais para a memória"):
+        modulo.ler_arquivo(conteudo)
+
+
+def test_a_planilha_normal_PASSA_pela_guarda_com_o_orcamento_de_verdade():
+    """O controle: o orçamento real não barra o arquivo de verdade.
+
+    É esta asserção que o defeito do Q&A violava — com o preço antigo, a conta
+    dava 507 MB contra 204 de orçamento para um arquivo de 649 KB.
+    """
+    from app.casos_de_uso.ingerir_bonds import ler_arquivo
+
+    conteudo = _planilha(DO_CADASTRO, {date(2026, 1, 5): (95.5, 9.1, 0, 0)})
 
     #: UMA cotação, e não duas: o segundo papel da fixture vem com preço e yield
     #: zerados, e `0` vira nulo pela regra 1 do domínio. Conferi o número em vez
     #: de supor — a primeira versão deste teste dizia 2 e falhou por isso.
-    assert len(leitura.cotacoes) == 1, "o orçamento voltou a barrar o caminho rápido"
+    assert len(ler_arquivo(conteudo).cotacoes) == 1
 
 
 def test_os_DOIS_leitores_entregam_a_MESMA_leitura(monkeypatch):
