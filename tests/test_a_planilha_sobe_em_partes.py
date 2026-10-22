@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session
 from app.armazenamento import blob
 from app.banco.sessao import obter_sessao
 from app.banco.tabelas_score import Mencao, PlanilhaRecebida
-from app.casos_de_uso import ingerir_mencoes, planilha_do_score, subida_em_partes
+from app.casos_de_uso import ingerir_mencoes, subida_em_partes
 from main import app
 from tests.test_e2e_postgres import URL
 
