@@ -348,21 +348,99 @@ def test_zip_INVALIDO_que_comeca_com_a_assinatura_nao_vira_500():
         ler_arquivo(b"PK\x03\x04" + b"\x00" * 200)
 
 
-def test_a_planilha_grande_demais_para_a_MEMORIA_e_recusada(monkeypatch):
-    """O limite de BYTES não protege a memória.
+def test_a_guarda_de_MEMORIA_vale_SO_no_leitor_de_reserva(monkeypatch):
+    """A recusa por memória mudou de lugar em 22/10/2026, e esta é a razão.
 
-    `TAMANHO_MAXIMO` são 80 MB de ZIP COMPRIMIDO, e um `.xlsx` de poucos MB pode
-    trazer milhões de células — `list(iter_rows())` materializa todas. Com o
-    orçamento rebaixado a zero, qualquer planilha estimável tem de ser recusada
-    com a frase certa, e não morrer sem frase nenhuma.
+    O Q&A teve um export de 649 KB recusado com "a leitura pediria ~507 MB".
+    A conta não estava absurda: o openpyxl obedece à `<dimension>` declarada e
+    materializa a linha inteira até a última coluna. O que estava errado era
+    aplicar essa conta ao arquivo SEMPRE — porque os bonds passaram a ler pelo
+    calamine, que devolve só a área usada e nunca produz aquele preenchimento.
+
+    Medido no arquivo do Q&A:
+
+        openpyxl   54.254 linhas   3.797.780 células   36,6 MB
+        calamine    1.755 linhas     121.095 células    2,3 MB
+
+    Então a guarda fica EXATAMENTE onde o risco está: o caminho de reserva.
+    Com o orçamento rebaixado e o leitor rápido quebrado, a recusa tem de sair
+    com a frase certa — e não o processo morrer sem frase nenhuma.
+    """
+    from app.casos_de_uso import ingerir_bonds as modulo
+
+    conteudo = _planilha(DO_CADASTRO, {date(2026, 1, 5): (95.5, 9.1, 0, 0)})
+
+    def calamine_quebrado(*args, **kwargs):
+        raise RuntimeError("o leitor rápido recusou este arquivo")
+
+    monkeypatch.setattr(modulo, "celulas_pelo_calamine", calamine_quebrado)
+    monkeypatch.setattr(modulo, "orcamento_de_leitura", lambda: 1)
+
+    with pytest.raises(RegraViolada, match="grande demais para a memória"):
+        modulo.ler_arquivo(conteudo)
+
+
+def test_a_guarda_de_MEMORIA_vale_TAMBEM_no_leitor_rapido(monkeypatch):
+    """ACHADO DE REVISÃO contra a minha primeira versão deste PR.
+
+    Eu havia movido a guarda para dentro do leitor de reserva, com o argumento
+    de que o calamine "não produz preenchimento". O argumento é falso: ele
+    ignora a dimensão DECLARADA, mas materializa o retângulo da área usada.
+    Medido num `.xlsx` de 4,7 KB com só `A1=1` e `BR54254=2`: 54.254 × 70
+    células, pico de 63,8 MB — pelo caminho RÁPIDO, sem guarda nenhuma.
+
+    Ou seja: eu havia trocado uma recusa indevida por um processo morto. E o
+    que consertou o defeito do Q&A não foi tirar a guarda, foi corrigir o PREÇO
+    da célula vazia — com ele o arquivo dele passa com a guarda no lugar.
     """
     from app.casos_de_uso import ingerir_bonds as modulo
 
     conteudo = _planilha(DO_CADASTRO, {date(2026, 1, 5): (95.5, 9.1, 0, 0)})
     monkeypatch.setattr(modulo, "orcamento_de_leitura", lambda: 1)
 
+    #: SEM quebrar o calamine: é o caminho rápido que precisa estar guardado.
     with pytest.raises(RegraViolada, match="grande demais para a memória"):
         modulo.ler_arquivo(conteudo)
+
+
+def test_a_planilha_normal_PASSA_pela_guarda_com_o_orcamento_de_verdade():
+    """O controle: o orçamento real não barra o arquivo de verdade.
+
+    É esta asserção que o defeito do Q&A violava — com o preço antigo, a conta
+    dava 507 MB contra 204 de orçamento para um arquivo de 649 KB.
+    """
+    from app.casos_de_uso.ingerir_bonds import ler_arquivo
+
+    conteudo = _planilha(DO_CADASTRO, {date(2026, 1, 5): (95.5, 9.1, 0, 0)})
+
+    #: UMA cotação, e não duas: o segundo papel da fixture vem com preço e yield
+    #: zerados, e `0` vira nulo pela regra 1 do domínio. Conferi o número em vez
+    #: de supor — a primeira versão deste teste dizia 2 e falhou por isso.
+    assert len(ler_arquivo(conteudo).cotacoes) == 1
+
+
+def test_os_DOIS_leitores_entregam_a_MESMA_leitura(monkeypatch):
+    """Trocar o leitor só é seguro se o domínio não notar a troca.
+
+    CONFERI NO ARQUIVO REAL antes de trocar (o export do Q&A, 649 KB): os dois
+    caminhos devolveram 31 papéis, 3.053 cotações e os seis campos da `Leitura`
+    iguais. Aqui o mesmo, numa planilha montada, para que a garantia fique na
+    suíte: o calamine entrega vazio como `""` e inteiro como `float`, e é
+    `como_o_openpyxl` que desfaz isso — se alguém a remover, este teste cai.
+    """
+    from app.casos_de_uso import ingerir_bonds as modulo
+
+    conteudo = _planilha(DO_CADASTRO, {date(2026, 1, 5): (95.5, 9.1, 0, 0)})
+
+    pelo_rapido = modulo.ler_arquivo(conteudo)
+
+    def calamine_quebrado(*args, **kwargs):
+        raise RuntimeError("cai na reserva")
+
+    monkeypatch.setattr(modulo, "celulas_pelo_calamine", calamine_quebrado)
+    pela_reserva = modulo.ler_arquivo(conteudo)
+
+    assert pelo_rapido == pela_reserva
 
 
 def test_a_planilha_normal_PASSA_pelo_orcamento():

@@ -52,6 +52,7 @@ from app.casos_de_uso.ingerir_mencoes import (
     custo_da_leitura,
     orcamento_de_leitura,
 )
+from app.casos_de_uso.leitor_de_planilha import celulas_pelo_calamine, sem_erro_do_excel
 from app.dominio.erros import RegraViolada
 from app.dominio.leitura_de_bonds import Leitura, ler
 
@@ -104,28 +105,29 @@ def ler_arquivo(conteudo: bytes) -> Leitura:
     essa armadilha. A lista é o formato que o domínio puro aceita, e é também o
     que permite ao leitor olhar as cinco primeiras linhas de cabeçalho antes de
     percorrer a série.
+
+    O MESMO MECANISMO DAS LENTES desde 22/10/2026: calamine primeiro, openpyxl
+    de reserva, pelo `leitor_de_planilha`. Antes esta tela abria o arquivo pelo
+    openpyxl direto — a plataforma tinha cinco leitores e três comportamentos, e
+    o mesmo arquivo era lido de um jeito aqui e de outro na tela ao lado.
     """
     if len(conteudo) > TAMANHO_MAXIMO:
         raise RegraViolada("A planilha de bonds passa do tamanho que se aceita ler.")
     if not conteudo.startswith(ASSINATURA_ZIP):
         raise RegraViolada("O arquivo não é um .xlsx — os primeiros bytes não são de ZIP.")
 
-    #: O LIMITE DE BYTES NÃO PROTEGE A MEMÓRIA, e isto é achado de revisão.
-    #: `TAMANHO_MAXIMO` são 80 MB de ZIP COMPRIMIDO, e um `.xlsx` de poucos MB
-    #: pode trazer milhões de células: `list(iter_rows())` materializa todas, e
-    #: o processo morre por memória com o arquivo "dentro do limite".
+    #: A MEMÓRIA É MEDIDA ANTES DE QUALQUER LEITOR, e isto voltou atrás numa
+    #: decisão minha. Eu havia movido esta guarda para dentro do leitor de
+    #: reserva, com o argumento de que o calamine "não produz preenchimento" —
+    #: e esse argumento é falso: ele ignora a dimensão DECLARADA, mas
+    #: materializa o retângulo da área usada. Um `.xlsx` de 4,7 KB com `A1=1` e
+    #: `BR54254=2` custa 63,8 MB pelo caminho rápido, medido. Deixar o caminho
+    #: rápido sem guarda era trocar uma recusa indevida por um processo morto.
     #:
-    #: REAPROVEITA `custo_da_leitura`, que estima sem descomprimir a planilha
-    #: (~9 ms: lê o diretório central do ZIP e 6 KB da aba maior), e
-    #: `orcamento_de_leitura`, que DEDUZ o teto do contêiner em vez de fixá-lo —
-    #: é o que faz a decisão viajar entre o Container Apps de 4 GiB e o cluster
-    #: do cliente.
-    #:
-    #: AQUI RECUSA, não degrada. A ingestão de menções tem um caminho lento de
-    #: memória constante para cair quando não cabe; esta não tem, e inventar um
-    #: seria código sem usuário. Recusar com a frase certa é melhor que morrer
-    #: sem frase nenhuma — e o número vai na mensagem, porque quem opera o
-    #: cluster precisa dele para decidir.
+    #: O QUE CONSERTOU O DEFEITO DO Q&A NÃO FOI TIRAR A GUARDA, foi corrigir o
+    #: PREÇO da célula vazia (`MEMORIA_POR_CELULA_VAZIA`): com ele, o arquivo
+    #: dele estima 104 MB contra 204 de orçamento e passa. A guarda podia ter
+    #: ficado onde estava desde o começo.
     custo = custo_da_leitura(conteudo)
     orcamento = orcamento_de_leitura()
     if custo is not None and custo > orcamento:
@@ -135,6 +137,34 @@ def ler_arquivo(conteudo: bytes) -> Leitura:
             f"~{orcamento // (1024 * 1024)} MB."
         )
 
+    try:
+        linhas = celulas_pelo_calamine(conteudo)
+    except RegraViolada:
+        #: RECUSA DE CADASTRO passa direto: arquivo vazio é recado à pessoa, não
+        #: falha de leitor, e tentar o outro daria a mesma resposta.
+        raise
+    except Exception:
+        #: QUALQUER OUTRA FALHA DO CALAMINE cai no openpyxl, que leu estes
+        #: arquivos desde que a tela existe. Um leitor novo pode recusar um
+        #: `.xlsx` estranho que o antigo aceitava, e a subida não pode morrer
+        #: por causa de uma otimização.
+        linhas = _pelo_leitor_de_reserva(conteudo)
+
+    return ler(linhas)
+
+
+def _pelo_leitor_de_reserva(conteudo: bytes) -> list[tuple]:
+    """O openpyxl, para quando o calamine recusa o arquivo.
+
+    A MEMÓRIA JÁ FOI MEDIDA em `ler_arquivo`, antes dos dois leitores — ver a
+    nota lá sobre por que ela não pode valer só aqui.
+
+    NORMALIZA AS CÉLULAS como o leitor rápido normaliza, e isto é achado de
+    revisão: sem isso, um `#N/A` no catálogo some pelo caminho rápido (o
+    calamine entrega vazio) e vira um papel de ticker "#N/A" pelo de reserva.
+    Dois caminhos que discordam sobre o mesmo arquivo é pior que qualquer um
+    dos dois sozinho.
+    """
     try:
         pasta = load_workbook(io.BytesIO(conteudo), read_only=True, data_only=True)
     except (BadZipFile, KeyError, ValueError) as erro:
@@ -153,11 +183,9 @@ def ler_arquivo(conteudo: bytes) -> Leitura:
         #: analista deu à folha ("Planilha2 (2)" no arquivo medido), e exigir um
         #: nome recusaria o arquivo certo por um detalhe que ninguém controla.
         folha = pasta[pasta.sheetnames[0]]
-        linhas = list(folha.iter_rows(values_only=True))
+        return [sem_erro_do_excel(linha) for linha in folha.iter_rows(values_only=True)]
     finally:
         pasta.close()
-
-    return ler(linhas)
 
 
 def conferir(sessao: Session, conteudo: bytes) -> Conferencia:
