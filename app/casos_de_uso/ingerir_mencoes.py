@@ -236,6 +236,52 @@ def _como_o_openpyxl(celula: object) -> object:
 #: rio abaixo. Sai de 123 B/célula ajustados, arredondado para cima.
 MEMORIA_POR_CELULA = 140
 
+#: A CÉLULA DE PREENCHIMENTO, que não traz valor nenhum — e que até 22/10/2026
+#: era cobrada pelos mesmos 140 B da que traz.
+#:
+#: POR QUE ELA EXISTE. `iter_rows` devolve a linha INTEIRA até a última coluna
+#: que a aba declara, e as colunas sem valor vêm como `None`. Numa aba larga e
+#: vazia isso é a maioria das células — mas é sempre o MESMO `None`: o que
+#: custa é o ponteiro na tupla, não um objeto por célula.
+#:
+#: MEDIDO em 22/10/2026 no export de bonds que o Q&A recusou (649 KB,
+#: `ref="A1:BR54254"`), com `tracemalloc` sobre o que `ingerir_bonds` faz:
+#:
+#:     células materializadas  3.797.780      pico real      36,6 MB
+#:     dessas, com valor          12.598      estimado então  507,1 MB   13,9x
+#:
+#: 36,6 MB / 3,8 M células são 9,7 B/célula pelo openpyxl. Mas esta conta é
+#: COMPARTILHADA, e o outro leitor é mais caro — foi achado de revisão, e a
+#: primeira versão deste coeficiente (12) subestimava por causa dele.
+#:
+#: O QUE EU HAVIA ESCRITO AQUI E ESTÁ ERRADO: que o calamine "nunca produz
+#: preenchimento". Ele ignora a dimensão DECLARADA, mas materializa o retângulo
+#: da área REALMENTE usada — e basta uma célula no canto para que esse retângulo
+#: seja enorme. Construí o caso e medi:
+#:
+#:     o que o arquivo tem        leitor     células      pico
+#:     o export do Q&A            openpyxl   3.797.780   36,6 MB   ( 9,7 B)
+#:     o export do Q&A            calamine     121.095    2,3 MB
+#:     só `A1=1` e `BR54254=2`    calamine   3.797.780   63,8 MB   (16,8 B)
+#:     só `A1=1` e `A1000000=2`   openpyxl   1.000.000    8,2 MB   ( 8,6 B)
+#:
+#: A ÚLTIMA LINHA DERRUBA A OUTRA METADE DO ACHADO, e por isso ficou aqui: a
+#: revisão supôs 56 B pela tupla de uma célula e ~64 B/célula em linha estreita,
+#: o que tornaria este modelo por célula insustentável. Medido, são 8,6 — o
+#: openpyxl REAPROVEITA a tupla da linha vazia em vez de criar uma por linha.
+#: Linha estreita não é o caso caro; o caro é o calamine, a 16,8, porque a lista
+#: de listas do `to_python()` coexiste com a lista de tuplas.
+#:
+#: 24 É O DOBRO DO QUE A PIOR MEDIÇÃO PEDE, na régua dos outros coeficientes
+#: deste bloco (folga de 1,08x a 1,45x). Com ele o caso do canto estima 91 MB
+#: contra 63,8 reais, e o arquivo do Q&A estima 109 MB contra 204 de orçamento —
+#: continua passando, que é o ponto de tudo isto.
+#:
+#: A ASSIMETRIA ERA O ESTRAGO: superestimar nas lentes só derruba para o caminho
+#: lento, que continua correto; em `ingerir_bonds` não há caminho lento, e a
+#: mesma conta recusava o arquivo na cara de quem subia.
+MEMORIA_POR_CELULA_VAZIA = 24
+
 #: O TEXTO COMO CADA CÉLULA O MATERIALIZA (`sharedStrings × count/uniqueCount`).
 #: 0,55 porque o byte de XML vira caractere Python com overhead, e a
 #: deduplicação do arquivo não se repete na memória.
@@ -360,7 +406,22 @@ def orcamento_de_leitura() -> int:
     return int(limite * FRACAO_DO_CONTEINER)
 
 
-def celulas_da_maior_aba(conteudo: bytes) -> int | None:
+@dataclass(frozen=True)
+class CelulasDaAba:
+    """As células da maior aba, SEPARADAS pelo que cada uma custa.
+
+    AS DUAS SÃO NECESSÁRIAS e por muito tempo houve só uma. `materializadas` é
+    o que o leitor CRIA — a linha inteira até a última coluna declarada, com as
+    vagas preenchidas por `None`; `ocupadas` é quantas dessas trazem valor, e é
+    o único termo que paga objeto Python. Numa aba densa as duas coincidem;
+    numa aba larga e vazia, a diferença entre elas é toda a conta.
+    """
+
+    materializadas: int
+    ocupadas: int
+
+
+def celulas_da_maior_aba(conteudo: bytes) -> CelulasDaAba | None:
     """Quantas células a maior aba traz, SEM descomprimir a planilha.
 
     CUSTA 6,7 ms no clipping de 10,53 MB, porque lê o diretório central do ZIP —
@@ -381,6 +442,22 @@ def celulas_da_maior_aba(conteudo: bytes) -> int | None:
 
         Clipei    dimensão 1.733.510   XML 1.983.000   ->  1.983.000  (+14%)
         Approach  dimensão   219.140   XML   194.000   ->    219.140  (exato)
+
+    E A DIFERENÇA ENTRE AS DUAS É O PREENCHIMENTO, que é o conserto de
+    22/10/2026. Quando a dimensão declara MAIS do que o XML comporta, o excesso
+    não é célula com valor: são as vagas que `iter_rows` devolve como `None`
+    para completar a linha. Elas existem (medi: o openpyxl preenche mesmo) e
+    custam ~9 B, não os 140 de uma célula de verdade — ver
+    `MEMORIA_POR_CELULA_VAZIA`.
+
+        bonds Q&A  dimensão 3.797.780   XML   152.890
+                   -> materializadas 3.797.780, ocupadas 152.890
+
+    O MÁXIMO CONTINUA EM `materializadas`, e é de propósito: é ele que impede a
+    dimensão que mente PARA BAIXO (`ref="A1:A1"` numa aba de 60 MB) de conceder
+    o cache a um arquivo enorme. Quando o XML vence, `ocupadas` iguala
+    `materializadas`, o termo do preenchimento zera e a conta é a de sempre —
+    por isso esta mudança não mexe em nenhum arquivo que já funcionava.
 
     DEVOLVE `None` quando não consegue dizer — ZIP ilegível, nenhuma aba, uma
     exceção qualquer. Quem chama trata `None` como "não cabe", porque a
@@ -405,14 +482,21 @@ def celulas_da_maior_aba(conteudo: bytes) -> int | None:
 
     achado = _DIMENSAO.search(cabeca)
     if achado is None:
-        return pelo_xml or None
+        #: SEM DIMENSÃO não há preenchimento a descontar: o tamanho do XML é a
+        #: única conta, e tudo o que ele comporta é célula com valor.
+        return CelulasDaAba(pelo_xml, pelo_xml) if pelo_xml else None
     #: `A` -> 1, `Z` -> 26, `AA` -> 27: é base 26 com dígitos de 1 a 26, não de
     #: 0 a 25. Iterar `bytes` entrega INTEIROS, e `b"A"[0]` é 65 — daí o 64.
     colunas = 0
     for letra in achado.group(1):
         colunas = colunas * 26 + (letra - 64)
     linhas = int(achado.group(2))
-    return max(colunas * linhas, pelo_xml) or None
+    materializadas = max(colunas * linhas, pelo_xml)
+    #: `ocupadas` NÃO É LIMITADA PELA DIMENSÃO, e isso é a guarda: com
+    #: `ref="A1:A1"` numa aba de 60 MB, limitar daria uma célula ocupada e o
+    #: arquivo inteiro sairia de graça. O XML manda em quanta célula com valor
+    #: existe; a dimensão manda só em quanta vaga vem junto.
+    return CelulasDaAba(materializadas, pelo_xml) if materializadas else None
 
 
 def bytes_de_texto(conteudo: bytes) -> tuple[int, int] | None:
@@ -473,8 +557,15 @@ def custo_da_leitura(conteudo: bytes) -> int | None:
     if celulas is None or texto is None:
         return None
     materializado, unico = texto
+    #: QUATRO TERMOS DESDE 22/10/2026: a célula com valor e a vaga de
+    #: preenchimento custam coisas diferentes, e cobrá-las igual inflava uma aba
+    #: larga e vazia em 14×. A subtração não fica negativa por construção
+    #: (`materializadas` é o máximo das duas estimativas, e `ocupadas` é uma
+    #: delas); o `max` é cinto de segurança para quem mexer naquela conta.
+    vazias = max(0, celulas.materializadas - celulas.ocupadas)
     return int(
-        celulas * MEMORIA_POR_CELULA
+        celulas.ocupadas * MEMORIA_POR_CELULA
+        + vazias * MEMORIA_POR_CELULA_VAZIA
         + materializado * MEMORIA_POR_TEXTO_MATERIALIZADO
         + unico * MEMORIA_POR_TEXTO_UNICO
     )

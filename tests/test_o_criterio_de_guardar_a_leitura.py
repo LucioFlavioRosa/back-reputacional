@@ -74,7 +74,7 @@ def test_a_dimensao_declarada_da_a_contagem_de_celulas():
     """`<dimension ref="A1:T100">` são 20 colunas por 100 linhas."""
     conteudo = _zip_com_abas({"sheet1.xml": _aba("A1:T100")})
 
-    assert ingerir_mencoes.celulas_da_maior_aba(conteudo) == 20 * 100
+    assert ingerir_mencoes.celulas_da_maior_aba(conteudo).materializadas == 20 * 100
 
 
 def test_coluna_de_duas_letras_e_base_26_com_digitos_de_1_a_26():
@@ -86,7 +86,7 @@ def test_coluna_de_duas_letras_e_base_26_com_digitos_de_1_a_26():
     """
     conteudo = _zip_com_abas({"sheet1.xml": _aba("A1:AA100")})
 
-    assert ingerir_mencoes.celulas_da_maior_aba(conteudo) == 27 * 100
+    assert ingerir_mencoes.celulas_da_maior_aba(conteudo).materializadas == 27 * 100
 
 
 # -- e quando ela falta, ou mente --------------------------------------------
@@ -99,7 +99,9 @@ def test_sem_dimensao_a_estimativa_vem_do_tamanho_do_xml():
     celulas = ingerir_mencoes.celulas_da_maior_aba(conteudo)
 
     assert celulas is not None
-    assert celulas == pytest.approx(70_000 // ingerir_mencoes.XML_POR_CELULA, rel=0.1)
+    assert celulas.materializadas == pytest.approx(
+        70_000 // ingerir_mencoes.XML_POR_CELULA, rel=0.1
+    )
 
 
 def test_uma_dimensao_que_mente_para_BAIXO_nao_engana():
@@ -116,7 +118,12 @@ def test_uma_dimensao_que_mente_para_BAIXO_nao_engana():
     celulas = ingerir_mencoes.celulas_da_maior_aba(conteudo)
 
     assert celulas is not None
-    assert celulas > 10_000, "a dimensão mentirosa venceu o tamanho do XML"
+    assert celulas.materializadas > 10_000, "a dimensão mentirosa venceu o tamanho do XML"
+    #: E O PREENCHIMENTO NÃO ABSORVE A GUARDA: se `ocupadas` fosse limitada pela
+    #: dimensão, as células deste arquivo virariam vaga de `None` a 12 B e ele
+    #: sairia quase de graça — que é o defeito que esta guarda existe para
+    #: impedir, pela porta nova.
+    assert celulas.ocupadas > 10_000, "as células viraram preenchimento barato"
 
 
 def test_bytes_que_nao_sao_zip_nao_sabem_dizer():
@@ -160,9 +167,114 @@ def test_o_criterio_olha_a_MAIOR_aba_e_nao_a_soma():
 
     assert celulas is not None
     pela_maior = 70_000 // ingerir_mencoes.XML_POR_CELULA
-    assert celulas == pytest.approx(pela_maior, rel=0.1)
+    assert celulas.materializadas == pytest.approx(pela_maior, rel=0.1)
     pela_soma = 120_000 // ingerir_mencoes.XML_POR_CELULA
-    assert celulas < pela_soma * 0.8, "cobrou da aba o tamanho das vizinhas"
+    assert celulas.materializadas < pela_soma * 0.8, "cobrou da aba o tamanho das vizinhas"
+
+
+# -- a célula vazia não custa o que a cheia custa -----------------------------
+
+
+def test_a_aba_ESPARSA_nao_e_cobrada_como_se_estivesse_cheia():
+    """O defeito que o Q&A viu na tela, em 22/10/2026.
+
+    O export de bonds de 649 KB declarava `ref="A1:BR54254"` — 70 colunas por
+    54.254 linhas — e a conferência o recusou dizendo "a leitura pediria
+    ~507 MB e o orçamento é de ~204 MB".
+
+    O QUE EU MEDI NO ARQUIVO DELE, e que desmente a conta:
+
+        células materializadas : 3.797.780   (a dimensão NÃO mente: o openpyxl
+                                              preenche mesmo até a coluna 70)
+        dessas, com valor      :    12.598
+        pico real da leitura   :  36,6 MB    contra os 507 estimados
+
+    A dimensão estava certa e o PREÇO estava errado. `MEMORIA_POR_CELULA` são
+    os 140 B de uma célula que virou objeto Python; a célula de preenchimento é
+    o MESMO `None` repetido numa tupla — 8 B de ponteiro, 8,9 medidos com a
+    folga do tuple. Cobrar 140 de uma coluna vazia inflou a conta em 14x.
+
+    A ASSIMETRIA É O PONTO: nas lentes superestimar só derruba para o caminho
+    lento, que continua correto; nos bonds não há caminho lento, e a mesma conta
+    fecha a porta. Ver `ingerir_bonds.ler_arquivo`.
+    """
+    #: A FORMA DO ARQUIVO REAL, em miniatura: a dimensão declara muito mais
+    #: célula do que o XML comporta.
+    conteudo = _zip_com_abas({"sheet1.xml": _aba("A1:BR54254", recheio=50_000)})
+
+    celulas = ingerir_mencoes.celulas_da_maior_aba(conteudo)
+
+    assert celulas is not None
+    #: AS DUAS CONTAS, e não uma: o leitor cria as 3,8 milhões (é o que custa
+    #: tupla), e só as que o XML comporta trazem valor.
+    assert celulas.materializadas == 70 * 54_254
+    assert celulas.ocupadas == pytest.approx(
+        50_000 // ingerir_mencoes.XML_POR_CELULA, rel=0.1
+    )
+
+    #: E O CUSTO SAI ABAIXO DO ORÇAMENTO DE UM CONTÊINER DE 512 MiB, que é o do
+    #: ambiente onde isto apareceu.
+    orcamento = int(512 * 1024 * 1024 * ingerir_mencoes.FRACAO_DO_CONTEINER)
+    custo = ingerir_mencoes.custo_da_leitura(conteudo)
+    assert custo is not None
+    assert custo < orcamento
+
+    #: O PREÇO ANTIGO RECUSAVA ESTE MESMO ARQUIVO, e dizer isso aqui é achado de
+    #: revisão: sem esta linha, o teste falhava no código anterior por
+    #: `AttributeError` — um motivo fraco, que não demonstra que a recusa
+    #: existia. A conta antiga era `materializadas × MEMORIA_POR_CELULA`.
+    antes = celulas.materializadas * ingerir_mencoes.MEMORIA_POR_CELULA
+    assert antes > orcamento, "a forma do arquivo não reproduz mais a recusa"
+    assert antes > custo * 4, "a correção deixou de ser a ordem de grandeza que era"
+
+
+def test_a_aba_CHEIA_continua_custando_o_mesmo_de_antes():
+    """O controle do teste acima — e a razão de ele não ser um afrouxamento.
+
+    Quando o XML comporta TUDO o que a dimensão declara, não há preenchimento a
+    descontar: `ocupadas == materializadas`, o termo da célula vazia é zero e a
+    conta é a mesma de sempre. É o caso da Clipei, e é por isso que esta
+    mudança não mexe em nenhum arquivo que hoje funciona.
+    """
+    #: 100 KB de corpo para uma dimensão de 500 células: o XML comporta muito
+    #: mais do que ela declara.
+    conteudo = _zip_com_abas({"sheet1.xml": _aba("A1:E100", recheio=100_000)})
+
+    celulas = ingerir_mencoes.celulas_da_maior_aba(conteudo)
+
+    assert celulas is not None
+    assert celulas.ocupadas == celulas.materializadas, "sobrou preenchimento onde não há"
+    assert celulas.materializadas * ingerir_mencoes.MEMORIA_POR_CELULA == pytest.approx(
+        ingerir_mencoes.custo_da_leitura(conteudo), rel=0.01
+    )
+
+
+def test_a_celula_NO_CANTO_tambem_e_paga():
+    """O achado da revisão do Codex contra a primeira versão deste coeficiente.
+
+    EU HAVIA ESCRITO que o calamine "nunca produz preenchimento", e por isso 12
+    bastaria. Ele ignora a dimensão DECLARADA, mas materializa o retângulo da
+    área REALMENTE usada — e basta uma célula no canto para o retângulo ser
+    enorme. Construí o caso e medi:
+
+        arquivo com só `A1=1` e `BR54254=2`
+        calamine -> 54.254 linhas, 3.797.780 células, pico 63,8 MB
+        estimado com o coeficiente 12 -> 43,5 MB      SUBESTIMAVA
+
+    Subestimar é o lado que mata o processo, e é o único erro que esta conta não
+    pode cometer. O coeficiente foi a 24.
+
+    O NÚMERO MEDIDO ESTÁ NA ASSERÇÃO de propósito: um teste que só exigisse
+    "abaixo do orçamento" passaria com qualquer coeficiente, que foi a outra
+    fragilidade apontada na mesma revisão.
+    """
+    conteudo = _zip_com_abas({"sheet1.xml": _aba("A1:BR54254", recheio=600)})
+
+    custo = ingerir_mencoes.custo_da_leitura(conteudo)
+
+    assert custo is not None
+    pico_medido = int(63.8 * 1024 * 1024)
+    assert custo > pico_medido, "a estimativa voltou a subestimar o caso do canto"
 
 
 # -- o orçamento vem do contêiner --------------------------------------------
