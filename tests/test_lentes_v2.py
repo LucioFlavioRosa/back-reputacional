@@ -286,9 +286,9 @@ def test_os_kpis_sao_os_da_especificacao_em_cada_lente(sessao):
     # A SOCIEDADE PERGUNTA "DE QUEM" E "ONDE": numa lente de rede aberta, o
     # volume diz pouco e a voz diz tudo. São os `kpis[]` que o pacote de
     # produção nomeia para ela.
-    assert "Autor mais reativo" in rotulos["sociedade"]
+    assert "Autor mais negativo" in rotulos["sociedade"]
     assert "Figuras públicas" in rotulos["sociedade"]
-    assert "UF mais reativa" in rotulos["sociedade"]
+    assert "UF mais negativa" in rotulos["sociedade"]
 
 
 def test_todo_bloco_de_informacao_tem_ficha(sessao):
@@ -324,17 +324,28 @@ def test_a_legenda_e_a_cor_da_institucional_vem_do_dicionario_de_clima(sessao):
     novo na 0105, Propositivo/Reativo na 0106) sem o `codigo` nunca mudar — e
     a lente institucional não pode repetir o rótulo velho num texto fixo, tem
     de ler o dicionário a cada vez, a mesma fonte que pinta o Painel
-    (`clima.cor_hex`)."""
+    (`clima.cor_hex`).
+
+    PRECISA DE `ligar_o_crm`, achado ao mexer no rótulo de sentimento de
+    notícia (21/10/2026): sem religar a fonte interna, a 0108 já deixou
+    `institucional` lendo pela mesma SENTIMENTO da imprensa, e os dois
+    fallbacks diziam a MESMA coisa até aquele dia — o teste passava sem
+    exercitar o caminho que seu próprio nome descreve. Ver
+    `tests/apoio_da_fonte_interna.py`.
+    """
+    ligar_o_crm(sessao)
     institucional = _dossie(sessao, "institucional")
     assert institucional.evolucao.legenda == ["Propositivo", "Neutro", "Reativo"]
     assert institucional.evolucao.cores == ["#17E3CB", "#8C91A4", "#FF5C60"]
 
-    # A imprensa mede sentimento de mídia, não clima — mas o dono do produto
-    # pediu a MESMA palavra nos dois (0106): Propositivo/Neutro/Reativo. A cor
-    # continua fixa (CORES_DO_SENTIMENTO) e não lida de um dicionário — não
-    # existe uma tabela "sentimento" como existe "clima".
+    # A imprensa mede sentimento de mídia, não clima — e desde o pedido do
+    # cliente de 21/10/2026 as duas palavras voltam a divergir: Positivo/
+    # Neutro/Negativo para notícia, Propositivo/Neutro/Reativo só para reunião
+    # (`clima`, acima). A cor continua fixa (CORES_DO_SENTIMENTO) e não lida
+    # de um dicionário — não existe uma tabela "sentimento" como existe
+    # "clima".
     imprensa = _dossie(sessao, "imprensa")
-    assert imprensa.evolucao.legenda == ["Propositivo", "Neutro", "Reativo"]
+    assert imprensa.evolucao.legenda == ["Positivo", "Neutro", "Negativo"]
     assert imprensa.evolucao.cores == ["#17E3CB", "#8C91A4", "#FF5C60"]
 
 
@@ -1172,9 +1183,9 @@ class TestIndicadoresDaSociedade:
         dossie = _dossie(sessao, "sociedade")
 
         rotulos = [kpi.rotulo for kpi in dossie.kpis]
-        assert "Autor mais reativo" in rotulos
+        assert "Autor mais negativo" in rotulos
         assert "Figuras públicas" in rotulos
-        assert "UF mais reativa" in rotulos
+        assert "UF mais negativa" in rotulos
 
     def test_figuras_publicas_conta_o_PERFIL_e_nao_o_cargo(self, sessao):
         """O cargo do autor chega em 5 itens de 14.855; o perfil, em todos.
@@ -1195,7 +1206,7 @@ class TestIndicadoresDaSociedade:
         _social(sessao, uf="SP", sentimento="pos")
 
         dossie = _dossie(sessao, "sociedade")
-        kpi = next(k for k in dossie.kpis if k.rotulo == "UF mais reativa")
+        kpi = next(k for k in dossie.kpis if k.rotulo == "UF mais negativa")
 
         assert kpi.valor == "RJ"
 
@@ -1419,7 +1430,7 @@ class TestAchadosDaRevisaoDosIndicadores:
             _social(sessao, uf="RJ", sentimento="neg")
 
         dossie = _dossie(sessao, "sociedade")
-        kpi = next(k for k in dossie.kpis if k.rotulo == "UF mais reativa")
+        kpi = next(k for k in dossie.kpis if k.rotulo == "UF mais negativa")
 
         assert kpi.valor == "RJ"
 

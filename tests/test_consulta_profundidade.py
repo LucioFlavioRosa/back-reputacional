@@ -661,20 +661,20 @@ def test_as_frases_dos_niveis_tem_fallback_neutro():
 
 def test_as_frases_com_plural_de_materia_e_de_negativa():
     assert frases.subtitulo_do_destaque_do_subtema(1, 1, "da Imprensa").startswith(
-        "1 matéria, 1 reativa."
+        "1 matéria, 1 negativa."
     )
     assert frases.subtitulo_do_destaque_do_subtema(3, 0, "da Imprensa").startswith(
-        "3 matérias, 0 reativas."
+        "3 matérias, 0 negativas."
     )
     assert frases.titulo_da_lista(
         subtema="X", mes="agosto", volume=3, negativas=1, tier1_no_topo=0,
         negativa_de_maior_impacto=date(2026, 8, 4),
-    ) == "1 de 3 matérias é reativa; a de maior impacto saiu em 04/08"
+    ) == "1 de 3 matérias é negativa; a de maior impacto saiu em 04/08"
     assert frases.titulo_dos_tiers(10, 1) == "Cada matéria de Tier 1 pesa 10 vezes uma de Tier 3"
     assert frases.titulo_dos_tiers(1, 0) == "Nesta calibração só o Tier 1 conta na nota"
     assert frases.subtitulo_da_lista(
         lente_contraida="da Imprensa", valor_tier1=4.0650, mostradas=20, volume=31
-    ).endswith("Tier 1 vale −4,07 quando reativa e +4,07 quando propositiva. "
+    ).endswith("Tier 1 vale −4,07 quando negativa e +4,07 quando positiva. "
                "A lista mostra as 20 de maior impacto de 31.")
 
 
@@ -825,7 +825,7 @@ def test_a_positiva_sem_impacto_nao_e_citada_como_a_de_maior_impacto():
     ]
     sub = _subtema(_consulta(mencoes, calibracao=calibracao)["lentes"][0],
                    "atendimento_ao_cliente")
-    assert "propositiva de maior impacto" not in sub["nivel4"]["leitura"]
+    assert "positiva de maior impacto" not in sub["nivel4"]["leitura"]
     assert sub["nivel4"]["tituloLista"].endswith("saiu em 02/08")
 
 

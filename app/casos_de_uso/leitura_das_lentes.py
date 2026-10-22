@@ -56,7 +56,7 @@ from app.esquemas.lentes import (
 CONCEITO_NS = Conceito(
     termo="NS (saldo de sentimento)",
     texto=(
-        "(propositivas − reativas) ÷ total. Vai de −1 a 1 e vira nota de 0 a 100 "
+        "(positivas − negativas) ÷ total. Vai de −1 a 1 e vira nota de 0 a 100 "
         "por (NS + 1) ÷ 2 × 100. Total zero é sem dado, e não zero."
     ),
 )
@@ -145,7 +145,12 @@ def saida_da_ficha(ficha: Ficha) -> FichaSaida:
     )
 
 
-SENTIMENTO = ["Propositivo", "Neutro", "Reativo"]
+#: PEDIDO DO CLIENTE (21/10/2026): só o sentimento de NOTÍCIA volta a dizer
+#: Positivo/Negativo — o termômetro de REUNIÃO (tabela `clima`, CRM) continua
+#: Propositivo/Reativo, decisão da 0106. São perguntas diferentes por fontes
+#: diferentes (ver o comentário de `CORES_DO_SENTIMENTO` logo abaixo), e agora
+#: também rótulos diferentes — a app deixa de ter uma palavra só para as duas.
+SENTIMENTO = ["Positivo", "Neutro", "Negativo"]
 
 
 #: MESMO VALOR DE `clima.cor_hex` (Turquesa Rio, Cinza 2, Vermelho Pitanga da
@@ -886,7 +891,7 @@ def frase_do_recorte(
     return (
         f"Este recorte {verbo} {pontos} ponto"
         f"{'s' if abs(impacto) >= 2 else ''} da nota de {lente.nome}, "
-        f"com {quantos} itens do mês e {negativas}% de reativas."
+        f"com {quantos} itens do mês e {negativas}% de negativas."
     )
 
 
@@ -1256,7 +1261,7 @@ def temas_mais_falados(
     )
 
 
-_ROTULO_DO_SENTIMENTO = {"pos": "Propositivo", "neu": "Neutro", "neg": "Reativo"}
+_ROTULO_DO_SENTIMENTO = {"pos": "Positivo", "neu": "Neutro", "neg": "Negativo"}
 
 
 _ROTULO_DO_TIER_DA_MATERIA = {
@@ -1353,7 +1358,7 @@ def _mencoes_da_sociedade(
                 # versão desta frase: ela dizia "com data, autor e engajamento",
                 # e os três são nulos possíveis no modelo. Prometer o que o dado
                 # pode não ter é o mesmo erro, do outro lado.
-                "O texto e o link vêm numa amostra das menções (as reativas, "
+                "O texto e o link vêm numa amostra das menções (as negativas, "
                 "as de maior alcance e as mais engajadas). As demais aparecem "
                 "nesta lista com os metadados que vieram — classificação, "
                 "perfil, autor e engajamento quando houver — e não abrem a "
@@ -1537,14 +1542,14 @@ def _kpis_da_imprensa(
             ),
         ),
         KpiSaida(
-            rotulo="Propositivas ou neutras",
+            rotulo="Positivas ou neutras",
             valor=_pct((positivas + neutras) / total if total else None),
-            detalhe=f"{_num(positivas)} propositivas",
+            detalhe=f"{_num(positivas)} positivas",
         ),
         KpiSaida(
-            rotulo="Pico reativo",
+            rotulo="Pico negativo",
             valor=_num(pico["neg"]) if pico and pico["neg"] else "—",
-            detalhe=f"{pico['mes']:%Y-%m}" if pico and pico["neg"] else "sem reativa",
+            detalhe=f"{pico['mes']:%Y-%m}" if pico and pico["neg"] else "sem negativa",
         ),
         KpiSaida(
             rotulo="Veículos Tier 1",
@@ -1717,10 +1722,10 @@ def _kpis_da_sociedade(
         # quem lê uma nota que caiu: `autor_mais_negativo`, `figuras_publicas` e
         # `uf_mais_negativa` no vocabulário do pacote.
         KpiSaida(
-            rotulo="Autor mais reativo",
+            rotulo="Autor mais negativo",
             valor=autores[0]["autor"] if autores else "—",
             detalhe=(
-                f"{_num(autores[0]['negativo'])} menções reativas"
+                f"{_num(autores[0]['negativo'])} menções negativas"
                 if autores
                 else "sem autor informado"
             ),
@@ -1742,10 +1747,10 @@ def _kpis_da_sociedade(
             ),
         ),
         KpiSaida(
-            rotulo="UF mais reativa",
+            rotulo="UF mais negativa",
             valor=mais_negativa["uf"] if mais_negativa else "—",
             detalhe=(
-                f"{_num(mais_negativa['negativo'])} menções reativas"
+                f"{_num(mais_negativa['negativo'])} menções negativas"
                 if mais_negativa
                 else "sem UF informada"
             ),
