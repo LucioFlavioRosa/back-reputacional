@@ -357,6 +357,20 @@ def caminho_da_planilha_em_partes(*, fonte: str, planilha_id: UUID) -> str:
     return f"planilhas/{_sem_acento_nem_surpresa(fonte).lower()}/{planilha_id}"
 
 
+def caminho_dos_bonds_em_partes(*, subida_id: UUID) -> str:
+    """Onde o export de bonds que sobe em partes se monta.
+
+        bonds/<subida_id>
+
+    SEM FONTE NO CAMINHO, ao contrário de `caminho_da_planilha_em_partes`: a
+    importação de bonds é uma só, não há o que separar. E sem o nome do arquivo
+    pela mesma razão de lá — ele só é conhecido quando a montagem termina, e o
+    caminho precisa existir na primeira parte. O nome vai para
+    `planilha_de_bonds_recebida.nome`, que é de onde a tela o lê.
+    """
+    return f"bonds/{subida_id}"
+
+
 def guardar_parte(caminho: str, indice: int, dados: bytes) -> None:
     """Põe uma parte no lugar, sem publicar o arquivo.
 

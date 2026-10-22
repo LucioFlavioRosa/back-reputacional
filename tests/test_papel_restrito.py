@@ -630,6 +630,59 @@ def test_planilha_do_score_guarda_e_descarta_com_o_papel_restrito(
     assert sessao_restrita.scalar(select(PlanilhaRecebida)) is None
 
 
+def test_a_subida_de_bonds_abre_e_descarta_com_o_papel_restrito(
+    sessao_restrita, semente, monkeypatch
+):
+    """`planilha_de_bonds_recebida` (0113) é tabela NOVA — mesmo ponto cego.
+
+    O bloco de tabelas futuras da 0009 concede `select, insert, update` e só;
+    `delete` é por tabela e explícito. Este projeto já pagou o esquecimento três
+    vezes (0041 `interacao_area`, 0068 `importacao`, 0092 `planilha_recebida`),
+    e nas três a suíte ficou VERDE — porque ela roda como superusuário — e só o
+    ambiente implantado quebrou.
+
+    AQUI APAGAR É O CAMINHO NORMAL, não exceção: abrir subida nova descarta a
+    pendente da mesma pessoa (índice único de `criado_por`), e importar tira a
+    linha. Sem o `grant`, a primeira subida funciona e a segunda devolve 500 —
+    na semana seguinte, quando alguém repete a rotina.
+
+    O CAMINHO VAI PELO CASO DE USO, e não por um `delete` cru: é o que prova
+    que a ordem real — select, delete, flush, insert — atravessa com a conta
+    restrita.
+    """
+    from app.armazenamento import blob
+    from app.banco.tabelas_mercado import PlanilhaDeBondsRecebida
+    from app.casos_de_uso import planilha_de_bonds
+
+    #: O armazenamento sai de cena de propósito: o que está sob teste é o
+    #: privilégio no Postgres, e um Azurite ausente faria o teste falhar pelo
+    #: motivo errado.
+    monkeypatch.setattr(blob, "ligado", lambda: True)
+
+    primeira = planilha_de_bonds.comecar(
+        sessao_restrita, usuario_id=semente.id, nome="a.xlsx", tamanho=10
+    )
+    sessao_restrita.flush()
+    assert primeira.id is not None
+
+    # A SEGUNDA subida apaga a primeira — primeiro `delete` do caminho.
+    segunda = planilha_de_bonds.comecar(
+        sessao_restrita, usuario_id=semente.id, nome="b.xlsx", tamanho=20
+    )
+    sessao_restrita.flush()
+    assert segunda.caminho_substituido is not None, "não substituiu a anterior"
+
+    # E a importação descarta a linha — segundo `delete`.
+    assert (
+        planilha_de_bonds.descartar(
+            sessao_restrita, subida_id=segunda.id, usuario_id=semente.id
+        )
+        is not None
+    )
+    sessao_restrita.flush()
+    assert sessao_restrita.scalar(select(PlanilhaDeBondsRecebida)) is None
+
+
 def test_papel_da_aplicacao_executa_a_funcao_de_concessao(sessao_restrita, semente):
     """O outro lado: a barreira não pode impedir o trabalho.
 
