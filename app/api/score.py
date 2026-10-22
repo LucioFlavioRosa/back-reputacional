@@ -272,7 +272,7 @@ LIMITES_DOS_SINAIS: tuple[tuple[str, str, str, str, str | None], ...] = (
     (
         "deslocamento_pp",
         "Deslocamento · pontos percentuais",
-        "Quanto a fatia reativa precisa recuar, ou subir, para virar sinal.",
+        "Quanto a fatia negativa precisa recuar, ou subir, para virar sinal.",
         "decimal",
         "p.p.",
     ),

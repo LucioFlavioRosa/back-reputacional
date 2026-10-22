@@ -127,7 +127,7 @@ def test_evolucao_fala_de_materia_e_nao_repete_a_manchete_da_nota(sessao, impren
 
     assert dossie.evolucao.titulo == "Evolução das matérias"
     assert dossie.evolucao.conclusao == (
-        "6 matérias em junho: 33% propositivas, 33% neutras, 33% reativas."
+        "6 matérias em junho: 33% positivas, 33% neutras, 33% negativas."
     )
     assert dossie.evolucao.conclusao != dossie.manchete
 

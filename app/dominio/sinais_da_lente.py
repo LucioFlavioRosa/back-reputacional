@@ -56,7 +56,7 @@ class Tom(StrEnum):
 #: regra de coerência: ao lado da manchete há um chip dizendo "+11" ou "−10". Um
 #: sinal antigo e intenso na manchete, com o chip mostrando o mês, faz a tela
 #: se contradizer na mesma linha.
-TIPOS_DE_MOVIMENTO_RECENTE: tuple[str, ...] = ("Virada", "Alta do reativo", "Recuperação")
+TIPOS_DE_MOVIMENTO_RECENTE: tuple[str, ...] = ("Virada", "Alta do negativo", "Recuperação")
 
 TIPO_DE_LACUNA = "Lacuna de dado"
 
@@ -343,7 +343,7 @@ def _alta_do_negativo(
     if delta_pp < limites.deslocamento_pp:
         return None
     return Sinal(
-        tipo="Alta do reativo",
+        tipo="Alta do negativo",
         frase=frases.alta_do_negativo(
             antes.fatia_negativa, antes.mes, depois.fatia_negativa, depois.mes
         ),

@@ -312,7 +312,7 @@ def test_toda_frase_abre_com_a_formula_do_indice():
     antes dela. A frase precisa dizer as duas coisas, nessa ordem."""
     for lente in ("imprensa", "mercado", "sociedade", "clientes", "institucional"):
         assert formula_aplicada(lente, PADRAO).startswith(
-            "NS = (propositivas − reativas) ÷ total; score = (NS + 1) ÷ 2 × 100."
+            "NS = (positivas − negativas) ÷ total; score = (NS + 1) ÷ 2 × 100."
         )
 
 
