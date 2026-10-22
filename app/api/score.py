@@ -49,6 +49,7 @@ from app.casos_de_uso import (
     ingerir_mencoes,
     planilha_do_score,
     reconciliar_lista_de_veiculos,
+    subida_em_partes,
     veiculos_da_imprensa,
 )
 from app.casos_de_uso.ler_sinais_da_lente import regua_dos_sinais
@@ -1777,7 +1778,7 @@ def comecar_subida_em_partes(
     #: depende do armazenamento, e um campo que às vezes falta obrigaria o
     #: cliente a tratar duas formas de resposta em vez de um campo nulo.
     return SubidaEmPartesSaida(
-        planilha_id=aberta.id, tamanho_da_parte=planilha_do_score.TAMANHO_DA_PARTE
+        planilha_id=aberta.id, tamanho_da_parte=subida_em_partes.TAMANHO_DA_PARTE
     )
 
 
