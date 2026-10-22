@@ -56,6 +56,11 @@ from sqlalchemy.orm import Session
 from app.banco.tabelas_lentes import MencaoNaoClassificada
 from app.banco.tabelas_score import Mencao, ScoreFonte, ScoreMesFonte
 from app.casos_de_uso import temas_da_mencao, unidade_da_mencao, veiculos_da_imprensa
+from app.casos_de_uso.leitor_de_planilha import (
+    abrir_pelo_openpyxl,
+    celulas_pelo_calamine,
+    como_o_openpyxl,
+)
 from app.casos_de_uso.veiculos_da_imprensa import nomes_da_lista
 from app.configuracao import obter_configuracao
 from app.dominio.erros import RegraViolada
@@ -153,18 +158,11 @@ def _linhas_da_aba(
     return _lido(conteudo).linhas(mapeamento)
 
 
-def _como_o_openpyxl(celula: object) -> object:
-    """Uma célula do calamine na forma que o openpyxl entregava.
-
-    Chamada uma vez por célula — 300 mil vezes num arquivo de 25.000 linhas —,
-    e por isso é só dois testes. Mesmo assim custa uma fração do que se ganhou:
-    a decodificação caiu de 2,55s para 0,27s.
-    """
-    if celula == "":
-        return None
-    if type(celula) is float and celula.is_integer():
-        return int(celula)
-    return celula
+#: A NORMALIZAÇÃO DE CÉLULA MUDOU DE CASA em 22/10/2026, para
+#: `leitor_de_planilha`, quando a ingestão de bonds passou a ler pelo mesmo
+#: mecanismo. O nome continua aqui porque é por ele que os testes deste módulo
+#: a alcançam — mover um nome de teste não é o conserto, é ruído no diff.
+_como_o_openpyxl = como_o_openpyxl
 
 
 # =============================================================================
@@ -722,69 +720,18 @@ class ArquivoLido:
         return self._lido[chave]
 
     def _pelo_calamine(self, mapeamento: Mapeamento) -> list[tuple]:
-        """A aba lida pelo calamine, com as células na forma do openpyxl.
+        """A aba lida pelo calamine — ver `leitor_de_planilha`.
 
-        AS TRÊS DIFERENÇAS, achadas comparando célula por célula os dois leitores
-        nos dois arquivos reais, e resolvidas aqui para que nada rio abaixo
-        precise saber qual leitor trouxe a célula:
-
-        * VAZIO vem como `""`, e não `None`. `_texto` já trata os dois, mas
-          `linha.get(coluna) is None` em qualquer lugar passaria a ser falso;
-        * INTEIRO vem como `float`, e a coluna `ID` da Clipei é numérica:
-          `id_fonte` gravaria `"12345.0"` no lugar de `"12345"`, e é por esse
-          campo que se compara matéria com matéria;
-        * `to_python()` PULA as linhas vazias do topo por padrão. O leitor
-          procura o cabeçalho nas 20 primeiras linhas contando a partir da
-          primeira: pular uma mudaria o que ele acha. `skip_empty_area=False`
-          devolve a aba como ela é.
+        O MÉTODO FICA, embora seja uma linha: é por este nome que
+        `test_a_planilha_e_aberta_uma_vez` conta as decodificações, e contar
+        decodificação é o que impede a conferência de voltar a ler o mesmo
+        arquivo quatro vezes.
         """
-        from python_calamine import CalamineWorkbook
-
-        livro = CalamineWorkbook.from_filelike(io.BytesIO(self._conteudo))
-        nomes = livro.sheet_names
-        if mapeamento.aba and mapeamento.aba not in nomes:
-            raise RegraViolada(
-                f"A planilha não tem a aba {mapeamento.aba!r}. "
-                f"Abas encontradas: {', '.join(nomes)}."
-            )
-        if not nomes:
-            raise RegraViolada("A planilha está vazia.")
-        aba = livro.get_sheet_by_name(mapeamento.aba or nomes[0])
-        return [
-            tuple(_como_o_openpyxl(celula) for celula in linha)
-            for linha in aba.to_python(skip_empty_area=False)
-        ]
+        return celulas_pelo_calamine(self._conteudo, mapeamento.aba)
 
     def _abrir(self, mapeamento: Mapeamento):
         """Abre o arquivo e devolve a planilha e a aba desta fonte."""
-        try:
-            from openpyxl import load_workbook
-        except ModuleNotFoundError as erro:  # pragma: no cover - dependência declarada
-            raise RegraViolada("Leitura de planilha indisponível neste servidor.") from erro
-
-        # `read_only` não carrega a planilha inteira na memória de uma vez, e
-        # `data_only` traz o VALOR de uma célula com fórmula — sem ele, a coluna
-        # de engajamento calculada chegaria como a string "=SOMA(...)".
-        try:
-            planilha = load_workbook(io.BytesIO(self._conteudo), read_only=True, data_only=True)
-        except Exception as erro:
-            # Um `.xls` antigo, um CSV renomeado ou um upload truncado chegam
-            # aqui. Sem a tradução, o openpyxl devolveria 500 e a pessoa leria
-            # "erro interno" para um arquivo que ela mesma pode trocar.
-            raise RegraViolada(
-                "Não consegui abrir o arquivo como planilha .xlsx. "
-                "Se ele veio em .xls ou .csv, salve como .xlsx e envie de novo."
-            ) from erro
-
-        if mapeamento.aba and mapeamento.aba in planilha.sheetnames:
-            return planilha, planilha[mapeamento.aba]
-        if mapeamento.aba:
-            abas = ", ".join(planilha.sheetnames)
-            planilha.close()
-            raise RegraViolada(
-                f"A planilha não tem a aba {mapeamento.aba!r}. Abas encontradas: {abas}."
-            )
-        return planilha, planilha[planilha.sheetnames[0]]
+        return abrir_pelo_openpyxl(self._conteudo, mapeamento.aba)
 
 
 def _lido(conteudo: bytes | ArquivoLido) -> ArquivoLido:

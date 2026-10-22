@@ -52,6 +52,7 @@ from app.casos_de_uso.ingerir_mencoes import (
     custo_da_leitura,
     orcamento_de_leitura,
 )
+from app.casos_de_uso.leitor_de_planilha import celulas_pelo_calamine
 from app.dominio.erros import RegraViolada
 from app.dominio.leitura_de_bonds import Leitura, ler
 
@@ -104,37 +105,63 @@ def ler_arquivo(conteudo: bytes) -> Leitura:
     essa armadilha. A lista é o formato que o domínio puro aceita, e é também o
     que permite ao leitor olhar as cinco primeiras linhas de cabeçalho antes de
     percorrer a série.
+
+    O MESMO MECANISMO DAS LENTES desde 22/10/2026: calamine primeiro, openpyxl
+    de reserva, pelo `leitor_de_planilha`. Antes esta tela abria o arquivo pelo
+    openpyxl direto — a plataforma tinha cinco leitores e três comportamentos, e
+    o mesmo arquivo era lido de um jeito aqui e de outro na tela ao lado.
     """
     if len(conteudo) > TAMANHO_MAXIMO:
         raise RegraViolada("A planilha de bonds passa do tamanho que se aceita ler.")
     if not conteudo.startswith(ASSINATURA_ZIP):
         raise RegraViolada("O arquivo não é um .xlsx — os primeiros bytes não são de ZIP.")
 
-    #: O LIMITE DE BYTES NÃO PROTEGE A MEMÓRIA, e isto é achado de revisão.
-    #: `TAMANHO_MAXIMO` são 80 MB de ZIP COMPRIMIDO, e um `.xlsx` de poucos MB
-    #: pode trazer milhões de células: `list(iter_rows())` materializa todas, e
-    #: o processo morre por memória com o arquivo "dentro do limite".
-    #:
-    #: REAPROVEITA `custo_da_leitura`, que estima sem descomprimir a planilha
-    #: (~9 ms: lê o diretório central do ZIP e 6 KB da aba maior), e
-    #: `orcamento_de_leitura`, que DEDUZ o teto do contêiner em vez de fixá-lo —
-    #: é o que faz a decisão viajar entre o Container Apps de 4 GiB e o cluster
-    #: do cliente.
-    #:
-    #: AQUI RECUSA, não degrada. A ingestão de menções tem um caminho lento de
-    #: memória constante para cair quando não cabe; esta não tem, e inventar um
-    #: seria código sem usuário. Recusar com a frase certa é melhor que morrer
-    #: sem frase nenhuma — e o número vai na mensagem, porque quem opera o
-    #: cluster precisa dele para decidir.
-    custo = custo_da_leitura(conteudo)
-    orcamento = orcamento_de_leitura()
-    if custo is not None and custo > orcamento:
-        raise RegraViolada(
-            "A planilha de bonds é grande demais para a memória deste ambiente: "
-            f"a leitura pediria ~{custo // (1024 * 1024)} MB e o orçamento é de "
-            f"~{orcamento // (1024 * 1024)} MB."
-        )
+    try:
+        linhas = celulas_pelo_calamine(conteudo)
+    except RegraViolada:
+        #: RECUSA DE CADASTRO passa direto: arquivo vazio é recado à pessoa, não
+        #: falha de leitor, e tentar o outro daria a mesma resposta.
+        raise
+    except Exception:
+        #: QUALQUER OUTRA FALHA DO CALAMINE cai no openpyxl, que leu estes
+        #: arquivos desde que a tela existe. Um leitor novo pode recusar um
+        #: `.xlsx` estranho que o antigo aceitava, e a subida não pode morrer
+        #: por causa de uma otimização.
+        linhas = _pelo_leitor_de_reserva(conteudo)
 
+    return ler(linhas)
+
+
+def _pelo_leitor_de_reserva(conteudo: bytes) -> list[tuple]:
+    """O openpyxl, para quando o calamine recusa o arquivo.
+
+    E É AQUI, E SÓ AQUI, QUE A MEMÓRIA É MEDIDA — a mudança de 22/10/2026.
+
+    A guarda valia para o caminho inteiro, e recusou um export de 649 KB do Q&A
+    dizendo que a leitura pediria 507 MB contra 204 de orçamento. A conta não
+    era absurda: o openpyxl obedece à `<dimension>` declarada e materializa a
+    linha até a última coluna. O que passou a estar errado foi aplicá-la SEMPRE,
+    depois que o caminho normal virou o calamine — que devolve só a área usada.
+    Medido no arquivo dele:
+
+        openpyxl   54.254 linhas   3.797.780 células   36,6 MB
+        calamine    1.755 linhas     121.095 células    2,3 MB
+
+    A ÁREA USADA, E NÃO "POUCA CÉLULA": basta um valor no canto para o retângulo
+    do calamine ser tão grande quanto o do openpyxl — ver o caso medido em
+    `MEMORIA_POR_CELULA_VAZIA`. Por isso a guarda continua existindo, e por isso
+    ela vale neste caminho: quando o calamine recusa o arquivo, quem lê é o
+    leitor que obedece à dimensão declarada, que é o teto de todos os casos.
+
+    `custo_da_leitura` estima sem descomprimir (~9 ms) e `orcamento_de_leitura`
+    DEDUZ o teto do contêiner em vez de fixá-lo — é o que faz a decisão viajar
+    entre o Container Apps de 4 GiB e o cluster do cliente.
+
+    AQUI RECUSA, não degrada. A ingestão de menções tem um caminho lento de
+    memória constante para cair quando não cabe; esta não tem, e inventar um
+    seria código sem usuário. O número vai na mensagem, porque quem opera o
+    cluster precisa dele para decidir.
+    """
     try:
         pasta = load_workbook(io.BytesIO(conteudo), read_only=True, data_only=True)
     except (BadZipFile, KeyError, ValueError) as erro:
@@ -153,11 +180,18 @@ def ler_arquivo(conteudo: bytes) -> Leitura:
         #: analista deu à folha ("Planilha2 (2)" no arquivo medido), e exigir um
         #: nome recusaria o arquivo certo por um detalhe que ninguém controla.
         folha = pasta[pasta.sheetnames[0]]
-        linhas = list(folha.iter_rows(values_only=True))
+
+        custo = custo_da_leitura(conteudo)
+        orcamento = orcamento_de_leitura()
+        if custo is not None and custo > orcamento:
+            raise RegraViolada(
+                "A planilha de bonds é grande demais para a memória deste ambiente: "
+                f"a leitura pediria ~{custo // (1024 * 1024)} MB e o orçamento é de "
+                f"~{orcamento // (1024 * 1024)} MB."
+            )
+        return list(folha.iter_rows(values_only=True))
     finally:
         pasta.close()
-
-    return ler(linhas)
 
 
 def conferir(sessao: Session, conteudo: bytes) -> Conferencia:
