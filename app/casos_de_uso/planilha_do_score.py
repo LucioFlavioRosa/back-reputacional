@@ -62,7 +62,7 @@ from sqlalchemy.orm import Session
 
 from app.armazenamento import blob
 from app.banco.tabelas_score import PlanilhaRecebida, ScoreFonte
-from app.casos_de_uso import ingerir_mencoes
+from app.casos_de_uso import ingerir_mencoes, subida_em_partes
 from app.dominio.erros import Conflito, NaoEncontrado, RegraViolada
 
 #: O que um `.xlsx` é para o Storage. A planilha NÃO passa por
@@ -193,40 +193,13 @@ def _registrar(
     return Guardada(id=planilha_id, caminho_substituido=substituido)
 
 
-#: O PEDAÇO, e o número sai de medição, não de gosto.
+#: O TAMANHO DO PEDAÇO E AS RECUSAS MUDARAM DE CASA em 22/10/2026, para
+#: `subida_em_partes`: elas não dependem de ser a planilha do Score que sobe, e
+#: a Importação de bonds passou três meses sem o mecanismo justamente porque ele
+#: nasceu colado aqui. Ver o cabeçalho daquele módulo.
 #:
-#: O TETO QUE MANDA é o do ingress do Container Apps: ~240 s por requisição, e
-#: ele NÃO é configurável. Medido no navegador dele em 16/10/2026, pela
-#: telemetria do próprio painel:
-#:
-#:     1,42 MB  ->    4,1 s  -> 200
-#:     1,33 MB  ->   73,2 s  -> 200
-#:    10,53 MB  ->  212,4 s  -> 403   (o ingress desistindo)
-#:    10,53 MB  ->  212,6 s  -> 403
-#:    10,53 MB  ->  227,4 s  -> 403
-#:
-#: A banda de subida varia de ~18 KB/s a ~350 KB/s na mesma máquina e na mesma
-#: hora. A 18 KB/s, 10,53 MB precisariam de 390 s e nunca caberiam em 240.
-#:
-#: 1 MB DÁ ~57 s NO PIOR CASO MEDIDO, quatro vezes de margem. Pedaço maior
-#: compra menos requisições e gasta a margem que justamente não existe; pedaço
-#: menor multiplica idas sem comprar segurança que já está em 4x.
-TAMANHO_DA_PARTE = 1 * 1024 * 1024
-
-
-def _partes_maximas() -> int:
-    """O máximo de partes que uma subida pode ter, derivado e não escolhido.
-
-    EXISTE PORQUE `partes` VEM DO CLIENTE. Sem este limite,
-    `partes=1_000_000_000` na conferência fazia o processo construir a lista de
-    blocos ANTES de falar com o Azure — uma requisição derrubava a réplica.
-    Achado da revisão do Codex em 16/10/2026.
-
-    FUNÇÃO E NÃO CONSTANTE porque `TAMANHO_DA_PARTE` é trocado nos testes, e uma
-    constante calculada no import ficaria com o valor antigo — o teto deixaria
-    de valer exatamente onde se quer provar que ele vale.
-    """
-    return ingerir_mencoes.TAMANHO_MAXIMO // TAMANHO_DA_PARTE + 1
+#: O QUE FICOU AQUI é o que é do Score: a linha de `PlanilhaRecebida`, o dono, a
+#: fonte, o caminho no armazenamento e o que fazer com o arquivo montado.
 
 
 def comecar(
@@ -370,54 +343,17 @@ def receber_parte(
     que consultar e a rota aceitava parte de qualquer sessão para qualquer uuid.
     Ver `_subida_em_voo`.
 
-    OS DOIS TETOS SÃO O QUE SOBROU DO ABUSO. A rota da parte é isenta do limite
-    genérico de corpo — tem de ser, senão a primeira parte seria recusada — e o
-    servidor lê a parte inteira na memória. Sem estes dois, uma sessão autorizada
-    mandava partes de qualquer tamanho e acumulava além do teto:
-
-      * cada parte cabe em `TAMANHO_DA_PARTE`;
-      * o índice cabe no que o TAMANHO DECLARADO comporta.
-
-    Juntos eles limitam o arquivo montado a pouco mais do que foi declarado — e o
-    declarado já foi conferido contra os 80 MB na abertura. A conferência final
-    ainda mede os bytes de verdade, que é o que de fato autoriza.
-
-    A PARTE VAZIA É RECUSADA: o Blob aceita bloco de zero byte, e um deles no
-    meio da lista produz um `.xlsx` truncado que só falha na leitura, longe da
-    causa.
+    OS TETOS DA PARTE ESTÃO EM `subida_em_partes.conferir_a_parte`: tamanho do
+    pedaço, índice dentro do declarado e parte vazia. São regras de qualquer
+    subida em partes, não da planilha do Score.
     """
     subida = _subida_em_voo(
         sessao, planilha_id=planilha_id, fonte=fonte, usuario_id=usuario_id
     )
-    esperadas = _partes_esperadas(subida.tamanho)
-    if not dados:
-        raise RegraViolada("A parte chegou vazia. Mande os bytes dela.")
-    if indice < 0 or indice >= esperadas:
-        raise RegraViolada(
-            "Esta parte está fora do tamanho que a subida declarou. "
-            "Comece a subida de novo."
-        )
-    #: PARTE CHEIA, EXCETO A ÚLTIMA — e esta regra é o que faz a aritmética do
-    #: teto fechar. Com ela, o arquivo montado não passa de
-    #: `partes_esperadas * TAMANHO_DA_PARTE`, que é o declarado arredondado para
-    #: cima; sem ela, partes menores permitiriam mais partes que o esperado e o
-    #: total voltaria a ser ilimitado.
-    #:
-    #: O SERVIDOR DITA O TAMANHO na abertura, então o cliente não tem o que
-    #: adivinhar. A recusa diz o número para quem estiver escrevendo outro
-    #: cliente.
-    ultima = indice == esperadas - 1
-    if len(dados) > TAMANHO_DA_PARTE or (not ultima and len(dados) != TAMANHO_DA_PARTE):
-        raise RegraViolada(
-            f"Cada parte tem {TAMANHO_DA_PARTE} bytes, menos a última. "
-            "Comece a subida de novo."
-        )
+    subida_em_partes.conferir_a_parte(
+        indice=indice, dados=dados, tamanho_declarado=subida.tamanho
+    )
     blob.guardar_parte(subida.caminho, indice, dados)
-
-
-def _partes_esperadas(tamanho_declarado: int) -> int:
-    """Quantas partes um arquivo daquele tamanho tem, para o teto do índice."""
-    return -(-tamanho_declarado // TAMANHO_DA_PARTE)
 
 
 def montar(
@@ -435,10 +371,9 @@ def montar(
     ser conferido é exatamente o que ficou gravado, e não o que o servidor
     pensava ter montado.
 
-    `partes` VEM DO CLIENTE, e por isso tem dois tetos: `PARTES_MAXIMAS`, que é
-    derivado do teto da planilha, e o que o tamanho DECLARADO desta subida
-    comporta. Sem eles, `partes=1_000_000_000` construía a lista de blocos na
-    memória antes de qualquer chamada ao Azure.
+    OS TETOS DE `partes` ESTÃO EM `subida_em_partes.conferir_a_contagem`, e o
+    teto do arquivo vai daqui: 80 MB é regra da planilha do Score, não da
+    subida em partes.
 
     PARTE FALTANDO VIRA RECUSA COM NOME, e não erro de leitura: o serviço recusa
     a lista inteira quando um bloco não está lá, e sem esta tradução a pessoa
@@ -448,13 +383,11 @@ def montar(
     subida = _subida_em_voo(
         sessao, planilha_id=planilha_id, fonte=fonte, usuario_id=usuario_id
     )
-    if partes <= 0:
-        raise RegraViolada("Diga quantas partes a planilha tem.")
-    if partes > _partes_maximas() or partes > _partes_esperadas(subida.tamanho):
-        raise RegraViolada(
-            "Esta contagem de partes não corresponde ao tamanho que a subida "
-            "declarou. Comece a subida de novo."
-        )
+    subida_em_partes.conferir_a_contagem(
+        partes=partes,
+        tamanho_declarado=subida.tamanho,
+        teto_do_arquivo=ingerir_mencoes.TAMANHO_MAXIMO,
+    )
     try:
         blob.juntar_partes(subida.caminho, partes, TIPO_DA_PLANILHA)
     except Exception as erro:  # noqa: BLE001 - bloco ausente, expirado ou id errado

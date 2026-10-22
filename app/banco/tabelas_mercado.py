@@ -11,10 +11,21 @@ não é dele, e é justamente a organização por domínio que o dono do produto
 
 from __future__ import annotations
 
-from datetime import date
+import uuid
+from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, ForeignKey, Numeric, SmallInteger, Text
+from sqlalchemy import (
+    Boolean,
+    Date,
+    ForeignKey,
+    Integer,
+    Numeric,
+    SmallInteger,
+    Text,
+    func,
+)
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.banco.sessao import Tabela
@@ -88,3 +99,50 @@ class BondCotacao(Tabela):
         Numeric(10, 4), nullable=True
     )
     yield_pct: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
+
+
+class PlanilhaDeBondsRecebida(Tabela):
+    """A subida em partes do export de bonds. Espelha a `0113`.
+
+    GUARDA O BYTE, NUNCA A CONCLUSÃO: nada do que a conferência calculou está
+    aqui. A importação relê a planilha inteira e reconfere contra o cadastro do
+    instante em que ela roda — o que esta linha dispensa é o UPLOAD, e só.
+
+    POR QUE ELA EXISTE. O ingress do Container Apps encerra a requisição por
+    volta de 240 s e não é configurável; o export de bonds é cumulativo e cresce
+    toda semana. Sem subir em pedaços, é questão de tempo até a tela devolver
+    403 sem explicação — foi o que aconteceu com a planilha do Score em 15/10.
+
+    É A MESMA IDEIA DE `PlanilhaRecebida`, SEM A FONTE: a importação de bonds é
+    uma só, então o dono sozinho já identifica a subida em voo.
+    """
+
+    __tablename__ = "planilha_de_bonds_recebida"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    #: Onde o byte mora. Quem monta a árvore é `blob.caminho_dos_bonds_em_partes`.
+    caminho: Mapped[str] = mapped_column(Text)
+    #: O nome que a pessoa escolheu, para a tela dizer o que ela vai importar.
+    nome: Mapped[str] = mapped_column(Text)
+    tamanho: Mapped[int] = mapped_column(Integer)
+    #: CONTROLE DE ACESSO, não auditoria: só quem conferiu importa. Por isso
+    #: NOT NULL — uma linha sem dono não teria como ser recusada.
+    criado_por: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("usuario.id")
+    )
+    criado_em: Mapped[datetime] = mapped_column(server_default=func.now())
+    #: NULO ENQUANTO A PLANILHA SOBE EM PARTES — ver `subindo`.
+    completa_em: Mapped[datetime | None] = mapped_column(nullable=True)
+
+    @property
+    def subindo(self) -> bool:
+        """A planilha ainda está chegando em partes?
+
+        PROPRIEDADE E NÃO COMPARAÇÃO SOLTA: `completa_em is None` espalhado por
+        quatro lugares é a forma de um deles divergir. E a importação depende
+        disto — importar uma planilha que ainda sobe leria um arquivo que não
+        existe, ou pior, um pela metade.
+        """
+        return self.completa_em is None

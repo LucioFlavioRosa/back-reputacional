@@ -22,8 +22,18 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 from typing import Annotated
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    Query,
+    UploadFile,
+    status,
+)
 from pydantic import BaseModel
 
 from app.api.dependencias import (
@@ -32,7 +42,14 @@ from app.api.dependencias import (
     exigir_portal_de_inteligencia_de_mercado,
 )
 from app.banco.sessao import SessaoDoPedido
-from app.casos_de_uso import impacto_na_janela, ingerir_bonds, serie_de_mercado
+from app.casos_de_uso import (
+    impacto_na_janela,
+    ingerir_bonds,
+    planilha_de_bonds,
+    planilha_do_score,
+    serie_de_mercado,
+    subida_em_partes,
+)
 
 rotas = APIRouter(
     prefix="/api/mercado",
@@ -363,6 +380,93 @@ def impacto_na_janela_(
     )
 
 
+class SubidaDeBondsSaida(BaseModel):
+    """O que o cliente precisa para subir o export em pedaços.
+
+    `subida_id` NULO SIGNIFICA "AQUI NÃO DÁ, MANDE DE UMA VEZ" — ambiente sem
+    armazenamento não tem onde montar. A tela cai no caminho de sempre em vez
+    de mostrar uma recusa crua, que é o que acontecia quando esta resposta era
+    um 422: o cliente não tinha como distinguir essa recusa das outras.
+
+    `tamanho_da_parte` VAI MESMO ASSIM, e não condicionalmente: ele não depende
+    do armazenamento, e um campo que às vezes falta obrigaria o cliente a tratar
+    duas formas de resposta em vez de um campo nulo.
+    """
+
+    subida_id: UUID | None
+    tamanho_da_parte: int
+
+
+@rotas.post("/bonds/upload")
+def abrir_subida_de_bonds(
+    sessao: Sessao,
+    usuario: Annotated[UsuarioLogado, Depends(exigir_escrita)],
+    tarefas: BackgroundTasks,
+    tamanho: Annotated[int, Form()],
+    nome: Annotated[str, Form()],
+) -> SubidaDeBondsSaida:
+    """Abre uma subida em partes para um export grande.
+
+    POR QUE ESTE CAMINHO EXISTE. O ingress do Container Apps encerra a
+    requisição por volta de 240 s, e isso NÃO é configurável. Medido em
+    16/10/2026 no ambiente implantado, com a banda variando de ~18 KB/s a
+    ~350 KB/s na mesma hora:
+
+        1,42 MB  ->    4,1 s  -> 200
+       10,53 MB  ->  212,4 s  -> 403   (o ingress desistindo)
+
+    O export de bonds é CUMULATIVO e cresce toda semana. Hoje tem 1,05 MB e
+    passa; sem este caminho, é questão de tempo até a tela devolver 403 sem
+    explicação — foi exatamente o que aconteceu com a planilha do Score em
+    15/10/2026.
+
+    NÃO SUBSTITUI A SUBIDA DE UMA VEZ. Arquivo pequeno não paga onze idas, e
+    ambiente sem armazenamento não tem onde montar: ali esta rota devolve
+    `subida_id` nulo e a tela usa o de sempre.
+    """
+    aberta = planilha_de_bonds.comecar(
+        sessao, usuario_id=usuario.id, nome=nome, tamanho=tamanho
+    )
+    tarefas.add_task(planilha_do_score.apagar_byte, aberta.caminho_substituido)
+    return SubidaDeBondsSaida(
+        subida_id=aberta.id, tamanho_da_parte=subida_em_partes.TAMANHO_DA_PARTE
+    )
+
+
+@rotas.put(
+    "/bonds/upload/{subida_id}/parte/{indice}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def subir_parte_dos_bonds(
+    sessao: Sessao,
+    usuario: Annotated[UsuarioLogado, Depends(exigir_escrita)],
+    subida_id: UUID,
+    indice: int,
+    parte: Annotated[UploadFile, File()],
+) -> None:
+    """Recebe uma parte. Não publica nada.
+
+    `PUT` E NÃO `POST` porque a operação é idempotente por índice: reenviar a
+    parte 3 substitui a parte 3, e é isso que permite ao cliente repetir a que
+    falhou sem recomeçar a subida.
+
+    A PARTE NÃO EXISTE PARA NINGUÉM até a montagem — são blocos não commitados
+    no armazenamento. Uma subida abandonada não deixa arquivo pela metade para
+    alguém ler, e o serviço descarta os blocos em sete dias.
+
+    E A SUBIDA TEM DONO: `receber_parte` consulta a linha por (id, dono, ainda
+    subindo) antes de escrever. Sem isso, conhecer o uuid de outra pessoa
+    bastaria para mandar parte na subida dela.
+    """
+    planilha_de_bonds.receber_parte(
+        sessao,
+        subida_id=subida_id,
+        usuario_id=usuario.id,
+        indice=indice,
+        dados=parte.file.read(),
+    )
+
+
 @rotas.post("/bonds/conferencia")
 def conferir_bonds(
     sessao: Sessao,
@@ -392,11 +496,9 @@ def importar_bonds(
 ) -> ImportacaoDeBondsSaida:
     """Grava as cotações, por `upsert` na chave `(bond_ticker, data)`.
 
-    RECEBE O ARQUIVO DE NOVO, e não um identificador do que a conferência
-    guardou. A montagem por partes de `planilha_do_score` é por fonte do Score e
-    generalizá-la para outro domínio é bloco próprio; enquanto o arquivo tem 1,05
-    MB — abaixo do limite de 1,2 MB que faz o front fatiar — reenviar os bytes é
-    o que a tela já faria de qualquer forma.
+    RECEBE O ARQUIVO DE NOVO, e é o caminho do arquivo PEQUENO. Para o grande
+    existe `/bonds/upload/{subida_id}/importar`, que lê o que a conferência já
+    montou em vez de pedir os bytes outra vez — ver aquela rota.
 
     SUBIR O MESMO ARQUIVO DUAS VEZES É INOFENSIVO, e isso é propriedade da chave
     composta, não gentileza desta rota: a segunda subida atualiza as mesmas
@@ -405,4 +507,62 @@ def importar_bonds(
     """
     resultado = ingerir_bonds.gravar(sessao, arquivo.file.read())
     sessao.commit()
+    return ImportacaoDeBondsSaida(**vars(resultado))
+
+
+@rotas.post("/bonds/upload/{subida_id}/conferencia")
+def conferir_bonds_em_partes(
+    sessao: Sessao,
+    usuario: Annotated[UsuarioLogado, Depends(exigir_escrita)],
+    subida_id: UUID,
+    partes: Annotated[int, Form()],
+) -> ConferenciaDeBondsSaida:
+    """Junta as partes e confere o arquivo montado. NÃO grava cotação nenhuma.
+
+    MONTA E LÊ DE VOLTA DO ARMAZENAMENTO, e não confere o que o servidor pensa
+    ter montado: é a leitura do que ficou gravado que garante que a prévia
+    mostrada é a do arquivo que a importação vai usar.
+
+    A SUBIDA FICA MARCADA COMO COMPLETA com o tamanho REAL. O declarado era
+    afirmação do cliente e serviu para dimensionar os tetos das partes.
+    """
+    subida, bytes_da_planilha = planilha_de_bonds.montar(
+        sessao, subida_id=subida_id, usuario_id=usuario.id, partes=partes
+    )
+    conferencia = ingerir_bonds.conferir(sessao, bytes_da_planilha)
+    planilha_de_bonds.concluir(subida, tamanho=len(bytes_da_planilha))
+    return ConferenciaDeBondsSaida(**vars(conferencia))
+
+
+@rotas.post("/bonds/upload/{subida_id}/importar")
+def importar_bonds_em_partes(
+    sessao: Sessao,
+    usuario: Annotated[UsuarioLogado, Depends(exigir_escrita)],
+    tarefas: BackgroundTasks,
+    subida_id: UUID,
+) -> ImportacaoDeBondsSaida:
+    """Grava as cotações do arquivo que a conferência já montou.
+
+    SEM REENVIAR OS BYTES, que é o ponto de toda a subida em partes: o arquivo
+    já está no armazenamento e esta rota o lê de lá. Antes, a tela mandava o
+    export INTEIRO duas vezes — uma para conferir e outra para importar — e cada
+    uma delas tinha de caber nos 240 s do ingress.
+
+    RELÊ E RECONFERE: a importação não confia no que a conferência calculou. Ela
+    lê a planilha de novo e compara com o cadastro do instante em que roda, que
+    é o que torna seguro haver minutos entre uma tela e outra.
+
+    O BYTE SAI DEPOIS DE GRAVADO, e numa tarefa de fundo: apagar é ida à rede e
+    não pertence à transação. Se a tarefa não rodar, sobra um byte sem linha —
+    que é o lado barato de errar.
+    """
+    subida, bytes_da_planilha = planilha_de_bonds.recuperar(
+        sessao, subida_id=subida_id, usuario_id=usuario.id
+    )
+    resultado = ingerir_bonds.gravar(sessao, bytes_da_planilha)
+    caminho = planilha_de_bonds.descartar(
+        sessao, subida_id=subida_id, usuario_id=usuario.id
+    )
+    sessao.commit()
+    tarefas.add_task(planilha_do_score.apagar_byte, caminho)
     return ImportacaoDeBondsSaida(**vars(resultado))

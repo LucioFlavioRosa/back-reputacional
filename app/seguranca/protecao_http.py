@@ -209,6 +209,22 @@ _CAMINHOS_DE_UPLOAD = (
     #: exatamente o esquecimento que a nota da planilha do Score registra.
     re.compile(r"^/api/mercado/bonds/conferencia$"),
     re.compile(r"^/api/mercado/bonds/importar$"),
+    #: A PARTE DO EXPORT DE BONDS, que sobe em pedaços desde 22/10/2026. É a
+    #: SEXTA vez que o comentário do topo se cumpre — e esta ia doer: a parte
+    #: tem 1 MB de arquivo, e o `Content-Length` do multipart que a carrega
+    #: passa de 1.048.576 por causa das fronteiras e dos nomes de campo.
+    #:
+    #: ACHADO DE REVISÃO, e os testes NÃO o pegavam: eles cortam a parte em
+    #: 2048 bytes para o arquivo de teste ser pequeno, então o multipart cabia
+    #: no teto e a rota passava. Em produção, com 1 MiB, a primeira parte
+    #: falharia — e, pelo mecanismo descrito acima, como falha de REDE, não
+    #: como 413. O teste que acompanha esta linha mede o caminho, não o
+    #: tamanho, justamente por isso.
+    #:
+    #: O `$` IMPORTA: `^…/upload$` não casa `…/upload/<id>/parte/0`, então a
+    #: isenção da abertura não cobriria esta — e a abertura nem precisa dela,
+    #: porque manda só dois campos de formulário.
+    re.compile(rf"^/api/mercado/bonds/upload/{_UUID}/parte/[0-9]+$"),
 )
 
 

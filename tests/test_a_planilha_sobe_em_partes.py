@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session
 from app.armazenamento import blob
 from app.banco.sessao import obter_sessao
 from app.banco.tabelas_score import Mencao, PlanilhaRecebida
-from app.casos_de_uso import ingerir_mencoes, planilha_do_score
+from app.casos_de_uso import ingerir_mencoes, subida_em_partes
 from main import app
 from tests.test_e2e_postgres import URL
 
@@ -156,8 +156,14 @@ def parte_pequena(monkeypatch):
 
     O TETO DE PARTES É FUNÇÃO e não constante por causa disto: calculado no
     import, ele ficaria com o valor de 1 MB e o limite deixaria de valer aqui.
+
+    A TROCA É EM `subida_em_partes`, e não mais em `planilha_do_score`: a
+    constante mudou de casa em 22/10/2026 junto com as recusas que a usam. Se
+    alguém a trocar no módulo errado, o patch não alcança quem decide e TODO
+    teste deste arquivo volta a passar com uma parte só — provando o caminho de
+    uma vez só com o nome do outro.
     """
-    monkeypatch.setattr(planilha_do_score, "TAMANHO_DA_PARTE", _PARTE_DE_TESTE)
+    monkeypatch.setattr(subida_em_partes, "TAMANHO_DA_PARTE", _PARTE_DE_TESTE)
 
 
 def _planilha(veiculos: list[str] = ("Jornal de Teste",)) -> bytes:
@@ -227,7 +233,7 @@ def test_a_planilha_sobe_em_partes_e_a_conferencia_responde_igual(
     abertura = _comecar(cliente, len(conteudo))
     assert abertura.status_code == 200, abertura.text
     planilha_id = abertura.json()["planilha_id"]
-    assert abertura.json()["tamanho_da_parte"] == planilha_do_score.TAMANHO_DA_PARTE
+    assert abertura.json()["tamanho_da_parte"] == subida_em_partes.TAMANHO_DA_PARTE
 
     for indice, pedaco in enumerate(pedacos):
         assert _parte(cliente, planilha_id, indice, pedaco).status_code == 204
@@ -682,7 +688,7 @@ def test_a_PARTE_MAIOR_QUE_O_TETO_e_recusada(cliente, armazenamento):
     tamanho, e o servidor as lia inteiras na memória. Achado da revisão.
     """
     planilha_id = _comecar(cliente, 10 * 1024 * 1024).json()["planilha_id"]
-    grande = b"x" * (planilha_do_score.TAMANHO_DA_PARTE + 1)
+    grande = b"x" * (subida_em_partes.TAMANHO_DA_PARTE + 1)
 
     resposta = _parte(cliente, planilha_id, 0, grande)
 
