@@ -253,6 +253,22 @@ MEMORIA_POR_CELULA = 140
 #: 36,6 MB / 3,8 M células são 9,7 B/célula com TUDO incluído. 12 arredonda para
 #: cima, como os outros coeficientes deste bloco.
 #:
+#: E O OUTRO LEITOR? Esta conta é compartilhada, e quem mede um caminho e
+#: conclui pelos dois erra. Medi o MESMO arquivo pelo calamine, que é por onde
+#: as lentes leem (`_pelo_calamine`):
+#:
+#:     openpyxl   54.254 linhas   3.797.780 células   36,6 MB
+#:     calamine    1.755 linhas     121.095 células    2,3 MB
+#:
+#: O calamine IGNORA a dimensão declarada e devolve só a área usada — os dados
+#: de verdade são 1.755 linhas. Ele custa mais por célula (20 B contra 9,7,
+#: porque a lista de listas do `to_python()` coexiste com a lista de tuplas),
+#: mas nunca produz o preenchimento: a contagem dele é limitada pelo conteúdo
+#: real, que é o mesmo que o XML comporta. Como `ocupadas` sai do XML e é
+#: cobrada a 140, a estimativa cobre com folga os ~20 B/célula do calamine em
+#: toda a área usada. Por isso o coeficiente da vaga, medido no openpyxl, não
+#: subestima o caminho das lentes.
+#:
 #: A ASSIMETRIA ERA O ESTRAGO: superestimar nas lentes só derruba para o caminho
 #: lento, que continua correto; em `ingerir_bonds` não há caminho lento, e a
 #: mesma conta recusava o arquivo na cara de quem subia.
