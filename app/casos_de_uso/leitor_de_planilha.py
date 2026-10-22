@@ -41,7 +41,6 @@ import io
 
 from app.dominio.erros import RegraViolada
 
-
 #: O QUE O EXCEL ESCREVE NUMA CÉLULA QUE DEU ERRO (`<c t="e"><v>#N/A</v></c>`).
 #:
 #: OS DOIS LEITORES DISCORDAM AQUI, e foi achado de revisão. Medido em

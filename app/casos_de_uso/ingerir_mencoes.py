@@ -681,7 +681,8 @@ class ArquivoLido:
             #: erro chegava como texto — o que fazia a MESMA planilha produzir
             #: dados diferentes conforme coubesse ou não na memória.
             cru = aba.iter_rows(values_only=True)
-            yield from self._dicionarios((sem_erro_do_excel(l) for l in cru), mapeamento)
+            limpas = (sem_erro_do_excel(linha) for linha in cru)
+            yield from self._dicionarios(limpas, mapeamento)
         finally:
             planilha.close()
 
