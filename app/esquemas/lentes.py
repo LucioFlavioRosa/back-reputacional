@@ -183,9 +183,15 @@ class DossieSaida(BaseModel):
     #: Os temas (Subcategoria da Clipei) mais falados do mês — ver
     #: `temas_mais_falados`. Vazio na Institucional.
     temas_mais_falados: BlocoSaida
-    #: O drill-down até a linha: as matérias mais recentes por trás da nota —
-    #: ver `materias_recentes`. Vazio na Institucional (não vem de clipping).
-    materias_recentes: BlocoSaida
+    #: O BLOCO "ÚLTIMAS MATÉRIAS" SAIU DAQUI em 23/10/2026. Ele listava as
+    #: matérias por trás da nota no corpo do dossiê; agora quem as mostra é o
+    #: MODAL de aprofundamento, no recorte do veículo que a pessoa clicou no
+    #: Termômetro — o princípio que o produto já seguia nos outros cliques:
+    #: "ao clicar em um dado temos que abrir um modal com o deep diving".
+    #:
+    #: A FUNÇÃO `materias_recentes` CONTINUA, e é a mesma: ela alimenta
+    #: `itens_do_recorte` na rota do recorte, que é o que o modal desenha.
+    #: Saiu o campo do dossiê, não a leitura.
     fatos: list[FatoSaida] = Field(default_factory=list)
     #: DOIS para quem alcança a lente inteira — e UM para quem não alcança o
     #: diretório. O piso desceu de 2 para 1 porque o painel que NOMEIA gente de

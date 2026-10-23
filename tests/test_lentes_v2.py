@@ -176,6 +176,20 @@ class _QuemOlha:
     ve_diretorio: bool = True
 
 
+def _itens_do_recorte(sessao, codigo: str, mes: str = "2026-06"):
+    """A lista de itens — hoje ela chega pela rota do RECORTE, e não pelo dossiê.
+
+    O bloco "Últimas matérias" saiu do dossiê em 23/10/2026: quem mostra as
+    menções agora é o MODAL de aprofundamento. A função que as monta
+    (materias_recentes) é a MESMA, e é por isso que estes testes continuam —
+    eles cobrem a leitura, não o lugar onde ela aparecia.
+    """
+    from app.api.lentes import obter_recorte
+
+    return obter_recorte(
+        sessao=sessao, usuario=_QuemOlha(), codigo=codigo, mes=mes
+    ).itens_do_recorte
+
 def _dossie(sessao, codigo: str, mes: str = "2026-06", *, edita: bool = False):
     from app.api.lentes import obter_dossie
 
@@ -1302,10 +1316,10 @@ class TestMencoesDaSociedade:
             engajamento=420,
         )
 
-        dossie = _dossie(sessao, "sociedade")
+        itens = _itens_do_recorte(sessao, "sociedade")
 
-        assert dossie.materias_recentes.dados, "a lente tem menção com texto"
-        linha = dossie.materias_recentes.dados[0]
+        assert itens.dados, "a lente tem menção com texto"
+        linha = itens.dados[0]
         assert linha["texto"] == "Falta água no bairro há três dias"
         assert linha["link"] == "https://instagram.com/p/abc"
         assert linha["autor"] == "@vizinho"
@@ -1315,9 +1329,9 @@ class TestMencoesDaSociedade:
         nada de uma menção de rede. A Sociedade recebe as colunas dela."""
         _social(sessao, titulo_texto="qualquer coisa")
 
-        dossie = _dossie(sessao, "sociedade")
+        itens = _itens_do_recorte(sessao, "sociedade")
 
-        chaves = [coluna.chave for coluna in dossie.materias_recentes.colunas]
+        chaves = [coluna.chave for coluna in itens.colunas]
         assert "texto" in chaves
         assert "autor" in chaves
         assert "engajamento" in chaves
@@ -1342,8 +1356,8 @@ class TestMencoesDaSociedade:
         _social(sessao, titulo_texto="o que se lê", data=_date(2026, 6, 2), engajamento=10)
         _social(sessao, titulo_texto="o mais engajado", data=_date(2026, 6, 1), engajamento=9000)
 
-        dossie = _dossie(sessao, "sociedade")
-        textos = [linha["texto"] for linha in dossie.materias_recentes.dados]
+        itens = _itens_do_recorte(sessao, "sociedade")
+        textos = [linha["texto"] for linha in itens.dados]
 
         assert textos[0] == "o mais engajado"
         assert textos[1] == "o que se lê"
@@ -1368,10 +1382,10 @@ class TestMencoesDaSociedade:
         """
         _social(sessao, titulo_texto=None, link=None)
 
-        dossie = _dossie(sessao, "sociedade")
+        itens = _itens_do_recorte(sessao, "sociedade")
 
-        assert len(dossie.materias_recentes.dados) == 1
-        linha = dossie.materias_recentes.dados[0]
+        assert len(itens.dados) == 1
+        linha = itens.dados[0]
         assert linha["texto"] is None
         assert linha["link"] is None
         #: O QUE SOBROU É O QUE JUSTIFICA MOSTRAR A LINHA: sem estes campos, a
@@ -1388,21 +1402,21 @@ class TestMencoesDaSociedade:
         """
         _social(sessao, titulo_texto="post sem reação", engajamento=0)
 
-        dossie = _dossie(sessao, "sociedade")
+        itens = _itens_do_recorte(sessao, "sociedade")
         linha = next(
-            item for item in dossie.materias_recentes.dados if item["texto"] == "post sem reação"
+            item for item in itens.dados if item["texto"] == "post sem reação"
         )
 
         assert linha["engajamento"] is not None
         assert any(
-            "texto" in lacuna for lacuna in dossie.materias_recentes.ficha.lacunas
+            "texto" in lacuna for lacuna in itens.ficha.lacunas
         )
 
     def test_a_imprensa_continua_com_as_colunas_de_clipping(self, sessao):
         """O contrapeso: a lente que já tinha a lista não muda."""
-        dossie = _dossie(sessao, "imprensa")
+        itens = _itens_do_recorte(sessao, "imprensa")
 
-        chaves = [coluna.chave for coluna in dossie.materias_recentes.colunas]
+        chaves = [coluna.chave for coluna in itens.colunas]
         assert "veiculo" in chaves
         assert "tier" in chaves
 

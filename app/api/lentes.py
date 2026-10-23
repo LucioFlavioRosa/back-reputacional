@@ -222,7 +222,6 @@ def obter_dossie(
     blocos_dos_paineis = paineis(sessao, lente, alvo, meses, calibracao, filtro)
     drivers = drivers_e_riscos(sessao, lente, alvo, calibracao, filtro)
     temas_falados = temas_mais_falados(sessao, lente, alvo, calibracao, filtro)
-    materias = materias_recentes(sessao, lente, alvo, calibracao, filtro)
     #: `ve_diretorio` CHEGA ATÉ AQUI porque uma das abas publica nome de gente de
     #: fora: na Imprensa, `autor` é o jornalista — o mesmo cadastro de terceiros
     #: que a matriz de jornalistas publica e que esta permissão guarda. Achado de
@@ -313,7 +312,6 @@ def obter_dossie(
         sinais_da_evolucao=leitura.sinais_da_evolucao,
         drivers_e_riscos=drivers,
         temas_mais_falados=temas_falados,
-        materias_recentes=materias,
         fatos=[
             FatoSaida(mes=f"{fato.mes:%Y-%m}", texto=fato.texto, efeito=fato.efeito)
             for fato in repositorio_score.fatos_do_periodo(sessao, meses)
