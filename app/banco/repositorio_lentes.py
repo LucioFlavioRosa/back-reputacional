@@ -1414,61 +1414,6 @@ def autores_por_sentimento(
     )
 
 
-def veiculos_por_sentimento(
-    sessao: Session,
-    lente_id: int,
-    mes: date,
-    calibracao: Calibracao,
-    filtro: FiltroDeMencoes | None = None,
-    quantos: int = 5,
-    so_do_tier: str | None = None,
-) -> list[dict]:
-    """Os veículos com mais matérias no mês — "quem é a cobertura" desta
-    lente, e o saldo de sentimento de cada um.
-
-    `so_do_tier` restringe a um tier (`muito_relevante` para o Top 10 Tier 1 do
-    painel "Tier do veículo × sentimento"), somado ao filtro da tela.
-
-    POR VOLUME, E NÃO POR SALDO — mesmo critério de `unidades_da_lente` e do
-    placar de clima do Painel (CRM): o veículo que mais falou da companhia
-    entra primeiro, com o saldo que ele tiver, bom ou ruim. Ordenar pelo
-    saldo esconderia o volume: um veículo com 2 matérias e 100% negativo
-    pesaria mais que um com 40 matérias e 60% negativo, que é o que de fato
-    está formando a opinião do mês.
-    """
-    consulta = (
-        select(
-            Mencao.veiculo,
-            func.count().filter(Mencao.sentimento == "pos"),
-            func.count().filter(Mencao.sentimento == "neu"),
-            func.count().filter(Mencao.sentimento == "neg"),
-        )
-        .select_from(Mencao)
-        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
-        .where(
-            ScoreFonte.lente_id == lente_id,
-            Mencao.mes == primeiro_dia(mes),
-            Mencao.veiculo.is_not(None),
-            *((Mencao.tier == so_do_tier,) if so_do_tier else ()),
-            *so_fontes_ligadas(calibracao),
-            *condicoes_do_filtro(filtro),
-        )
-        .group_by(Mencao.veiculo)
-        .order_by((func.count()).desc(), Mencao.veiculo.asc())
-        .limit(quantos)
-    )
-    return [
-        {
-            "veiculo": veiculo,
-            "positivo": pos,
-            "neutro": neu,
-            "negativo": neg,
-            "total": pos + neu + neg,
-        }
-        for veiculo, pos, neu, neg in sessao.execute(consulta)
-    ]
-
-
 def veiculos_tier1_do_periodo(
     sessao: Session,
     lente_id: int,

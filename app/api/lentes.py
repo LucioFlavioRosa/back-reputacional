@@ -62,9 +62,6 @@ from app.casos_de_uso.leitura_das_lentes import (
     saida_da_ficha,
     temas_mais_falados,
     trilha_do_recorte,
-    veiculos,
-    veiculos_tier1,
-    volume_por_tier,
 )
 from app.casos_de_uso.ler_sinais_da_lente import ler_sinais, regua_dos_sinais
 from app.dominio.erros import NaoEncontrado
@@ -223,9 +220,6 @@ def obter_dossie(
     #: antes de qualquer teste rodar (F823).
     bloco_da_evolucao = evolucao(sessao, lente, alvo, meses, calibracao, None, filtro)
     blocos_dos_paineis = paineis(sessao, lente, alvo, meses, calibracao, filtro)
-    bloco_do_volume = volume_por_tier(sessao, lente, alvo, calibracao, filtro)
-    top_veiculos, clima_por_veiculos = veiculos(sessao, lente, alvo, calibracao, filtro)
-    tier1 = veiculos_tier1(sessao, lente, alvo, calibracao, filtro)
     drivers = drivers_e_riscos(sessao, lente, alvo, calibracao, filtro)
     temas_falados = temas_mais_falados(sessao, lente, alvo, calibracao, filtro)
     materias = materias_recentes(sessao, lente, alvo, calibracao, filtro)
@@ -317,10 +311,6 @@ def obter_dossie(
             else com_conclusao(bloco_da_evolucao, leitura.titulo_da_evolucao)
         ),
         sinais_da_evolucao=leitura.sinais_da_evolucao,
-        volume_por_tier=bloco_do_volume,
-        top_veiculos=top_veiculos,
-        clima_por_veiculos=clima_por_veiculos,
-        veiculos_tier1=tier1,
         drivers_e_riscos=drivers,
         temas_mais_falados=temas_falados,
         materias_recentes=materias,
