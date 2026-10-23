@@ -158,11 +158,22 @@ que está sendo desenhado**, e não o painel:
 | Clique | Painel 1 (Tier × sentimento) | Painel 2 (Top veículos) | Painel 3 (Termômetro) | Dossiê |
 |---|---|---|---|---|
 | num **tier** | **inteiro**, destacado | só os daquele tier | só os daquele tier | intocado |
-| num **veículo** | só o tier dele | **inteiro**, destacado | **inteiro**, destacado | intocado |
+| num **veículo** | só o tier dele | **inteiro**, destacado | **só o escolhido** | intocado |
 
-Os dois painéis de veículo ficam inteiros **juntos**, porque compartilham o
-eixo. Filtrar o painel 3 pelo veículo escolhido no painel 2 o deixaria com uma
-barra só — que é o modo de falha que o molde existe para evitar.
+**Cada painel diz de qual filtro ele se exime**, e não há uma regra única: o de
+tier exime-se do tier, o Top exime-se do veículo, e o Termômetro **não se exime
+de nada**.
+
+O TERMÔMETRO MOSTRA SÓ O VEÍCULO ESCOLHIDO — revisto em 23/10/2026, depois de
+o dono ver as duas formas no ambiente. A primeira versão o deixava inteiro e
+apenas esmaecia os outros, pelo argumento de que uma barra só não se compara
+com nada. Ele quis o recorte, e o argumento contra caiu na parte que importava:
+como o **Top continua inteiro**, é por ele que se troca de veículo, e trocar
+segue sendo **um** clique. Só a comparação *dentro* do Termômetro se perde.
+
+E AS DUAS COLUNAS QUE SE EXIMEM precisam se eximir, pelo motivo invertido: se a
+de tier estreitasse pelo tier escolhido, ficaria com um degrau só e ninguém
+trocaria de tier sem desfazer o clique antes.
 
 Clicar de novo no mesmo valor desfaz, como no molde.
 
@@ -295,13 +306,20 @@ um recorte pousar sobre outro.
 
 **Front**
 
-* domínio: a regra do `exceto` por **eixo** — clicar num tier deixa o painel de
-  tier inteiro e estreita os dois de veículo; clicar num veículo deixa **os
-  dois** de veículo inteiros e estreita o de tier. Este é o teste que prende a
-  diferença em relação ao molde de três níveis.
+* domínio: **de qual filtro cada coluna se exime** — clicar num tier deixa a
+  coluna de tier inteira e estreita as duas de veículo; clicar num veículo
+  deixa o **Top** inteiro, reduz o **Termômetro** ao escolhido, e estreita a de
+  tier. Este é o teste que prende a diferença em relação ao molde de três
+  níveis, onde a regra é uma só para todas as colunas.
 * domínio: NSS e score conferidos contra valores escritos à mão.
+* domínio: a contraprova de que só o eixo do veículo mudou — escolher um
+  **tier** continua estreitando o Termômetro.
 * componente: os três painéis desenhados, os chips com o rótulo do eixo, o
   Limpar zerando os dois, e o botão "Ver todos" abrindo em 5.
+* componente: os **dois eixos juntos** — o Termômetro mostra a interseção, e
+  com um veículo que não publicou no tier escolhido ele fica **vazio com o
+  recado** ("Nenhuma matéria com veículo neste recorte"), não um quadro vazio
+  sem explicação.
 
 **O que morre**
 
