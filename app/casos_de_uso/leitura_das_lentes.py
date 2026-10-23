@@ -1070,8 +1070,14 @@ TETO_DE_MATERIAS = 5
 
 
 TETO_DE_MATERIAS_FILTRADO = 30
-#: "ÚLTIMAS MATÉRIAS" DA IMPRENSA E DO MERCADO MOSTRAM 15, por pedido: o card
-#: rola, e cada linha abre o detalhe da matéria num popup.
+#: QUINZE QUANDO NÃO HÁ RECORTE, por pedido: a lista rola, e cada linha abre o
+#: detalhe da matéria num popup.
+#:
+#: O NOME GUARDA O CARD QUE SAIU. Era o teto do bloco "Últimas matérias" do
+#: dossiê, que acabou em 23/10/2026; hoje a mesma montagem alimenta
+#: `itens_do_recorte`, e este número rege o caso em que o modal abre sem filtro
+#: nenhum — o clique num mês da Evolução com a barra de filtros limpa. O nome
+#: fica porque é o mesmo pedido e o mesmo número; trocá-lo só mudaria a palavra.
 TETO_DAS_ULTIMAS_MATERIAS = 15
 #: O TETO DE VEÍCULOS SAIU DAQUI em 23/10/2026, com os blocos que ele cortava.
 #: Quantos veículos aparecem passou a ser decisão da TELA: a rota nova manda o
