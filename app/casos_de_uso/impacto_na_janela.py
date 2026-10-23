@@ -69,7 +69,7 @@ from sqlalchemy.orm import Session
 from app.banco import repositorio_score
 from app.banco.tabelas_score import Lente
 from app.dominio.erros import NaoEncontrado, RegraViolada
-from app.dominio.score import Contagem, pesos_exatos, ponderar
+from app.dominio.score import Contagem, Tier, pesos_exatos, ponderar
 from app.dominio.tema_do_mes import PONTOS_POR_NS
 
 #: A lente desta leitura. Ver o cabeçalho do módulo.
@@ -135,9 +135,14 @@ class ImpactoNaJanela:
     #: ponto do índice para dizer, e a tela precisa dizer ISSO em vez de mostrar
     #: dois quadros vazios — é o que `mes_sem_base` sinaliza.
     fatia_das_lentes: float = 0.0
-    #: AS LENTES QUE ENTRARAM NA SOMA, na ordem do cadastro — e não as três
-    #: fixas: a lente sem dado no mês não contribui, e dizer que ela entrou
-    #: faria a tela prometer um universo que a conta não cobriu.
+    #: AS LENTES QUE ENTRARAM NA SOMA — e não as três fixas: a lente sem dado no
+    #: mês não contribui, e dizer que ela entrou faria a tela prometer um
+    #: universo que a conta não cobriu.
+    #:
+    #: NA ORDEM PEDIDA, e antes era "na ordem do cadastro" — mudou com o filtro
+    #: rápido (`_ler_lentes` devolve na ordem de `codigos`, que sem escolha é a
+    #: de `LENTES_DOS_REGISTROS`). A tela imprime esta lista na linha da régua,
+    #: então a ordem é visível; ninguém a lê por posição.
     lentes: tuple[str, ...] = ()
     positivos: list[ImpactoDoGrupo] = field(default_factory=list)
     negativos: list[ImpactoDoGrupo] = field(default_factory=list)
@@ -248,6 +253,27 @@ def _lentes_escolhidas(lentes: Sequence[str] | None) -> tuple[str, ...]:
     return tuple(dict.fromkeys(lentes))
 
 
+def _tier_escolhido(tier: str | None) -> str | None:
+    """O tier pedido, conferido contra a escala da Clipei.
+
+    POR SIMETRIA COM `nivel`, que já é conferido aqui — achado de revisão. A
+    regex da rota protege quem chega por HTTP, mas estas funções são chamadas
+    direto (testes, comandos, qualquer leitura futura), e `Mencao.tier == tier`
+    com um valor que não existe na escala devolve ZERO EM SILÊNCIO: um quadro
+    vazio tem a mesma cara de "nada impactou neste tier".
+
+    `Tier.SEM` É RECUSADO DE PROPÓSITO: é o tier vazio das fontes que não têm
+    tier (redes, canais próprios, CRM), e filtrar o quadro por ele pediria "as
+    matérias de imprensa sem veículo com tier" — pergunta que a tela não faz.
+    """
+    if tier is None:
+        return None
+    aceitos = tuple(t.value for t in Tier if t is not Tier.SEM)
+    if tier not in aceitos:
+        raise RegraViolada(f"Tier desconhecido: {tier}. Aceitos: {', '.join(aceitos)}.")
+    return tier
+
+
 def _ler_lentes(
     sessao: Session, codigos: Sequence[str], escolhidas: bool
 ) -> list[Lente]:
@@ -311,6 +337,7 @@ def registros(
         raise RegraViolada(f"Nivel desconhecido: {nivel}.")
 
     escolhidas = _lentes_escolhidas(lentes)
+    tier = _tier_escolhido(tier)
     lidas = _ler_lentes(sessao, escolhidas, bool(lentes))
 
     return repositorio_score.registros_do_grupo_na_janela(
@@ -370,6 +397,7 @@ def ler(
     #: Sem escolha, as três de sempre. A conta continua por lente e somada
     #: depois, cada uma com o seu denominador e o seu peso no índice.
     escolhidas = _lentes_escolhidas(lentes)
+    tier = _tier_escolhido(tier)
     lentes_lidas = _ler_lentes(sessao, escolhidas, bool(lentes))
 
     #: INCLUSIVA NAS DUAS PONTAS, e `dias - 1` é o que faz "15 dias" serem quinze

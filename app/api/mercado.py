@@ -272,7 +272,14 @@ def registros_da_janela(
         str | None,
         Query(
             pattern="^(imprensa|mercado|institucional)(,(imprensa|mercado|institucional))*$",
-            description="as lentes do quadro, separadas por vírgula; vazio = as três",
+            #: OMITIR, E NÃO MANDAR VAZIO — achado de revisão. A descrição dizia
+            #: "vazio = as três", e `lentes=` é 422: a regex exige ao menos uma
+            #: lente. Quem lesse o contrato ao pé da letra escreveria a chamada
+            #: que a rota recusa. A tela manda a chave só quando há escolha.
+            description=(
+                "as lentes do quadro, separadas por vírgula. OMITIR o parâmetro é "
+                "pedir as três; mandá-lo vazio é 422."
+            ),
         ),
     ] = None,
     tier: Annotated[
@@ -344,7 +351,14 @@ def impacto_na_janela_(
         str | None,
         Query(
             pattern="^(imprensa|mercado|institucional)(,(imprensa|mercado|institucional))*$",
-            description="as lentes do quadro, separadas por vírgula; vazio = as três",
+            #: OMITIR, E NÃO MANDAR VAZIO — achado de revisão. A descrição dizia
+            #: "vazio = as três", e `lentes=` é 422: a regex exige ao menos uma
+            #: lente. Quem lesse o contrato ao pé da letra escreveria a chamada
+            #: que a rota recusa. A tela manda a chave só quando há escolha.
+            description=(
+                "as lentes do quadro, separadas por vírgula. OMITIR o parâmetro é "
+                "pedir as três; mandá-lo vazio é 422."
+            ),
         ),
     ] = None,
     tier: Annotated[
