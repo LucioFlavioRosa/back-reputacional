@@ -155,7 +155,7 @@ type Selecao = { tier?: string; veiculo?: string };
 Duas chaves, três painéis. O `exceto` do molde passa a ser **o eixo do painel
 que está sendo desenhado**, e não o painel:
 
-| Clique | Painel 1 (tier) | Painel 2 (top) | Painel 3 (termômetro) | Dossiê |
+| Clique | Painel 1 (Tier × sentimento) | Painel 2 (Top veículos) | Painel 3 (Termômetro) | Dossiê |
 |---|---|---|---|---|
 | num **tier** | **inteiro**, destacado | só os daquele tier | só os daquele tier | intocado |
 | num **veículo** | só o tier dele | **inteiro**, destacado | **inteiro**, destacado | intocado |
@@ -174,8 +174,10 @@ Clicar de novo no mesmo valor desfaz, como no molde.
    `muito_relevante, relevante, menos_relevante`. Impacto em pontos na ponta.
    **Somente a distribuição de sentimento por tier** — a rosca de volume não
    volta, por ser a mesma leitura em outra forma.
-2. **Matérias por tier e Top veículos** — `ColunasEmpilhadas` por volume
-   decrescente, sentimento dentro da barra, impacto na ponta.
+2. **Top veículos** — `ColunasEmpilhadas` por volume decrescente, sentimento
+   dentro da barra, impacto na ponta. O título perdeu o "Matérias por tier e"
+   (decisão de 23/10/2026): a rosca de volume saiu e a distribuição por tier é
+   o painel 1, então o nome antigo prometia duas leituras e entrega uma.
 3. **Termômetro por Veículos** — `BarraDivergentePorItem` na variante
    `termometro`, com NSS e score pela conta de `ufsDoExplorador`:
    `nss = (pos − neg) ÷ total × 100` e `score = (NS ponderado + 1) ÷ 2 × 100`.
