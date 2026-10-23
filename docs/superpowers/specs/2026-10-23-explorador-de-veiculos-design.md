@@ -306,13 +306,20 @@ um recorte pousar sobre outro.
 
 **Front**
 
-* domínio: a regra do `exceto` por **eixo** — clicar num tier deixa o painel de
-  tier inteiro e estreita os dois de veículo; clicar num veículo deixa **os
-  dois** de veículo inteiros e estreita o de tier. Este é o teste que prende a
-  diferença em relação ao molde de três níveis.
+* domínio: **de qual filtro cada coluna se exime** — clicar num tier deixa a
+  coluna de tier inteira e estreita as duas de veículo; clicar num veículo
+  deixa o **Top** inteiro, reduz o **Termômetro** ao escolhido, e estreita a de
+  tier. Este é o teste que prende a diferença em relação ao molde de três
+  níveis, onde a regra é uma só para todas as colunas.
 * domínio: NSS e score conferidos contra valores escritos à mão.
+* domínio: a contraprova de que só o eixo do veículo mudou — escolher um
+  **tier** continua estreitando o Termômetro.
 * componente: os três painéis desenhados, os chips com o rótulo do eixo, o
   Limpar zerando os dois, e o botão "Ver todos" abrindo em 5.
+* componente: os **dois eixos juntos** — o Termômetro mostra a interseção, e
+  com um veículo que não publicou no tier escolhido ele fica **vazio com o
+  recado** ("Nenhuma matéria com veículo neste recorte"), não um quadro vazio
+  sem explicação.
 
 **O que morre**
 
