@@ -103,6 +103,24 @@ def imprensa_de_junho(sessao):
     return linhas
 
 
+def _itens(sessao, codigo: str = "imprensa", **filtro):
+    """A lista de itens — hoje pela rota do RECORTE, não pelo dossiê.
+
+    O bloco "Últimas matérias" saiu do dossiê em 23/10/2026: quem mostra as
+    matérias é o MODAL de aprofundamento, que o clique num veículo do Termômetro
+    abre. A função que as monta (materias_recentes) é a MESMA — estes testes
+    cobrem a leitura, e só mudou por onde ela chega.
+    """
+    parametros = dict(
+        tier=None, veiculo=None, atributo=None, tema=None, perfil_autor=None, uf=None,
+        subtema=None, autor=None, empresa=None, tema_n1=None, tema_n2=None, tema_n3=None,
+        sentimento=None,
+    )
+    parametros.update(filtro)
+    return obter_recorte(
+        sessao=sessao, usuario=_QuemOlha(), codigo=codigo, mes="2026-06", **parametros
+    ).itens_do_recorte
+
 def _dossie(sessao, **filtro):
     return obter_dossie(
         sessao=sessao, usuario=_QuemOlha(), codigo="imprensa", mes="2026-06", **filtro
@@ -220,9 +238,7 @@ def test_opcoes_de_filtro_vazias_fora_do_mes_semeado(sessao, imprensa_de_junho):
 def test_materias_recentes_mostra_as_seis_abaixo_do_teto(sessao, imprensa_de_junho):
     """Seis menções semeadas, teto de 15 (`TETO_DAS_ULTIMAS_MATERIAS`, por
     pedido: o card rola e mostra as 15 últimas) — as seis aparecem."""
-    dossie = _dossie(sessao)
-
-    bloco = dossie.materias_recentes
+    bloco = _itens(sessao)
     assert bloco.tipo == "tabela"
     assert bloco.subtipo == "materias"
     assert len(bloco.dados) == 6
@@ -234,9 +250,7 @@ def test_materias_recentes_mostra_as_seis_abaixo_do_teto(sessao, imprensa_de_jun
 def test_materias_recentes_respeita_o_mesmo_filtro_da_tela(sessao, imprensa_de_junho):
     """Filtrar por tier muito_relevante deixa só as duas matérias daquele
     tier — o mesmo recorte que já muda a nota e o painel A."""
-    dossie = _dossie(sessao, tier="muito_relevante")
-
-    linhas = dossie.materias_recentes.dados
+    linhas = _itens(sessao, tier="muito_relevante").dados
     assert len(linhas) == 2
     assert {linha["tier"] for linha in linhas} == {"Tier 1"}
     assert {linha["veiculo"] for linha in linhas} == {"Veículo A"}
@@ -244,10 +258,10 @@ def test_materias_recentes_respeita_o_mesmo_filtro_da_tela(sessao, imprensa_de_j
 
 def test_materias_recentes_vazia_na_institucional(sessao):
     """A lente Institucional lê o CRM, não `mencao` — não há matéria lá."""
-    dossie = obter_dossie(sessao=sessao, usuario=_QuemOlha(), codigo="institucional", mes="2026-06")
+    itens = _itens(sessao, codigo="institucional")
 
-    assert dossie.materias_recentes.dados == []
-    assert dossie.materias_recentes.ficha.lacunas
+    assert itens.dados == []
+    assert itens.ficha.lacunas
 
 
 # -- drivers e riscos, e temas mais falados --------------------------------------
@@ -547,14 +561,12 @@ def test_a_linha_da_materia_leva_para_a_materia(sessao, codigo):
     )
     sessao.flush()
 
-    dossie = obter_dossie(sessao=sessao, usuario=_QuemOlha(), codigo=codigo, mes="2026-06")
-
     #: O DESTINO DA LINHA é declarado, e é o que torna a linha clicável.
-    assert dossie.materias_recentes.coluna_do_link == "link"
+    assert _itens(sessao, codigo=codigo).coluna_do_link == "link"
 
     #: O VALOR VIAJA NOS DADOS...
     linha = next(
-        linha for linha in dossie.materias_recentes.dados
+        linha for linha in _itens(sessao, codigo=codigo).dados
         if linha.get("link") == "https://exemplo.com.br/cpi-da-aegea"
     )
     assert linha["veiculo"] == "Valor Econômico"
@@ -562,7 +574,7 @@ def test_a_linha_da_materia_leva_para_a_materia(sessao, codigo):
     #: ...E NÃO NA GRADE. Esta é a metade do pedido que se perde fácil: sem ela,
     #: alguém "completa" a tabela acrescentando a coluna, e a URL volta a ocupar
     #: largura na tela.
-    assert "link" not in [coluna.chave for coluna in dossie.materias_recentes.colunas]
+    assert "link" not in [coluna.chave for coluna in _itens(sessao, codigo=codigo).colunas]
 
 
 def test_a_sociedade_continua_com_a_lista_dela_e_tambem_clicavel(sessao):
@@ -571,12 +583,10 @@ def test_a_sociedade_continua_com_a_lista_dela_e_tambem_clicavel(sessao):
     Vale o teste porque ela é o PADRÃO que o pedido citou: se alguém unificar as
     duas montagens algum dia, as duas têm de continuar com o destino na linha.
     """
-    dossie = obter_dossie(
-        sessao=sessao, usuario=_QuemOlha(), codigo="sociedade", mes="2026-06"
-    )
+    itens = _itens(sessao, codigo="sociedade")
 
-    assert dossie.materias_recentes.coluna_do_link == "link"
-    assert "link" not in [coluna.chave for coluna in dossie.materias_recentes.colunas]
+    assert itens.coluna_do_link == "link"
+    assert "link" not in [coluna.chave for coluna in itens.colunas]
 
 
 def test_o_mercado_tem_onde_esta_a_causa_menos_a_aba_de_jornalista(sessao):
@@ -639,11 +649,9 @@ def test_materias_recentes_sobe_o_teto_quando_ha_recorte(sessao):
         )
     sessao.flush()
 
-    sem_filtro = _dossie(sessao)
-    assert len(sem_filtro.materias_recentes.dados) == 15
+    assert len(_itens(sessao).dados) == 15
 
-    com_filtro = _dossie(sessao, veiculo="Veículo Único")
-    assert len(com_filtro.materias_recentes.dados) == 20
+    assert len(_itens(sessao, veiculo="Veículo Único").dados) == 20
 
 
 # =============================================================================
