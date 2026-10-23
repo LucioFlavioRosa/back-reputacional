@@ -52,9 +52,22 @@
 
 ---
 
-### Task 1: Medir a cardinalidade de tier × veículo
+### Task 1: Medir a cardinalidade de tier × veículo — ❌ BLOQUEADA EM 23/10/2026
 
 Sem esta medida a rota não está fechada — é a condição que o desenho impõe. O número real nunca apareceu em tela nenhuma, porque os blocos de hoje sempre vêm cortados em 10.
+
+> **O que aconteceu.** Esta tarefa dizia "pilha local", e a especificação dizia
+> "base de dev" — desvio introduzido ao escrever o plano. Ao executar, os
+> **três** bancos do Postgres local se mostraram vazios (`count(*) from mencao`
+> = 0 em `painel_reputacional`, `painel_reputacional_limpo` e
+> `painel_reputacional_teste`), então a medição é impossível ali de todo modo.
+>
+> **Decisão:** as tarefas 2 a 6 seguiram **sem o teto** (Step 3b não
+> executado), que é o caso comum. A medição na base de dev é ação em ambiente
+> compartilhado e ficou como item aberto para o dono do produto. Se o número a
+> exigir, o teto entra depois sem tocar o front — mas antes é preciso resolver
+> as duas decisões de produto que a especificação registra na seção "E se o
+> teto vier, o nulo não serve de rótulo".
 
 **Files:**
 - Modify: `docs/superpowers/specs/2026-10-23-explorador-de-veiculos-design.md` (a seção "O tamanho da carga")

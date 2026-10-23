@@ -310,3 +310,37 @@ class ExploradorSaida(BaseModel):
     mes: str
     denominador: float
     grupos: list[GrupoDoExploradorSaida]
+
+
+class GrupoDeVeiculoSaida(BaseModel):
+    """Um pedaço do mês: tier e veículo, com contagem e peso por sentimento.
+
+    Nulo onde a menção não traz o campo — a tela deixa de fora da barra daquele
+    EIXO, e a menção continua valendo no outro.
+
+    UMA LINHA POR PAR, e não por veículo: o mesmo veículo pode ter matéria em
+    mais de um tier, e somar aqui tiraria da tela a possibilidade de estreitar
+    por tier.
+    """
+
+    tier: str | None
+    veiculo: str | None
+    positivo: int
+    neutro: int
+    negativo: int
+    peso_positivo: float
+    peso_neutro: float
+    peso_negativo: float
+
+
+class ExploradorDeVeiculosSaida(BaseModel):
+    """Os grupos do mês e o denominador da nota — a tela soma o resto.
+
+    Mesma regra de impacto de `ExploradorSaida`:
+    `impacto(S) = 50 × (Σ peso_positivo − Σ peso_negativo) ÷ denominador`.
+    """
+
+    lente: str
+    mes: str
+    denominador: float
+    grupos: list[GrupoDeVeiculoSaida]

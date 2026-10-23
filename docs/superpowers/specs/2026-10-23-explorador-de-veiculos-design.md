@@ -212,6 +212,33 @@ linha de **"outros" explícita** (nunca um corte silencioso, que faria as somas
 dos painéis não fecharem com a nota). Enquanto a medição não existir, a rota
 não é considerada fechada.
 
+### Estado da medição em 23/10/2026: NÃO FEITA
+
+Tentada na pilha local e **impossível ali**: os três bancos do Postgres local
+(`painel_reputacional`, `painel_reputacional_limpo`,
+`painel_reputacional_teste`) têm `count(*) from mencao` = **0**. A pilha local
+nunca recebeu a base importada.
+
+A medição precisa da base de **dev**, e rodar SQL ali é ação em ambiente
+compartilhado — fica como item aberto para o dono do produto. **A rota foi
+implementada sem teto**, que é o caso comum; o teto, se a medição o exigir,
+entra depois sem tocar o front.
+
+### E se o teto vier, o nulo não serve de rótulo
+
+Achado ao implementar: a linha de "outros" com `veiculo = null` seria
+**silenciosamente descartada** pela tela. `somasDoEixo`, no domínio do front,
+faz `if (!chave) continue` — que é a regra **certa** para "menção sem veículo",
+e que o próprio molde do Explorador de taxonomia tem ("Menção sem o campo
+daquele nível fica fora DESTA barra"). As duas coisas colidiriam no mesmo
+valor: o "outros" do teto e o "sem veículo" do dado.
+
+Então o teto, quando vier, precisa de **rótulo próprio** em vez de nulo — e de
+uma decisão sobre o que o clique nele faz, porque filtrar por "Outros" não
+casaria com nenhuma menção. Duas decisões de produto que este desenho
+deliberadamente **não** resolve, para não inventar comportamento antes de
+existir o número que o justifique.
+
 ## Os blocos antigos do servidor
 
 `volume_por_tier`, `top_veiculos`, `clima_por_veiculos` e `veiculos_tier1`
