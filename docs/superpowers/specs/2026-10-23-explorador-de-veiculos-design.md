@@ -166,6 +166,29 @@ barra só — que é o modo de falha que o molde existe para evitar.
 
 Clicar de novo no mesmo valor desfaz, como no molde.
 
+## UM cartão, três colunas
+
+Decisão de 23/10/2026, depois de a primeira versão sair com **três cartões
+empilhados**: o bloco é **um cartão com as três colunas lado a lado**
+(`grade grade--3`), como o bloco de Atributos que serve de molde.
+
+O que isso ganha: a comparação de relance entre as três leituras, e os chips de
+"Filtrando por" aparecendo **uma** vez — empilhado, eram três linhas de chips e
+três botões "Limpar", todos com o mesmo nome acessível.
+
+O que isso custa: a `BarraDivergentePorItem` do termômetro passa de largura
+cheia para um terço, e o cartão fica mais largo que alto. **Pede conferência
+visual.**
+
+Cada coluna é um `role="group"` com `aria-labelledby` no próprio `h3`. Sem o
+grupo, o leitor de tela leria uma fila de barras sem dizer de qual coluna cada
+uma é — "Folha, 12 matérias" aparece nas DUAS colunas de veículo, e nada as
+distinguiria.
+
+O título do cartão é **"Tier do veículo, top veículos e termômetro"**, no molde
+da lista que "Atributos, temas estratégicos e subtemas" usa. Os nomes das três
+colunas continuam sendo os que o pedido nomeou.
+
 ## As medidas de cada painel
 
 1. **Tier do veículo × sentimento** — `ColunasEmpilhadas` com as três barras de
