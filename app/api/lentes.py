@@ -78,8 +78,10 @@ from app.dominio.score import FiltroDeMencoes, formula_aplicada
 from app.dominio.sinais_da_lente import Secao
 from app.esquemas.lentes import (
     DossieSaida,
+    ExploradorDeVeiculosSaida,
     ExploradorSaida,
     FatoSaida,
+    GrupoDeVeiculoSaida,
     GrupoDoExploradorSaida,
     OpcoesDeFiltroSaida,
     RecorteSaida,
@@ -645,4 +647,76 @@ def obter_explorador(
         mes=f"{alvo:%Y-%m}",
         denominador=denominador,
         grupos=[GrupoDoExploradorSaida(**grupo) for grupo in grupos],
+    )
+
+
+@rotas.get("/{codigo}/explorador-de-veiculos")
+def obter_explorador_de_veiculos(
+    sessao: Sessao,
+    usuario: UsuarioLogado,
+    codigo: str,
+    mes: Annotated[str, Query(description="AAAA-MM")],
+    tier: Annotated[str | None, Query()] = None,
+    veiculo: Annotated[str | None, Query()] = None,
+    atributo: Annotated[str | None, Query()] = None,
+    tema: Annotated[str | None, Query()] = None,
+    perfil_autor: Annotated[str | None, Query()] = None,
+    uf: Annotated[str | None, Query()] = None,
+    subtema: Annotated[str | None, Query()] = None,
+    autor: Annotated[str | None, Query()] = None,
+    empresa: Annotated[str | None, Query()] = None,
+    tema_n1: Annotated[str | None, Query(description="pilar (N1) da taxonomia, pelo nome")] = None,
+    tema_n2: Annotated[str | None, Query(description="tema estratégico (N2), pelo nome")] = None,
+    tema_n3: Annotated[str | None, Query(description="tema (N3) do cadastro, pelo nome")] = None,
+    sentimento: Annotated[str | None, Query(description="pos, neu ou neg")] = None,
+) -> ExploradorDeVeiculosSaida:
+    """Os três painéis do Explorador de veículos: tier × sentimento, Top
+    veículos e o Termômetro por veículo.
+
+    UM PEDIDO POR MÊS E RECORTE DA TELA, e o filtro cruzado (clicar num tier
+    estreita os dois painéis de veículo; clicar num veículo estreita o de
+    tier) acontece no navegador, somando os grupos — ver `grupos_de_veiculos`.
+    Os mesmos parâmetros do dossiê: a barra de filtros do topo vale aqui também.
+
+    SÃO DOIS EIXOS, E TRÊS PAINÉIS: os painéis "Top veículos" e "Termômetro"
+    são o MESMO eixo (veículo) com medidas diferentes, e é por isso que esta
+    rota manda o par e não dois agregados prontos.
+
+    A LENTE QUE LÊ O CRM NÃO TEM MENÇÃO, e volta vazia (sem erro): a tela só
+    pede para as lentes de clipping.
+    """
+    alvo = mes_de(mes)
+    lente = repositorio_lentes.lente_por_codigo(sessao, codigo)
+    if lente is None:
+        raise NaoEncontrado("Lente não encontrada.")
+    if repositorio_lentes.lente_e_interna(sessao, lente.id):
+        return ExploradorDeVeiculosSaida(
+            lente=lente.codigo, mes=f"{alvo:%Y-%m}", denominador=0, grupos=[]
+        )
+
+    filtro = FiltroDeMencoes(
+        tier=tier,
+        veiculo=veiculo,
+        atributo=atributo,
+        tema_texto=tema,
+        perfil_autor=perfil_autor,
+        uf=uf,
+        subtema=subtema,
+        autor=autor,
+        empresa=empresa,
+        tema_n1=tema_n1,
+        tema_n2=tema_n2,
+        tema_n3=tema_n3,
+        sentimento=sentimento,
+    )
+    calibracao = repositorio_score.calibracao_vigente(sessao)
+    regua, denominador = repositorio_score.denominador_do_mes(sessao, lente.id, alvo, calibracao)
+    grupos = repositorio_lentes.grupos_de_veiculos(
+        sessao, lente.id, alvo, calibracao, regua, filtro
+    )
+    return ExploradorDeVeiculosSaida(
+        lente=lente.codigo,
+        mes=f"{alvo:%Y-%m}",
+        denominador=denominador,
+        grupos=[GrupoDeVeiculoSaida(**grupo) for grupo in grupos],
     )

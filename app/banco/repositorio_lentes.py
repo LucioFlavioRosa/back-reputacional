@@ -1017,6 +1017,92 @@ def grupos_do_explorador(
     return list(grupos.values())
 
 
+def grupos_de_veiculos(
+    sessao: Session,
+    lente_id: int,
+    mes: date,
+    calibracao: Calibracao,
+    regua: str,
+    filtro: FiltroDeMencoes | None = None,
+) -> list[dict]:
+    """As menções do mês agrupadas por tier e veículo — o que os três painéis
+    do Explorador de veículos somam na tela.
+
+    O MESMO MECANISMO DE `grupos_do_explorador`, com uma chave menor: agregado
+    pronto para ser somado no navegador, e é isso que faz o clique ser
+    instantâneo sem mover o dossiê. Cada linha traz a contagem (o que a barra
+    desenha) e o peso por sentimento (o que a nota e o impacto usam) — peso se
+    soma, e o denominador do mês é um só.
+
+    UMA LINHA POR PAR `(tier, veiculo)`, E NÃO POR VEÍCULO: o mesmo veículo
+    pode ter matéria em mais de um tier, e somar aqui tiraria da tela a
+    possibilidade de estreitar por tier. A soma por veículo é trabalho de quem
+    desenha.
+
+    POR QUE UMA ROTA PRÓPRIA, e não `tier`/`veiculo` dentro de
+    `grupos_do_explorador`: acrescentá-los àquela chave multiplicaria a
+    cardinalidade (`n1 × n2 × n3 × uf × tier × veículo`). Uma chave de só
+    `tier × veículo` é a carga mínima que responde aos três painéis.
+
+    `cargo` E `engajamento` ENTRAM NO `group_by` SÓ PORQUE `peso_da_mencao`
+    PRECISA DELES, e não saem na resposta — o mesmo motivo pelo qual estão em
+    `grupos_do_explorador`.
+
+    SEM JUNÇÃO DE `Tema`/`MacroTema`, ao contrário do explorador de taxonomia:
+    esta consulta não lê taxonomia, e os filtros de taxonomia da tela continuam
+    valendo sem o join porque `condicoes_do_filtro` casa por SUBCONSULTA, nunca
+    por junção — decisão registrada lá com a razão ("entra em nove consultas
+    diferentes, e acrescentar uma junção aqui mudaria o `from` delas por
+    baixo"). Esta é a décima.
+    """
+    consulta = (
+        select(
+            Mencao.tier,
+            Mencao.veiculo,
+            Mencao.sentimento,
+            Mencao.cargo,
+            Mencao.engajamento,
+            func.count().label("quantas"),
+        )
+        .select_from(Mencao)
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .where(
+            ScoreFonte.lente_id == lente_id,
+            Mencao.mes == primeiro_dia(mes),
+            *so_fontes_ligadas(calibracao),
+            *condicoes_do_filtro(filtro),
+        )
+        .group_by(
+            Mencao.tier,
+            Mencao.veiculo,
+            Mencao.sentimento,
+            Mencao.cargo,
+            Mencao.engajamento,
+        )
+    )
+    grupos: dict[tuple, dict] = {}
+    for linha in sessao.execute(consulta):
+        chave = (linha.tier or None, linha.veiculo or None)
+        grupo = grupos.setdefault(
+            chave,
+            {
+                "tier": chave[0],
+                "veiculo": chave[1],
+                "positivo": 0,
+                "neutro": 0,
+                "negativo": 0,
+                "peso_positivo": 0.0,
+                "peso_neutro": 0.0,
+                "peso_negativo": 0.0,
+            },
+        )
+        lado = {"pos": "positivo", "neg": "negativo"}.get(linha.sentimento, "neutro")
+        peso = peso_da_mencao(linha.tier, linha.cargo, linha.engajamento, calibracao, regua)
+        grupo[lado] += int(linha.quantas)
+        grupo[f"peso_{lado}"] += peso * int(linha.quantas)
+    return list(grupos.values())
+
+
 def presenca_das_dimensoes(
     sessao: Session,
     campos: Sequence[str],
