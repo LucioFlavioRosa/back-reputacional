@@ -59,6 +59,7 @@ QUANTO do índice a soma representa — ver `fatia_das_lentes`.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
@@ -229,6 +230,45 @@ def _regua_das_lentes(reguas: list[str]) -> str:
     return " e ".join(distintas)
 
 
+def _lentes_escolhidas(lentes: Sequence[str] | None) -> tuple[str, ...]:
+    """As lentes pedidas, conferidas contra as três de clipping.
+
+    VAZIO É "AS TRÊS", que é o quadro de sempre. Uma lente fora da lista é
+    recusada em voz alta: devolver as três em silêncio faria a tela afirmar
+    "só Mercado" sobre uma soma das três.
+    """
+    if not lentes:
+        return tuple(LENTES_DOS_REGISTROS)
+    desconhecidas = sorted(set(lentes) - set(LENTES_DOS_REGISTROS))
+    if desconhecidas:
+        raise RegraViolada(
+            f"Lente fora do quadro: {', '.join(desconhecidas)}. "
+            f"Aceitas: {', '.join(LENTES_DOS_REGISTROS)}."
+        )
+    return tuple(dict.fromkeys(lentes))
+
+
+def _ler_lentes(
+    sessao: Session, codigos: Sequence[str], escolhidas: bool
+) -> list[Lente]:
+    """As lentes do cadastro, na ordem pedida.
+
+    SEM ESCOLHA, A IMPRENSA É O CHÃO e as outras duas podem faltar que a soma
+    encurta — o comportamento de sempre do quadro e do modal. COM ESCOLHA, cada
+    lente pedida tem de existir: "só Mercado" sem a lente Mercado no cadastro
+    não pode virar um quadro vazio que parece resposta.
+    """
+    achadas = {
+        lente.codigo: lente
+        for lente in sessao.scalars(select(Lente).where(Lente.codigo.in_(codigos))).all()
+    }
+    exigidas = list(codigos) if escolhidas else [LENTE]
+    faltando = [codigo for codigo in exigidas if codigo not in achadas]
+    if faltando:
+        raise NaoEncontrado(f"A lente {', '.join(faltando)} não está cadastrada.")
+    return [achadas[codigo] for codigo in codigos if codigo in achadas]
+
+
 def registros(
     sessao: Session,
     ate: date,
@@ -237,6 +277,8 @@ def registros(
     nivel: str = NIVEL_PADRAO,
     pagina: int = 1,
     tamanho: int = 50,
+    lentes: Sequence[str] | None = None,
+    tier: str | None = None,
 ) -> repositorio_score.RegistrosDaJanela:
     """As menções que compõem UM grupo do quadro — o que abre ao clicar nele.
 
@@ -268,14 +310,12 @@ def registros(
     if nivel not in repositorio_score.NIVEIS_DA_JANELA:
         raise RegraViolada(f"Nivel desconhecido: {nivel}.")
 
-    lentes = sessao.scalars(select(Lente).where(Lente.codigo.in_(LENTES_DOS_REGISTROS))).all()
-    achadas = {lente.codigo for lente in lentes}
-    if LENTE not in achadas:
-        raise NaoEncontrado(f"A lente {LENTE} não está cadastrada.")
+    escolhidas = _lentes_escolhidas(lentes)
+    lidas = _ler_lentes(sessao, escolhidas, bool(lentes))
 
     return repositorio_score.registros_do_grupo_na_janela(
         sessao,
-        [lente.id for lente in lentes],
+        [lente.id for lente in lidas],
         de=ate - timedelta(days=dias - 1),
         ate=ate,
         grupo_id=grupo,
@@ -283,6 +323,7 @@ def registros(
         nivel=nivel,
         pagina=pagina,
         tamanho=tamanho,
+        tier=tier,
     )
 
 
@@ -291,6 +332,8 @@ def ler(
     ate: date,
     dias: int = DIAS_DA_JANELA,
     nivel: str = NIVEL_PADRAO,
+    lentes: Sequence[str] | None = None,
+    tier: str | None = None,
 ) -> ImpactoNaJanela:
     """Os temas que mais empurraram o ÍNDICE na janela que termina em `ate`.
 
@@ -322,11 +365,12 @@ def ler(
     if nivel not in repositorio_score.NIVEIS_DA_JANELA:
         raise RegraViolada(f"Nivel desconhecido: {nivel}.")
 
-    lentes = sessao.scalars(select(Lente).where(Lente.codigo.in_(LENTES_DOS_REGISTROS))).all()
-    #: A IMPRENSA É O CHÃO, como em `registros`: é o quadro dela que a tela abre.
-    #: As outras duas podem faltar que a soma encurta.
-    if LENTE not in {lente.codigo for lente in lentes}:
-        raise NaoEncontrado(f"A lente {LENTE} não está cadastrada.")
+    #: AS LENTES ESCOLHIDAS NO FILTRO RÁPIDO (pedido de 22/10/2026: "olhar apenas
+    #: notícias de Imprensa e Mercado, ou apenas Imprensa, ou apenas Mercado").
+    #: Sem escolha, as três de sempre. A conta continua por lente e somada
+    #: depois, cada uma com o seu denominador e o seu peso no índice.
+    escolhidas = _lentes_escolhidas(lentes)
+    lentes_lidas = _ler_lentes(sessao, escolhidas, bool(lentes))
 
     #: INCLUSIVA NAS DUAS PONTAS, e `dias - 1` é o que faz "15 dias" serem quinze
     #: dias: de 10/09 menos 14 dá 27/08, e de 27/08 a 10/09 há exatamente quinze
@@ -346,7 +390,7 @@ def ler(
     contaram: list[str] = []
     sem_grupo = 0
     sem_data = 0
-    for lente in lentes:
+    for lente in lentes_lidas:
         regua_da_lente, total_do_mes = repositorio_score.denominador_do_mes(
             sessao, lente.id, mes, calibracao
         )
@@ -373,7 +417,7 @@ def ler(
         reguas.append(regua_da_lente)
         contaram.append(lente.codigo)
         somas = repositorio_score.somas_por_nivel_na_janela(
-            sessao, lente.id, de=de, ate=ate, nivel=nivel
+            sessao, lente.id, de=de, ate=ate, nivel=nivel, tier=tier
         )
         sem_grupo += somas.sem_grupo
         sem_data += somas.sem_data

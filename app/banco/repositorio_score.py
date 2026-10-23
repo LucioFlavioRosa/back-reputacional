@@ -710,7 +710,12 @@ def meses_da_janela(de: date, ate: date) -> list[date]:
 
 
 def somas_por_nivel_na_janela(
-    sessao: Session, lente_id: int, de: date, ate: date, nivel: str = NIVEL_DO_TEMA
+    sessao: Session,
+    lente_id: int,
+    de: date,
+    ate: date,
+    nivel: str = NIVEL_DO_TEMA,
+    tier: str | None = None,
 ) -> SomasNaJanela:
     """As somas da lente entre dois DIAS, agrupadas pelo nível pedido.
 
@@ -800,6 +805,12 @@ def somas_por_nivel_na_janela(
         #: que dá contexto à linha, e a coluna da menção pode estar preenchida
         #: por uma resolução que parou no pilar — aí ela fala de outro nível.
         consulta = consulta.outerjoin(BlocoTema, BlocoTema.id == MacroTema.bloco_tema_id)
+    if tier:
+        #: O TIER DO QUADRO (pedido de 22/10/2026): "ver a lista do que pressiona
+        #: para cima ou para baixo pelo Tier". Recorta o NUMERADOR; o
+        #: denominador continua o do mês inteiro, e é o que faz o número seguir
+        #: em pontos do índice — "quanto as matérias Tier 1 moveram a nota".
+        consulta = consulta.where(Mencao.tier == tier)
     if no_subtema:
         #: O MESMO NO SUBTEMA: o tema estratégico vem do cadastro do subtema.
         consulta = consulta.outerjoin(MacroTema, MacroTema.id == Tema.macro_tema_id)
@@ -862,6 +873,7 @@ def somas_por_nivel_na_janela(
                 ScoreFonte.lente_id == lente_id,
                 Mencao.mes.in_(meses),
                 Mencao.data.is_(None),
+                *([Mencao.tier == tier] if tier else []),
             )
         ).scalar()
         or 0
@@ -1822,6 +1834,7 @@ def registros_do_grupo_na_janela(
     nivel: str = NIVEL_DO_TEMA,
     pagina: int = 1,
     tamanho: int = 50,
+    tier: str | None = None,
 ) -> RegistrosDaJanela:
     """As menções que compõem UM grupo do quadro, paginadas.
 
@@ -1914,6 +1927,10 @@ def registros_do_grupo_na_janela(
         coluna_da_mencao == grupo_id,
         *so_fontes_ligadas(calibracao),
     ]
+    if tier:
+        #: O MESMO TIER DO QUADRO, senão a lista do modal deixaria de ser a da
+        #: linha que a abriu.
+        onde.append(Mencao.tier == tier)
 
     total = (
         sessao.scalar(
