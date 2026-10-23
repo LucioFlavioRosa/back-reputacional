@@ -889,3 +889,54 @@ def test_o_SUBTEMA_N3_agrupa_pelo_tema_da_mencao_com_o_N2_de_contexto(
     assert impacto_na_janela.registros(
         sessao, ate=CLICADO, grupo=subtema.id, nivel="n3"
     ).total == 2
+
+
+# -- o filtro rápido dos quadros: lente e tier (pedido de 22/10/2026) -----------
+
+
+def test_o_TIER_recorta_o_quadro_e_o_modal_do_mesmo_jeito(sessao, clipei, temas, mes_com_base):
+    """"Ver a lista do que pressiona para cima ou para baixo pelo Tier": com o
+    tier escolhido, só as matérias dele entram no numerador — e o modal que a
+    linha abre conta as mesmas."""
+    tema = next(iter(temas))
+    _mencao(sessao, clipei, sentimento="neg", n2=temas[tema], dia=CLICADO, tier="muito_relevante")
+    _mencao(sessao, clipei, sentimento="neg", n2=temas[tema], dia=CLICADO, tier="relevante")
+    _mencao(sessao, clipei, sentimento="neg", n2=temas[tema], dia=CLICADO, tier="relevante")
+
+    todos = impacto_na_janela.ler(sessao, ate=CLICADO, dias=15, nivel="n2")
+    tier1 = impacto_na_janela.ler(sessao, ate=CLICADO, dias=15, nivel="n2", tier="muito_relevante")
+
+    assert todos.negativos[0].mencoes == 3
+    assert tier1.negativos[0].mencoes == 1
+    #: MENOS MATÉRIAS, MENOS PONTOS: o denominador é o do mês inteiro.
+    assert abs(tier1.negativos[0].impacto) < abs(todos.negativos[0].impacto)
+    assert impacto_na_janela.registros(
+        sessao, ate=CLICADO, grupo=temas[tema], nivel="n2", tier="muito_relevante"
+    ).total == 1
+
+
+def test_a_LENTE_escolhida_tira_as_outras_da_soma(sessao, clipei, temas, mes_com_base):
+    """"Olhar apenas notícias de Imprensa e Mercado, ou apenas Imprensa, ou apenas
+    Mercado". A matéria da Imprensa não pode entrar num quadro de "só Mercado"."""
+    tema = next(iter(temas))
+    _mencao(sessao, clipei, sentimento="neg", n2=temas[tema], dia=CLICADO)
+
+    so_imprensa = impacto_na_janela.ler(
+        sessao, ate=CLICADO, dias=15, nivel="n2", lentes=["imprensa"]
+    )
+    so_mercado = impacto_na_janela.ler(
+        sessao, ate=CLICADO, dias=15, nivel="n2", lentes=["mercado"]
+    )
+
+    assert [g.rotulo for g in so_imprensa.negativos] == [tema]
+    assert so_imprensa.lentes == ("imprensa",)
+    assert so_mercado.negativos == []
+    assert "imprensa" not in so_mercado.lentes
+    assert impacto_na_janela.registros(
+        sessao, ate=CLICADO, grupo=temas[tema], nivel="n2", lentes=["mercado"]
+    ).total == 0
+
+
+def test_a_LENTE_fora_do_quadro_e_recusada(sessao, clipei):
+    with pytest.raises(RegraViolada):
+        impacto_na_janela.ler(sessao, ate=CLICADO, dias=15, lentes=["sociedade"])

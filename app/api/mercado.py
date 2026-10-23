@@ -268,6 +268,16 @@ def registros_da_janela(
     nivel: Annotated[str, Query(pattern="^(n1|n2|n3)$")] = impacto_na_janela.NIVEL_PADRAO,
     pagina: Annotated[int, Query(ge=1)] = 1,
     tamanho: Annotated[int, Query(ge=1, le=200)] = 50,
+    lentes: Annotated[
+        str | None,
+        Query(
+            pattern="^(imprensa|mercado|institucional)(,(imprensa|mercado|institucional))*$",
+            description="as lentes do quadro, separadas por vírgula; vazio = as três",
+        ),
+    ] = None,
+    tier: Annotated[
+        str | None, Query(pattern="^(muito_relevante|relevante|menos_relevante)$")
+    ] = None,
 ) -> RegistrosDaJanelaSaida:
     """As menções que compõem um grupo do quadro — o que abre ao clicar nele.
 
@@ -289,7 +299,15 @@ def registros_da_janela(
     de data em dois lugares divergem na primeira mudança.
     """
     lidos = impacto_na_janela.registros(
-        sessao, ate=ate, grupo=grupo, dias=dias, nivel=nivel, pagina=pagina, tamanho=tamanho
+        sessao,
+        ate=ate,
+        grupo=grupo,
+        dias=dias,
+        nivel=nivel,
+        pagina=pagina,
+        tamanho=tamanho,
+        lentes=lentes.split(",") if lentes else None,
+        tier=tier,
     )
     #: CAMPO A CAMPO, e não `**vars(r)`: as dataclasses do repositório têm
     #: `slots=True` e não têm `__dict__` — `vars()` levanta `TypeError`, e foi
@@ -322,6 +340,16 @@ def impacto_na_janela_(
     ate: Annotated[date, Query()],
     dias: Annotated[int, Query(ge=1, le=90)] = impacto_na_janela.DIAS_DA_JANELA,
     nivel: Annotated[str, Query(pattern="^(n1|n2|n3)$")] = impacto_na_janela.NIVEL_PADRAO,
+    lentes: Annotated[
+        str | None,
+        Query(
+            pattern="^(imprensa|mercado|institucional)(,(imprensa|mercado|institucional))*$",
+            description="as lentes do quadro, separadas por vírgula; vazio = as três",
+        ),
+    ] = None,
+    tier: Annotated[
+        str | None, Query(pattern="^(muito_relevante|relevante|menos_relevante)$")
+    ] = None,
 ) -> ImpactoNaJanelaSaida:
     """Os temas que mais empurraram o ÍNDICE na janela — em pontos do score geral.
 
@@ -343,7 +371,14 @@ def impacto_na_janela_(
     permite a tela afirmar "imprensa, 27/08 a 10/09" com o dado que desenhou, e
     não com o que ela pediu — os dois divergem enquanto a resposta não chega.
     """
-    lida = impacto_na_janela.ler(sessao, ate=ate, dias=dias, nivel=nivel)
+    lida = impacto_na_janela.ler(
+        sessao,
+        ate=ate,
+        dias=dias,
+        nivel=nivel,
+        lentes=lentes.split(",") if lentes else None,
+        tier=tier,
+    )
     return ImpactoNaJanelaSaida(
         de=lida.de,
         ate=lida.ate,
