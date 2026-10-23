@@ -260,3 +260,39 @@ def test_a_lente_que_le_o_crm_responde_vazia_sem_erro(sessao):
 def test_a_lente_que_nao_existe_da_404(sessao):
     with pytest.raises(NaoEncontrado):
         _explorador_de_veiculos(sessao, codigo="nao-existe")
+
+
+def test_o_mercado_responde_como_a_imprensa(sessao):
+    """A PARIDADE MERCADO/IMPRENSA PERDEU A GUARDA NO BACK em 23/10/2026, e esta
+    é ela de volta — achado da revisão do Codex.
+
+    O teste que a prendia (`test_o_mercado_tem_os_quatro_blocos_de_veiculo_como_a
+    _imprensa`) saiu com os quatro blocos do dossiê, e a rota nova não herdou
+    guarda nenhuma: ela não consulta `LENTES_COM_VEICULO_E_TIER`, responde para
+    qualquer lente que não seja interna. Isso é de propósito — mas "de propósito"
+    sem teste é a mesma coisa que por acidente.
+
+    O FRONT GUARDA O OUTRO LADO (`LENTES_COM_BLOCOS_DE_VEICULO`, com os testes de
+    tela cobrindo as duas lentes). Faltava este: que o SERVIDOR entrega dado para
+    o Mercado, e não só para a Imprensa.
+    """
+    fonte = sessao.scalars(
+        select(ScoreFonte).where(ScoreFonte.codigo == "clipei_investidores")
+    ).one()
+    lente_do_mercado = _lente(sessao, "mercado")
+    assert fonte.lente_id == lente_do_mercado.id, "a fonte do Mercado mudou de lente"
+
+    linhas = _linhas_da_imprensa(sessao)
+    for linha, veiculo in zip(linhas, ["Valor", "Valor", "Expert XP"] * 2, strict=True):
+        linha["veiculo"] = veiculo
+    _gravar(sessao, "clipei_investidores", linhas)
+
+    saida = _explorador_de_veiculos(sessao, codigo="mercado")
+
+    assert saida.lente == "mercado"
+    assert sum(g.positivo + g.neutro + g.negativo for g in saida.grupos) == 6
+    assert {g.veiculo for g in saida.grupos} == {"Valor", "Expert XP"}
+    #: E A INVARIANTE DO DENOMINADOR VALE AQUI TAMBÉM: a nota do Mercado tem a
+    #: régua dela, e o impacto das barras tem de fechar com ela.
+    pesos = sum(g.peso_positivo + g.peso_neutro + g.peso_negativo for g in saida.grupos)
+    assert pesos == pytest.approx(saida.denominador)

@@ -917,18 +917,15 @@ def nomeia_o_diretorio(lente_e_interna: bool, bloco: BlocoSaida) -> bool:
     return lente_e_interna and bloco.tipo == "barras_horizontais"
 
 
-#: As cores do tier, na mesma paleta oficial da Aegea que o resto do produto
-#: usa — nunca uma cor inventada para preencher uma fatia da rosca.
-_CORES_DO_TIER = {
-    "muito_relevante": "#0027BD",  # Azul Mar
-    "relevante": "#17E3CB",  # Turquesa Rio
-    "menos_relevante": "#A11FFF",  # Roxo Açaí
-}
-
-
-#: AS LENTES QUE TÊM VEÍCULO E TIER DE VERDADE — e portanto os três blocos de
-#: veículo do dossiê: a rosca de volume por tier, o par top/termômetro por
-#: veículo, e a lista de últimas matérias.
+#: AS LENTES QUE TÊM VEÍCULO E TIER DE VERDADE — hoje isto governa a lista de
+#: últimas matérias e a aba de "Onde está a causa".
+#:
+#: GOVERNAVA TAMBÉM os três blocos de veículo do dossiê (a rosca de volume por
+#: tier e o par top/termômetro), que saíram em 23/10/2026: a tela passou a
+#: montá-los no navegador, a partir de `GET /{codigo}/explorador-de-veiculos`.
+#: Quem decide onde o bloco NOVO aparece é a tela, por
+#: `LENTES_COM_BLOCOS_DE_VEICULO` — a rota responde para qualquer lente que não
+#: seja interna.
 #:
 #: ERA SÓ A IMPRENSA, e a restrição era de TELA: o Jones (2026-10-02) não quis
 #: ver "os mesmos veículos e tiers repetidos em Imprensa e Mercado". A decisão

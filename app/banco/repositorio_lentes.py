@@ -725,11 +725,14 @@ def _por_coluna_de_texto(
 
     UMA FUNÇÃO PARA OS QUATRO CORTES NOVOS — perfil do autor, UF, subtema e
     autor —, porque é literalmente a mesma consulta: agrupar por uma coluna de
-    `mencao`, contar por sentimento, ignorar nulo. As irmãs mais velhas
-    (`temas_por_sentimento`, `veiculos_por_sentimento`) são separadas porque cada
-    uma tem a sua particularidade: tema casa com o dicionário do CRM por
-    `coalesce`, veículo tem grafia a normalizar. Estas quatro não têm nenhuma, e
+    `mencao`, contar por sentimento, ignorar nulo. A irmã mais velha
+    (`temas_por_sentimento`) é separada porque tem a sua particularidade: tema
+    casa com o dicionário do CRM por `coalesce`. Estas quatro não têm nenhuma, e
     quatro cópias da mesma consulta divergiriam na primeira correção.
+
+    HAVIA UMA TERCEIRA IRMÃ, `veiculos_por_sentimento`, citada aqui até
+    23/10/2026 — ela separava-se por ter grafia de veículo a normalizar. Saiu
+    com os blocos de veículo do dossiê, que eram os únicos a chamá-la.
 
     NULO FICA FORA, e isto é decisão de leitura: a UF vem em pouco mais da metade
     dos itens e o subtema em 15%. Uma linha "sem classificação" seria a maior de
