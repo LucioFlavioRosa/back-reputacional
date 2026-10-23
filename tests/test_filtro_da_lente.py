@@ -343,29 +343,6 @@ def test_a_institucional_passou_a_ler_MENCAO_e_nao_o_CRM(sessao):
     assert "Clipei · imprensa institucional" in dossie.drivers_e_riscos.ficha.fonte
 
 
-# -- volume por tier, e top/clima dos veículos ------------------------------------
-
-
-def test_volume_por_tier_e_uma_rosca_com_os_tres_tiers(sessao, imprensa_de_junho):
-    dossie = _dossie(sessao)
-
-    bloco = dossie.volume_por_tier
-    assert bloco.tipo == "rosca"
-    por_chave = {linha["chave"]: linha["total"] for linha in bloco.dados}
-    assert por_chave == {"muito_relevante": 2, "relevante": 2, "menos_relevante": 2}
-
-
-def test_top_veiculos_ordena_por_volume(sessao, imprensa_de_junho):
-    """Os dois veículos têm 3 menções cada — empate desfeito por nome."""
-    dossie = _dossie(sessao)
-
-    assert dossie.top_veiculos.tipo == "barras_horizontais"
-    assert [linha["rotulo"] for linha in dossie.top_veiculos.dados] == [
-        "Veículo A", "Veículo B",
-    ]
-    assert {linha["valor"] for linha in dossie.top_veiculos.dados} == {3}
-
-
 def test_veiculos_tier1_conta_so_quem_tem_materia_muito_relevante(sessao, imprensa_de_junho):
     """Veículo A tem duas matérias muito_relevante; Veículo B só tem relevante
     e menos_relevante — a conta de Tier 1 é dele só."""
@@ -381,114 +358,6 @@ def test_veiculos_tier1_respeita_o_mesmo_filtro_da_tela(sessao, imprensa_de_junh
     dossie = _dossie(sessao, veiculo="Veículo B")
     kpi = next(k for k in dossie.kpis if k.rotulo == "Veículos Tier 1")
     assert kpi.valor == "0"
-
-
-def test_clima_por_veiculos_e_o_saldo_simples_nao_o_ns_ponderado(sessao, imprensa_de_junho):
-    """(positivas − negativas) ÷ total × 100 — SEM peso de tier, diferente da
-    nota oficial da lente. Veículo A: 2 pos, 1 neu, 0 neg -> +67. Veículo B:
-    0 pos, 1 neu, 2 neg -> -67."""
-    dossie = _dossie(sessao)
-
-    por_chave = {linha["chave"]: linha["score"] for linha in dossie.clima_por_veiculos.dados}
-    assert por_chave == {"Veículo A": 67, "Veículo B": -67}
-
-
-def test_volume_e_veiculos_vazios_na_institucional(sessao):
-    dossie = obter_dossie(sessao=sessao, usuario=_QuemOlha(), codigo="institucional", mes="2026-06")
-
-    assert dossie.volume_por_tier.dados == []
-    assert dossie.volume_por_tier.ficha.lacunas
-    assert dossie.top_veiculos.dados == []
-    assert dossie.clima_por_veiculos.dados == []
-    assert dossie.clima_por_veiculos.ficha.lacunas
-
-
-def test_o_mercado_tem_os_quatro_blocos_de_veiculo_como_a_imprensa(sessao):
-    """ESTE TESTE REVERTE A DECISÃO QUE ELE MESMO AFIRMAVA, e por isso diz tudo.
-
-    Ele se chamava `..._vazios_no_mercado_MESMO_com_tier_e_veiculo_no_dado`: as
-    maiúsculas eram para avisar que o vazio era DE PROPÓSITO. A restrição foi
-    pedida pelo Jones em 2026-10-02 e era de TELA — ele não quis ver "os mesmos
-    veículos e tiers repetidos em Imprensa e Mercado". O dado sempre esteve lá:
-    a migration 0048 define `clipei_investidores` como o MESMO clipping da
-    Clipei, recortado por público-alvo Investidores.
-
-    E A DECISÃO VINHA COM A CONDIÇÃO DE REVISÃO ESCRITA: "se um dia o recorte
-    por público-alvo virar outro veículo/tier na prática (ex.: fontes econômicas
-    específicas), vale revisitar".
-
-    A CONDIÇÃO SE CUMPRIU, e é medida na base de hoje, não impressão:
-
-      ZERO dos 10 maiores veículos do Mercado estão no top 10 da Imprensa
-      Valor Econômico  — 1º no Mercado,   95º na Imprensa
-      Expert XP        — 3º no Mercado,  333º na Imprensa
-      InfoMoney        — 5º no Mercado,  419º na Imprensa
-      Acionista        — 10º no Mercado, 634º na Imprensa
-
-      o top da Imprensa é rádio local (Rádio Betel 87.9 FM, 1.451 menções);
-      o do Mercado é imprensa econômica, inteiro
-
-      e o tier quase se inverte: 46,2% muito_relevante no Mercado contra 10,7%
-      na Imprensa, que tem 72,7% em menos_relevante
-
-    Os dois gráficos lado a lado não repetem nada — era o que o pedido original
-    temia, e deixou de ser verdade.
-
-    PARA VOLTAR: tire `"mercado"` de `LENTES_COM_VEICULO_E_TIER`, em
-    `app/api/lentes.py`. É uma palavra, e os três blocos voltam a sair vazios.
-    """
-    clipei_investidores = sessao.scalars(
-        select(ScoreFonte).where(ScoreFonte.codigo == "clipei_investidores")
-    ).one()
-    #: "Valor Econômico" não é exemplo escolhido ao acaso: é o veículo nº 1 do
-    #: Mercado na base real, e o 95º da Imprensa. É o caso que justifica o bloco.
-    sessao.add(
-        Mencao(
-            fonte_id=clipei_investidores.id, mes=MES, sentimento="pos",
-            tier="muito_relevante", veiculo="Valor Econômico",
-        )
-    )
-    #: E UM CHAMARIZ NA IMPRENSA, no mesmo mês (achado de revisão): sem ele, uma
-    #: consulta que esquecesse de filtrar por lente passaria, porque a única
-    #: menção do mês seria a do Mercado. Com os dois, o bloco do Mercado só
-    #: fecha se o filtro de lente existir de verdade.
-    clipei = sessao.scalars(
-        select(ScoreFonte).where(ScoreFonte.codigo == "clipei")
-    ).one()
-    sessao.add(
-        Mencao(
-            fonte_id=clipei.id, mes=MES, sentimento="neg",
-            tier="menos_relevante", veiculo="Rádio Betel 87.9 FM",
-        )
-    )
-    sessao.flush()
-
-    dossie = obter_dossie(sessao=sessao, usuario=_QuemOlha(), codigo="mercado", mes="2026-06")
-
-    assert dossie.volume_por_tier.dados, "a rosca de volume por tier ficou vazia"
-    assert dossie.top_veiculos.dados, "o top de veículos ficou vazio"
-    assert dossie.clima_por_veiculos.dados, "o termômetro por veículo ficou vazio"
-    assert dossie.materias_recentes.dados, "a lista de últimas matérias ficou vazia"
-
-    #: E O DADO É O PLANTADO, não um resto de outra lente: sem esta asserção o
-    #: teste passaria se os blocos trouxessem as menções da Imprensa.
-    #: (`top_veiculos` é de barras horizontais — as linhas são `rotulo`/`valor`;
-    #: o termômetro é `divergente_por_item`, com `chave`.)
-    assert [linha["rotulo"] for linha in dossie.top_veiculos.dados] == ["Valor Econômico"]
-    assert [linha["chave"] for linha in dossie.clima_por_veiculos.dados] == [
-        "Valor Econômico"
-    ]
-    assert [linha["chave"] for linha in dossie.volume_por_tier.dados] == [
-        "muito_relevante"
-    ]
-    assert [linha["veiculo"] for linha in dossie.materias_recentes.dados] == [
-        "Valor Econômico"
-    ]
-
-    #: E NENHUMA LACUNA, que é o outro lado: a ficha avisava "por ora esta tela
-    #: só mostra tier na lente Imprensa", e essa frase não pode sobrar.
-    assert not dossie.volume_por_tier.ficha.lacunas
-    assert not dossie.top_veiculos.ficha.lacunas
 
 
 def test_a_evolucao_do_mercado_e_a_serie_de_barras_como_na_imprensa(sessao):
@@ -757,46 +626,6 @@ def test_o_mercado_tem_onde_esta_a_causa_menos_a_aba_de_jornalista(sessao):
 
     #: O JORNALISTA NÃO ENTRA, e é a única diferença com a Imprensa.
     assert "autor" not in recortes
-
-
-def test_as_lentes_sem_veiculo_continuam_vazias_e_dizem_o_motivo(sessao):
-    """O outro lado da mudança: trazer o Mercado NÃO abriu para todas.
-
-    E A LACUNA TEM DE SER VERDADEIRA SOBRE CADA UMA, que é onde eu errei duas
-    vezes (achado de revisão). Medido:
-
-        sociedade   2.842 menções   ZERO com tier   2.582 com veículo
-        clientes        0 menções
-
-    Então "não tem tier" é verdade para as duas, e "não tem veículo" é FALSO
-    para a Sociedade — o campo dela guarda perfil e rede ("deolhoemesteio",
-    "Stela Farias"), não veículo de imprensa. Ver `_lacuna_do_veiculo`.
-
-    SEM ESTE TESTE, trocar o `!=` por um `not in` mal escrito abriria para todo
-    mundo e os blocos vazios voltariam a aparecer como moldura sem conteúdo.
-    """
-    for codigo in ("sociedade", "clientes"):
-        dossie = obter_dossie(
-            sessao=sessao, usuario=_QuemOlha(), codigo=codigo, mes="2026-06"
-        )
-        assert dossie.volume_por_tier.dados == [], codigo
-        assert dossie.volume_por_tier.ficha.lacunas, codigo
-        assert dossie.top_veiculos.dados == [], codigo
-        #: e a lacuna NÃO promete mais que isso é temporário nem culpa a Imprensa
-        for lacuna in dossie.volume_por_tier.ficha.lacunas:
-            assert "por ora" not in lacuna.lower(), lacuna
-            assert "Imprensa" not in lacuna or "CRM" in lacuna, lacuna
-
-    #: E A FRASE DO VEÍCULO É A DE CADA UMA. A Sociedade TEM veículo (2.582
-    #: menções, medido) — dizer que não tem seria trocar uma mentira por outra.
-    sociedade = obter_dossie(
-        sessao=sessao, usuario=_QuemOlha(), codigo="sociedade", mes="2026-06"
-    )
-    assert "perfil ou a rede" in sociedade.top_veiculos.ficha.lacunas[0]
-    clientes = obter_dossie(
-        sessao=sessao, usuario=_QuemOlha(), codigo="clientes", mes="2026-06"
-    )
-    assert "não traz veículo na carga" in clientes.top_veiculos.ficha.lacunas[0]
 
 
 def test_materias_recentes_sobe_o_teto_quando_ha_recorte(sessao):
@@ -1361,25 +1190,3 @@ def test_DENTRO_de_um_tema_a_primeira_aba_e_o_SUBTEMA(sessao, sociedade_de_junho
     assert "tema" not in [bloco.recorta for bloco in dentro.dentro]
 
 
-def test_o_top_tier1_so_traz_veiculo_tier_1_com_o_sentimento(sessao):
-    """Embaixo de "Tier do veículo × sentimento": os veículos TIER 1 com mais
-    matérias, em quantidade, e nenhum veículo de outro tier."""
-    clipei = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "clipei")).one()
-    for sentimento in ("pos", "pos", "neg"):
-        sessao.add(
-            Mencao(
-                fonte_id=clipei.id, mes=MES, sentimento=sentimento,
-                veiculo="Jornal Grande", tier="muito_relevante",
-            )
-        )
-    for _ in range(5):
-        sessao.add(
-            Mencao(fonte_id=clipei.id, mes=MES, sentimento="neu", veiculo="Blog", tier="relevante")
-        )
-    sessao.flush()
-
-    bloco = _dossie(sessao).veiculos_tier1
-    assert bloco is not None
-    assert [linha["rotulo"] for linha in bloco.dados] == ["Jornal Grande"]
-    assert bloco.dados[0]["positivo"] == 2 and bloco.dados[0]["negativo"] == 1
-    assert bloco.dados[0]["valor"] == 3

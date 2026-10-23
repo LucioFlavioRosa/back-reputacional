@@ -917,18 +917,15 @@ def nomeia_o_diretorio(lente_e_interna: bool, bloco: BlocoSaida) -> bool:
     return lente_e_interna and bloco.tipo == "barras_horizontais"
 
 
-#: As cores do tier, na mesma paleta oficial da Aegea que o resto do produto
-#: usa — nunca uma cor inventada para preencher uma fatia da rosca.
-_CORES_DO_TIER = {
-    "muito_relevante": "#0027BD",  # Azul Mar
-    "relevante": "#17E3CB",  # Turquesa Rio
-    "menos_relevante": "#A11FFF",  # Roxo Açaí
-}
-
-
-#: AS LENTES QUE TÊM VEÍCULO E TIER DE VERDADE — e portanto os três blocos de
-#: veículo do dossiê: a rosca de volume por tier, o par top/termômetro por
-#: veículo, e a lista de últimas matérias.
+#: AS LENTES QUE TÊM VEÍCULO E TIER DE VERDADE — hoje isto governa a lista de
+#: últimas matérias e a aba de "Onde está a causa".
+#:
+#: GOVERNAVA TAMBÉM os três blocos de veículo do dossiê (a rosca de volume por
+#: tier e o par top/termômetro), que saíram em 23/10/2026: a tela passou a
+#: montá-los no navegador, a partir de `GET /{codigo}/explorador-de-veiculos`.
+#: Quem decide onde o bloco NOVO aparece é a tela, por
+#: `LENTES_COM_BLOCOS_DE_VEICULO` — a rota responde para qualquer lente que não
+#: seja interna.
 #:
 #: ERA SÓ A IMPRENSA, e a restrição era de TELA: o Jones (2026-10-02) não quis
 #: ver "os mesmos veículos e tiers repetidos em Imprensa e Mercado". A decisão
@@ -961,220 +958,16 @@ _CORES_DO_TIER = {
 #:   Sociedade TEM `veiculo` (2.582 menções, 1.103 valores) e ZERO tier. Mas o
 #:   que ela guarda ali é perfil e rede — "deolhoemesteio", "Stela Farias" —,
 #:   não veículo de imprensa. Ranquear isso como "Top veículos", ao lado de
-#:   tier, diria algo errado sobre o dado. Ver `_lacuna_do_veiculo`, que é o que
-#:   explica isso para quem está na tela.
+#:   tier, diria algo errado sobre o dado.
+#:
+#:   A FRASE QUE EXPLICAVA ISSO NA TELA (`_lacuna_do_veiculo`) saiu em
+#:   23/10/2026 com os blocos de veículo: ela vivia na ficha de um bloco vazio,
+#:   e sem o bloco não há onde mostrá-la. A constante continua porque outras
+#:   leituras a usam.
 #:
 #: A Institucional fica fora por vir do CRM, e isso é conferido à parte
 #: (`lente_e_interna`), porque a mensagem é outra.
 LENTES_COM_VEICULO_E_TIER = ("imprensa", "mercado")
-
-
-def _lacuna_do_veiculo(codigo: str) -> str:
-    """Por que ESTA lente não tem o ranking de veículos — e a frase tem de ser
-    verdadeira sobre ela, não genérica.
-
-    ACHADO DE REVISÃO, e o erro foi meu duas vezes: a frase original era "por
-    ora esta tela só mostra veículo na lente Imprensa", que virou mentira no dia
-    em que o Mercado entrou. Troquei por "esta lente não traz veículo na carga",
-    e essa é FALSA para a Sociedade: medido, ela traz 2.582 menções com veículo,
-    em 1.103 valores distintos.
-
-    O QUE A SOCIEDADE TRAZ NÃO É VEÍCULO DE IMPRENSA: é perfil ou rede —
-    "deolhoemesteio", "casadevovodede", nomes de pessoas. O campo é o mesmo, o
-    conceito não, e `DIMENSOES_POR_LENTE` já a chama de "Rede". Ranquear isso
-    como "Top veículos", ao lado de tier, diria algo errado sobre o dado.
-    """
-    if codigo == "sociedade":
-        return (
-            "Nesta lente o campo do veículo guarda o perfil ou a rede, não um "
-            "veículo de imprensa — ele aparece como Rede, em Onde está a causa."
-        )
-    return "Esta lente não traz veículo na carga."
-
-
-def volume_por_tier(
-    sessao, lente, mes: date, calibracao: Calibracao, filtro: FiltroDeMencoes | None = None
-) -> BlocoSaida:
-    """A rosca de volume por tier — mesmo desenho de "% Interações por tier"
-    do Painel (CRM), com matéria no lugar de interação.
-
-    REAPROVEITA `composicao_por_tier`, a mesma consulta do painel "Tier do
-    veículo × sentimento": a rosca só soma os três sentimentos de cada tier,
-    não pede nada que aquela consulta já não traga.
-
-    IMPRENSA E MERCADO — ver `LENTES_COM_VEICULO_E_TIER`, onde está a medida que
-    trouxe o Mercado para cá. Em resumo: os dois gráficos lado a lado não
-    repetem nada, porque nenhum dos 10 maiores veículos do Mercado está no top
-    10 da Imprensa.
-    """
-    if lente.codigo not in LENTES_COM_VEICULO_E_TIER:
-        vazio_ficha = (
-            Ficha(
-                origem=Procedencia.CRM,
-                fonte="Esta lente não vem de clipping",
-                lacunas=("A lente Institucional não tem tier — ela lê o CRM.",),
-            )
-            if repositorio_lentes.lente_e_interna(sessao, lente.id)
-            else Ficha(
-                origem=Procedencia.PLANILHA,
-                fonte=_nomes_das_fontes(sessao, lente.id),
-                #: A LACUNA DIZ O MOTIVO, e não "por ora": esta lente não tem o
-                #: campo, e isso não muda com o tempo. A frase antiga ("só
-                #: mostra tier na lente Imprensa") virou mentira no dia em que
-                #: o Mercado entrou — e ninguém a teria revisado.
-                lacunas=("Esta lente não traz tier do veículo na carga.",),
-            )
-        )
-        return _bloco("rosca", "Volume por tier", [], vazio_ficha, None)
-
-    tiers = repositorio_lentes.composicao_por_tier(sessao, lente.id, mes, calibracao, filtro)
-    return _bloco(
-        "rosca",
-        "Volume por tier",
-        [
-            {
-                "chave": linha["tier"],
-                "rotulo": _ROTULO_DO_TIER_DA_MATERIA.get(linha["tier"], linha["tier"]),
-                "total": linha["positivo"] + linha["neutro"] + linha["negativo"],
-                "cor": _CORES_DO_TIER.get(linha["tier"]),
-                #: O SENTIMENTO DE CADA TIER, para a coluna empilhada do card
-                #: (quantidade, não 100%) — já vinha na consulta.
-                "positivo": linha["positivo"],
-                "neutro": linha["neutro"],
-                "negativo": linha["negativo"],
-            }
-            for linha in tiers
-        ],
-        Ficha(
-            origem=Procedencia.PLANILHA,
-            fonte=_nomes_das_fontes(sessao, lente.id),
-            colunas=("Aegea Tier",),
-        ),
-        None,
-    )
-
-
-def veiculos(
-    sessao, lente, mes: date, calibracao: Calibracao, filtro: FiltroDeMencoes | None = None
-) -> tuple[BlocoSaida, BlocoSaida]:
-    """Top veículos por volume, e o placar de clima de cada um — mesmo par
-    de "Top 5 instituições" + "Clima por Instituições" do Painel (CRM), por
-    veículo em vez de instituição.
-
-    UMA CONSULTA SÓ alimenta os dois blocos: top-por-volume e o saldo de
-    sentimento são a mesma soma lida de dois jeitos.
-
-    IMPRENSA E MERCADO — ver `LENTES_COM_VEICULO_E_TIER`.
-    """
-    if lente.codigo not in LENTES_COM_VEICULO_E_TIER:
-        vazio_ficha = (
-            Ficha(
-                origem=Procedencia.CRM,
-                fonte="Esta lente não vem de clipping",
-                lacunas=("A lente Institucional não tem veículo — ela lê o CRM.",),
-            )
-            if repositorio_lentes.lente_e_interna(sessao, lente.id)
-            else Ficha(
-                origem=Procedencia.PLANILHA,
-                fonte=_nomes_das_fontes(sessao, lente.id),
-                lacunas=(_lacuna_do_veiculo(lente.codigo),),
-            )
-        )
-        return (
-            _bloco("barras_horizontais", "Top veículos", [], vazio_ficha, None),
-            _bloco("divergente_por_item", "Termômetro por veículos", [], vazio_ficha, None),
-        )
-
-    veiculos = repositorio_lentes.veiculos_por_sentimento(
-        sessao, lente.id, mes, calibracao, filtro, quantos=QUANTOS_VEICULOS_NO_TOPO
-    )
-    ficha = Ficha(
-        origem=Procedencia.PLANILHA,
-        fonte=_nomes_das_fontes(sessao, lente.id),
-        colunas=("Veículo", "Classificação"),
-    )
-    top_veiculos = _bloco(
-        "barras_horizontais",
-        "Top veículos",
-        [
-            {
-                "rotulo": linha["veiculo"],
-                "valor": linha["total"],
-                "positivo": linha["positivo"],
-                "neutro": linha["neutro"],
-                "negativo": linha["negativo"],
-            }
-            for linha in veiculos
-        ],
-        ficha,
-        None,
-    )
-    no_termometro = veiculos[:QUANTOS_VEICULOS_NO_TERMOMETRO]
-    # MESMO CÁLCULO DO PAINEL (CRM): (positivas − negativas) ÷ total × 100,
-    # de −100 a 100 — não é o NS oficial do Score (que pondera por tier e vai
-    # de 0 a 100). É o placar simples que a diretoria já conhece de lá.
-    clima_por_veiculos = _bloco(
-        "divergente_por_item",
-        "Termômetro por veículos",
-        [
-            {
-                "chave": linha["veiculo"],
-                "rotulo": linha["veiculo"],
-                "total": linha["total"],
-                "score": round((linha["positivo"] - linha["negativo"]) / linha["total"] * 100),
-            }
-            for linha in no_termometro
-        ],
-        ficha,
-        None,
-    )
-    return top_veiculos, clima_por_veiculos
-
-
-QUANTOS_VEICULOS_TIER1 = 10
-
-
-def veiculos_tier1(
-    sessao, lente, mes: date, calibracao: Calibracao, filtro: FiltroDeMencoes | None = None
-) -> BlocoSaida | None:
-    """Os 10 veículos TIER 1 com mais matérias no mês, com positivo, neutro e
-    negativo de cada um — em QUANTIDADE, não 100% (por pedido). Mora embaixo do
-    painel "Tier do veículo × sentimento": ele diz como o Tier 1 foi no total,
-    este diz quais veículos do Tier 1 formaram isso.
-
-    SÓ ONDE HÁ TIER (`LENTES_COM_VEICULO_E_TIER`); nas outras, nulo.
-    """
-    if lente.codigo not in LENTES_COM_VEICULO_E_TIER:
-        return None
-    veiculos = repositorio_lentes.veiculos_por_sentimento(
-        sessao,
-        lente.id,
-        mes,
-        calibracao,
-        filtro,
-        quantos=QUANTOS_VEICULOS_TIER1,
-        so_do_tier="muito_relevante",
-    )
-    return _bloco(
-        "barras_horizontais",
-        "Top 10 veículos Tier 1",
-        [
-            {
-                "rotulo": linha["veiculo"],
-                "valor": linha["total"],
-                "positivo": linha["positivo"],
-                "neutro": linha["neutro"],
-                "negativo": linha["negativo"],
-            }
-            for linha in veiculos
-        ],
-        Ficha(
-            origem=Procedencia.PLANILHA,
-            fonte=_nomes_das_fontes(sessao, lente.id),
-            colunas=("Veículo", "Aegea Tier", "Classificação"),
-        ),
-        None,
-    )
 
 
 def drivers_e_riscos(
@@ -1280,10 +1073,9 @@ TETO_DE_MATERIAS_FILTRADO = 30
 #: "ÚLTIMAS MATÉRIAS" DA IMPRENSA E DO MERCADO MOSTRAM 15, por pedido: o card
 #: rola, e cada linha abre o detalhe da matéria num popup.
 TETO_DAS_ULTIMAS_MATERIAS = 15
-#: TOP 10 VEÍCULOS no card de tier, por pedido; e o TERMÔMETRO AO LADO também
-#: passou a 10 (21/10/2026), para os dois cards terem o mesmo tamanho.
-QUANTOS_VEICULOS_NO_TOPO = 10
-QUANTOS_VEICULOS_NO_TERMOMETRO = 10
+#: O TETO DE VEÍCULOS SAIU DAQUI em 23/10/2026, com os blocos que ele cortava.
+#: Quantos veículos aparecem passou a ser decisão da TELA: a rota nova manda o
+#: mês agrupado inteiro, e o botão "Ver todos os N" é quem corta.
 
 
 def _mencoes_da_sociedade(

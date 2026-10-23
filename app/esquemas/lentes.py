@@ -160,16 +160,23 @@ class DossieSaida(BaseModel):
     evolucao: BlocoSaida
     #: O quadro ao lado da evolução — até três sinais da série, mais as lacunas.
     sinais_da_evolucao: list[str] = Field(default_factory=list)
-    #: A rosca de volume por tier, ao lado do Top 5 veículos — ver
-    #: `volume_por_tier`/`veiculos`. Só nas lentes de
-    #: `LENTES_COM_VEICULO_E_TIER` (Imprensa e Mercado); vazios nas outras.
-    volume_por_tier: BlocoSaida
-    top_veiculos: BlocoSaida
-    #: O placar de clima por veículo — ver `veiculos`. Vazio na Institucional.
-    clima_por_veiculos: BlocoSaida
-    #: Os 10 veículos Tier 1 com mais matérias, com o sentimento de cada um —
-    #: embaixo do painel "Tier do veículo × sentimento". Ver `veiculos_tier1`.
-    veiculos_tier1: BlocoSaida | None = None
+    #: A DIMENSÃO DE VEÍCULO SAIU DAQUI em 23/10/2026. Eram quatro blocos —
+    #: `volume_por_tier` (a rosca), `top_veiculos`, `clima_por_veiculos` e
+    #: `veiculos_tier1` — que a tela deixou de ler quando os três cartões
+    #: independentes deram lugar ao Explorador de veículos, que soma no
+    #: navegador a partir de `GET /{codigo}/explorador-de-veiculos`.
+    #:
+    #: FICARAM SENDO CALCULADOS PARA NINGUÉM por algumas horas, e sair é mais
+    #: honesto que ficar: bloco que o servidor monta em todo dossiê e ninguém
+    #: desenha é custo por volume e uma promessa falsa no contrato da rota.
+    #:
+    #: SAIU TAMBÉM, por consequência: `veiculos_por_sentimento` no repositório
+    #: (sem outro consumidor) e a divergência de arredondamento que havia entre
+    #: o `round` do Python daqui e o `Math.round` do navegador — ela desaparece
+    #: porque o cálculo duplicado deixa de existir.
+    #:
+    #: O KPI "Veículos Tier 1" CONTINUA: ele vem de
+    #: `veiculos_tier1_do_periodo`, que é outra função, com nome parecido.
     #: O que está puxando a lente pra cima ou pra baixo, por atributo
     #: reputacional — ver `drivers_e_riscos`. Vazio na Institucional.
     drivers_e_riscos: BlocoSaida
@@ -310,3 +317,37 @@ class ExploradorSaida(BaseModel):
     mes: str
     denominador: float
     grupos: list[GrupoDoExploradorSaida]
+
+
+class GrupoDeVeiculoSaida(BaseModel):
+    """Um pedaço do mês: tier e veículo, com contagem e peso por sentimento.
+
+    Nulo onde a menção não traz o campo — a tela deixa de fora da barra daquele
+    EIXO, e a menção continua valendo no outro.
+
+    UMA LINHA POR PAR, e não por veículo: o mesmo veículo pode ter matéria em
+    mais de um tier, e somar aqui tiraria da tela a possibilidade de estreitar
+    por tier.
+    """
+
+    tier: str | None
+    veiculo: str | None
+    positivo: int
+    neutro: int
+    negativo: int
+    peso_positivo: float
+    peso_neutro: float
+    peso_negativo: float
+
+
+class ExploradorDeVeiculosSaida(BaseModel):
+    """Os grupos do mês e o denominador da nota — a tela soma o resto.
+
+    Mesma regra de impacto de `ExploradorSaida`:
+    `impacto(S) = 50 × (Σ peso_positivo − Σ peso_negativo) ÷ denominador`.
+    """
+
+    lente: str
+    mes: str
+    denominador: float
+    grupos: list[GrupoDeVeiculoSaida]
