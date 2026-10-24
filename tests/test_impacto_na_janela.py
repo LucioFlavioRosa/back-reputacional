@@ -915,11 +915,28 @@ def test_o_TIER_recorta_o_quadro_e_o_modal_do_mesmo_jeito(sessao, clipei, temas,
     ).total == 1
 
 
-def test_a_LENTE_escolhida_tira_as_outras_da_soma(sessao, clipei, temas, mes_com_base):
+def test_a_LENTE_escolhida_tira_as_outras_da_soma(sessao, clipei, temas):
     """"Olhar apenas notícias de Imprensa e Mercado, ou apenas Imprensa, ou apenas
-    Mercado". A matéria da Imprensa não pode entrar num quadro de "só Mercado"."""
-    tema = next(iter(temas))
-    _mencao(sessao, clipei, sentimento="neg", n2=temas[tema], dia=CLICADO)
+    Mercado". A matéria da Imprensa não pode entrar num quadro de "só Mercado".
+
+    AS DUAS METADES, e a segunda é conserto de achado de revisão. A primeira
+    versão deste teste semeava só uma menção de IMPRENSA e afirmava que "só
+    Mercado" devolvia lista vazia — o que ele provava era a metade negativa.
+    Sem base no Mercado, aquela chamada caía no retorno antecipado do
+    `mes_sem_base`, e lista vazia é o que ele devolve de qualquer jeito: um
+    defeito que DESCARTASSE a lente escolhida passaria igual, porque "só
+    Mercado, sem dado" e "nenhuma lente" têm a mesma cara na saída.
+
+    AGORA AS DUAS LENTES TÊM BASE E MATÉRIA, em temas diferentes: escolher uma
+    tem de mostrar a DELA e esconder a outra, nos dois sentidos.
+    """
+    mercado = _fonte_da_lente(sessao, "mercado")
+    _com_base(sessao, clipei)
+    _com_base(sessao, mercado)
+    nomes = list(temas)
+    da_imprensa, do_mercado = nomes[0], nomes[1]
+    _mencao(sessao, clipei, sentimento="neg", n2=temas[da_imprensa], dia=CLICADO)
+    _mencao(sessao, mercado, sentimento="neg", n2=temas[do_mercado], dia=CLICADO)
 
     so_imprensa = impacto_na_janela.ler(
         sessao, ate=CLICADO, dias=15, nivel="n2", lentes=["imprensa"]
@@ -927,14 +944,48 @@ def test_a_LENTE_escolhida_tira_as_outras_da_soma(sessao, clipei, temas, mes_com
     so_mercado = impacto_na_janela.ler(
         sessao, ate=CLICADO, dias=15, nivel="n2", lentes=["mercado"]
     )
+    as_duas = impacto_na_janela.ler(
+        sessao, ate=CLICADO, dias=15, nivel="n2", lentes=["imprensa", "mercado"]
+    )
 
-    assert [g.rotulo for g in so_imprensa.negativos] == [tema]
+    #: CADA UMA MOSTRA A SUA, e é isto que a versão anterior não dizia.
+    assert [g.rotulo for g in so_imprensa.negativos] == [da_imprensa]
     assert so_imprensa.lentes == ("imprensa",)
-    assert so_mercado.negativos == []
-    assert "imprensa" not in so_mercado.lentes
+    assert [g.rotulo for g in so_mercado.negativos] == [do_mercado]
+    assert so_mercado.lentes == ("mercado",)
+    #: E NENHUMA DAS DUAS CAIU NO "MÊS SEM BASE": se caísse, as listas vazias
+    #: passariam pela asserção acima sem provar nada.
+    assert not so_imprensa.mes_sem_base
+    assert not so_mercado.mes_sem_base
+    #: AS DUAS JUNTAS TRAZEM OS DOIS TEMAS.
+    assert {g.rotulo for g in as_duas.negativos} == {da_imprensa, do_mercado}
+
+    #: E O MODAL SEGUE O MESMO RECORTE: o tema da Imprensa não tem registro
+    #: nenhum num quadro de "só Mercado".
     assert impacto_na_janela.registros(
-        sessao, ate=CLICADO, grupo=temas[tema], nivel="n2", lentes=["mercado"]
+        sessao, ate=CLICADO, grupo=temas[da_imprensa], nivel="n2", lentes=["mercado"]
     ).total == 0
+    assert impacto_na_janela.registros(
+        sessao, ate=CLICADO, grupo=temas[do_mercado], nivel="n2", lentes=["mercado"]
+    ).total == 1
+
+
+def test_o_TIER_desconhecido_e_recusado_em_voz_alta(sessao, clipei):
+    """Achado de revisão: `nivel` era conferido no caso de uso e `tier` não.
+
+    O RÓTULO DA TELA É A ARMADILHA: quem chamar com "Tier 1" em vez de
+    `muito_relevante` filtrava para zero em silêncio, e um quadro vazio tem a
+    mesma cara de "nada impactou neste tier". A regex da rota protege só quem
+    chega por HTTP.
+    """
+    with pytest.raises(RegraViolada):
+        impacto_na_janela.ler(sessao, ate=CLICADO, dias=15, tier="Tier 1")
+    with pytest.raises(RegraViolada):
+        impacto_na_janela.registros(sessao, ate=CLICADO, grupo=1, tier="muito relevante")
+    #: O TIER VAZIO TAMBÉM, e de propósito: `Tier.SEM` é o das fontes sem tier
+    #: (redes, canais próprios, CRM), e o quadro é de imprensa.
+    with pytest.raises(RegraViolada):
+        impacto_na_janela.ler(sessao, ate=CLICADO, dias=15, tier="")
 
 
 def test_a_LENTE_fora_do_quadro_e_recusada(sessao, clipei):
