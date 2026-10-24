@@ -36,6 +36,7 @@ from app.banco.tabelas_score import (
     ScoreMesFonte,
 )
 from app.dominio.consulta_profundidade import GrupoDaConsulta, MencaoDaConsulta, MesDaLente
+from app.dominio.ingestao_score import para_sigla, para_uf
 from app.dominio.score import (
     REGUA_DE_CONTAGEM,
     REGUAS_DE_TIER,
@@ -421,12 +422,35 @@ def condicoes_do_filtro(filtro: FiltroDeMencoes | None) -> list:
         (Mencao.veiculo, filtro.veiculo),
         # -- as do padrão Aegea (0055) --
         (Mencao.perfil_autor, filtro.perfil_autor),
-        (Mencao.uf, filtro.uf),
         (Mencao.subtema, filtro.subtema),
         (Mencao.autor, filtro.autor),
         (Mencao.sentimento, filtro.sentimento),
     )
     condicoes = [coluna == valor for coluna, valor in de_cada if valor]
+    if filtro.uf:
+        #: O ESTADO CASA PELAS DUAS FORMAS, pelo mesmo motivo do tema e da
+        #: concessionária logo abaixo — e aqui a assimetria é do nosso próprio
+        #: modelo: `mencao.uf` guarda o NOME ("Santa Catarina", decisão do dono
+        #: do produto em 09/10/2026 — ver `para_uf`), enquanto o mapa e a lista
+        #: da Síntese executiva mostram a SIGLA, que `grupos_do_explorador`
+        #: deriva com `para_sigla`. Comparando só o valor recebido, clicar na
+        #: linha "SC" — que acabou de somar as matérias do estado — mandaria
+        #: aqui um valor que a coluna não tem: modal VAZIO sobre uma barra
+        #: cheia, o mesmo defeito que `tema_texto` e `empresa` tiveram.
+        #:
+        #: AS DUAS, E NÃO SÓ O NOME: linha gravada antes de 09/10/2026 pode ter
+        #: ficado com a sigla, e a barra soma as duas juntas (`para_sigla` leva
+        #: "SC" e "Santa Catarina" para a mesma sigla) — casar só uma forma
+        #: faria o modal contar menos que a linha clicada.
+        #:
+        #: `para_uf` TAMBÉM CANONIZA caixa e espaço ("SAO PAULO" -> "São
+        #: Paulo"), e o valor recebido entra no conjunto de todo jeito: o que
+        #: vem da barra de filtros da tela (que oferece os valores crus da
+        #: coluna, `_distintos(Mencao.uf)`) continua casando como antes, e
+        #: estado estrangeiro — "Comunidade de Madrid", que não tem sigla —
+        #: casa pelo texto que o fornecedor deu.
+        formas = {filtro.uf, para_uf(filtro.uf), para_sigla(filtro.uf)}
+        condicoes.append(Mencao.uf.in_(sorted(forma for forma in formas if forma)))
     if filtro.empresa:
         #: A CONCESSIONÁRIA CASA POR DUAS COLUNAS, pelo mesmo motivo do tema
         #: logo abaixo — e aqui o efeito é maior. O rótulo que a tela mostra

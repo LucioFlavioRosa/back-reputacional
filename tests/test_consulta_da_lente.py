@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import date
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
 from app.api.consulta_profundidade import obter_consulta
@@ -580,6 +580,88 @@ def test_o_explorador_devolve_a_UF_em_SIGLA_mesmo_gravada_pelo_NOME(sessao):
     saida = _explorador(sessao)
 
     assert {g.uf for g in saida.grupos} == {"RJ", "SP", "Comunidade de Madrid", None}
+
+
+def test_a_LINHA_DO_MAPA_e_o_clique_nela_contam_O_MESMO(sessao):
+    """A LIÇÃO DA `0098`, agora na UF — e o mapa já estava exposto a ela.
+
+    A lista do Termômetro por UF mostra a SIGLA, derivada de `mencao.uf`, que
+    guarda o NOME desde 09/10/2026. O recorte compara o valor recebido com a
+    coluna: mandar "SP" sobre uma coluna que diz "São Paulo" não acharia nada —
+    barra cheia, modal VAZIO. É o que faltava para o clique no estado abrir o
+    mesmo recorte que a linha mostra.
+
+    AS DUAS FORMAS CONVIVEM NA MESMA UF de propósito ("São Paulo" e "SP"), que é
+    o caso em que casar só uma delas conta MENOS que a linha clicada. E a
+    verificação é por linha, não só na que interessa: estado estrangeiro
+    ("Comunidade de Madrid", sem sigla) tem de continuar fechando pelo texto.
+    """
+    linhas = _linhas_da_imprensa(sessao)
+    nomes = ["Rio de Janeiro", "Rio de Janeiro", "São Paulo", "SP", "Comunidade de Madrid", None]
+    for linha, uf in zip(linhas, nomes, strict=True):
+        linha["uf"] = uf
+    _gravar(sessao, "clipei", linhas)
+    lente = _lente(sessao, "imprensa")
+    calibracao = repositorio_score.calibracao_vigente(sessao)
+
+    da_linha = Counter()
+    for grupo in _explorador(sessao).grupos:
+        if grupo.uf:
+            da_linha[grupo.uf] += grupo.positivo + grupo.neutro + grupo.negativo
+    assert da_linha == Counter({"RJ": 2, "SP": 2, "Comunidade de Madrid": 1})
+
+    for uf, quantas in da_linha.items():
+        #: O MESMO `where` DA LEITURA, menos a UF: é o clique na linha.
+        do_clique = sessao.scalar(
+            select(func.count())
+            .select_from(Mencao)
+            .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+            .where(
+                ScoreFonte.lente_id == lente.id,
+                Mencao.mes == MES,
+                *repositorio_score.so_fontes_ligadas(calibracao),
+                *repositorio_score.condicoes_do_filtro(FiltroDeMencoes(uf=uf)),
+            )
+        )
+        assert do_clique == quantas, (
+            f"a linha {uf!r} conta {quantas} e o clique nela alcança {do_clique}"
+        )
+
+
+def test_o_recorte_por_uf_nao_pega_estado_vizinho(sessao):
+    """O conjunto de formas não pode virar peneira larga.
+
+    `para_uf` e `para_sigla` traduzem UMA UF; se alguma delas devolvesse valor
+    de outro estado — ou o conjunto entrasse vazio e virasse `in_()` sem termo —
+    o recorte por "SP" passaria a contar o Rio junto.
+    """
+    linhas = _linhas_da_imprensa(sessao)
+    for linha, uf in zip(
+        linhas, ["Rio de Janeiro", "SP", "SP", "SP", "SP", "SP"], strict=True
+    ):
+        linha["uf"] = uf
+    _gravar(sessao, "clipei", linhas)
+    lente = _lente(sessao, "imprensa")
+
+    def quantas(valor: str) -> int:
+        return sessao.scalar(
+            select(func.count())
+            .select_from(Mencao)
+            .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+            .where(
+                ScoreFonte.lente_id == lente.id,
+                Mencao.mes == MES,
+                *repositorio_score.condicoes_do_filtro(FiltroDeMencoes(uf=valor)),
+            )
+        )
+
+    assert quantas("SP") == 5
+    #: PELAS DUAS PONTAS: o nome acha a linha gravada em sigla, e a sigla acha a
+    #: gravada pelo nome — é o que a barra de filtros da tela manda (ela oferece
+    #: os valores crus da coluna) e o que o mapa manda.
+    assert quantas("São Paulo") == 5
+    assert quantas("Rio de Janeiro") == 1
+    assert quantas("RJ") == 1
 
 
 def test_o_explorador_segue_o_filtro_da_tela(sessao):
