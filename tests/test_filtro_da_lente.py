@@ -103,6 +103,39 @@ def imprensa_de_junho(sessao):
     return linhas
 
 
+@pytest.fixture
+def institucional_de_junho(sessao):
+    """Três matérias da `clipei_institucional` em junho/2026, uma de cada tier.
+
+    POR QUE UM FIXTURE PRÓPRIO, e não o `imprensa_de_junho` com outra fonte: o
+    que se prova aqui é que a lente certa recebe a lista certa, e as duas
+    precisam de menção na SUA fonte para que trocá-las não passe verde.
+
+    DUAS COLUNAS, DE PROPÓSITO: veículo e tier são exatamente as que a tabela de
+    matérias desenha, e a razão pela qual `LENTES_COM_VEICULO_E_TIER` existe.
+    """
+    fonte = sessao.scalars(
+        select(ScoreFonte).where(ScoreFonte.codigo == "clipei_institucional")
+    ).one()
+    for tier, veiculo, sentimento in (
+        ("muito_relevante", "Agência Brasil", "pos"),
+        ("relevante", "Diário Oficial", "neu"),
+        ("menos_relevante", "Diário Oficial", "neg"),
+    ):
+        sessao.add(
+            Mencao(
+                fonte_id=fonte.id,
+                mes=MES,
+                sentimento=sentimento,
+                tier=tier,
+                veiculo=veiculo,
+                atributo="Governança",
+                tema_texto="Regulação",
+            )
+        )
+    sessao.flush()
+
+
 def _itens(sessao, codigo: str = "imprensa", **filtro):
     """A lista de itens — hoje pela rota do RECORTE, não pelo dossiê.
 
@@ -256,12 +289,43 @@ def test_materias_recentes_respeita_o_mesmo_filtro_da_tela(sessao, imprensa_de_j
     assert {linha["veiculo"] for linha in linhas} == {"Veículo A"}
 
 
-def test_materias_recentes_vazia_na_institucional(sessao):
-    """A lente Institucional lê o CRM, não `mencao` — não há matéria lá."""
-    itens = _itens(sessao, codigo="institucional")
+def test_a_institucional_traz_materia_COMO_A_IMPRENSA(sessao, institucional_de_junho):
+    """A Institucional é CLIPPING, e a lista dela tem as mesmas duas colunas.
 
-    assert itens.dados == []
-    assert itens.ficha.lacunas
+    ERA O CONTRÁRIO ATÉ AQUI, e o teste de antes dizia por quê: "a lente
+    Institucional lê o CRM, não `mencao` — não há matéria lá". Isso morreu na
+    `0107`/`0108`: ela passou a espelhar a Clipei recortada pela subcategoria
+    "Institucional" do Cadastro de Instituições, e a fonte `crm` dela foi
+    aposentada com `ativo = false`.
+
+    O QUE A TELA DIZIA ENQUANTO ISSO: "Esta lente não traz matéria de clipping
+    na carga", escrito na ficha de um bloco vazio — uma afirmação falsa sobre o
+    dado, sobre uma lente que tem matéria. É o defeito que este teste tranca.
+    """
+    bloco = _itens(sessao, codigo="institucional")
+
+    assert bloco.tipo == "tabela"
+    assert bloco.subtipo == "materias"
+    assert len(bloco.dados) == 3
+    assert {linha["veiculo"] for linha in bloco.dados} == {"Agência Brasil", "Diário Oficial"}
+    #: AS DUAS COLUNAS QUE A MEDIDA JUSTIFICA — veículo e tier, as mesmas da
+    #: Imprensa (ver `test_materias_recentes_respeita_o_mesmo_filtro_da_tela`).
+    assert {linha["tier"] for linha in bloco.dados} == {"Tier 1", "Tier 2", "Tier 3"}
+    assert not bloco.ficha.lacunas
+
+
+def test_a_lente_QUE_NAO_E_CLIPPING_segue_sem_lista(sessao):
+    """A contraprova: Clientes continua com o bloco vazio e a lacuna escrita.
+
+    SEM ESTE TESTE, trocar a condição por algo que mostra demais (um `True`, ou
+    todas as lentes) passaria verde — a Institucional acima ficaria certa e a
+    regra, errada. Clientes não tem clipping na carga de verdade; a frase da
+    ficha é a única coisa que explica o card vazio a quem o encontra.
+    """
+    bloco = _itens(sessao, codigo="clientes")
+
+    assert bloco.dados == []
+    assert bloco.ficha.lacunas
 
 
 # -- drivers e riscos, e temas mais falados --------------------------------------
@@ -589,53 +653,58 @@ def test_a_sociedade_continua_com_a_lista_dela_e_tambem_clicavel(sessao):
     assert "link" not in [coluna.chave for coluna in itens.colunas]
 
 
-def test_o_mercado_tem_onde_esta_a_causa_menos_a_aba_de_jornalista(sessao):
-    """O último elemento que era só da Imprensa — e a premissa que o barrava era
-    FALSA.
+@pytest.mark.parametrize(
+    ("codigo", "fonte"),
+    [("mercado", "clipei_investidores"), ("institucional", "clipei_institucional")],
+)
+def test_as_tres_de_clipping_tem_O_MESMO_onde_esta_a_causa(sessao, codigo, fonte):
+    """As cinco abas da Imprensa, nas três lentes de clipping — Jornalista
+    inclusa desde 24/10/2026, por paridade literal pedida pelo dono do produto.
 
-    O comentário de `DIMENSOES_POR_LENTE` punha Mercado e Institucional juntas:
-    "a fonte é estudo e agenda, não menção ingerida. Rodar os cortes devolveria
-    zero, e zero numa tela se lê como 'não houve'".
+    A PREMISSA QUE BARRAVA AS DUAS ERA FALSA, e é por isso que elas entraram em
+    etapas. O comentário de `DIMENSOES_POR_LENTE` dizia das duas: "a fonte é
+    estudo e agenda, não menção ingerida. Rodar os cortes devolveria zero, e
+    zero numa tela se lê como 'não houve'". Era falso para o Mercado desde
+    sempre (327 menções, quatro dimensões 100% preenchidas) e deixou de valer
+    para a Institucional na `0107`/`0108`, que a fizeram clipping.
 
-    Verdade para a Institucional, falso para o Mercado. Medido:
-
-        MERCADO        327 menções   tema 327 (34 distintos)   atributo 327 (8)
-                                     veículo 327               uf 327 (10 UFs)
-                                     autor 0
-        INSTITUCIONAL    0 menções
-
-    Quatro das cinco dimensões da Imprensa estão 100% preenchidas no Mercado.
-
-    E O JORNALISTA NÃO ENTRA, que é a única diferença — e não é desvantagem do
-    Mercado: o campo `autor` está vazio nas DUAS lentes (a Imprensa tem 25.457
-    menções e ZERO autores). A aba dela existe para nomear o diretório de
-    jornalistas, conceito de imprensa e não de relação com investidor. Dar ao
-    Mercado uma aba vazia seria o defeito que o comentário descreve.
+    A ABA DO JORNALISTA VEM VAZIA NAS TRÊS, e isso é verdade sobre o dado, não
+    sobre a lente: a Imprensa tem 25.457 menções e ZERO autores. A aba dela
+    sempre existiu por decisão de produto (é a declaração que protege o nome do
+    autor na Base — ver `nomeia_o_diretorio`), não por ter linha. O teste de
+    antes exigia "nenhuma aba vazia" como regra geral, e essa regra nunca valeu
+    para a Imprensa; aqui ela vale para as quatro abas que têm dado, e a do
+    Jornalista é conferida pelo que ela de fato é.
     """
-    clipei_investidores = sessao.scalars(
-        select(ScoreFonte).where(ScoreFonte.codigo == "clipei_investidores")
+    clipei_da_lente = sessao.scalars(
+        select(ScoreFonte).where(ScoreFonte.codigo == fonte)
     ).one()
     sessao.add(
         Mencao(
-            fonte_id=clipei_investidores.id, mes=MES, sentimento="pos",
+            fonte_id=clipei_da_lente.id, mes=MES, sentimento="pos",
             tier="muito_relevante", veiculo="Valor Econômico",
             tema_texto="Governança", atributo="1. Governança", uf="SP",
         )
     )
     sessao.flush()
 
-    dossie = obter_dossie(sessao=sessao, usuario=_QuemOlha(), codigo="mercado", mes="2026-06")
+    dossie = obter_dossie(sessao=sessao, usuario=_QuemOlha(), codigo=codigo, mes="2026-06")
 
     recortes = [bloco.recorta for bloco in dossie.onde_esta_a_causa]
-    assert recortes == ["tema", "atributo", "veiculo", "uf"], recortes
-    #: E NENHUMA ABA VAZIA: uma aba sem dado se lê como "não houve", e era o
-    #: argumento do comentário original. Se as abas vierem sem linha, a mudança
-    #: produziu exatamente o que ela queria evitar.
-    for bloco in dossie.onde_esta_a_causa:
+    assert recortes == ["tema", "atributo", "veiculo", "uf", "autor"], recortes
+    #: E NENHUMA DAS QUATRO COM DADO VEM VAZIA: uma aba sem linha se lê como
+    #: "não houve", e era o argumento do comentário original. Se elas vierem sem
+    #: linha, a mudança produziu exatamente o que ela queria evitar.
+    com_dado = [bloco for bloco in dossie.onde_esta_a_causa if bloco.recorta != "autor"]
+    for bloco in com_dado:
         assert bloco.dados, f"a aba {bloco.recorta} veio vazia"
 
-    #: O JORNALISTA NÃO ENTRA, e é a única diferença com a Imprensa.
-    assert "autor" not in recortes
+    #: E A ABA DO JORNALISTA VEM, VAZIA — o oposto do que esta linha afirmava
+    #: até 24/10/2026 ("o Jornalista não entra, e é a única diferença com a
+    #: Imprensa"). Vazia é o estado correto dela enquanto a carga não trouxer
+    #: autor: a Imprensa está assim desde o começo.
+    jornalista = next(b for b in dossie.onde_esta_a_causa if b.recorta == "autor")
+    assert jornalista.dados == []
 
 
 def test_materias_recentes_sobe_o_teto_quando_ha_recorte(sessao):

@@ -917,8 +917,12 @@ def nomeia_o_diretorio(lente_e_interna: bool, bloco: BlocoSaida) -> bool:
     return lente_e_interna and bloco.tipo == "barras_horizontais"
 
 
-#: AS LENTES QUE TÊM VEÍCULO E TIER DE VERDADE — hoje isto governa a lista de
-#: últimas matérias e a aba de "Onde está a causa".
+#: AS LENTES QUE TÊM VEÍCULO E TIER DE VERDADE — hoje isto governa UM lugar só:
+#: a lista de últimas matérias (`materias_recentes`, logo abaixo).
+#:
+#: ESTA LINHA DIZIA "e a aba de Onde está a causa", e não é verdade: as abas
+#: daquele cartão saem de `DIMENSOES_POR_LENTE`, em `causa_da_lente.py`, que não
+#: consulta esta constante. Deixar escrito aqui fazia procurar no lugar errado.
 #:
 #: GOVERNAVA TAMBÉM os três blocos de veículo do dossiê (a rosca de volume por
 #: tier e o par top/termômetro), que saíram em 23/10/2026: a tela passou a
@@ -965,9 +969,27 @@ def nomeia_o_diretorio(lente_e_interna: bool, bloco: BlocoSaida) -> bool:
 #:   e sem o bloco não há onde mostrá-la. A constante continua porque outras
 #:   leituras a usam.
 #:
-#: A Institucional fica fora por vir do CRM, e isso é conferido à parte
-#: (`lente_e_interna`), porque a mensagem é outra.
-LENTES_COM_VEICULO_E_TIER = ("imprensa", "mercado")
+#: A INSTITUCIONAL ENTROU EM 24/10/2026, e o que a mantinha fora era uma
+#: premissa morta: "fica fora por vir do CRM, e isso é conferido à parte
+#: (`lente_e_interna`), porque a mensagem é outra". Ela deixou de vir do CRM na
+#: `0107`/`0108` — espelha a Clipei recortada pela subcategoria "Institucional"
+#: do Cadastro de Instituições, e a fonte `crm` dela está `ativo = false`, então
+#: `lente_e_interna` já devolve falso e aquele ramo não é mais alcançado.
+#:
+#: O QUE A TELA DIZIA ENQUANTO ISSO, e é por isso que esta linha é conserto e
+#: não feature: a lista vinha VAZIA com a lacuna "Esta lente não traz matéria de
+#: clipping na carga" — uma afirmação falsa sobre o dado, no lugar das matérias
+#: que a lente tem. Mesmo defeito de família do `tema_texto`, da `empresa` e da
+#: UF: a tela afirmando sobre um dado o que deixou de ser verdade.
+#:
+#: AS DUAS COLUNAS SE JUSTIFICAM NELA pelo mesmo argumento medido do Mercado: é
+#: outro conjunto de veículos, não os mesmos repetidos — ela recorta por outra
+#: subcategoria do cadastro.
+#:
+#: O VOLUME AINDA É BAIXO em Mercado e Institucional, e isso é cadastro de
+#: veículo por fazer (dono do produto, 24/10/2026), não lente sem dado: a
+#: classificação das instituições é que ainda não está completa.
+LENTES_COM_VEICULO_E_TIER = ("imprensa", "mercado", "institucional")
 
 
 def drivers_e_riscos(
@@ -1177,15 +1199,17 @@ def materias_recentes(
 ) -> BlocoSaida:
     """O drill-down até a linha: as matérias mais recentes por trás da nota.
 
-    IMPRENSA E MERCADO — ver `LENTES_COM_VEICULO_E_TIER`. As colunas desta
-    tabela ("Veículo", "Aegea Tier") são as mesmas duas que a medida de lá
+    AS TRÊS LENTES DE CLIPPING — ver `LENTES_COM_VEICULO_E_TIER`. As colunas
+    desta tabela ("Veículo", "Aegea Tier") são as mesmas duas que a medida de lá
     justifica.
 
     A SOCIEDADE TEM LISTA PRÓPRIA, e por razão diferente: as colunas de clipping
     não dizem nada de um post, mas a carga do padrão trouxe o que uma menção de
     rede precisa — o texto, o link, quem escreveu e o engajamento. Ela ganha a
-    lista com as colunas DELA (`_mencoes_da_sociedade`). Clientes e
-    Institucional seguem sem lista, por não terem o campo.
+    lista com as colunas DELA (`_mencoes_da_sociedade`).
+
+    SÓ CLIENTES SEGUE SEM LISTA, por não ter clipping na carga. A Institucional
+    estava nesta frase até 24/10/2026, de quando lia o CRM.
     """
     if lente.codigo == "sociedade":
         return _mencoes_da_sociedade(sessao, lente, mes, calibracao, filtro)

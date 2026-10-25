@@ -105,9 +105,9 @@ class Presenca:
 #: TIER NÃO ENTRA NA IMPRENSA porque ele já é o painel A da lente: uma aba que
 #: repete um painel da mesma tela gasta a vez de uma que não está em nenhum.
 #:
-#: A INSTITUCIONAL NÃO ESTÁ AQUI: a fonte dela é agenda, não menção ingerida —
-#: ela tem ZERO menções. Rodar os cortes devolveria zero, e zero numa tela se lê
-#: como "não houve".
+#: A INSTITUCIONAL ESTÁ AQUI desde 21/10/2026, e esta nota dizia o contrário —
+#: "a fonte dela é agenda, não menção ingerida; ela tem ZERO menções". Era
+#: verdade antes da `0107`/`0108`, que a fizeram clipping como as outras duas.
 #:
 #: O MERCADO ESTAVA JUNTO DELA, E ERA ERRO MEU DE PREMISSA. O comentário dizia
 #: "a fonte é estudo e agenda" para os dois. Para o Mercado isso é falso: ele é
@@ -122,10 +122,11 @@ class Presenca:
 #: Quatro das cinco dimensões da Imprensa estão 100% preenchidas no Mercado, e
 #: nenhum corte devolveria zero.
 #:
-#: O `autor` NÃO ENTRA, e não é desvantagem do Mercado: ele está vazio nas DUAS
-#: lentes — a Imprensa tem 25.457 menções e ZERO autores. A aba "Jornalista"
-#: dela está lá por decisão de produto (nomeia o diretório), não por ter dado.
-#: Dar ao Mercado uma aba vazia seria o defeito que este comentário descreve.
+#: O `autor` ENTRA NAS TRÊS desde 24/10/2026 (paridade literal, pedido do dono
+#: do produto) — ver a nota no "mercado" abaixo, que guarda o argumento que eu
+#: tinha contra e por que ele não se sustentou. O campo está vazio nas três: a
+#: Imprensa tem 25.457 menções e ZERO autores, e a aba dela sempre esteve lá por
+#: decisão de produto, não por ter dado.
 DIMENSOES_POR_LENTE: dict[str, tuple[Dimensao, ...]] = {
     "sociedade": (
         Dimensao("tema", "Pilar (N1)", "tema_texto"),
@@ -143,10 +144,26 @@ DIMENSOES_POR_LENTE: dict[str, tuple[Dimensao, ...]] = {
         Dimensao("uf", "UF", "uf"),
         Dimensao("autor", "Jornalista", "autor", nomeia_o_diretorio=True),
     ),
-    #: AS MESMAS DA IMPRENSA, MENOS O JORNALISTA — ver a nota acima: o campo
-    #: `autor` está vazio nas duas lentes, e a aba dela existe para nomear o
-    #: diretório de jornalistas, que é um conceito de imprensa, não de
-    #: relação com investidor.
+    #: AS MESMAS DA IMPRENSA, JORNALISTA INCLUSO desde 24/10/2026 — paridade
+    #: literal, por decisão do dono do produto: as três lentes de clipping são a
+    #: mesma tela, e não uma tela com três variações a explicar.
+    #:
+    #: O ARGUMENTO QUE EU TINHA ESCRITO AQUI CONTRA ERA "o campo `autor` está
+    #: vazio nas duas lentes, e a aba existe para nomear o diretório de
+    #: jornalistas, que é conceito de imprensa, não de relação com investidor".
+    #: O primeiro trecho vale igual para a Imprensa, que tem a aba; o segundo é
+    #: julgamento de produto, e o produto decidiu o contrário.
+    #:
+    #: A FLAG VEM JUNTO, E É O QUE IMPORTA AQUI: `nomeia_o_diretorio=True` não é
+    #: enfeite da aba — é de onde a Base das Lentes deriva se pode publicar o
+    #: nome do autor para quem NÃO tem a permissão do diretório (ver
+    #: `nomeia_o_diretorio`, abaixo). Acrescentar a dimensão sem a flag daria
+    #: paridade na tela e um vazamento na outra: o nome de gente de fora, que
+    #: vem do cadastro, exposto nestas duas lentes e protegido só na Imprensa.
+    #:
+    #: E É O MESMO AUTOR, não outro: as três são o mesmo export da Clipei pela
+    #: mesma ingestão — o `autor` é o jornalista, e não o perfil que vem dentro
+    #: da menção (a distinção que o teste da Base cobra).
     #:
     #: E O TIER NÃO ENTRA, pela mesma razão que não entra na Imprensa: ele já é
     #: a rosca no alto da tela, e uma aba que repete um painel da mesma tela
@@ -156,6 +173,7 @@ DIMENSOES_POR_LENTE: dict[str, tuple[Dimensao, ...]] = {
         Dimensao("atributo", "Atributo", "atributo"),
         Dimensao("veiculo", "Veículo", "veiculo"),
         Dimensao("uf", "UF", "uf"),
+        Dimensao("autor", "Jornalista", "autor", nomeia_o_diretorio=True),
     ),
     "clientes": (
         Dimensao("tema", "Pilar (N1)", "tema_texto"),
@@ -168,12 +186,14 @@ DIMENSOES_POR_LENTE: dict[str, tuple[Dimensao, ...]] = {
     #: dela é agenda, não menção ingerida — ela tem ZERO menções"; desde a
     #: `0107` ela é o clipping da Clipei recortado pela subcategoria
     #: "Institucional", e desde a `0108` é SÓ isso. As dimensões são as do
-    #: Mercado porque o export é o mesmo, recortado de outro jeito.
+    #: Mercado porque o export é o mesmo, recortado de outro jeito — Jornalista
+    #: incluso, com a flag, pela razão escrita no Mercado acima.
     "institucional": (
         Dimensao("tema", "Pilar (N1)", "tema_texto"),
         Dimensao("atributo", "Atributo", "atributo"),
         Dimensao("veiculo", "Veículo", "veiculo"),
         Dimensao("uf", "UF", "uf"),
+        Dimensao("autor", "Jornalista", "autor", nomeia_o_diretorio=True),
     ),
 }
 
