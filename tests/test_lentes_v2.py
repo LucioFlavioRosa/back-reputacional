@@ -963,30 +963,18 @@ def test_com_ve_diretorio_a_matriz_continua_vindo(sessao):
 
 
 def test_sem_ve_diretorio_os_orgaos_do_crm_nao_sao_nomeados(sessao, monkeypatch):
-    """O painel da institucional lista com quem a companhia se reuniu.
+    """O painel "Órgãos com mais interações" nomeia terceiros: é do diretório.
 
-    São os mesmos nomes de `GET /api/instituicoes`, que esse papel não abre —
-    chegando por outra porta, agregados por volume de agenda.
+    São os mesmos nomes de `GET /api/instituicoes`, que esse papel não abre.
 
-    COM O CRM LIGADO SÓ AQUI, e esta é a correção mais importante da revisão do
-    Codex: esta é uma garantia de PRIVACIDADE, e com a política de hoje ela
-    passava por motivo errado — o painel não existe para ninguém, então "ele
-    não aparece para quem não vê o diretório" era verdade por ausência, não por
-    permissão. Nestas palavras: "esse último passa porque o painel CRM nem
-    chega a existir, não porque a permissão de diretório foi exercitada".
-
-    E O CONTROLE MORA DENTRO DESTE TESTE, não no gêmeo de baixo. Religar o CRM
-    não bastou: uma asserção de AUSÊNCIA passa sempre que o painel não existe,
-    por qualquer motivo — inclusive por o painel ter sido removido para todo
-    mundo, que é o conserto errado que este teste existe para barrar. Então
-    aqui se afirmam os DOIS papéis sobre o MESMO estado do cadastro: quem vê o
-    diretório recebe o painel, quem não vê não recebe. É a diferença entre os
-    dois que prova a regra, e nenhuma das duas metades sozinha a prova.
+    OS DOIS PAPÉIS NO MESMO TESTE, e é o que o torna honesto: uma asserção de
+    ausência passa sempre que o painel não existe, inclusive se alguém o
+    remover para todo mundo — o conserto errado que este teste existe para
+    barrar. É a diferença entre os dois papéis, sobre o mesmo cadastro, que
+    prova a regra de permissão.
     """
     ligar_o_crm(sessao, monkeypatch)
 
-    #: O CONTROLE: com o CRM ligado, o painel EXISTE para quem vê o diretório.
-    #: Se esta linha falhar, a de baixo não prova nada.
     com_diretorio = _dossie_de(sessao, "institucional", ve_diretorio=True).paineis
     assert "Órgãos com mais interações" in [p.titulo for p in com_diretorio]
 

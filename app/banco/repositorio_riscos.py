@@ -171,33 +171,15 @@ class FiltroDeRisco:
 
     @property
     def tem_crm(self) -> bool:
-        """O CRM entra quando a política o admite e o FILTRO DA TELA não o exclui.
+        """O CRM entra quando a política o admite e o filtro da tela não o exclui.
 
-        O QUE ESTA PROPRIEDADE OLHA, e só isto: a política de produto, e os dois
-        campos do filtro que o usuário escolheu (`fontes` e `lentes`). Ela NÃO
-        consulta o cadastro — não tem sessão para isso. A primeira redação desta
-        docstring dizia "nem a fonte nem a lente o deixam de fora", e lia-se
-        como se fosse o cadastro; é achado da revisão do Codex, e é exatamente a
-        confusão que já tinha produzido um defeito aqui (eu afirmava `ativo=True`
-        para a política, sobre um cadastro que daqui não se vê).
+        Olha a política e os campos `fontes` e `lentes` do filtro. Não consulta o
+        cadastro, porque não tem sessão: quem confere o cadastro é
+        `agendas_de_incidente`.
 
-        A POLÍTICA VEM PRIMEIRO, e é de produto: as agendas do CRM ficam no CRM,
-        e os KPIs Reputacionais se medem de Clipei, Bites e Approach. A regra
-        está escrita uma vez, em `dominio/fontes_do_score` — aqui só se
-        pergunta. Com ela em `False`, `agendas_de_incidente` devolve `None` e as
-        agendas desaparecem de TODOS os caminhos desta tela (série, contagem por
-        risco, lista, conjunto de fontes do mês), porque todos passam por lá.
-        O resto deste método continua inteiro para o dia em que a resposta
-        mudar.
-
-        O FILTRO DE LENTE TAMBÉM O EXCLUI, e esquecer isso seria o pior tipo de
-        erro nesta tela: quem escolhe "Imprensa" receberia as reuniões do CRM no
-        meio das notícias, e o total não corresponderia a nada que se possa
-        conferir. `LENTE_DO_CRM` só tem significado com o cadastro religado —
-        ver o "como se desfaz" em `dominio/fontes_do_score`.
-
-        QUEM CONFERE O CADASTRO é `agendas_de_incidente`, que tem a sessão: ela
-        é o gargalo por onde os seis caminhos das agendas passam.
+        O filtro de lente também o exclui, e esquecer isso seria o pior erro
+        nesta tela: quem escolhe "Imprensa" receberia as reuniões do CRM no meio
+        das notícias. `LENTE_DO_CRM` só tem significado com o cadastro religado.
         """
         #: SÓ A POLÍTICA SE PERGUNTA AQUI, e por isso a função é a de uma
         #: pergunta só: este método não tem sessão, e mentir `ativo=True` para
@@ -350,34 +332,25 @@ def agendas_de_incidente(
 ) -> Select | None:
     """As agendas do CRM que contam como incidente, ou `None` se o CRM está fora.
 
-    A SESSÃO ENTROU AQUI por achado da revisão do Codex, e fecha um defeito que
-    eu abri: `tem_crm` só sabe da política, e a fonte precisa estar ATIVA e ter
-    LENTE no cadastro para a agenda poder ser contada. Sem a conferência, ligar
-    a política sem reativar a fonte fazia a agenda entrar aposentada — e, sem
-    lente, montava uma linha de incidente com `lente=None` contra um contrato
-    que declara `lente: str`, ou seja, 500 na tela.
+    O gargalo: os seis caminhos das agendas — série, matriz, recorrência, lista,
+    por tema e total por severidade — passam por aqui. A guarda mora neste ponto
+    porque guarda que se pode esquecer de chamar é guarda que não existe.
 
-    É AQUI E EM NENHUM OUTRO LUGAR porque esta função é o gargalo: os seis
-    caminhos das agendas (série, matriz, recorrência, lista, por tema, total por
-    severidade) todos passam por ela. Uma guarda que se pode esquecer de chamar
-    é guarda que não existe — e esta não se pode esquecer.
+    Para a agenda contar, três coisas juntas: a política admite fonte interna, o
+    cadastro a tem como ativa, e ela tem lente. Sem lente, a linha do incidente
+    não teria o que pôr em `lente: str`.
 
-    `interacao` NÃO TEM SENTIMENTO: tem `clima`, que é o Termômetro da tela do
-    CRM. Clima negativo é o equivalente da menção negativa, e é a única leitura
-    de "incidente" que o CRM oferece sem inventar campo.
+    `interacao` não tem sentimento: tem `clima`. Clima negativo é o equivalente
+    da menção negativa, e a única leitura de "incidente" que o CRM oferece sem
+    inventar campo.
 
-    O ESCOPO DO USUÁRIO É OBRIGATÓRIO, e é por isso que ele é parâmetro e não
-    campo opcional do filtro: achado de revisão. O CRM restringe por frente e
-    por unidade de negócio (`usuario_escopo`), e uma tela de risco sem isso
-    contaria como incidente a agenda que a listagem do CRM esconde daquele
-    usuário — a mesma agenda, visível num lugar e não no outro. Guarda que se
-    pode esquecer de passar é guarda que não existe.
+    O escopo do usuário é parâmetro, e não campo opcional do filtro: o CRM
+    restringe por frente e por unidade de negócio, e sem isso esta tela contaria
+    como incidente a agenda que a listagem do CRM esconde daquele usuário.
     """
     if not filtro.tem_crm:
         return None
-    #: E O CADASTRO TEM DE CONCORDAR: fonte interna ativa E com lente. Sem
-    #: lente, a agenda não tem a que pertencer, e a linha do incidente exige
-    #: uma (`lente: str`). Ver a nota do cabeçalho.
+    #: O cadastro tem de concordar com a política: fonte ativa e com lente.
     interna = sessao.scalar(
         select(ScoreFonte).where(ScoreFonte.codigo == FONTE_DO_CRM)
     )
@@ -385,11 +358,9 @@ def agendas_de_incidente(
         interna=interna.interna, ativo=interna.ativo
     ) or interna.lente_id is None:
         return None
-    #: DIMENSÃO DE MENÇÃO EXCLUI A AGENDA. Quem filtra por tier ou por cargo está
-    #: perguntando sobre imprensa ou sobre redes; a agenda não tem esses campos,
-    #: e devolvê-la junto faria o recorte parecer não ter funcionado. Achado de
-    #: revisão: campos de uma fonte só precisam dizer que a ausência é
-    #: estrutural.
+    #: Dimensão de menção exclui a agenda: quem filtra por tier ou por cargo
+    #: pergunta sobre imprensa ou sobre redes, e a agenda não tem esses
+    #: campos. Devolvê-la junto faria o recorte parecer não ter funcionado.
     if filtro.dimensoes:
         return None
 
@@ -1012,21 +983,13 @@ def incidentes_de_risco(
 
     das_agendas = agendas_de_incidente(sessao, filtro, riscos, escopo)
     if das_agendas is not None:
-        #: O NOME DA FONTE E DA LENTE DO CRM, do cadastro: ele é uma `score_fonte`
-        #: como as outras (`interna = true`), e escrever "crm" na tela seria o
-        #: mesmo erro de mostrar código onde o produto mostra nome.
+        #: O nome da fonte e o da lente vêm do cadastro: escrever "crm" na
+        #: tela seria mostrar código onde o produto mostra nome.
         #:
-        #: E A LENTE NÃO É MAIS ADIVINHADA. Aqui havia `LENTE_DO_CRM` como
-        #: padrão, e a `0114` tirou a lente da fonte interna: o padrão passaria a
-        #: AFIRMAR "institucional" sobre uma fonte que deixou de ser daquela
-        #: lente.
-        #:
-        #: O `else None` É CINTO DE SEGURANÇA, E NÃO O COMPORTAMENTO — achado da
-        #: revisão do Codex. Esta nota dizia que "sem lente no cadastro a coluna
-        #: fica vazia", e esse estado é INALCANÇÁVEL daqui: `agendas_de_incidente`
-        #: devolve `None` quando o cadastro não tem lente, então nenhuma linha
-        #: chega a ser construída. Fica pelo tipo (`lente: str` não aceita nulo
-        #: calado) e para o dia em que o gargalo mudar de pergunta.
+        #: A lente não é adivinhada. Aqui havia `LENTE_DO_CRM` como padrão, e
+        #: desde a `0114` isso afirmaria "institucional" sobre uma fonte que
+        #: não é mais dela. O `else None` é cinto de segurança:
+        #: `agendas_de_incidente` já devolve `None` quando não há lente.
         do_cadastro = lentes_das_fontes(sessao).get(FONTE_DO_CRM)
         nomes_do_crm = (
             (nomes_das_fontes(sessao).get(FONTE_DO_CRM) or FONTE_DO_CRM),

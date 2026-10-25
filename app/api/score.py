@@ -632,21 +632,14 @@ def listar_fontes(
 ) -> list[FonteSaida]:
     """O registro de fontes, com cobertura e volume — a aba Calibração.
 
-    SÓ AS FONTES QUE ALIMENTAM OS KPIs. A aba é o cadastro de quem forma o
-    índice: listar uma fonte que não entra na conta é oferecer um ajuste que não
-    ajusta nada. Hoje isso significa Clipei, Clipei · investidores, Clipei ·
-    imprensa institucional, Approach SL, Bites e Approach CM — ver
-    `dominio/fontes_do_score`, onde a regra está escrita uma vez.
+    Só as fontes que alimentam os KPIs: listar uma fonte que não entra na conta
+    é oferecer um ajuste que não ajusta nada. A regra está em
+    `dominio/fontes_do_score`.
 
-    ERA A LISTA INTEIRA, e o que ela mostrava era "CRM dos Stakeholders ·
-    Institucional", esmaecido e com selo "interna": a ligação que o dono do
-    produto mandou desfazer, visível na tela de quem calibra o índice.
-
-    O FILTRO É DAQUI, E NÃO DO REPOSITÓRIO, de propósito:
-    `fontes_cadastradas` continua devolvendo todas, porque a subida de planilha
-    precisa CONHECER a fonte interna para recusar o upload nela com a mensagem
-    certa (ver `test_score_api`). Esconder no repositório trocaria a recusa por
-    um "fonte não encontrada".
+    O filtro é daqui, e não do repositório, de propósito: `fontes_cadastradas`
+    continua devolvendo todas porque a subida de planilha precisa conhecer a
+    fonte interna para recusar o upload nela com a mensagem certa. Esconder no
+    repositório trocaria a recusa por "fonte não encontrada".
     """
     alvo = mes_de(mes)
     calibracao = repositorio_score.calibracao_vigente(sessao)
@@ -683,11 +676,10 @@ def listar_fontes(
             mencoes_no_mes=volume.get(fonte.id, 0),
         )
         for fonte in repositorio_score.fontes_cadastradas(sessao)
-        #: `ativo=True` AQUI É A PERGUNTA, NÃO UMA AFIRMAÇÃO: o que se filtra na
-        #: aba é a POLÍTICA (fonte interna não alimenta os KPIs), nunca a
-        #: aposentadoria. Fonte externa aposentada CONTINUA na lista, e tem de
-        #: continuar: ela guarda histórico em `score_mes_fonte`, aparece
-        #: esmaecida pelo `ligada`, e é na Calibração que se religa.
+        #: `ativo=True` é a PERGUNTA, não uma afirmação: o que se filtra na
+        #: aba é a política, nunca a aposentadoria. Fonte externa aposentada
+        #: continua na lista, esmaecida pelo `ligada` — é na Calibração que
+        #: se religa.
         if alimenta_os_kpis(interna=fonte.interna, ativo=True)
     ]
 
