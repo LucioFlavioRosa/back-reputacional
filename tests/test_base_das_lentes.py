@@ -302,14 +302,22 @@ def test_a_base_e_o_cartao_perguntam_a_mesma_coisa():
 
     `nomeia_o_diretorio` é a função que `base_das_lentes` passou a chamar nos
     três pontos onde havia `codigo == "imprensa"`. Este teste prende o estado
-    de hoje — só a Imprensa — e, mais que isso, prende que a resposta vem da
-    declaração por dimensão, que é onde a política está escrita.
+    de hoje — as três lentes de clipping — e, mais que isso, prende que a
+    resposta vem da declaração por dimensão, que é onde a política está escrita.
+
+    ERAM SÓ A IMPRENSA ATÉ 24/10/2026. Mercado e Institucional ganharam a aba
+    "Jornalista" por paridade literal com ela (pedido do dono do produto), e a
+    flag veio junto de propósito: é ela que faz a Base das Lentes esconder o
+    nome do autor de quem não tem a permissão do diretório. A pergunta que a
+    mensagem abaixo manda conferir tem resposta sim — as três são o mesmo export
+    da Clipei pela mesma ingestão, e o `autor` ali é o jornalista do cadastro,
+    não o perfil que vem dentro da menção (que é o caso da Sociedade).
     """
     nomeiam = sorted(
         codigo for codigo in DIMENSOES_POR_LENTE if nomeia_o_diretorio(codigo)
     )
 
-    assert nomeiam == ["imprensa"], (
+    assert nomeiam == ["imprensa", "institucional", "mercado"], (
         f"mudou quem nomeia o diretório: hoje {nomeiam}. Se foi de propósito, a "
         "Base das Lentes já acompanha — confira se a lente nova tem mesmo autor "
         "de CADASTRO, e não o perfil que vem dentro da menção."

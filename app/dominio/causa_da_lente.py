@@ -105,10 +105,6 @@ class Presenca:
 #: TIER NÃO ENTRA NA IMPRENSA porque ele já é o painel A da lente: uma aba que
 #: repete um painel da mesma tela gasta a vez de uma que não está em nenhum.
 #:
-#: A INSTITUCIONAL NÃO ESTÁ AQUI: a fonte dela é agenda, não menção ingerida —
-#: ela tem ZERO menções. Rodar os cortes devolveria zero, e zero numa tela se lê
-#: como "não houve".
-#:
 #: O MERCADO ESTAVA JUNTO DELA, E ERA ERRO MEU DE PREMISSA. O comentário dizia
 #: "a fonte é estudo e agenda" para os dois. Para o Mercado isso é falso: ele é
 #: o clipping da Clipei recortado por público-alvo Investidores (migration
@@ -122,10 +118,9 @@ class Presenca:
 #: Quatro das cinco dimensões da Imprensa estão 100% preenchidas no Mercado, e
 #: nenhum corte devolveria zero.
 #:
-#: O `autor` NÃO ENTRA, e não é desvantagem do Mercado: ele está vazio nas DUAS
-#: lentes — a Imprensa tem 25.457 menções e ZERO autores. A aba "Jornalista"
-#: dela está lá por decisão de produto (nomeia o diretório), não por ter dado.
-#: Dar ao Mercado uma aba vazia seria o defeito que este comentário descreve.
+#: O `autor` entra nas três lentes de clipping, por paridade. A carga ainda
+#: não traz valores nessa coluna: a aba existe por decisão de produto, e não
+#: por ter dado.
 DIMENSOES_POR_LENTE: dict[str, tuple[Dimensao, ...]] = {
     "sociedade": (
         Dimensao("tema", "Pilar (N1)", "tema_texto"),
@@ -143,10 +138,18 @@ DIMENSOES_POR_LENTE: dict[str, tuple[Dimensao, ...]] = {
         Dimensao("uf", "UF", "uf"),
         Dimensao("autor", "Jornalista", "autor", nomeia_o_diretorio=True),
     ),
-    #: AS MESMAS DA IMPRENSA, MENOS O JORNALISTA — ver a nota acima: o campo
-    #: `autor` está vazio nas duas lentes, e a aba dela existe para nomear o
-    #: diretório de jornalistas, que é um conceito de imprensa, não de
-    #: relação com investidor.
+    #: AS MESMAS DA IMPRENSA, Jornalista incluso: as três lentes de clipping
+    #: são a mesma tela.
+    #:
+    #: `nomeia_o_diretorio=True` não é enfeite da aba: é de onde a Base das
+    #: Lentes deriva se pode publicar o nome do autor para quem não tem a
+    #: permissão do diretório (ver `nomeia_o_diretorio`, abaixo). A flag
+    #: acompanha a dimensão `autor` em TODA lente de clipping — sem ela,
+    #: aquela lente publica o nome do autor para quem não vê o diretório.
+    #:
+    #: E é o mesmo autor, não outro: as três são o mesmo export da Clipei pela
+    #: mesma ingestão. O `autor` é o jornalista, e não o perfil que vem dentro
+    #: da menção.
     #:
     #: E O TIER NÃO ENTRA, pela mesma razão que não entra na Imprensa: ele já é
     #: a rosca no alto da tela, e uma aba que repete um painel da mesma tela
@@ -156,6 +159,7 @@ DIMENSOES_POR_LENTE: dict[str, tuple[Dimensao, ...]] = {
         Dimensao("atributo", "Atributo", "atributo"),
         Dimensao("veiculo", "Veículo", "veiculo"),
         Dimensao("uf", "UF", "uf"),
+        Dimensao("autor", "Jornalista", "autor", nomeia_o_diretorio=True),
     ),
     "clientes": (
         Dimensao("tema", "Pilar (N1)", "tema_texto"),
@@ -163,17 +167,16 @@ DIMENSOES_POR_LENTE: dict[str, tuple[Dimensao, ...]] = {
         Dimensao("empresa", "Concessionária", "unidade_texto"),
         Dimensao("uf", "UF", "uf"),
     ),
-    #: A INSTITUCIONAL ENTRA PELA MESMA PORTA QUE O MERCADO ENTROU, e pela mesma
-    #: razão: a premissa que a mantinha fora morreu. A nota acima dizia "a fonte
-    #: dela é agenda, não menção ingerida — ela tem ZERO menções"; desde a
-    #: `0107` ela é o clipping da Clipei recortado pela subcategoria
-    #: "Institucional", e desde a `0108` é SÓ isso. As dimensões são as do
-    #: Mercado porque o export é o mesmo, recortado de outro jeito.
+    #: AS MESMAS DO MERCADO, porque o export é o mesmo, recortado de outro
+    #: jeito: desde a `0111` a Institucional é o clipping da Clipei recortado
+    #: pela subcategoria "Institucional" do cadastro, e a `0112` tirou o CRM do
+    #: índice. Jornalista incluso, com a flag, pela razão escrita no Mercado.
     "institucional": (
         Dimensao("tema", "Pilar (N1)", "tema_texto"),
         Dimensao("atributo", "Atributo", "atributo"),
         Dimensao("veiculo", "Veículo", "veiculo"),
         Dimensao("uf", "UF", "uf"),
+        Dimensao("autor", "Jornalista", "autor", nomeia_o_diretorio=True),
     ),
 }
 
@@ -251,8 +254,9 @@ def nomeia_o_diretorio(codigo_da_lente: str) -> bool:
     Imprensa, `autor` é o jornalista do cadastro de terceiros; na Sociedade
     digital e em Clientes é o perfil que veio DENTRO da menção — o `Publicador`
     que o fornecedor manda na própria linha, que o indicador "Autor mais
-    negativo" já mostra a todo mundo. Por isso só a Imprensa responde `True`
-    hoje, e por isso o `Publicador` da Approach entra aberto.
+    negativo" já mostra a todo mundo. Por isso respondem `True` as
+    três lentes de clipping, e por isso o `Publicador` da Approach entra
+    aberto.
     """
     return any(
         dimensao.nomeia_o_diretorio
