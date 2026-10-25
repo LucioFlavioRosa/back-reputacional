@@ -64,8 +64,19 @@ def _cliente(sessao, papel: str):
 
 
 @pytest.fixture
-def com_incidentes(sessao):
+def com_incidentes(sessao, monkeypatch):
     """Semeia o que a tela precisa: uma menção negativa e uma agenda tensa.
+
+    E LIGA O CRM, porque semear agenda sem ligá-lo seria semear o que a tela
+    não mostra. Por decisão do dono do produto (24/10/2026) as agendas não
+    contam como incidente — a política está em `dominio/fontes_do_score`. O que
+    estes testes provam é o MECANISMO da aba (recorte por lente, por fonte,
+    permissão, recorrência, busca), e ele tem de continuar correto para o dia
+    em que o CRM voltar: sem esta linha, metade deles passaria a provar sobre
+    uma agenda invisível, o que é o mesmo que não provar nada.
+
+    O COMPORTAMENTO PADRÃO — a aba SEM agenda nenhuma — tem testes próprios no
+    fim deste arquivo, e são eles que travam a decisão de hoje.
 
     SEMEAR EM VEZ DE PULAR. O banco de teste nasce das migrations, sem menção
     nenhuma, e cinco destes testes pulavam — entre eles os das duas regras de
@@ -81,7 +92,10 @@ def com_incidentes(sessao):
     from app.banco.tabelas_catalogo import Tema as _Tema
     from app.banco.tabelas_catalogo import TemaRisco as _TemaRisco
     from app.banco.tabelas_score import ScoreFonte as _Fonte
+    from tests.apoio_da_fonte_interna import ligar_o_crm
     from tests.test_rastreio_de_riscos import _agenda, _mencao
+
+    ligar_o_crm(sessao, monkeypatch)
 
     par = sessao.execute(
         _select(_Tema, _Risco)

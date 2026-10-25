@@ -54,6 +54,7 @@ from app.casos_de_uso import (
 )
 from app.casos_de_uso.ler_sinais_da_lente import regua_dos_sinais
 from app.dominio.erros import Conflito, NaoEncontrado, RegraViolada
+from app.dominio.fontes_do_score import alimenta_os_kpis
 from app.dominio.ingestao_score import rotulo_do_cargo
 from app.dominio.periodo import mes_de
 from app.dominio.score import (
@@ -629,7 +630,17 @@ def listar_fontes(
     usuario: UsuarioLogado,
     mes: Annotated[str, Query(description="AAAA-MM")],
 ) -> list[FonteSaida]:
-    """O registro de fontes, com cobertura e volume — a aba Calibração."""
+    """O registro de fontes, com cobertura e volume — a aba Calibração.
+
+    Só as fontes que alimentam os KPIs: listar uma fonte que não entra na conta
+    é oferecer um ajuste que não ajusta nada. A regra está em
+    `dominio/fontes_do_score`.
+
+    O filtro é daqui, e não do repositório, de propósito: `fontes_cadastradas`
+    continua devolvendo todas porque a subida de planilha precisa conhecer a
+    fonte interna para recusar o upload nela com a mensagem certa. Esconder no
+    repositório trocaria a recusa por "fonte não encontrada".
+    """
     alvo = mes_de(mes)
     calibracao = repositorio_score.calibracao_vigente(sessao)
     lentes = {lente.id: lente.nome for lente in repositorio_score.lentes_cadastradas(sessao)}
@@ -665,6 +676,11 @@ def listar_fontes(
             mencoes_no_mes=volume.get(fonte.id, 0),
         )
         for fonte in repositorio_score.fontes_cadastradas(sessao)
+        #: `ativo=True` é a PERGUNTA, não uma afirmação: o que se filtra na
+        #: aba é a política, nunca a aposentadoria. Fonte externa aposentada
+        #: continua na lista, esmaecida pelo `ligada` — é na Calibração que
+        #: se religa.
+        if alimenta_os_kpis(interna=fonte.interna, ativo=True)
     ]
 
 

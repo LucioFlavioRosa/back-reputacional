@@ -231,7 +231,7 @@ def test_a_lacuna_do_autor_aparece_onde_a_pessoa_esta_olhando(sessao):
     assert any("assina" in lacuna for lacuna in matriz.ficha.lacunas)
 
 
-def test_a_lente_INTERNA_le_o_crm_e_nao_as_mencoes(sessao):
+def test_a_lente_INTERNA_le_o_crm_e_nao_as_mencoes(sessao, monkeypatch):
     """A fonte dela é interna: são agendas registradas, e não menções
     ingeridas. Rodar as consultas de `mencao` aqui devolveria zero — e zero,
     numa tela, se lê como "não houve".
@@ -239,7 +239,7 @@ def test_a_lente_INTERNA_le_o_crm_e_nao_as_mencoes(sessao):
     COM O CRM RELIGADO (`0108`): a Institucional saiu desse arranjo por decisão
     de produto, e o mecanismo da fonte interna continua no código. É ele que
     este teste mede."""
-    ligar_o_crm(sessao)
+    ligar_o_crm(sessao, monkeypatch)
     dossie = _dossie(sessao, "institucional")
     for bloco in [dossie.evolucao, *dossie.paineis]:
         assert bloco.ficha.origem == "crm", bloco.titulo
@@ -332,7 +332,7 @@ def test_a_tabela_manda_as_proprias_colunas_e_o_subtipo(sessao):
         assert tabela.colunas, tabela.titulo
 
 
-def test_a_legenda_e_a_cor_da_institucional_vem_do_dicionario_de_clima(sessao):
+def test_a_legenda_e_a_cor_da_institucional_vem_do_dicionario_de_clima(sessao, monkeypatch):
     """O rótulo de clima já mudou quatro vezes (Propositivo/Tenso na fundação,
     Proativo/Reativo na 0030, Positivo/Negativo na 0047, Proativo/Reativo de
     novo na 0105, Propositivo/Reativo na 0106) sem o `codigo` nunca mudar — e
@@ -347,7 +347,7 @@ def test_a_legenda_e_a_cor_da_institucional_vem_do_dicionario_de_clima(sessao):
     exercitar o caminho que seu próprio nome descreve. Ver
     `tests/apoio_da_fonte_interna.py`.
     """
-    ligar_o_crm(sessao)
+    ligar_o_crm(sessao, monkeypatch)
     institucional = _dossie(sessao, "institucional")
     assert institucional.evolucao.legenda == ["Propositivo", "Neutro", "Reativo"]
     assert institucional.evolucao.cores == ["#17E3CB", "#8C91A4", "#FF5C60"]
@@ -903,7 +903,7 @@ def _agenda_do_crm(sessao, *, instituicao: str, sensivel: bool, mes: str = "2026
     return agenda
 
 
-def test_a_agenda_sensivel_nao_entra_no_score_nem_nomeia_o_orgao(sessao):
+def test_a_agenda_sensivel_nao_entra_no_score_nem_nomeia_o_orgao(sessao, monkeypatch):
     """A DECISÃO MAIS PESADA DE 0089, e a única que vale para TODO mundo.
 
     `orgaos_do_crm` devolve nome de instituição com contagem por mês, e
@@ -924,7 +924,7 @@ def test_a_agenda_sensivel_nao_entra_no_score_nem_nomeia_o_orgao(sessao):
     seja, passaria sem medir o vazamento. A marca que ele protege é a mais
     pesada do CRM e tem de continuar valendo no dia em que a fonte voltar.
     """
-    ligar_o_crm(sessao)
+    ligar_o_crm(sessao, monkeypatch)
     restrita = _agenda_do_crm(
         sessao, instituicao="Agência Reservada do Teste", sensivel=True
     )
@@ -962,24 +962,32 @@ def test_com_ve_diretorio_a_matriz_continua_vindo(sessao):
     assert "matriz_prioridade" in tipos
 
 
-def test_sem_ve_diretorio_os_orgaos_do_crm_nao_sao_nomeados(sessao):
-    """O painel da institucional lista com quem a companhia se reuniu.
+def test_sem_ve_diretorio_os_orgaos_do_crm_nao_sao_nomeados(sessao, monkeypatch):
+    """O painel "Órgãos com mais interações" nomeia terceiros: é do diretório.
 
-    São os mesmos nomes de `GET /api/instituicoes`, que esse papel não abre —
-    chegando por outra porta, agregados por volume de agenda.
+    São os mesmos nomes de `GET /api/instituicoes`, que esse papel não abre.
+
+    OS DOIS PAPÉIS NO MESMO TESTE, e é o que o torna honesto: uma asserção de
+    ausência passa sempre que o painel não existe, inclusive se alguém o
+    remover para todo mundo — o conserto errado que este teste existe para
+    barrar. É a diferença entre os dois papéis, sobre o mesmo cadastro, que
+    prova a regra de permissão.
     """
+    ligar_o_crm(sessao, monkeypatch)
+
+    com_diretorio = _dossie_de(sessao, "institucional", ve_diretorio=True).paineis
+    assert "Órgãos com mais interações" in [p.titulo for p in com_diretorio]
+
     paineis = _dossie_de(sessao, "institucional", ve_diretorio=False).paineis
     nomeiam_orgaos = [p for p in paineis if p.titulo == "Órgãos com mais interações"]
 
     assert nomeiam_orgaos == []
-
-
-def test_com_ve_diretorio_os_orgaos_continuam_vindo(sessao):
+def test_com_ve_diretorio_os_orgaos_continuam_vindo(sessao, monkeypatch):
     #: COM O CRM RELIGADO (`0108`): "Órgãos com mais interações" é painel da
     #: fonte interna. A regra medida aqui é de PERMISSÃO — quem vê o diretório
     #: recebe o painel que nomeia terceiros —, e ela não deve morrer junto com
     #: a decisão de produto de tirar o CRM do índice.
-    ligar_o_crm(sessao)
+    ligar_o_crm(sessao, monkeypatch)
     paineis = _dossie_de(sessao, "institucional", ve_diretorio=True).paineis
     titulos = [p.titulo for p in paineis]
 

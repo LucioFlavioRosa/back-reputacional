@@ -276,7 +276,7 @@ def test_a_trilha_mostra_TODA_dimensao_do_filtro(sessao, sociedade_de_junho):
     assert por_chave["empresa"] == "Concessionária"
 
 
-def test_a_lente_que_NAO_vem_de_mencao_recusa_o_recorte(sessao):
+def test_a_lente_que_NAO_vem_de_mencao_recusa_o_recorte(sessao, monkeypatch):
     """ACHADO DE REVISÃO (média). A Institucional lê o CRM, não `mencao` — e o
     filtro é de `mencao`. A resposta misturava "nota do recorte vazio" (que mede
     `mencao` e dá zero) com "composição e histórico do mês inteiro" (que
@@ -290,7 +290,7 @@ def test_a_lente_que_NAO_vem_de_mencao_recusa_o_recorte(sessao):
     e a garantia aqui é sobre LENTE INTERNA, não sobre aquela lente. Religar é o
     que mantém a regra medida — e ela volta a valer sozinha no dia em que
     alguém puser o CRM de volta no índice."""
-    ligar_o_crm(sessao)
+    ligar_o_crm(sessao, monkeypatch)
     recorte = obter_recorte(
         sessao=sessao, usuario=_QuemOlha(), codigo="institucional", mes="2026-06", uf="RJ"
     )
@@ -327,14 +327,14 @@ def test_a_institucional_PASSOU_a_aceitar_o_recorte(sessao):
     assert [passo.chave for passo in recorte.trilha] == ["uf"]
 
 
-def test_sem_filtro_a_lente_interna_responde_o_mes(sessao):
+def test_sem_filtro_a_lente_interna_responde_o_mes(sessao, monkeypatch):
     """O CONTRAPESO: sem recorte, a lente interna continua respondendo — é o que
     a barra da Evolução abre quando alguém clica num mês dela.
 
     COM O CRM RELIGADO (`0108`): sem isso o teste continuava passando, mas pelo
     caminho das MENÇÕES — o nome dizia "lente interna" e o que ele media era
     outra coisa. Achado de revisão."""
-    ligar_o_crm(sessao)
+    ligar_o_crm(sessao, monkeypatch)
     recorte = obter_recorte(
         sessao=sessao, usuario=_QuemOlha(), codigo="institucional", mes="2026-06"
     )
