@@ -1,24 +1,22 @@
 """A linha da planilha vira uma proposta de interação, ou vira divergência.
 
 A IMPORTAÇÃO NÃO ESCREVE EM `interacao`. Ela monta um `InteracaoEntrada` — o
-mesmo corpo que o `POST /api/interacoes` recebe da tela — e a confirmação
-(Tarefa 11) o manda pelo mesmo caminho. É o que garante que uma agenda importada
-nasça com as mesmas regras, as mesmas derivações e as mesmas recusas de uma
-agenda digitada: se a importação escrevesse direto, cada regra nova do
-formulário teria de ser reimplementada aqui, e as duas versões divergiriam.
+mesmo corpo que o `POST /api/interacoes` recebe da tela — e a confirmação o
+manda pelo mesmo caminho. É o que garante que a agenda importada nasça com as
+mesmas regras, derivações e recusas de uma digitada: escrevendo direto, cada
+regra nova do formulário teria de ser reimplementada aqui.
 
-ONDE CADA VOCABULÁRIO MORA é a única coisa que este módulo sabe e o domínio não.
+ONDE CADA VOCABULÁRIO MORA é o que este módulo sabe e o domínio não.
 `app/dominio/importacao_de_agendas.py` descreve QUAIS vocabulários a planilha
-tem e como suas abas se chamam — isso é sobre o arquivo. De qual tabela cada um
-sai, e se o campo da interação guarda o `id` da linha ou o `codigo` estável, é
-sobre como o BANCO guarda, e por isso é aqui. `NO_BANCO` e `NO_CODIGO` são essa
-tabela, e um teste prende as duas listas à do domínio.
+tem e como as abas se chamam — isso é sobre o arquivo. De qual tabela cada um
+sai, e se o campo guarda o `id` da linha ou o `codigo` estável, é sobre como o
+BANCO guarda: é `NO_BANCO` e `NO_CODIGO`, aqui, e um teste prende as duas
+listas à do domínio.
 
-O NOME QUE A PESSOA VÊ NÃO É O QUE O BANCO GUARDA, e isso não é detalhe: o clima
-de código `propositivo` tem rótulo "Positivo". A aba de vocabulário lista o
-rótulo, porque é o que a pessoa reconhece; `InteracaoEntrada.clima` recebe o
-código, porque é o que a criação espera. Mandar o rótulo adiante daria 422 num
-campo que a pessoa preencheu certo.
+O NOME QUE A PESSOA VÊ NÃO É O QUE O BANCO GUARDA: o clima de código
+`propositivo` tem rótulo "Positivo". A aba de vocabulário lista o rótulo, que é
+o que ela reconhece; `InteracaoEntrada.clima` recebe o código, que é o que a
+criação espera. Mandar o rótulo adiante dá 422 num campo preenchido certo.
 """
 
 from collections.abc import Mapping, Sequence
@@ -142,10 +140,8 @@ NO_CODIGO: dict[str, tuple[str, ...]] = {
     "abrangencias": (*sorted(UFS), NACIONAL, INTERNACIONAL),
 }
 
-#: Nomes antigos do termômetro → `codigo` do clima. O rótulo mudou quatro vezes
-#: (Proativo na 0030, Positivo/Negativo na 0047, Proativo de novo na 0105,
-#: Propositivo/Reativo na 0106), e
-#: planilhas preenchidas com os nomes de antes ainda circulam.
+#: Nomes antigos do termômetro → `codigo` do clima. O rótulo já mudou várias
+#: vezes, e planilhas preenchidas com os nomes de antes ainda circulam.
 APELIDOS_DO_CLIMA: dict[str, str] = {
     "positivo": "propositivo",
     "proativo": "propositivo",
@@ -154,16 +150,14 @@ APELIDOS_DO_CLIMA: dict[str, str] = {
 
 #: As colunas numeradas que montam cada lista de `InteracaoEntrada`.
 #:
-#: TUDO NUMA ABA SÓ. Antes eram três abas filhas ligadas pelo `Código`; agora cada
-#: pessoa e cada material é um GRUPO de colunas numeradas na própria linha da
-#: agenda. O que se ganhou: a instituição do interlocutor está na mesma linha que
-#: ele, então "quem pode falar por qual instituição" deixou de ser inferido.
+#: Cada pessoa e cada material é um GRUPO de colunas numeradas na própria linha
+#: da agenda, então a instituição do interlocutor está na mesma linha que ele e
+#: não precisa ser inferida.
 #:
 #: Cada grupo diz qual campo de `InteracaoEntrada` alimenta, com que modelo cada
 #: item é montado, e o sufixo de cada coluna dele — `"Interlocutor {n}"` vira
 #: `interlocutor_id`. Um teste prende cada coluna numerada de `FORMATO` a uma
-#: entrada aqui, senão uma coluna nova apareceria no modelo e não chegaria a
-#: lugar nenhum.
+#: entrada aqui, senão uma coluna nova não chegaria a lugar nenhum.
 GRUPOS_NUMERADOS: dict[str, dict] = {
     "outra_parte": {
         "modelo": ParticipanteDaOutraParteEntrada,
@@ -241,9 +235,8 @@ class Proposta:
         ela já declarou o cadastro novo na aba editável —, só não existe ainda o
         id para montar o `InteracaoEntrada`. Quem cria é a confirmação.
 
-    Tratar os dois como a mesma coisa era o defeito que a revisão achou: um nome
-    escrito corretamente na aba de cadastro fazia a linha travar, o oposto do que
-    a spec manda.
+    Tratá-los como a mesma coisa faz um nome escrito corretamente na aba de
+    cadastro travar a linha.
     """
 
     linha: LinhaBruta
@@ -382,13 +375,10 @@ def indice_completo(sessao: Session) -> dict[str, dict[str, object]]:
 
     PARA QUEM PRECISA DELE VÁRIAS VEZES NA MESMA RESPOSTA. `_indice` custa uma
     consulta por vocabulário, e `indice_do_vocabulario` o reconstrói INTEIRO a
-    cada chamada. A resposta da conferência pergunta duas coisas por grupo — qual
-    é o alvo deste nome, e este valor é ambíguo —, então perguntá-las pelo atalho
-    de um vocabulário custa o índice inteiro por grupo.
-
-    MEDIDO (11/10/2026): a resposta custava 19 consultas, iguais para 3 e para 30
-    grupos. Uma pergunta a mais por grupo a levou para 67 e 499. Com 500 valores
-    distintos pendentes seriam milhares de consultas numa leitura de tela.
+    cada chamada. A resposta da conferência pergunta duas coisas por grupo —
+    qual é o alvo deste nome, e este valor é ambíguo —, então perguntá-las pelo
+    atalho de um vocabulário custa o índice inteiro POR GRUPO: com centenas de
+    valores pendentes, milhares de consultas numa leitura de tela.
     """
     return _indice(sessao)
 
@@ -507,19 +497,19 @@ class _Resolucao:
     valor: object | None = None
     #: `(vocabulário, nome)` quando a confirmação precisa criar este cadastro.
     a_criar: tuple[str, str] | None = None
-    #: ESTE ITEM DA LISTA NÃO ENTRA NA AGENDA, e o aviso já explica por quê.
+    #: ESTE ITEM DA LISTA NÃO ENTRA NA AGENDA, e o aviso explica por quê.
     #:
-    #: NASCEU DO "AVISE MAS NÃO TRAVE" (11/10/2026). Um interlocutor que é de
-    #: OUTRA instituição não pode ser ligado a esta agenda — a regra 4 do domínio
-    #: diz que o participante pertence à instituição da agenda, e `impedimentos` a
-    #: reconfere com a proposta montada. Avisar sem omitir empurraria a recusa
-    #: para a confirmação, depois de a conferência ter dito que estava pronto.
+    #: Um interlocutor de OUTRA instituição não pode ser ligado a esta agenda
+    #: (regra 4 do domínio: o participante pertence à instituição da agenda, e
+    #: `impedimentos` a reconfere com a proposta montada). Avisar sem omitir
+    #: empurraria a recusa para a confirmação, depois de a conferência ter dito
+    #: que estava pronto.
     #:
     #: E NÃO DÁ PARA OMITIR DEIXANDO O CAMPO VAZIO:
     #: `ParticipanteDaOutraParteEntrada.interlocutor_id` é obrigatório, então
     #: construir o item sem ele estoura o pydantic — e o `except` daquele laço
-    #: transforma o estouro em divergência que TRAVA. A trava voltaria pela porta
-    #: de trás, com uma mensagem pior.
+    #: transforma o estouro em divergência que TRAVA, pela porta de trás e com
+    #: mensagem pior.
     omitir_o_item: bool = False
 
 
@@ -560,19 +550,16 @@ def _conferir_o_declarado(
 ) -> bool:
     """Confere as colunas da ABA DE CADASTRO, e devolve se está tudo bem.
 
-    ERA O BURACO QUE A REVISÃO ACHOU, e ele tinha três sintomas: a abrangência escrita
-    como "Minas Gerais" estourava a confirmação por violar o domínio da coluna no banco;
-    o tier `999` falhava por chave estrangeira; e a subcategoria de outra categoria era
-    DESCARTADA em silêncio, com o cadastro nascendo sem ela.
+    VOCABULÁRIO FECHADO SE CONFERE ONDE TODOS OS OUTROS SE CONFEREM: no upload,
+    junto das demais pendências, com a coluna e o valor na mensagem. As células
+    da AGENDA passam por `_resolver`; as da aba de CADASTRO não passavam por
+    nada, e chegavam ao banco — abrangência fora do domínio da coluna, tier
+    inexistente violando a chave estrangeira, subcategoria de outra categoria
+    descartada em silêncio.
 
-    A RAIZ ERA A MESMA: as células da AGENDA passavam por `_resolver`, e as da aba de
-    CADASTRO não passavam por nada. Um vocabulário fechado tem de ser conferido onde
-    todos os outros são — no upload, junto das outras pendências, com a coluna e o valor
-    na mensagem.
-
-    POR QUE NO UPLOAD E NÃO NA CONFIRMAÇÃO: é a diferença entre a pessoa consertar uma
-    célula junto das outras e receber erro interno depois de ter conferido 500 linhas e
-    clicado em subir.
+    POR QUE NO UPLOAD E NÃO NA CONFIRMAÇÃO: é a diferença entre consertar uma
+    célula junto das outras e receber erro interno depois de conferir 500 linhas
+    e clicar em subir.
     """
     tudo_bem = True
     for coluna in colunas_do_cadastro(vocabulario):
@@ -629,18 +616,18 @@ def _conferir_o_declarado(
             # Texto livre não tem o que conferir, e a categoria já tem a recusa dela.
             continue
 
-        # O QUE OUTRA ABA DECLAROU TAMBÉM VALE, e este era um defeito meu que dois
-        # testes antigos pegaram: a pessoa cria a instituição na aba Instituições e o
-        # interlocutor dela na aba Interlocutores, no MESMO arquivo. O nome ainda não
-        # está no banco — vai nascer na mesma transação —, e conferir só contra o banco
-        # transformava o uso normal das duas abas em pendência.
+        # O QUE OUTRA ABA DECLAROU TAMBÉM VALE: a pessoa cria a instituição na
+        # aba Instituições e o interlocutor dela na aba Interlocutores, no MESMO
+        # arquivo. O nome ainda não está no banco — vai nascer na mesma
+        # transação —, e conferir só contra o banco transforma o uso normal das
+        # duas abas em pendência.
         #
-        # MAS SÓ PARA O QUE A IMPORTAÇÃO REALMENTE CRIA, e este era o achado da revisão
-        # seguinte: `areas_pessoa` tem aba e lista suspensa, mas é dicionário
-        # administrado na plataforma — a importação não cria área nenhuma. Aceitar a
-        # área "declarada" fazia a conferência dizer que estava tudo certo e a criação
-        # omitir o campo, porque ela só grava `area_id` do que achou no banco. A pessoa
-        # preenchia a área e o cadastro nascia sem ela, sem nada reclamar.
+        # MAS SÓ PARA O QUE A IMPORTAÇÃO REALMENTE CRIA. `areas_pessoa` tem aba
+        # e lista suspensa, mas é dicionário administrado na plataforma: a
+        # importação não cria área nenhuma. Aceitar a área "declarada" faria a
+        # conferência dizer que está tudo certo e a criação omitir o campo, que
+        # só grava `area_id` do que achou no banco — a pessoa preenche a área e o
+        # cadastro nasce sem ela, sem nada reclamar.
         declarados_que_valem = (
             declarados.get(coluna.vocabulario, frozenset())
             if coluna.vocabulario in VOCABULARIOS_QUE_A_IMPORTACAO_CRIA
@@ -662,20 +649,17 @@ def _conferir_o_declarado(
             )
             tudo_bem = False
         elif conhecido is AMBIGUO:
-            # DECLAROU ALGO QUE NÃO RESOLVE, e isto é diferente de não declarar —
-            # achado ALTA de revisão (11/10/2026). O nome ambíguo ESTÁ no índice,
-            # então a checagem acima o aceitava; depois, `_instituicao_declarada`
-            # devolvia `None` para a sentinela, e `None` quer dizer "use a
-            # instituição da agenda". Resultado: ela declarava um órgão e o
-            # cadastro nascia em OUTRO, em silêncio — o mesmo chute calado que a
-            # preferência pela aba acabou de fechar, reaberto por outra porta.
+            # DECLAROU ALGO QUE NÃO RESOLVE, e é diferente de não declarar. O
+            # nome ambíguo ESTÁ no índice, então a checagem acima o aceita;
+            # depois, `_instituicao_declarada` devolve `None` para a sentinela, e
+            # `None` quer dizer "use a instituição da agenda". Sem este caso ela
+            # declara um órgão e o cadastro nasce em OUTRO, em silêncio.
             #
-            # A FRASE DÁ AS DUAS SAÍDAS REAIS, e nenhuma delas é "escreva o nome
-            # certo": os dois cadastros têm o MESMO nome, então não há o que
-            # corrigir na célula. Ou ela deixa a coluna em branco — e aí a
-            # instituição da agenda passa a valer, legitimamente, porque ela não
-            # declarou nada —, ou cadastra a pessoa pela Administração e aponta
-            # para ela na conferência.
+            # A FRASE DÁ AS DUAS SAÍDAS REAIS, e nenhuma é "escreva o nome
+            # certo": os dois cadastros têm o MESMO nome, não há o que corrigir
+            # na célula. Ou ela deixa a coluna em branco — e aí a instituição da
+            # agenda passa a valer, legitimamente, porque ela não declarou nada
+            # —, ou cadastra a pessoa pela Administração e aponta para ela.
             divergencias.append(
                 Divergencia(
                     campo=campo,
@@ -740,25 +724,18 @@ def _resolver(
         return _Resolucao(valor=achado)
 
     if veredito == "cria":
-        # A CATEGORIA DA INSTITUIÇÃO É CONFERIDA AQUI, no upload, e não na
-        # confirmação — e desde 11/10/2026 ela AVISA em vez de recusar.
+        # A CATEGORIA DA INSTITUIÇÃO É CONFERIDA AQUI, no upload, e ela AVISA
+        # em vez de recusar: quem chega sem categoria nasce com o tipo
+        # `entidade`, marcado para revisar. A frente não é chutada porque
+        # `entidade` é o único tipo fora de `FRENTE_UNICA_DO_TIPO`.
         #
-        # ESTE COMENTÁRIO DIZIA "O TIPO DA INSTITUIÇÃO É EXIGIDO AQUI… recusar agora
-        # põe a pendência na tela junto das outras", e era verdade até a decisão do
-        # dono do produto: "pode registrar como entidade e marcar para revisar".
-        # Nada é exigido aqui; `entidade` é o tipo de quem nasce sem categoria, e a
-        # frente deixa de ser chutada porque `entidade` é o único tipo fora de
-        # `FRENTE_UNICA_DO_TIPO`. Achado de revisão: comentário errado custa o mesmo
-        # que código errado, só demora mais a doer — foi uma frase desatualizada
-        # neste arquivo que me fez escrever `nivel="livre"` e estourar o banco.
-        #
-        # O LUGAR CONTINUA SENDO O UPLOAD, e por uma razão que não mudou: a
-        # conferência é onde a pessoa vê o que vai acontecer. Um aviso que só
-        # aparecesse na confirmação chegaria depois de ela já ter conferido tudo.
-        # O QUE A PESSOA ESCREVEU NAS OUTRAS COLUNAS daquela aba, para a criação ter
-        # com que nascer. Era só a categoria de público; passou a ser tudo, porque as
-        # abas ganharam os campos do formulário da plataforma — e um campo que não
-        # viaja até aqui é um campo que ela preencheu e que o cadastro nasce sem.
+        # O LUGAR É O UPLOAD porque a conferência é onde a pessoa vê o que vai
+        # acontecer; um aviso na confirmação chegaria depois de ela ter
+        # conferido tudo.
+
+        # O QUE A PESSOA ESCREVEU NAS OUTRAS COLUNAS daquela aba, para a criação
+        # ter com que nascer: um campo que não viaja até aqui é um campo que ela
+        # preencheu e que o cadastro nasce sem.
         declarado = dict(
             (cadastros_declarados.get(vocabulario) or {}).get(normalizar(texto)) or {}
         )
@@ -767,19 +744,13 @@ def _resolver(
             categoria is None
             or normalizar(str(categoria)) not in indice.get("categorias_publico", {})
         ):
-            # AVISA E DEIXA NASCER — era `trava=True` até 11/10/2026.
+            # AVISA E DEIXA NASCER, por um caminho só, qualquer que seja o jeito
+            # como o nome chegou — é o padrão de cadastro incompleto, com os
+            # parâmetros de cada caso vindo do que a aba trouxer. Tratar
+            # diferente quem usou a aba faria a trava cair justamente sobre
+            # quem preencheu mais.
             #
-            # A INCOERÊNCIA QUE ISTO CONSERTA (achado de revisão): um nome que
-            # NÃO está na aba passou a entrar sem categoria, e um nome que ESTÁ
-            # na aba sem categoria válida continuava travando. Quem usou a aba
-            # levava a trava que quem não usou deixou de levar — o oposto do que
-            # se quer, e contra o "todos os campos são opcionais" do pedido.
-            #
-            # UM CAMINHO SÓ PARA NASCER INCOMPLETO, qualquer que seja o jeito
-            # como o nome chegou. É o padrão de cadastro que o dono do produto
-            # pediu, com os parâmetros de cada caso vindo do que a aba trouxer.
-            #
-            # A FRASE DIZ O QUE SE PERDE porque ela escreveu algo ali e merece
+            # A FRASE DIZ O QUE SE PERDE, porque ela escreveu algo ali e merece
             # saber por que não valeu.
             divergencias.append(
                 Divergencia(
@@ -853,23 +824,16 @@ def _resolver(
             "tela de Administração — cadastre-o lá e aponte para ele aqui."
         )
     else:
-        # NÃO TRAVA MAIS, e esta é a mudança pedida pelo dono do produto
-        # (11/10/2026): "o ponto principal é não barrar o registro".
+        # NÃO TRAVA: o cadastro nasce com o que houver e fica incompleto até
+        # alguém completá-lo na plataforma. A importação sabe criar os quatro
+        # cadastros desta lista sem exigir que o nome esteja TAMBÉM na aba de
+        # cadastro — exigir o mesmo dado em dois lugares é o que faz o registro
+        # não acontecer.
         #
-        # O QUE ERA: a importação já sabia criar os quatro cadastros desta lista,
-        # mas só se a pessoa escrevesse o nome TAMBÉM na aba de cadastro. A trava
-        # não era "falta dado" — era "falta dado em dois lugares". Com várias
-        # reuniões num dia, preencher duas abas para cada nome novo é o que faz o
-        # registro não acontecer.
+        # É o modelo da Clipei/Bites: a menção entra mesmo sem o veículo no
+        # cadastro, com o texto cru preservado, e o vínculo se faz depois.
         #
-        # É O MODELO DA CLIPEI/BITES, que ele citou: lá a menção entra mesmo
-        # quando o veículo não está no cadastro, com o texto cru preservado, e o
-        # vínculo se faz depois — "o estado normal enquanto o cadastro não cobre
-        # o fornecedor".
-        #
-        # O CADASTRO NASCE COM O QUE HOUVER e fica incompleto até alguém
-        # completá-lo na plataforma. A divergência continua aparecendo na
-        # conferência, agora como AVISO e não como impedimento.
+        # A divergência continua aparecendo na conferência, como AVISO.
         divergencias.append(
             Divergencia(
                 campo=campo,
@@ -881,27 +845,24 @@ def _resolver(
                 ),
                 trava=False,
                 coluna=coluna_nome,
-                # SEM `acao`, e esta é a diferença que mantém a oferta de apontar.
+                # SEM `acao`, e é isso que mantém a oferta de apontar.
                 #
-                # O caso "declarada na aba", logo acima, marca `acao="criar"`
-                # porque ali a pessoa PEDIU o cadastro — a decisão está tomada, e
-                # `linhas_com` ignora divergência decidida justamente para um
-                # segundo clique não sobrescrever o que ela escolheu.
+                # No caso "declarada na aba", acima, `acao="criar"` porque a
+                # pessoa PEDIU o cadastro — a decisão está tomada, e `linhas_com`
+                # ignora divergência decidida para um segundo clique não
+                # sobrescrever a escolha dela.
                 #
                 # AQUI ELA SÓ DIGITOU UM NOME na coluna da agenda. Criar é o
-                # PADRÃO, não a escolha dela — então a divergência fica aberta, e
-                # a conferência continua podendo oferecer "aponte para 'Prefeitura
-                # Municipal de Campinas', que já existe". É essa oferta que
-                # impede a duplicata, e medida ela importa: 3.809 instituições
-                # para 3.781 nomes distintos, com 28 duplicatas já no banco.
+                # padrão, não a escolha dela: a divergência fica aberta, e a
+                # conferência pode oferecer "aponte para a que já existe" — é
+                # essa oferta que impede a duplicata.
                 #
-                # E NÃO TRAVA NADA: `a_criar` põe a linha em "esperando criação",
-                # que é trabalho da confirmação, não pendência da pessoa.
+                # E NÃO TRAVA: `a_criar` põe a linha em "esperando criação", que
+                # é trabalho da confirmação.
                 #
                 # `acao_padrao` É O QUE FAZ A CONFIRMAÇÃO FUNCIONAR sem clique:
-                # `acao` vazia mantém a oferta de apontar, e isto diz à
-                # confirmação o que fazer quando ninguém aponta. Sem este campo o
-                # fluxo inteiro dava 409 — achado de revisão, com teste.
+                # `acao` vazia mantém a oferta, e isto diz à confirmação o que
+                # fazer quando ninguém aponta. Sem este campo, 409.
                 acao_padrao="criar",
             )
         )
@@ -927,16 +888,15 @@ def _conferir_orgao_declarado(
 
     Declarar "Carla Nova — Câmara Municipal" e usá-la numa agenda do Valor
     Econômico é pedir duas coisas incompatíveis, e o domínio só diz isso na
-    CONFIRMAÇÃO — depois da conferência inteira. Criar a pessoa em um dos dois e
-    seguir seria escolher por ela, calado, num dado que nenhuma tela mostra depois.
+    CONFIRMAÇÃO. Criar a pessoa em um dos dois e seguir seria escolher por ela,
+    calado, num dado que nenhuma tela mostra depois.
 
     Sem órgão declarado não há contradição: a pessoa nasce na instituição da
-    agenda, que é o comportamento de antes desta coluna existir.
+    agenda.
 
-    DEVOLVE "ESTE ITEM NÃO ENTRA" — era `None` até 11/10/2026, quando o aviso
-    deixou de travar. Quem decide omitir é o laço das listas, e ele só pode
-    decidir se souber: o vínculo com esta agenda é o que a regra 4 não aceita, e
-    `impedimentos` o recusaria na confirmação.
+    DEVOLVE "ESTE ITEM NÃO ENTRA", e não `None`, porque quem decide omitir é o
+    laço das listas e ele só pode decidir se souber: o vínculo com esta agenda é
+    o que a regra 4 não aceita, e `impedimentos` o recusaria na confirmação.
     """
     do_interlocutor = (cadastros_declarados.get("interlocutores") or {}).get(
         normalizar(texto)
@@ -979,31 +939,25 @@ def _interlocutor_da_instituicao(
 ) -> _Resolucao | None:
     """O interlocutor daquela instituição, a recusa, ou `None` para seguir adiante.
 
-    A RELAÇÃO QUE O FRONT TEM, do lado do servidor.
-    `interlocutoresDaInstituicao` reduz a lista do formulário ao órgão escolhido;
-    aqui a mesma informação faz duas coisas que a lista solta não fazia:
+    A RELAÇÃO QUE O FRONT TEM, do lado do servidor:
+    `interlocutoresDaInstituicao` reduz a lista do formulário ao órgão
+    escolhido, e aqui a mesma informação faz duas coisas.
 
     DESFAZ O HOMÔNIMO. "Assessoria da liderança" é cargo, não nome próprio, e
     existe em vários órgãos — o banco permite, porque `interlocutor` é único por
     `(nome_normalizado, instituicao_id)`. Pelo nome sozinho a importação travava
-    pedindo à pessoa que escolhesse qual; com o órgão da linha não há o que
-    escolher, e a pendência desaparece.
+    pedindo que a pessoa escolhesse; com o órgão da linha não há o que escolher.
 
-    DEIXA DE FORA quem é de outro órgão — e AVISA, sem travar (11/10/2026). A
-    regra 4 do domínio — o participante pertence à instituição da agenda —
-    recusava isso na CONFIRMAÇÃO, depois de a pessoa ter conferido tudo. A
-    suspensa dependente previne o erro no Excel, mas a planilha convertida para o
-    Google Sheets pode perder a validação, e o arquivo pode não ter saído do nosso
-    modelo: quem garante é aqui.
-
-    ATÉ 11/10/2026 ISSO TRAVAVA A IMPORTAÇÃO INTEIRA, e o dono do produto pediu o
-    contrário: "sempre aponte a inconsistência mas não trave". Agora a agenda
-    entra sem a pessoa, com o aviso na linha — e apontar o cadastro certo na
-    conferência a traz de volta num clique.
+    DEIXA DE FORA quem é de outro órgão, e AVISA sem travar: a regra 4 do
+    domínio — o participante pertence à instituição da agenda — recusaria isso
+    na confirmação, depois de a pessoa ter conferido tudo. A agenda entra sem a
+    pessoa, e apontar o cadastro certo na conferência a traz de volta num
+    clique. A lista suspensa dependente previne o erro no Excel, mas a planilha
+    convertida para o Google Sheets pode perder a validação: quem garante é aqui.
 
     `None` significa "não sei, siga pelo caminho normal" — sem órgão na linha, ou
-    com um nome que não existe em cadastro nenhum, que é o caminho de quem declara
-    alguém novo.
+    com um nome que não existe em cadastro nenhum, que é o caminho de quem
+    declara alguém novo.
     """
     if instituicao_id is None or instituicao_id is AMBIGUO:
         return None
@@ -1016,16 +970,13 @@ def _interlocutor_da_instituicao(
         # O nome não existe em cadastro nenhum: é criação, e quem trata disso é
         # `_resolver` com a declaração da aba.
         return None
-    # AVISA E DEIXA A AGENDA ENTRAR — era `trava=True` até 11/10/2026, a pedido
-    # do dono do produto: "sempre aponte a inconsistência mas não trave".
+    # AVISA E DEIXA A AGENDA ENTRAR, SEM A PESSOA, e isso está na frase. O
+    # vínculo é o que não pode acontecer: a regra 4 do domínio não aceita
+    # participante de outra instituição, e `impedimentos` a reconfere. O que se
+    # perde é a presença daquele grupo, que não significa nada sem a pessoa a
+    # que se refere.
     #
-    # SEM A PESSOA, E ISSO ESTÁ NA FRASE. O vínculo é o que não pode acontecer: a
-    # regra 4 do domínio não aceita participante de outra instituição, e
-    # `impedimentos` a reconfere. O que se perde é a presença daquele grupo, e
-    # ela não significa nada sem a pessoa a que se refere.
-    #
-    # E A SAÍDA CONTINUA A UM CLIQUE: a divergência fica aberta, então apontar
-    # para o cadastro certo na conferência faz a pessoa entrar — `apontados` é
+    # E A SAÍDA ESTÁ A UM CLIQUE: a divergência fica aberta, e `apontados` é
     # consultado ANTES desta checagem, justamente para a decisão dela valer.
     divergencias.append(
         Divergencia(
@@ -1057,19 +1008,15 @@ def _listas_da_linha(
 ) -> tuple[dict[str, list], list[Divergencia], list[tuple[str, str]], list[Mapping]]:
     """As pessoas e os materiais de UMA linha, montados das colunas numeradas.
 
-    TUDO NUMA ABA SÓ. Antes cada pessoa era uma linha numa aba filha, ligada pelo
-    `Código`; agora é um grupo de colunas na própria linha da agenda. O vínculo
-    deixou de existir, e com ele a classe inteira de erro que ele produzia — código
-    órfão, código repetido, participante na agenda errada.
-
     Devolve quatro coisas: as listas montadas por campo, as divergências, os
     cadastros a criar, e os itens que ESPERAM um cadastro com o que já se sabe
-    deles. O item que espera não pode ser descartado: ele leva a presença e o papel
-    com ele, e a pessoa não preencheu aquilo para nada.
+    deles. O item que espera não pode ser descartado: ele leva a presença e o
+    papel com ele, e a pessoa não preencheu aquilo para nada.
 
     O GRUPO VAZIO É IGNORADO em silêncio, e é o caso comum: a agenda tem dois
     interlocutores e a planilha tem espaço para quatro. Acusar "falta o
-    Interlocutor 3" em toda linha afogaria a conferência em pendências inventadas.
+    Interlocutor 3" em toda linha afogaria a conferência em pendências
+    inventadas.
     """
     colunas = {coluna.nome: coluna for coluna in aba_de(ABA_PRINCIPAL).colunas}
     listas: dict[str, list] = {}
@@ -1489,18 +1436,14 @@ def propor_de_linhas(
                     # O MESMO TEMA DUAS VEZES NA MESMA AGENDA É UMA SÓ.
                     #
                     # `interacao_tema` tem chave primária `(interacao, tema)` e o
-                    # repositório monta a lista com `set`, então a repetição JÁ
-                    # era absorvida — em silêncio. Com três colunas de tema isso
-                    # quase não acontecia; com 18 passou a ser o erro de
-                    # preenchimento mais fácil de cometer, e silêncio aqui faria
-                    # a pessoa conferir 18 células para descobrir por que a
+                    # repositório monta a lista com `set`, então a repetição já
+                    # era absorvida — em silêncio. Com 18 colunas de tema esse é
+                    # o erro de preenchimento mais fácil de cometer, e o silêncio
+                    # faria a pessoa conferir 18 células para descobrir por que a
                     # agenda tem 6 temas e ela preencheu 8.
                     #
-                    # NÃO TRAVA, de propósito. Repetir um tema é escorregão de
-                    # preenchimento, não dado errado: a agenda resultante está
-                    # correta, e travar uma linha de um arquivo de 500 por isso
-                    # ensinaria a ignorar o aviso — o mesmo raciocínio que
-                    # `_avisar_duplicatas` usa para a agenda repetida.
+                    # NÃO TRAVA: repetir um tema é escorregão de preenchimento, e
+                    # não dado errado — a agenda resultante está correta.
                     divergencias.append(
                         Divergencia(
                             campo=coluna.campo,
@@ -1520,13 +1463,10 @@ def propor_de_linhas(
 
         campos.update(listas)
 
-        # AS PESSOAS E OS MATERIAIS SAEM DA PRÓPRIA LINHA, das colunas
-        # numeradas. Antes vinham de abas filhas ligadas pelo `Código`, e o
-        # vínculo era a parte que mais confundia quem preenchia.
         # A INSTITUIÇÃO DA LINHA JÁ ESTÁ RESOLVIDA aqui: o laço das colunas
-        # simples rodou antes, e é dele que sai `campos["instituicao_id"]`. É essa
-        # ordem que permite ao interlocutor ser resolvido DENTRO do órgão da agenda,
-        # como o formulário do front faz.
+        # simples rodou antes, e é dele que sai `campos["instituicao_id"]`. É
+        # essa ordem que permite ao interlocutor ser resolvido DENTRO do órgão da
+        # agenda, como o formulário do front faz.
         listas_da_linha, das_listas, criar_das_listas, esperando_tuplas = _listas_da_linha(
             sessao,
             linha,
@@ -1576,10 +1516,10 @@ def propor_de_linhas(
 
         entrada = None
         travada = any(d.trava for d in divergencias)
-        # NÃO TENTA MONTAR quando algo espera cadastro: faltaria o id obrigatório,
-        # o Pydantic estouraria, e o erro genérico entraria como divergência que
-        # TRAVA — transformando um cadastro corretamente declarado em pendência.
-        # Era o primeiro defeito que a revisão do Codex achou.
+        # NÃO TENTA MONTAR quando algo espera cadastro: faltaria o id
+        # obrigatório, o Pydantic estouraria, e o erro genérico entraria como
+        # divergência que TRAVA — transformando um cadastro corretamente
+        # declarado em pendência.
         if not travada and not pendentes_de_cadastro and not esperando:
             try:
                 entrada = InteracaoEntrada(**campos)
@@ -1627,33 +1567,24 @@ def propor_de_linhas(
 def _avisar_as_duas_grafias(propostas: list[Proposta]) -> list[Proposta]:
     """Avisa que um nome novo vem escrito de duas formas — SEM travar.
 
-    POR QUE ISTO EXISTE. A criação deduplica pelo nome NORMALIZADO e fica com a
-    primeira grafia do arquivo, o que conserta um 422 real: "já existe uma pessoa
-    chamada 'Renan Tiburcio' nesta instituição", numa planilha que trazia "Renan
-    Tiburcio" e "Renan Tibúrcio" e numa base onde ela não existia.
+    A criação deduplica pelo nome NORMALIZADO e fica com a primeira grafia do
+    arquivo. Sem o aviso, a deduplicação é SILENCIOSA: o cadastro nasce com uma
+    das grafias e ninguém sabe que havia outra. A conferência existe para
+    prometer o que vai acontecer, e "vou cadastrar como 'Renan Tiburcio', não
+    'Renan Tibúrcio'" é escolha que a pessoa tem direito de ver — e de corrigir
+    na planilha, se a errada for a que ficou.
 
-    MAS A DEDUPLICAÇÃO É SILENCIOSA, e aí está o problema que este aviso resolve: o
-    cadastro nasce com uma das grafias e ninguém fica sabendo que havia outra. A
-    conferência existe para prometer o que vai acontecer, e "vou cadastrar como
-    'Renan Tiburcio', não 'Renan Tibúrcio'" é uma escolha que a pessoa tem direito
-    de ver — e de corrigir na planilha, se a errada for a que ficou.
-
-    MEDIDO NO ARQUIVO REAL: três nomes de 318, os três na mesma instituição,
-    diferindo só no acento — Barbara Halberstadt, Nathalia Maximo e Renan Tiburcio.
-
-    SÓ O QUE VAI NASCER, pela mesma razão do aviso das duas instituições: para quem
-    já está no cadastro, a resolução por linha já casa as duas grafias — é para
-    isso que `nome_normalizado` existe.
+    SÓ O QUE VAI NASCER: para quem já está no cadastro, a resolução por linha já
+    casa as duas grafias, que é para isso que `nome_normalizado` existe.
     """
     #: (vocabulário, nome normalizado) -> as grafias que o arquivo trouxe, na
     #: ordem de aparição.
     #:
-    #: O VOCABULÁRIO ENTRA NA CHAVE porque a deduplicação que este aviso explica
-    #: é por `(vocabulario, normalizar(valor))` — duas tabelas diferentes não
-    #: colidem entre si. Achado de revisão do Codex: agrupando só pelo nome, um
-    #: tema e uma instituição com o mesmo texto normalizado viravam "duas
-    #: grafias", e a conferência prometia uma deduplicação que não vai acontecer.
-    #: Aviso falso numa tela de aviso é o que ensina a ignorá-la.
+    #: O VOCABULÁRIO ENTRA NA CHAVE porque a deduplicação é por
+    #: `(vocabulario, normalizar(valor))`: agrupando só pelo nome, um tema e uma
+    #: instituição com o mesmo texto normalizado viram "duas grafias" e a
+    #: conferência promete uma deduplicação que não vai acontecer. Aviso falso
+    #: numa tela de aviso ensina a ignorá-la.
     grafias: dict[tuple[str, str], list[str]] = {}
     a_criar: set[tuple[str, str]] = set()
     for proposta in propostas:
@@ -1715,25 +1646,17 @@ def _avisar_a_pessoa_em_duas_instituicoes(
 ) -> list[Proposta]:
     """Avisa que um nome novo aparece em instituições diferentes — SEM travar.
 
-    POR QUE NO UPLOAD E NÃO SÓ NA ABA DE REVISÃO. O alerta na aba de cadastro é o
-    pedido do dono do produto, e ele acontece DEPOIS da confirmação. A conferência
-    também tem de dizer, antes: ela existe para prometer o que vai acontecer, e
-    "vou criar dois cadastros para esta pessoa" é exatamente o que ninguém quer
-    descobrir depois.
+    POR QUE NO UPLOAD, e não só na aba de revisão: a conferência existe para
+    prometer o que vai acontecer, e "vou criar dois cadastros para esta pessoa"
+    é o que ninguém quer descobrir depois. O alerta da aba de cadastro acontece
+    depois da confirmação.
 
-    ERA UMA RECUSA ATÉ 11/10/2026, levantada na confirmação. Medido na planilha
-    real de relações com investidores: 304 linhas, 321 pessoas, e QUATRO em duas
-    instituições cada — 300 agendas barradas por 4 nomes. "A mensagem está correta,
-    mas não era para impedir subir: era transformar isso em um alerta para revisão
-    na aba correspondente de cadastro."
-
-    SÓ O NOME NOVO, e é o que mantém o aviso útil: quem já está no cadastro tem
-    uma instituição decidida, e a resolução por linha (`_interlocutor_da_instituicao`)
-    já trata o caso dele — com o aviso de que a agenda entra sem a pessoa.
+    SÓ O NOME NOVO. Quem já está no cadastro tem instituição decidida, e a
+    resolução por linha (`_interlocutor_da_instituicao`) já trata o caso dele.
 
     PELO QUE A LINHA ESCREVEU, e não pelo id resolvido: nesta altura o cadastro
-    ainda não existe, então o que há é o texto da célula. É a mesma informação que
-    `_instituicao_de_cada_interlocutor` vai usar na confirmação.
+    ainda não existe, então o que há é o texto da célula. É a mesma informação
+    que `_instituicao_de_cada_interlocutor` usa na confirmação.
     """
     moldes = [
         molde
@@ -1950,10 +1873,10 @@ def _cadastro_existe(sessao: Session, campo: str, alvo: str) -> bool:
     erro apareceria lá — longe de quem escolheu, depois de a pessoa já ter
     conferido tudo.
 
-    ATENDE OS DOIS TIPOS DE VOCABULÁRIO. Antes só olhava `NO_BANCO`, e uma
-    Modalidade escrita errada não tinha saída: apontar para `presencial` era
-    recusado como inexistente, e criar é proibido porque a lista é fechada — a
-    pessoa ficava presa numa pendência sem resolução possível.
+    ATENDE OS DOIS TIPOS DE VOCABULÁRIO. Só em `NO_BANCO`, uma Modalidade
+    escrita errada não tem saída: apontar para `presencial` é recusado como
+    inexistente, e criar é proibido porque a lista é fechada — pendência sem
+    resolução possível.
     """
     vocabulario = vocabulario_do_campo(campo)
     if vocabulario is None:
@@ -2024,34 +1947,24 @@ def _decisoes(linhas) -> tuple[dict[tuple[str, str], str], dict[tuple[str, str],
             if acao == "criar":
                 vocabulario = vocabulario_do_campo(bruta["campo"])
                 if vocabulario:
-                    #: UMA CRIAÇÃO POR NOME NORMALIZADO, com a PRIMEIRA grafia do
-                    #: arquivo como nome.
+                    #: UMA CRIAÇÃO POR NOME NORMALIZADO, com a PRIMEIRA grafia
+                    #: do arquivo como nome.
                     #:
-                    #: O 422 QUE ISTO CONSERTA, de uma subida real: "já existe uma
-                    #: pessoa chamada 'Renan Tiburcio' nesta instituição" — e ela
-                    #: não existia no banco. A colisão era dentro da própria
-                    #: planilha, que trazia "Renan Tiburcio" e "Renan Tibúrcio".
-                    #: Medido: de 318 nomes, TRÊS vinham com duas grafias, as três
-                    #: na mesma instituição, diferindo só no acento.
+                    #: A planilha pode trazer o mesmo nome em duas grafias
+                    #: ("Renan Tiburcio" e "Renan Tibúrcio"), e duas entradas
+                    #: viram duas criações que colidem no índice único
+                    #: `(nome_normalizado, instituicao_id)` — 422 dizendo que a
+                    #: pessoa já existe, sobre uma pessoa que não está no banco.
+                    #: A chave deste dicionário é o nome NORMALIZADO por isso.
                     #:
-                    #: DUAS ENTRADAS VIRAVAM DUAS CRIAÇÕES, e elas colidem no
-                    #: índice único `(nome_normalizado, instituicao_id)`.
+                    #: A PRIMEIRA GRAFIA FICA por ser estável: não depende de a
+                    #: planilha estar ordenada, e duas confirmações do mesmo
+                    #: arquivo dão o mesmo cadastro. A conferência avisa que
+                    #: havia duas — ver `_avisar_as_duas_grafias`.
                     #:
-                    #: E `normalizar` EXISTE PARA ISSO: o docstring dela diz que
-                    #: "`nome_normalizado` existe para a importação deduplicar
-                    #: 'Radamés' e 'Radames' antes de criar as chaves
-                    #: estrangeiras". A deduplicação falhava porque a chave deste
-                    #: dicionário era o texto cru.
-                    #:
-                    #: A PRIMEIRA GRAFIA FICA, e a escolha é por ser estável e
-                    #: explicável: ela não depende de a planilha estar ordenada, e
-                    #: duas confirmações do mesmo arquivo dão o mesmo cadastro. A
-                    #: conferência avisa que havia duas — ver
-                    #: `_avisar_as_duas_grafias`.
-                    #:
-                    #: E O NOME CRU CONTINUA SENDO O VALOR DA CHAVE, para
-                    #: `_criar_cadastros` e `_reconferir` receberem um nome de
-                    #: verdade e não a forma normalizada.
+                    #: E O NOME CRU É O VALOR DA CHAVE, para `_criar_cadastros` e
+                    #: `_reconferir` receberem um nome de verdade, e não a forma
+                    #: normalizada.
                     chave = normalizar(str(bruta["valor"]))
                     if (vocabulario, chave) not in ja_vai_nascer:
                         ja_vai_nascer.add((vocabulario, chave))
@@ -2064,21 +1977,20 @@ def _decisoes(linhas) -> tuple[dict[tuple[str, str], str], dict[tuple[str, str],
 def _declarados_por_nome(linhas) -> dict[str, dict[str, object]]:
     """Nome normalizado → os campos que a pessoa escreveu na aba de cadastro.
 
-    VEM DA DIVERGÊNCIA E NÃO DO ARQUIVO, porque o arquivo não é guardado: o upload
-    anota em `declarado` tudo o que ela preencheu ao marcar `acao="criar"`, e a
-    confirmação lê daqui. Era só a categoria de público; passou a ser todos os campos
-    quando as abas ganharam os do formulário da plataforma.
+    VEM DA DIVERGÊNCIA E NÃO DO ARQUIVO, porque o arquivo não é guardado: o
+    upload anota em `declarado` tudo o que ela preencheu ao marcar
+    `acao="criar"`, e a confirmação lê daqui.
     """
     campos: dict[str, dict[str, object]] = {}
     for linha in linhas:
         if linha.decisao == "descartada":
             continue
         for bruta in linha.divergencias or []:
-            #: PELA AÇÃO EFETIVA, e aqui estava o defeito: este filtro exigia
-            #: `acao == "criar"`, e a criação por PADRÃO não passava. A
-            #: instituição nascia — e sem a abrangência e a relevância que a
-            #: pessoa escreveu na aba. Perda silenciosa, que é pior que a trava
-            #: que isto substituiu, porque a trava ela VÊ. Achado de revisão.
+            #: PELA AÇÃO EFETIVA, e não por `acao == "criar"`: a criação por
+            #: PADRÃO não marca ação, então o filtro estrito deixaria a
+            #: instituição nascer sem a abrangência e a relevância que a pessoa
+            #: escreveu na aba. Perda silenciosa é pior que trava, porque a trava
+            #: ela VÊ.
             if acao_efetiva(bruta) != "criar":
                 continue
             declarado = _o_declarado_da_divergencia(bruta)
@@ -2174,59 +2086,44 @@ def _instituicao_de_cada_interlocutor(
 ) -> dict[str, object]:
     """Interlocutor novo → a instituição a que ele pertence.
 
-    COM TUDO NUMA ABA, a resposta é vizinha de coluna: o interlocutor e a
-    instituição estão na MESMA linha. Antes isto atravessava duas abas ligadas
-    pelo `Código`, e era a parte mais frágil da inferência.
+    A resposta é vizinha de coluna: o interlocutor e a instituição estão na
+    MESMA linha da aba.
 
     SEM ISTO o interlocutor nasceria solto, e a recusa 4 — participante tem de
     pertencer à instituição da agenda — o rejeitaria NA CONFIRMAÇÃO: o upload
     diria "vou criar", a pessoa conferiria tudo, e o último passo devolveria
     conflito por uma pessoa que ela mesma declarou.
 
-    `escolhidos` VEM PRIMEIRO, e é o achado Alto da revisão. Quando duas
-    instituições têm o mesmo nome normalizado, o índice cru devolve `AMBIGUO` —
-    um sentinela, não um id — e era ele que ia para a chave estrangeira do
-    interlocutor novo, estourando no `flush` com "can't adapt type 'object'". A
-    pessoa tinha escolhido qual instituição era, na conferência; a decisão estava
-    gravada e só não era consultada aqui.
+    A ORDEM DAS FONTES É DECISÃO EXPLÍCITA ANTES DE INFERÊNCIA, e cada degrau
+    fecha uma falha concreta:
 
-    E O QUE ELA DECLAROU NA ABA VEM ANTES DA INSTITUIÇÃO DA AGENDA (11/10/2026).
-    Declarar "Carla Nova — Câmara Municipal" e usá-la numa agenda do Valor
-    Econômico era RECUSADO, e o motivo escrito era este: "criar a pessoa em um dos
-    dois órgãos e esperar que dê certo é o tipo de chute que erra calado". Tirada a
-    trava, o chute aconteceu — medido: ela nascia na instituição da agenda,
-    contrariando em silêncio o que a pessoa escreveu.
-
-    A ORDEM É A DO RESTO DO MÓDULO: decisão explícita antes de inferência. A aba é
-    declaração ("quero que exista assim"); a instituição da agenda é vizinhança de
-    coluna, que acerta quando ninguém disse nada e erra quando alguém disse.
+      1. `escolhidos` — quando duas instituições têm o mesmo nome normalizado, o
+         índice cru devolve `AMBIGUO`, um sentinela e não um id, que estoura no
+         `flush` ("can't adapt type 'object'"). A pessoa já escolheu qual era, na
+         conferência; é aqui que a escolha vale.
+      2. O que ela declarou NA ABA — declaração é "quero que exista assim".
+      3. A instituição da agenda — vizinhança de coluna, que acerta quando
+         ninguém disse nada e erra quando alguém disse.
 
     E O ESCRITOR CONTINUA SENDO UM SÓ: `_JA_RESOLVIDOS` mantém `instituicao_id`
-    fora do que a criação grava a partir do declarado, justamente para as duas
-    verdades não discordarem. Quem aprende a declaração é este caminho.
+    fora do que a criação grava a partir do declarado, para as duas verdades não
+    discordarem. Quem aprende a declaração é este caminho.
 
-    `a_nascer` É O CONJUNTO DOS QUE VÃO SER CRIADOS, e sem ele a trava voltava
-    pela confirmação — achado ALTA de revisão. A varredura lê as células CRUAS da
-    linha, não os itens que `_listas_da_linha` manteve: o interlocutor de outra
-    instituição, corretamente OMITIDO da agenda, continuava entrando na checagem
-    de "a mesma pessoa em agendas de instituições diferentes" e levantava
-    `RegraViolada` na confirmação. A tela dizia "a agenda entra sem Ana" e o
-    servidor recusava tudo.
+    `a_nascer` É O CONJUNTO DOS QUE VÃO SER CRIADOS, e sem ele a trava volta pela
+    confirmação: a varredura lê as células CRUAS da linha, não os itens que
+    `_listas_da_linha` manteve, então o interlocutor de outra instituição —
+    corretamente omitido da agenda — entrava na checagem de "a mesma pessoa em
+    agendas de instituições diferentes" e levantava `RegraViolada`. A tela dizia
+    "a agenda entra sem Ana" e o servidor recusava tudo.
 
-    E É O PRÓPRIO PROPÓSITO DA FUNÇÃO: ela responde por interlocutor NOVO. Quem já
-    existe no cadastro já tem instituição, e quem foi omitido não vai nascer —
-    `de_quem` é lido num lugar só, na criação, exatamente para isso.
+    E É O PROPÓSITO DA FUNÇÃO: ela responde por interlocutor NOVO. Quem já existe
+    tem instituição, e quem foi omitido não vai nascer — `de_quem` é lido num
+    lugar só, na criação, exatamente para isso.
     """
-    #: NOME -> AS INSTITUIÇÕES EM QUE ELE APARECE, no plural desde 11/10/2026.
-    #:
-    #: ERA NOME -> UMA INSTITUIÇÃO, e a trava nascia daí: duas instituições para o
-    #: mesmo nome não caBIAM na estrutura, então a função levantava `RegraViolada`
-    #: — a saída honesta de quem não podia representar o caso.
-    #:
-    #: E O BANCO SEMPRE REPRESENTOU: a `0002` cria
-    #: `unique (nome_normalizado, instituicao_id)` com o comentário "Mesmo nome em
-    #: instituições diferentes são pessoas diferentes". Dois cadastros é o que o
-    #: modelo prevê; faltava a criação saber fazer dois.
+    #: NOME -> AS INSTITUIÇÕES EM QUE ELE APARECE, no plural: a `0002` cria
+    #: `unique (nome_normalizado, instituicao_id)` porque mesmo nome em
+    #: instituições diferentes são pessoas diferentes. No singular, o caso não
+    #: cabia na estrutura e a função levantava `RegraViolada`.
     de_quem: dict[str, list[object]] = {}
     #: Quem declarou instituição que o cadastro não responde mais. Ver `NAO_RESOLVE`.
     nao_resolvidos: set[str] = set()
@@ -2274,31 +2171,23 @@ def _instituicao_de_cada_interlocutor(
                 da_aba = _instituicao_declarada(declarados.get(chave), indice)
                 if da_aba is NAO_RESOLVE:  # noqa: SIM114
                     # O CADASTRO MUDOU ENTRE SUBIR E CONFIRMAR, e este é o
-                    # contrato que a confirmação já tem escrito: "quando algo
-                    # mudou, a resposta é 409 e não 422 — o que a pessoa mandou
-                    # estava certo quando ela olhou".
+                    # contrato da confirmação: quando algo mudou, a resposta é
+                    # 409 e não 422 — o que a pessoa mandou estava certo quando
+                    # ela olhou.
                     #
                     # O CASO: "Câmara Municipal" era única no upload, e alguém
                     # cadastrou uma segunda pela Administração no meio do
                     # caminho. Cair na instituição da agenda aqui faria a pessoa
-                    # NASCER no órgão errado — e, por ter nascido no órgão da
-                    # agenda, ela ainda seria vinculada a ela. Achado ALTA de
-                    # revisão.
+                    # nascer no órgão errado — e, por ter nascido no órgão da
+                    # agenda, ela ainda seria vinculada a ela.
                     nao_resolvidos.add(str(pessoa))
                     continue
                 onde = instituicao if da_aba is None else da_aba
                 # A MESMA PESSOA NOVA EM AGENDAS DE INSTITUIÇÕES DIFERENTES VIRA
-                # DOIS CADASTROS, um por instituição — e não uma recusa.
-                #
-                # ERA `RegraViolada` ATÉ 11/10/2026, e o dono do produto corrigiu
-                # depois de subir a planilha real: "a mensagem está correta, mas
-                # não era para impedir subir: era transformar isso em um alerta
-                # para revisão na aba correspondente de cadastro". Medido no
-                # arquivo dele: 300 agendas barradas por 4 nomes.
-                #
-                # DOIS CADASTROS É O QUE O MODELO PREVÊ: a `0002` diz "mesmo nome
-                # em instituições diferentes são pessoas diferentes", e a
-                # unicidade é `(nome_normalizado, instituicao_id)`.
+                # DOIS CADASTROS, um por instituição — e não uma recusa. É o que
+                # o modelo prevê: a `0002` diz "mesmo nome em instituições
+                # diferentes são pessoas diferentes", com unicidade em
+                # `(nome_normalizado, instituicao_id)`.
                 #
                 # E A ORDEM É A DO ARQUIVO, para a lista não remexer entre duas
                 # confirmações: quem aparece primeiro nasce primeiro.
@@ -2395,24 +2284,15 @@ def _subcategoria_da_categoria(sessao: Session, categoria, nome: object) -> int 
 
 #: POR QUE ESTA INSTITUIÇÃO ESPERA REVISÃO: ela entrou sem categoria de público.
 #:
-#: DECISÃO DO DONO DO PRODUTO (11/10/2026), depois de ver a fila real: "pode
-#: registrar como entidade e marcar para revisar". O comportamento era esse; o que
-#: faltava era a marca DIZER o que há para fazer.
+#: A MARCA DIZ O QUE HÁ PARA FAZER, e é a razão de ela existir. Sem este texto a
+#: aba de revisão repete a frase genérica "entrou por planilha e ninguém
+#: conferiu", que não diz O QUE conferir; com ele, cada linha nomeia o campo que
+#: falta e o efeito de ele faltar.
 #:
-#: E A DIFERENÇA É O QUE SE VÊ NA ABA. Medido com a planilha real de RI: 499 das
-#: 502 pendências caem na aba "Instituições e Contatos", e 178 delas são
-#: INSTITUIÇÕES — todas nasceram assim: `3R Investimentos`, `AF Invest`, `ARX`,
-#: numa planilha de Relações com Investidores, todas como "Entidade". (Esta linha
-#: dizia "499 das 502 pendências SÃO instituições", e estava errada: 499 é o total
-#: da aba, que junta duas tabelas.) Sem este texto, a aba mostra 499 linhas
-#: repetindo a frase genérica
-#: "entrou por planilha e ninguém conferiu", que não diz O QUE conferir. Com ele,
-#: cada linha nomeia o campo que falta e o efeito de ele faltar.
-#:
-#: `entidade` CONTINUA SENDO O TIPO CERTO, e o motivo explica por quê em vez de
-#: pedir desculpa: é o único tipo fora de `FRENTE_UNICA_DO_TIPO`, então ele não
-#: finge decidir a frente da agenda. Qualquer outro cravaria uma frente errada em
-#: toda agenda desta instituição.
+#: `entidade` É O TIPO CERTO, e o motivo explica por quê em vez de pedir
+#: desculpa: é o único tipo fora de `FRENTE_UNICA_DO_TIPO`, então ele não finge
+#: decidir a frente da agenda. Qualquer outro cravaria uma frente errada em toda
+#: agenda desta instituição.
 MOTIVO_SEM_CATEGORIA = (
     "Entrou pela planilha sem categoria de público, então o tipo ficou "
     "'Entidade' — o único que não crava uma frente. Diga a categoria para a "
@@ -2480,41 +2360,35 @@ def _criar_cadastros(
                 if categoria_nome in indice.get("categorias_publico", {})
                 else None
             )
-            # SEM CATEGORIA, NASCE INCOMPLETA — e não recusada. Era um
-            # `RegraViolada` aqui, e isso barrava a linha inteira por uma coluna
-            # da OUTRA aba. Mudança pedida pelo dono do produto (11/10/2026).
+            # SEM CATEGORIA, NASCE INCOMPLETA — e não recusada. Recusar barraria
+            # a linha inteira por uma coluna da OUTRA aba.
             #
             # O QUE SE PERDE, e está dito em voz alta porque é real: a categoria
             # de público é o que torna a instituição visível para a taxonomia de
             # públicos do Score, e é dela que sai o `tipo`. Sem ela, esta
             # instituição fica fora dessa taxonomia até alguém completá-la.
             #
-            # `entidade` É O TIPO HONESTO para "ainda não se sabe": é o único que
-            # não está em `FRENTE_UNICA_DO_TIPO`, então ele não finge decidir a
+            # `entidade` É O TIPO HONESTO para "ainda não se sabe": é o único
+            # fora de `FRENTE_UNICA_DO_TIPO`, então ele não finge decidir a
             # frente — `derivar_frente` cai no formato da interação e, sem ele,
             # em `PARCEIROS`. Qualquer outro tipo cravaria uma frente errada em
-            # toda agenda desta instituição, que é pior que uma frente genérica.
-            #
-            # E NÃO É ESTADO NOVO NO BANCO: 205 das 3.809 instituições já estão
-            # sem categoria hoje. O alerta na agenda é o que torna isso visível.
+            # toda agenda desta instituição, que é pior que uma genérica.
             tipo = (
                 TIPO_DA_CATEGORIA_DE_PUBLICO[categoria.codigo]
                 if categoria is not None
                 else TIPO_SEM_CATEGORIA
             )
-            # A ABRANGÊNCIA VEM DA PLANILHA e não é a UF da agenda: o dono do
-            # produto foi explícito, são coisas diferentes. Uma reunião em Brasília
-            # com um órgão de Minas tem UF da agenda `DF` e abrangência do órgão
-            # `MG`. Antes disto a instituição nascia com `NA` fixo, e alguém
-            # precisava completar na Administração depois — e "depois" é quando
-            # ninguém lembra.
+            # A ABRANGÊNCIA VEM DA PLANILHA e não é a UF da agenda: são coisas
+            # diferentes. Uma reunião em Brasília com um órgão de Minas tem UF
+            # da agenda `DF` e abrangência do órgão `MG`.
+
             # PELO `gravar`, e não `sessao.add` pelado: sem ele, declarar um
-            # nome+tipo que já existe DESATIVADO sai como 500 — o índice
-            # único (nome_normalizado, tipo) da 0002 não é parcial em
-            # `ativo`, e `_indice`/`_so_ativos` só enxergam o que está ativo,
-            # então a divergência nunca aparece antes do `INSERT` bater na
-            # colisão. Mesmo defeito que `api/stakeholders.py` já evita nas
-            # mesmas três tabelas.
+            # nome+tipo que já existe DESATIVADO sai como 500 — o índice único
+            # `(nome_normalizado, tipo)` da `0002` não é parcial em `ativo`, e
+            # `_indice`/`_so_ativos` só enxergam o que está ativo, então a
+            # divergência nunca aparece antes do `INSERT` bater na colisão.
+            # Mesmo cuidado que `api/stakeholders.py` tem nas mesmas três
+            # tabelas.
             gravar(
                 sessao,
                 Instituicao(
@@ -2551,18 +2425,14 @@ def _criar_cadastros(
             do_cadastro = dict(declarados.get(normalizar(valor)) or {})
             #: UM CADASTRO POR INSTITUIÇÃO EM QUE O NOME APARECE.
             #:
-            #: ERA UM SÓ, e duas instituições para o mesmo nome levantavam
-            #: `RegraViolada` na confirmação — 300 agendas da planilha real de RI
-            #: barradas por 4 nomes. O dono do produto corrigiu a regra:
-            #: "transformar isso em um alerta para revisão na aba correspondente de
-            #: cadastro".
-            #:
-            #: E É O QUE O MODELO PREVÊ: a `0002` diz "mesmo nome em instituições
+            #: É o que o modelo prevê: a `0002` diz "mesmo nome em instituições
             #: diferentes são pessoas diferentes", com unicidade em
             #: `(nome_normalizado, instituicao_id)`. Dois cadastros não colidem.
+            #: Criar um só fazia o nome em duas casas levantar `RegraViolada` na
+            #: confirmação, barrando a planilha inteira.
             #:
-            #: A LISTA VAZIA CRIA UM SEM INSTITUIÇÃO, que é o comportamento de
-            #: antes para o nome que apareceu sem instituição na linha.
+            #: A LISTA VAZIA CRIA UM SEM INSTITUIÇÃO, para o nome que apareceu
+            #: sem instituição na linha.
             destinos = de_quem.get(normalizar(valor)) or [None]
             #: O MOTIVO, SÓ QUANDO HÁ MAIS DE UM, e é o alerta que a aba mostra:
             #: sem ele a pessoa abre a fila e vê dois cadastros iguais sem saber
@@ -2599,15 +2469,11 @@ def _criar_cadastros(
                 criados += 1
             #: `continue`: ESTA É A ÚNICA RAMIFICAÇÃO QUE CRIA MAIS DE UMA LINHA.
             #:
-            #: O `criados += 1` no fim do laço conta UMA criação por nome, e era
-            #: verdade até 11/10/2026, quando um nome em duas instituições passou a
-            #: nascer duas vezes. Achado de revisão do Codex: a confirmação da
-            #: planilha real de RI respondeu `cadastros: 505` tendo inserido 509 —
-            #: os 4 nomes em duas casas contavam 4 em vez de 8.
-            #:
-            #: E ESSE NÚMERO É O QUE A PESSOA LÊ na tela depois de subir a planilha.
-            #: Um resumo que subconta é pior que resumo nenhum: ele convida a
-            #: conferir o que já está certo.
+            #: O `criados += 1` no fim do laço conta UMA criação por nome, e um
+            #: nome em duas instituições nasce duas vezes — contá-lo lá faria o
+            #: resumo subcontar. E esse número é o que a pessoa lê na tela depois
+            #: de subir a planilha: um resumo que subconta convida a conferir o
+            #: que já está certo.
             continue
         elif vocabulario == "pessoas_aegea":
             do_cadastro = dict(declarados.get(normalizar(valor)) or {})
@@ -2633,16 +2499,10 @@ def _criar_cadastros(
             # do modelo, e a planilha não o amplia.
             gravar(
                 sessao,
-                #: `gerais`, E NAO `livre`: `livre` não é um nível. A
-                #: constraint `tema_nivel_check` e `NIVEIS_DE_TEMA` aceitam
-                #: `sensivel`, `estrategico` e `gerais` — confirmar uma
-                #: importação com tema novo devolvia CheckViolation, 500.
-                #:
-                #: NUNCA APARECEU porque era preciso declarar o tema na aba para
-                #: chegar aqui, e nenhum teste fazia isso de ponta a ponta. O
-                #: caminho ficou alcançável quando a importação parou de exigir a
-                #: aba (11/10/2026) — a mudança não criou o defeito, tirou-o do
-                #: esconderijo.
+                #: `gerais`, E NÃO `livre`: `livre` não é um nível. A constraint
+                #: `tema_nivel_check` e `NIVEIS_DE_TEMA` aceitam `sensivel`,
+                #: `estrategico` e `gerais`, e qualquer outro valor sai como
+                #: CheckViolation — 500 ao confirmar uma importação com tema novo.
                 #:
                 #: E `gerais` É O NEUTRO: `estrategico` é vocabulário fechado do
                 #: modelo (os KPIs dependem dele, e a planilha não o amplia), e
@@ -2803,19 +2663,20 @@ def _declaracoes_da_importacao(
 ) -> tuple[dict[str, frozenset[str]], dict[str, dict[str, dict[str, object]]]]:
     """O que a pessoa declarou no arquivo, para repropor uma linha depois do upload.
 
-    DUAS FONTES, E A ORDEM IMPORTA. A primeira é a linha reservada que o upload gravou
-    (`ABA_DAS_DECLARACOES`): ela tem a declaração INTEIRA, inclusive a que nenhuma linha
-    usou — foi o achado da revisão, e o caso era a pessoa declarar um órgão, não usá-lo
-    em nenhuma linha, e passar a usá-lo corrigindo uma célula na conferência.
+    DUAS FONTES, E A ORDEM IMPORTA. A primeira é a linha reservada que o upload
+    gravou (`ABA_DAS_DECLARACOES`): ela tem a declaração INTEIRA, inclusive a
+    que nenhuma linha usou — o caso é declarar um órgão, não usá-lo em nenhuma
+    linha, e passar a usá-lo corrigindo uma célula na conferência.
 
-    A SEGUNDA É AS DIVERGÊNCIAS GRAVADAS, e ela existe para as importações ANTIGAS: as
-    que foram criadas antes de a linha reservada existir continuam abertas para
-    conferência, e para elas a reconstrução parcial é tudo o que há. Some quando não
-    houver mais nenhuma conferência antiga aberta.
+    A SEGUNDA É AS DIVERGÊNCIAS GRAVADAS, e existe para as importações ANTIGAS:
+    as criadas antes da linha reservada continuam abertas para conferência, e
+    para elas a reconstrução parcial é tudo o que há. Some quando não houver mais
+    nenhuma conferência antiga aberta.
 
-    UNIÃO E NÃO ESCOLHA: as duas descrevem o mesmo arquivo, e o que a linha reservada
-    tem a mais é justamente o que a reconstrução não alcança. Onde as duas têm o mesmo
-    nome, a gravada manda — ela é o que a pessoa escreveu, não o que foi inferido.
+    UNIÃO E NÃO ESCOLHA: as duas descrevem o mesmo arquivo, e o que a linha
+    reservada tem a mais é o que a reconstrução não alcança. Onde as duas têm o
+    mesmo nome, a gravada manda — ela é o que a pessoa escreveu, não o que foi
+    inferido.
     """
     from app.banco import repositorio_importacao
 
@@ -2887,15 +2748,12 @@ def _repropor_uma(sessao: Session, importacao_id, alvo) -> None:
             coluna = getattr(fonte.tabela, fonte.resolve_para)
             escolhidos[(campo, valor)] = _no_tipo_da_coluna(coluna, destino)
 
-    # A DECLARAÇÃO VEM DA PRÓPRIA DIVERGÊNCIA GRAVADA, e era o achado crítico da
-    # revisão: a pessoa declarava a instituição, o upload prometia criá-la, ela corrigia
-    # QUALQUER célula daquela linha na grade — e a promessa desaparecia, virando pendência
-    # travada.
-    #
-    # A CAUSA: a reproposição não tem o arquivo, então não tinha como saber o que foi
-    # declarado. Mas tem a divergência, que já carrega a declaração inteira — era só ler
-    # de lá. O mesmo vale para os NOMES declarados, que `classificar` usa para separar
-    # "quero cadastrar isto" de "errei a grafia".
+    # A DECLARAÇÃO VEM DA PRÓPRIA DIVERGÊNCIA GRAVADA. A reproposição não tem o
+    # arquivo, então, lendo de outro lugar, a pessoa declarava a instituição, o
+    # upload prometia criá-la, ela corrigia QUALQUER célula daquela linha na
+    # grade — e a promessa desaparecia, virando pendência travada. A divergência
+    # já carrega a declaração inteira. O mesmo vale para os NOMES declarados, que
+    # `classificar` usa para separar "quero cadastrar isto" de "errei a grafia".
     declarados, cadastros = _declaracoes_da_importacao(sessao, importacao_id, linhas)
     (proposta,) = propor_de_linhas(
         sessao,
@@ -2959,8 +2817,8 @@ def confirmar(sessao: Session, importacao_id, usuario) -> Resumo:
     #
     # ANTES DE CRIAR OS CADASTROS, e não depois: a criação do interlocutor novo
     # precisa saber de qual instituição ele é, e quando o nome da instituição é
-    # ambíguo é SÓ a decisão da pessoa que responde isso. Calcular depois foi o
-    # achado Alto da revisão — ver `_instituicao_de_cada_interlocutor`.
+    # ambíguo é SÓ a decisão da pessoa que responde isso — ver
+    # `_instituicao_de_cada_interlocutor`.
     escolhidos: dict[tuple[str, str], object] = {}
     for (campo, valor), alvo in apontados.items():
         vocabulario = vocabulario_do_campo(campo)
@@ -2989,15 +2847,13 @@ def confirmar(sessao: Session, importacao_id, usuario) -> Resumo:
     # QUEM CONFIRMA AGENDA MARCADA PRECISA DA CAMADA SENSÍVEL (migration 0089).
     #
     # A rota de cadastro e o `PATCH` já barram a marcação de quem não alcança o
-    # sensível — e sem esta conferência a planilha seria a porta de trás: a
-    # pessoa escreveria "sim" na coluna, confirmaria, e criaria agendas que
-    # desapareceriam da vista dela no mesmo instante. Nem desmarcar daria:
-    # precisaria pedir a outra pessoa.
+    # sensível, e sem esta conferência a planilha seria a porta de trás: a pessoa
+    # escreveria "sim" na coluna, confirmaria, e criaria agendas que
+    # desapareceriam da vista dela no mesmo instante — nem desmarcar daria.
     #
-    # ANTES DO LAÇO, E SOBRE O CONJUNTO. Recusar dentro do laço criaria parte
-    # das agendas e abortaria no meio — e esta função existe para ser tudo ou
-    # nada. Recusar aqui também dá uma mensagem melhor: diz QUANTAS linhas e
-    # ONDE, em vez de parar na primeira.
+    # ANTES DO LAÇO, E SOBRE O CONJUNTO: recusar dentro do laço criaria parte das
+    # agendas e abortaria no meio, e esta função é tudo ou nada. Aqui a mensagem
+    # também diz QUANTAS linhas e ONDE, em vez de parar na primeira.
     marcadas = [
         proposta.linha.numero
         for proposta in propostas
@@ -3075,10 +2931,9 @@ def cancelar(sessao: Session, importacao_id) -> None:
 def pode_criar(campo: str) -> bool:
     """A importação sabe criar cadastro para este campo?
 
-    A TELA PERGUNTA ISTO para não oferecer um botão que o servidor recusa. Antes
-    ela mostrava "Cadastrar como novo" em todo grupo, e um dicionário administrado
-    saía da pendência como `criar` para falhar só na confirmação — depois de a
-    pessoa ter conferido tudo.
+    A TELA PERGUNTA ISTO para não oferecer um botão que o servidor recusa: sem
+    ele, um dicionário administrado na plataforma sairia da pendência como
+    `criar` e falharia só na confirmação, depois de a pessoa ter conferido tudo.
     """
     vocabulario = vocabulario_do_campo(campo)
     return vocabulario in VOCABULARIOS_QUE_A_IMPORTACAO_CRIA
@@ -3093,27 +2948,17 @@ def candidatos_do_nome(sessao: Session, campo: str, nome: str) -> list[tuple[str
     cadastros num item só, e `_alvo_de` devolvia `str(AMBIGUO)` — o repr da
     sentinela — como se fosse id. O botão existia e mandava lixo.
 
-    ENTÃO A ESCOLHA VEM DAQUI, de quem conhece a tabela: um item por cadastro, com
-    o id de verdade e um rótulo que os distingue. Sem isto a única saída da pessoa
-    era descartar a linha ou renomear na planilha.
+    ENTÃO A ESCOLHA VEM DAQUI, de quem conhece a tabela: um item por cadastro,
+    com o id de verdade e um rótulo que os distingue.
 
     SÓ OS ATIVOS, pela mesma razão que `_indice` filtra: oferecer um cadastro
     aposentado é convidar a apontar para o que a confirmação recusa.
 
-    DOIS VOCABULÁRIOS, e não todos, porque rótulo que não distingue é pior que
-    nenhum — devolveria dois botões idênticos outra vez:
-
-    * `instituicoes` se distingue pelo TIPO. Medido: 28 nomes duplicados, sendo
-      22 do par `perfil_rede` + `veiculo`.
-    * `interlocutores` se distingue pela INSTITUIÇÃO, que é a unicidade da tabela
-      (`nome_normalizado`, `instituicao_id`). Medido: hoje não existe nenhum
-      homônimo — 129 interlocutores, nenhum nome repetido. O caminho fica porque
-      o banco o permite, e `_orgaos_de_cada_interlocutor` já existe para a
-      mensagem desse mesmo caso.
-
-    Para os outros vocabulários, devolve vazio: dois temas ativos com o mesmo nome
-    são defeito de base, e não há atributo que a pessoa reconheça para escolher
-    entre eles.
+    DOIS VOCABULÁRIOS, e não todos, porque rótulo que não distingue devolveria
+    dois botões idênticos outra vez: `instituicoes` se distingue pelo TIPO, e
+    `interlocutores`, pela INSTITUIÇÃO, que é a unicidade da tabela. Para os
+    outros, devolve vazio: dois temas ativos com o mesmo nome são defeito de
+    base, e não há atributo que a pessoa reconheça para escolher entre eles.
     """
     vocabulario = vocabulario_do_campo(campo)
     chave = normalizar(nome)
@@ -3153,12 +2998,10 @@ def e_ambiguo(
 ) -> bool:
     """Este valor casa com MAIS DE UM cadastro?
 
-    QUEM PERGUNTA, E POR QUÊ. A conferência oferece "Cadastrar como novo" em todo
-    grupo de campo que a importação sabe criar. Num nome AMBÍGUO isso é um atalho
-    explícito para a TERCEIRA duplicata do mesmo nome — achado de revisão
-    (11/10/2026) —, e é o contrário do que o dono do produto pediu: "caso tenha
-    suspeita de duplicação em qualquer campo, mostrar para o usuário decidir". A
-    decisão coerente ali é escolher um dos dois que já existem.
+    QUEM PERGUNTA, E POR QUÊ. A conferência oferece "Cadastrar como novo" em
+    todo grupo de campo que a importação sabe criar. Num nome AMBÍGUO isso é um
+    atalho explícito para a TERCEIRA duplicata do mesmo nome; a decisão coerente
+    ali é escolher um dos dois que já existem.
 
     SÓ A AMBIGUIDADE, e não "o nome existe no índice". A diferença importa: o
     interlocutor que existe sob OUTRA instituição também está no índice, e ali
@@ -3170,8 +3013,8 @@ def e_ambiguo(
         return False
     #: O ÍNDICE DE QUEM CHAMA, QUANDO ELE TEM UM. Quem pergunta uma vez só —
     #: `resolver`, numa decisão da pessoa — não precisa calculá-lo antes; quem
-    #: pergunta por grupo precisa, e medido: reconstruí-lo por grupo levou a
-    #: resposta da conferência de 19 consultas fixas para 499 em 30 grupos.
+    #: pergunta por grupo precisa, senão o custo da resposta cresce com o número
+    #: de grupos em vez de ficar fixo.
     conhecidos = (
         indice_do_vocabulario(sessao, vocabulario)
         if indice is None
