@@ -1,20 +1,17 @@
 """Lê a planilha de subtemas e diz o que faria com cada linha.
 
-NADA É GRAVADO AQUI. Este módulo lê, confronta com o banco e devolve uma
-`Proposta` por linha — a confirmação é outra rota, e é de propósito: a Aegea
-mantém a taxonomia numa planilha de 104 linhas, e aplicar 104 mudanças sem
-mostrar quais são é pedir confiança que ninguém deveria dar a um `.xlsx` que
-passou por e-mail.
+NADA É GRAVADO AQUI: este módulo lê, confronta com o banco e devolve uma
+`Proposta` por linha; a confirmação é outra rota. Aplicar cem mudanças de
+taxonomia sem mostrar quais são é pedir confiança que ninguém deve dar a um
+`.xlsx` que passou por e-mail.
 
-O QUE A CONFERÊNCIA PRECISA RESPONDER, em uma tela: destas 104 linhas, quais
-mudaram? Na manutenção mensal a resposta é "quatro", e o valor está em não
-precisar ler as outras cem.
+A CONFERÊNCIA RESPONDE "destas linhas, quais mudaram?" — na manutenção mensal a
+resposta é quatro, e o valor está em não precisar ler as outras cem.
 
 A IMPORTAÇÃO NÃO CRIA VOCABULÁRIO. Pilar, tema estratégico, LSO e risco já
-existem no banco; a planilha os ESCOLHE. Valor que não casa vira linha recusada,
-com a coluna e o valor nomeados. A alternativa — criar o que não existe — faria
-um erro de digitação virar um pilar novo, e a taxonomia da Aegea é o que o
-painel inteiro usa para agrupar.
+existem no banco; a planilha os ESCOLHE, e valor que não casa vira linha
+recusada, com a coluna e o valor nomeados. Criar o que não existe faria um erro
+de digitação virar um pilar novo, e é por essa taxonomia que o painel agrupa.
 """
 
 from __future__ import annotations
@@ -64,9 +61,9 @@ def ler(conteudo: bytes) -> list[SubtemaLido]:
 
     AS RECUSAS SÃO ESTRUTURAIS e vêm antes de qualquer confronto com o banco:
     arquivo que não abre, aba que não existe, cabeçalho que não é o do modelo.
-    Deixar o leitor seguir com um cabeçalho diferente é como uma coluna
-    renomeada vira 104 linhas recusadas em vez de uma mensagem dizendo "esta
-    planilha não é o modelo".
+    Seguir com um cabeçalho diferente é o que faz uma coluna renomeada virar
+    cem linhas recusadas, em vez de uma frase dizendo que a planilha não é o
+    modelo.
     """
     try:
         livro = openpyxl.load_workbook(io.BytesIO(conteudo), read_only=True, data_only=True)
@@ -174,12 +171,11 @@ def _interpretar_risco(valor: str) -> tuple[bool | None, bool]:
 
     NULO É RESPOSTA, e distinta de `Não`: `e_risco` nulo quer dizer "não
     reconciliado com a taxonomia v4", e `false` quer dizer "reconciliado, e não
-    é de risco". A `0058` documenta a diferença, e perdê-la aqui apagaria uma
-    informação que a planilha carrega de propósito.
+    é de risco".
 
-    O SEGUNDO ELEMENTO separa "em branco" de "digitou algo que eu não entendo" —
+    O SEGUNDO ELEMENTO separa "em branco" de "digitou algo que eu não entendo":
     sem ele, um "Talvez" na célula viraria nulo em silêncio, e a pessoa só
-    descobriria meses depois que aquele subtema nunca foi reconciliado.
+    descobriria depois que aquele subtema nunca foi reconciliado.
     """
     if not valor.strip():
         return None, True
@@ -219,14 +215,11 @@ def propor(sessao: Session, lidas: Iterable[SubtemaLido]) -> list[Proposta]:
     #: Onde cada nome apareceu pela primeira vez NESTE arquivo.
     #:
     #: SEM ISTO, DUAS LINHAS COM O MESMO SUBTEMA VIRAM DOIS `NOVO`, e a gravação
-    #: estoura no índice único de `tema.nome` — 500 e "erro interno" para quem
-    #: subiu, em vez da frase que resolve ("a linha 37 repete a 12"). O confronto
-    #: com o banco não pega o caso: `temas` é o que já existe LÁ, e as duas
-    #: linhas são novas aqui.
-    #:
-    #: Vale também para `ALTERA` e `IGUAL`: duas linhas mandando no mesmo tema
-    #: podem mandar coisas diferentes, e aplicar as duas faria a última ganhar
-    #: em silêncio. A segunda é recusada, qualquer que seja a decisão dela.
+    #: estoura no índice único de `tema.nome`: 500 e "erro interno" em vez da
+    #: frase que resolve ("a linha 37 repete a 12"). O confronto com o banco não
+    #: pega o caso, porque `temas` é o que já existe LÁ e as duas linhas são
+    #: novas aqui. Vale também para `ALTERA` e `IGUAL`: duas linhas mandando no
+    #: mesmo tema podem mandar coisas diferentes, e a segunda é recusada.
     primeira_aparicao: dict[str, int] = {}
 
     for lida in lidas:
@@ -289,12 +282,10 @@ def _propor_uma(
         )
 
     # OS DOIS ANDAM JUNTOS, e a recusa é do PAR incompleto, não da coluna vazia.
-    #
-    # Em branco nos dois é estado legítimo ("não reconciliado", o que 45
-    # subtemas têm hoje). Preenchido nos dois é classificação. Um só preenchido
-    # é meia classificação: o banco guarda apenas `macro_tema_id`, então um
-    # pilar sem tema estratégico não seria gravado em lugar nenhum — a linha
-    # pareceria aplicada e não teria efeito.
+    # Em branco nos dois é estado legítimo ("não reconciliado"); preenchido nos
+    # dois é classificação. Um só preenchido é meia classificação: o banco guarda
+    # apenas `macro_tema_id`, então um pilar sem tema estratégico não iria para
+    # lugar nenhum, e a linha pareceria aplicada sem ter efeito.
     if bool(lida.pilar) != bool(lida.tema_estrategico):
         faltando = "Tema estratégico (N2)" if lida.pilar else "Pilar (N1)"
         divergencias.append(
@@ -376,30 +367,22 @@ def _propor_uma(
 def impressao_das_propostas(propostas: Iterable[Proposta]) -> str:
     """Um resumo do que a pessoa VIU na conferência, para a confirmação conferir.
 
-    POR QUE ISTO EXISTE. Nada é gravado entre conferir e confirmar — a
-    importação de subtemas não tem tabela de rascunho, de propósito (ver
-    `aplicar`). O preço é que o banco pode mudar nesse intervalo: alguém edita
-    um subtema pela tela de Cadastro de Assuntos enquanto a planilha está
-    aberta, e a confirmação aplicaria um `ALTERA` sobre um "antes" que já não é
-    o antes. A pessoa teria aprovado uma mudança e aplicado outra.
+    NADA É GRAVADO ENTRE CONFERIR E CONFIRMAR (ver `aplicar`), então o banco
+    pode mudar no intervalo: alguém edita um subtema pela tela de Cadastro de
+    Assuntos e a confirmação aplicaria um `ALTERA` sobre um "antes" que já não é
+    o antes. A impressão fecha isso sem tabela de rascunho — a confirmação
+    reconfere a planilha contra o banco daquele instante, recalcula a impressão
+    e recusa se ela mudou.
 
-    A impressão fecha isso sem tabela: a confirmação reconfere a planilha contra
-    o banco DAQUELE instante, recalcula a impressão, e recusa se ela mudou. É a
-    reconferência transacional que a importação de agendas faz com estado, feita
-    aqui sem estado.
+    ENTRA O QUE MUDA A DECISÃO: a linha, o nome, o `tema_id`, a decisão e o par
+    antes/depois. Reordenar a planilha muda a impressão, e isso é desejado — a
+    conferência mostra números de linha, e foi aquelas linhas que a pessoa
+    aprovou.
 
-    ENTRA O QUE MUDA A DECISÃO, e não a planilha inteira: a linha, o nome, o
-    `tema_id`, a decisão e o par antes/depois. Reordenar a planilha sem mudar
-    nada muda a impressão (a linha entra), e isso é desejado — a conferência
-    mostra números de linha, e a pessoa aprovou AQUELAS linhas.
-
-    O `tema_id` ENTROU DEPOIS, e a revisão do bloco o provou necessário com um
-    cenário reproduzido contra o banco: conferiu-se um `ALTERA` do tema 159;
-    antes de confirmar, aquele tema foi RENOMEADO e um outro, com o nome e os
-    campos que o 159 tinha, foi criado como 160. A planilha segue falando do
-    mesmo nome, e com nome normalizado a impressão batia — mas `aplicar` ia
-    alterar o 160. A pessoa teria aprovado uma mudança num subtema e aplicado
-    noutro. A identidade do registro é parte do que ela aprovou, não só o nome.
+    O `tema_id` ENTRA PORQUE O NOME NÃO IDENTIFICA: um tema renomeado, mais
+    outro criado com o nome e os campos antigos, deixariam a impressão batendo
+    pelo nome enquanto `aplicar` alteraria o registro errado. A identidade do
+    registro é parte do que foi aprovado.
     """
     resumo = hashlib.sha256()
     for proposta in propostas:
@@ -427,24 +410,20 @@ def aplicar(sessao: Session, propostas: Iterable[Proposta]) -> ResumoDaAplicacao
 
     NÃO HÁ TABELA DE RASCUNHO, e isso é escolha. A importação de agendas
     persiste cada linha em `importacao_linha` porque são até 500 linhas de 58
-    colunas, com edição célula a célula e um trabalho que a pessoa interrompe e
-    retoma. A de subtemas são 150 linhas de 6 colunas que ninguém edita dentro
-    do sistema: a pessoa corrige a PLANILHA e sobe de novo. Duas tabelas e uma
-    migration para guardar um rascunho que vive três minutos seriam a cerimônia
-    que o docstring do domínio recusa — e o custo real, a reconferência, está
-    resolvido por `impressao_das_propostas` mais o bloqueio de
+    colunas, editadas célula a célula num trabalho que a pessoa interrompe e
+    retoma. Aqui são 150 linhas de 6 colunas que ninguém edita dentro do
+    sistema: a pessoa corrige a PLANILHA e sobe de novo. O custo real — a
+    reconferência — está em `impressao_das_propostas` mais o bloqueio de
     `_conferir_sob_bloqueio`, aqui embaixo.
 
     `RECUSADA` E `IGUAL` NÃO GERAM ESCRITA, e uma linha recusada não impede as
-    outras. A alternativa — recusar o arquivo inteiro por uma célula errada —
-    faria uma revisão de taxonomia parar por um código de risco digitado
-    errado, com as outras 149 linhas certas presas atrás dele.
+    outras: recusar o arquivo inteiro por uma célula faria uma revisão de
+    taxonomia parar por um código de risco digitado errado.
 
-    O QUE A IMPORTAÇÃO NÃO TOCA, mesmo tendo a linha na mão: `tema.nivel`,
-    `tema.tipo`, `tema.ativo` e `tema.area_dona_id`. Nenhum deles está na
-    planilha, e em registro que já existe silêncio na planilha não é instrução
-    de apagar. Em registro NOVO o nível vem de `NIVEL_PADRAO_DA_TAXONOMIA`, que
-    explica a escolha.
+    O QUE A IMPORTAÇÃO NÃO TOCA: `tema.nivel`, `tema.tipo`, `tema.ativo` e
+    `tema.area_dona_id`. Nenhum deles está na planilha, e em registro que já
+    existe silêncio não é instrução de apagar. Em registro NOVO o nível vem de
+    `NIVEL_PADRAO_DA_TAXONOMIA`.
     """
     propostas = list(propostas)
     _conferir_sob_bloqueio(sessao, propostas)
@@ -515,23 +494,22 @@ def aplicar(sessao: Session, propostas: Iterable[Proposta]) -> ResumoDaAplicacao
 def _conferir_sob_bloqueio(sessao: Session, propostas: Sequence[Proposta]) -> None:
     """Tranca as linhas que vão mudar e confirma que o `antes` ainda é o antes.
 
-    A IMPRESSÃO SOZINHA NÃO BASTA, e a revisão do bloco mostrou por quê: ela é
-    calculada ANTES de gravar, e nada impede outra transação de entrar entre o
-    cálculo e os `UPDATE`. A janela é pequena e o efeito é "o último commit
-    ganha" — a edição feita pelo Cadastro de Assuntos some sem ninguém saber.
+    A IMPRESSÃO SOZINHA NÃO BASTA: ela é calculada ANTES de gravar, e nada
+    impede outra transação de entrar entre o cálculo e os `UPDATE`. A janela é
+    pequena e o efeito é "o último commit ganha" — a edição feita pelo Cadastro
+    de Assuntos some sem ninguém saber.
 
-    A TRANCA É `FOR UPDATE` NAS LINHAS AFETADAS, e não um bloqueio da tabela
-    inteira: revisar a taxonomia não pode impedir alguém de cadastrar um
-    assunto que esta planilha não menciona. Depois de trancar, o estado é LIDO
-    DE NOVO e comparado com o `antes` que a pessoa aprovou:
+    A TRANCA É `FOR UPDATE` NAS LINHAS AFETADAS, e não da tabela inteira:
+    revisar a taxonomia não pode impedir alguém de cadastrar um assunto que esta
+    planilha não menciona. Depois de trancar, o estado é LIDO DE NOVO e
+    comparado com o `antes` que a pessoa aprovou:
 
       - mudou antes da tranca -> a comparação falha, e a importação recusa
       - mudou depois da tranca -> impossível: o outro lado espera o nosso commit
 
-    `tema_risco` TAMBÉM ENTRA. Trancar só `tema` deixaria passar quem mexe nos
-    vínculos de risco sem tocar na linha do tema — e é exatamente o que
-    `aplicar_riscos_do_tema` faz quando a lista de riscos é a única coisa que
-    muda.
+    `tema_risco` TAMBÉM ENTRA: trancar só `tema` deixaria passar quem mexe nos
+    vínculos de risco sem tocar na linha do tema, que é o que
+    `aplicar_riscos_do_tema` faz quando só a lista de riscos muda.
     """
     alvos = {
         proposta.tema_id: proposta
@@ -558,19 +536,14 @@ def _conferir_sob_bloqueio(sessao: Session, propostas: Sequence[Proposta]) -> No
     ).all():
         agora.setdefault(tema_id, set()).add(risco_id)
 
-    # `populate_existing` GARANTE A RELEITURA, e a garantia é o ponto.
-    #
-    # Sem ele, `select(Tema)` pode devolver o objeto que já está no mapa de
-    # identidade — a versão lida na conferência — e a comparação abaixo
-    # compararia o `antes` com ele mesmo: um guarda que não dispara. Medido em
-    # ensaio direto: sessão A lê, sessão B altera e commita, A relê; sem a opção
-    # vem `confianca` (o valor velho), com a opção vem `credibilidade`.
-    #
-    # PODE, E NÃO SEMPRE: em outros arranjos de sessão a releitura simples volta
-    # fresca, e foi medido também. É justamente por depender do estado da sessão
-    # que isto não fica por sorte — a opção custa nada e torna a leitura sempre
-    # a do banco. `test_a_tranca_enxerga_o_valor_do_banco_e_nao_o_da_sessao`
-    # fixa o mecanismo de forma determinística.
+    # `populate_existing` GARANTE A RELEITURA. Sem ele, `select(Tema)` pode
+    # devolver o objeto que já está no mapa de identidade — a versão lida na
+    # conferência — e a comparação abaixo compararia o `antes` com ele mesmo: um
+    # guarda que não dispara. PODE, e não sempre: é por depender do estado da
+    # sessão que isto não fica por sorte. A opção não custa nada e torna a
+    # leitura sempre a do banco;
+    # `test_a_tranca_enxerga_o_valor_do_banco_e_nao_o_da_sessao` fixa o
+    # mecanismo de forma determinística.
     presentes = list(
         sessao.scalars(select(Tema).where(Tema.id.in_(ids)).execution_options(populate_existing=True))
     )

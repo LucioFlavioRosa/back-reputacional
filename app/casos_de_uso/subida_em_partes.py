@@ -1,21 +1,16 @@
 """Subir um arquivo em pedaços: as REGRAS, sem o domínio de quem sobe.
 
-POR QUE ESTE MÓDULO EXISTE. A subida em partes nasceu dentro da planilha do
-Score e ficou amarrada a ela — o próprio `ingerir_bonds` registrava a dívida:
-"a montagem por partes de `planilha_do_score` é por fonte do Score e
-generalizá-la para outro domínio é bloco próprio". Este é o bloco. O que está
-aqui é o que não depende de QUEM sobe: o tamanho do pedaço, quantos pedaços um
-arquivo comporta, e as recusas que impedem um cliente de mandar o que quiser.
+O QUE ESTÁ AQUI é o que não depende de QUEM sobe: o tamanho do pedaço, quantos
+pedaços um arquivo comporta, e as recusas que impedem um cliente de mandar o
+que quiser.
 
-O QUE NÃO ESTÁ AQUI, e de propósito: a linha no banco, o dono, o caminho no
-armazenamento e o que fazer com o arquivo montado. Isso é de cada domínio, e
-foi misturar as duas coisas que deixou a Importação de bonds sem o mecanismo
-por três meses.
+O QUE NÃO ESTÁ, de propósito: a linha no banco, o dono, o caminho no
+armazenamento e o que fazer com o arquivo montado. Isso é de cada domínio, e foi
+misturar as duas coisas que deixou a Importação de bonds sem o mecanismo
+enquanto ele já existia dentro da planilha do Score.
 
-TUDO AQUI É FUNÇÃO PURA. Nenhuma lê banco, armazenamento ou relógio — o que
-torna cada recusa testável sem subir nada, e foi medido que elas precisam de
-teste: as quatro condições de segurança deste caminho saíram todas de revisão,
-nenhuma de projeto.
+TUDO AQUI É FUNÇÃO PURA: nenhuma lê banco, armazenamento ou relógio, o que torna
+cada recusa testável sem subir nada.
 """
 
 from __future__ import annotations
@@ -25,21 +20,14 @@ from app.dominio.erros import RegraViolada
 #: O PEDAÇO, e o número sai de medição, não de gosto.
 #:
 #: O TETO QUE MANDA é o do ingress do Container Apps: ~240 s por requisição, e
-#: ele NÃO é configurável. Medido no navegador dele em 16/10/2026, pela
-#: telemetria do próprio painel:
+#: ele NÃO é configurável. Medido pela telemetria do próprio painel, 1,42 MB
+#: subiram em 4 s e 1,33 MB em 73 s; 10,53 MB passaram de 212 s e levaram 403
+#: três vezes. A banda de subida varia de ~18 KB/s a ~350 KB/s na mesma máquina
+#: e na mesma hora, e a 18 KB/s os 10,53 MB precisariam de 390 s.
 #:
-#:     1,42 MB  ->    4,1 s  -> 200
-#:     1,33 MB  ->   73,2 s  -> 200
-#:    10,53 MB  ->  212,4 s  -> 403   (o ingress desistindo)
-#:    10,53 MB  ->  212,6 s  -> 403
-#:    10,53 MB  ->  227,4 s  -> 403
-#:
-#: A banda de subida varia de ~18 KB/s a ~350 KB/s na mesma máquina e na mesma
-#: hora. A 18 KB/s, 10,53 MB precisariam de 390 s e nunca caberiam em 240.
-#:
-#: 1 MB DÁ ~57 s NO PIOR CASO MEDIDO, quatro vezes de margem. Pedaço maior
-#: compra menos requisições e gasta a margem que justamente não existe; pedaço
-#: menor multiplica idas sem comprar segurança que já está em 4x.
+#: 1 MB DÁ ~57 s NO PIOR CASO MEDIDO, quatro vezes de margem. Pedaço maior gasta
+#: justamente a margem que não existe; pedaço menor multiplica idas sem comprar
+#: segurança que já está em 4x.
 TAMANHO_DA_PARTE = 1 * 1024 * 1024
 
 
@@ -51,14 +39,13 @@ def partes_esperadas(tamanho_declarado: int) -> int:
 def partes_maximas(teto_do_arquivo: int) -> int:
     """O máximo de partes que uma subida pode ter, derivado e não escolhido.
 
-    EXISTE PORQUE `partes` VEM DO CLIENTE. Sem este limite,
-    `partes=1_000_000_000` na conferência fazia o processo construir a lista de
-    blocos ANTES de falar com o Azure — uma requisição derrubava a réplica.
-    Achado da revisão do Codex em 16/10/2026.
+    EXISTE PORQUE `partes` VEM DO CLIENTE: sem este limite,
+    `partes=1_000_000_000` na conferência faz o processo construir a lista de
+    blocos ANTES de falar com o Azure, e uma requisição derruba a réplica.
 
     FUNÇÃO E NÃO CONSTANTE porque `TAMANHO_DA_PARTE` é trocado nos testes, e uma
-    constante calculada no import ficaria com o valor antigo — o teto deixaria
-    de valer exatamente onde se quer provar que ele vale.
+    constante calculada no import ficaria com o valor antigo — o teto deixaria de
+    valer exatamente onde se quer provar que ele vale.
 
     `teto_do_arquivo` VEM DE FORA porque é regra de quem sobe: a planilha do
     Score tem um teto de bytes, a de bonds tem o dela, e este módulo não deve
@@ -70,15 +57,15 @@ def partes_maximas(teto_do_arquivo: int) -> int:
 def conferir_a_parte(*, indice: int, dados: bytes, tamanho_declarado: int) -> None:
     """Recusa a parte que não cabe no que a subida declarou.
 
-    OS DOIS TETOS SÃO O QUE SOBROU DO ABUSO. A rota da parte é isenta do limite
-    genérico de corpo — tem de ser, senão a primeira parte seria recusada — e o
-    servidor lê a parte inteira na memória. Sem estes dois, uma sessão autorizada
-    mandava partes de qualquer tamanho e acumulava além do teto:
+    OS DOIS TETOS: a rota da parte é isenta do limite genérico de corpo — tem de
+    ser, senão a primeira parte seria recusada — e o servidor lê a parte inteira
+    na memória. Sem eles, uma sessão autorizada manda partes de qualquer tamanho
+    e acumula além do teto:
 
       * cada parte cabe em `TAMANHO_DA_PARTE`;
       * o índice cabe no que o TAMANHO DECLARADO comporta.
 
-    Juntos eles limitam o arquivo montado a pouco mais do que foi declarado — e o
+    Juntos, limitam o arquivo montado a pouco mais do que foi declarado — e o
     declarado já foi conferido contra o teto do domínio na abertura. A
     conferência final ainda mede os bytes de verdade, que é o que de fato
     autoriza.
@@ -95,15 +82,12 @@ def conferir_a_parte(*, indice: int, dados: bytes, tamanho_declarado: int) -> No
             "Esta parte está fora do tamanho que a subida declarou. "
             "Comece a subida de novo."
         )
-    #: PARTE CHEIA, EXCETO A ÚLTIMA — e esta regra é o que faz a aritmética do
-    #: teto fechar. Com ela, o arquivo montado não passa de
+    #: PARTE CHEIA, EXCETO A ÚLTIMA — é o que faz a aritmética do teto fechar:
+    #: com ela, o arquivo montado não passa de
     #: `partes_esperadas * TAMANHO_DA_PARTE`, que é o declarado arredondado para
-    #: cima; sem ela, partes menores permitiriam mais partes que o esperado e o
-    #: total voltaria a ser ilimitado.
-    #:
-    #: O SERVIDOR DITA O TAMANHO na abertura, então o cliente não tem o que
-    #: adivinhar. A recusa diz o número para quem estiver escrevendo outro
-    #: cliente.
+    #: cima. Sem ela, partes menores permitiriam mais partes que o esperado e o
+    #: total voltaria a ser ilimitado. O servidor dita o tamanho na abertura, e a
+    #: recusa diz o número para quem estiver escrevendo outro cliente.
     ultima = indice == esperadas - 1
     if len(dados) > TAMANHO_DA_PARTE or (not ultima and len(dados) != TAMANHO_DA_PARTE):
         raise RegraViolada(
@@ -116,9 +100,8 @@ def conferir_a_contagem(*, partes: int, tamanho_declarado: int, teto_do_arquivo:
     """Recusa a contagem de partes que não corresponde ao que foi declarado.
 
     `partes` VEM DO CLIENTE, e por isso tem dois tetos: o derivado do teto do
-    arquivo, e o que o tamanho DECLARADO desta subida comporta. Sem eles,
-    `partes=1_000_000_000` construía a lista de blocos na memória antes de
-    qualquer chamada ao Azure.
+    arquivo, e o que o tamanho DECLARADO desta subida comporta. Ver
+    `maximo_de_partes`.
     """
     if partes <= 0:
         raise RegraViolada("Diga quantas partes o arquivo tem.")

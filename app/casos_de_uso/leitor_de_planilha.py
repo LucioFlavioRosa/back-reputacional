@@ -1,38 +1,27 @@
 """Bytes de um `.xlsx` viram linhas de células. UM leitor para a plataforma.
 
-POR QUE ESTE MÓDULO EXISTE. A plataforma tinha cinco leitores de planilha e
-três comportamentos: a ingestão de menções estimava a memória, reservava e caía
-num caminho lento; a de bonds estimava e RECUSAVA; as outras três abriam direto.
-Um mesmo arquivo era lido de jeitos diferentes conforme a tela por onde subia —
-e o custo disso apareceu em 22/10/2026, quando o Q&A teve um export de 649 KB
-recusado por "memória" numa tela, enquanto a outra teria lido o mesmo arquivo
-sem reclamar.
+POR QUE UM SÓ: a plataforma tinha cinco leitores e três comportamentos — um
+estimava a memória e caía num caminho lento, outro estimava e RECUSAVA, os
+demais abriam direto. O mesmo arquivo era lido de jeitos diferentes conforme a
+tela por onde subia, e um export de 649 KB chegou a ser recusado por "memória"
+numa tela que a outra teria lido sem reclamar.
 
-O QUE É "O MECANISMO": calamine primeiro, openpyxl de reserva, e as células
-sempre na mesma forma. Os dois leitores entregam a mesma planilha de modo
-diferente, e normalizar aqui é o que permite a tudo rio abaixo não saber qual
-deles trouxe a célula.
+O MECANISMO: calamine primeiro, openpyxl de reserva, e as células sempre na
+mesma forma — é o que permite a tudo rio abaixo não saber qual leitor trouxe a
+célula.
 
-E A DIFERENÇA ENTRE ELES NÃO É SÓ VELOCIDADE. Medido em 22/10/2026 no export de
-bonds que o Q&A subiu (649 KB, `<dimension ref="A1:BR54254"/>`):
+A DIFERENÇA ENTRE ELES NÃO É SÓ VELOCIDADE. O openpyxl obedece à dimensão
+DECLARADA no cabeçalho do arquivo e preenche a linha inteira com `None` até a
+última coluna; o calamine devolve a área realmente usada. No export de bonds
+isso deu 3,8 milhões de células contra 121 mil, e 36,6 MB contra 2,3 MB.
 
-    openpyxl   54.254 linhas   3.797.780 células   36,6 MB
-    calamine    1.755 linhas     121.095 células    2,3 MB
-
-O openpyxl obedece à dimensão DECLARADA e preenche a linha inteira com `None`
-até a última coluna; o calamine devolve a área realmente usada. Os dados de
-verdade eram 1.755 linhas — o resto era vazio que o cabeçalho do arquivo mandou
-inventar. Daí os 16× de memória, além dos 9,5× de tempo já medidos antes.
-
-MAS "ÁREA USADA" NÃO É "POUCA CÉLULA", e confundir as duas custou um achado de
-revisão: basta um valor no canto inferior direito para o retângulo do calamine
-ser tão grande quanto o do openpyxl, e aí ele preenche igual — medido em
-`ingerir_mencoes.MEMORIA_POR_CELULA_VAZIA`. Este módulo é mais barato no caso
-comum, não imune ao caso ruim.
+MAS "ÁREA USADA" NÃO É "POUCA CÉLULA": basta um valor no canto inferior direito
+para o retângulo do calamine ficar tão grande quanto o do openpyxl. Este módulo
+é mais barato no caso comum, não imune ao caso ruim — ver
+`ingerir_mencoes.MEMORIA_POR_CELULA_VAZIA`.
 
 A POLÍTICA NÃO MORA AQUI. Este módulo lê; quem chama decide o que fazer quando
-não cabe — guardar ou não a leitura, recusar ou degradar. Foi misturar as duas
-coisas que fez uma estimativa de cache virar uma porta fechada numa tela.
+não cabe — guardar ou não a leitura, recusar ou degradar.
 """
 
 from __future__ import annotations
@@ -43,19 +32,13 @@ from app.dominio.erros import RegraViolada
 
 #: O QUE O EXCEL ESCREVE NUMA CÉLULA QUE DEU ERRO (`<c t="e"><v>#N/A</v></c>`).
 #:
-#: OS DOIS LEITORES DISCORDAM AQUI, e foi achado de revisão. Medido em
-#: 22/10/2026 com uma aba onde B1 e B2 são células de erro:
+#: OS DOIS LEITORES DISCORDAM: o openpyxl devolve a string (`'#N/A'`), o
+#: calamine devolve vazio. Sem acerto, um ticker com `#N/A` no catálogo dos
+#: bonds some pelo caminho rápido e vira `PapelLido(ticker="#N/A")` pelo de
+#: reserva — dois caminhos discordando sobre o mesmo arquivo.
 #:
-#:     openpyxl   '#N/A'   '#DIV/0!'      (a string, como o Excel a escreveu)
-#:     calamine   ''       ''             (vazio — o erro não sobrevive)
-#:
-#: O ESTRAGO ERA SILENCIOSO: um ticker com `#N/A` no catálogo dos bonds some
-#: pelo caminho rápido e vira `PapelLido(ticker="#N/A")` pelo de reserva. Dois
-#: caminhos discordando sobre o mesmo arquivo é pior que qualquer um sozinho.
-#:
-#: E A ESCOLHA É FORÇADA: o calamine não diz QUAL erro era, então não há como
-#: fazer o rápido parecer com o antigo — que é a convenção do resto deste
-#: módulo. Só dá para ir no outro sentido, e ele é o certo de qualquer forma:
+#: O ACERTO É PELO VAZIO, e é forçado: o calamine não diz QUAL erro era, então
+#: não há como fazer o rápido parecer com o antigo. É também o sentido certo —
 #: célula que deu erro não tem valor, e tratá-la como o texto "#N/A" é deixar
 #: lixo de planilha virar dado.
 ERROS_DO_EXCEL = frozenset(
@@ -89,12 +72,11 @@ def sem_erro_do_excel(linha: tuple) -> tuple:
 def como_o_openpyxl(celula: object) -> object:
     """Uma célula do calamine na forma que o openpyxl entregava.
 
-    AS DIFERENÇAS, achadas comparando célula por célula os dois leitores nos
-    arquivos reais, e resolvidas aqui para que nada rio abaixo precise saber
+    AS DUAS DIFERENÇAS, resolvidas aqui para que nada rio abaixo precise saber
     qual leitor trouxe a célula:
 
-    * VAZIO vem como `""`, e não `None`. `_texto` já trata os dois, mas
-      `linha.get(coluna) is None` em qualquer lugar passaria a ser falso;
+    * VAZIO vem como `""`, e não `None` — `linha.get(coluna) is None` em
+      qualquer lugar passaria a ser falso;
     * INTEIRO vem como `float`, e a coluna `ID` da Clipei é numérica:
       `id_fonte` gravaria `"12345.0"` no lugar de `"12345"`, e é por esse campo
       que se compara matéria com matéria.
@@ -109,10 +91,10 @@ def como_o_openpyxl(celula: object) -> object:
 def celulas_pelo_calamine(conteudo: bytes, aba: str | None = None) -> list[tuple]:
     """A aba lida pelo calamine, com as células na forma do openpyxl.
 
-    `to_python()` PULA as linhas vazias do topo por padrão, e `skip_empty_area`
-    desliga isso: o leitor de menções procura o cabeçalho nas 20 primeiras
-    linhas contando a partir da primeira, e o de bonds lê as cinco do topo por
-    índice — pular uma mudaria o que os dois acham.
+    `skip_empty_area=False` porque `to_python()` PULA as linhas vazias do topo
+    por padrão: o leitor de menções procura o cabeçalho nas 20 primeiras linhas
+    e o de bonds lê as cinco do topo por índice, e pular uma mudaria o que os
+    dois acham.
 
     LEVANTA `RegraViolada` para o que é recado à pessoa (aba que falta, arquivo
     vazio). Qualquer outra exceção é falha DESTE leitor, e quem chama pode
@@ -141,9 +123,8 @@ def abrir_pelo_openpyxl(conteudo: bytes, aba: str | None = None):
     QUEM ABRE FECHA: a planilha volta junto porque `read_only` segura o ZIP, e
     quem chama precisa de `planilha.close()` num `finally`.
 
-    É O CAMINHO DE RESERVA, e também o único que materializa a dimensão
-    declarada — ver o cabeçalho do módulo. Quem o usa para guardar a leitura
-    inteira é quem deve medir a memória antes.
+    É O CAMINHO DE RESERVA, e o único que materializa a dimensão declarada (ver
+    o cabeçalho). Quem o usa para guardar a leitura inteira deve medir antes.
     """
     try:
         from openpyxl import load_workbook

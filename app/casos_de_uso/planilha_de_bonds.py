@@ -1,24 +1,19 @@
 """A subida em partes do export de bonds: a linha, o dono e a montagem.
 
 POR QUE ESTA TELA PRECISA DISSO. O ingress do Container Apps encerra a
-requisição por volta de 240 s e isso NÃO é configurável. Medido em 16/10/2026,
-na mesma máquina e na mesma hora, com a banda variando de ~18 KB/s a ~350 KB/s:
+requisição por volta de 240 s, e isso NÃO é configurável. Medido na mesma
+máquina e na mesma hora, com a banda variando bastante: 1,42 MB subiram em 4 s
+e deram 200; 10,53 MB passaram de 212 s e levaram 403, o ingress desistindo.
 
-    1,42 MB  ->    4,1 s  -> 200
-   10,53 MB  ->  212,4 s  -> 403   (o ingress desistindo)
-
-A planilha do Score ganhou a subida em partes por causa disso. A de bonds ficou
-sem — e manda o arquivo inteiro, DUAS VEZES, porque a tela confere e depois
-importa. O export é CUMULATIVO e cresce toda semana: hoje tem 1,05 MB e passa.
+O export é CUMULATIVO e cresce toda semana, e a tela manda o arquivo DUAS
+VEZES, porque confere e depois importa.
 
 O QUE ESTE MÓDULO NÃO FAZ: as regras do pedaço. Tamanho da parte, índice,
 contagem e seus tetos estão em `subida_em_partes`, que não sabe de bonds. Aqui
 mora o que é desta tela: a linha, o dono, o caminho no armazenamento e o que
 fazer com o arquivo montado.
 
-AS QUATRO CONDIÇÕES DE SEGURANÇA SÃO AS MESMAS DA PLANILHA DO SCORE, e não
-foram inventadas aqui: saíram da revisão de 16/10/2026 contra o desenho que
-emitia um identificador sem gravá-lo. Ver `_em_voo`.
+AS CONDIÇÕES DE SEGURANÇA SÃO AS MESMAS DA PLANILHA DO SCORE — ver `_em_voo`.
 """
 
 from __future__ import annotations
@@ -44,10 +39,9 @@ class Aberta:
     """O que a abertura devolve para a tela.
 
     `id` NULO SIGNIFICA "AQUI NÃO DÁ, MANDE DE UMA VEZ" — ambiente sem
-    armazenamento não tem onde montar. É a mesma convenção da planilha do
-    Score, e ela existe porque RECUSAR com 422 não funciona: o cliente não tem
-    como distinguir essa recusa das outras desta rota e mostra a mensagem crua
-    em vez de cair no caminho de sempre.
+    armazenamento não tem onde montar. É a mesma convenção da planilha do Score,
+    e existe porque recusar com 422 não funciona: o cliente não distingue essa
+    recusa das outras desta rota e mostra a mensagem crua.
     """
 
     id: UUID | None
@@ -60,19 +54,17 @@ def comecar(
     """Abre uma subida em partes: GRAVA A LINHA e devolve o identificador.
 
     A LINHA NASCE ANTES DO BYTE, e é ela que dá dono à subida. Sem linha, o
-    identificador valeria como senha ao portador — quem conhecesse o uuid de
-    outra pessoa mandaria parte na subida dela. E o byte nunca fica órfão: uma
+    identificador valeria como senha ao portador. E o byte nunca fica órfão: uma
     falha em qualquer ponto, inclusive no commit (que roda DEPOIS de a rota
     retornar), deixa uma linha incompleta apontando para o arquivo, que é o que
     permite achá-lo.
 
-    O TAMANHO DECLARADO FICA GRAVADO, e é contra ele que cada parte é conferida.
-    Sem isso, declarar 1 MB e mandar oitenta partes de 1 MB montaria 80 MB.
+    O TAMANHO DECLARADO FICA GRAVADO, e é contra ele que cada parte é conferida:
+    sem isso, declarar 1 MB e mandar oitenta partes de 1 MB montaria 80 MB.
 
-    SUBSTITUI A PENDENTE daquela pessoa, byte inclusive: é o que o índice único
-    de `criado_por` exige, e é o que a tela já espera — abrir subida nova
-    descarta a anterior. Quem chama põe `caminho_substituido` numa tarefa de
-    fundo.
+    SUBSTITUI A PENDENTE daquela pessoa, byte inclusive — é o que o índice único
+    de `criado_por` exige, e o que a tela já espera. Quem chama põe
+    `caminho_substituido` numa tarefa de fundo.
 
     O IDENTIFICADOR É DO SERVIDOR, e não do cliente: ele entra no caminho do
     armazenamento, e caminho montado com valor que o cliente escolhe é como se
@@ -166,14 +158,12 @@ def montar(
     """Junta as partes da subida daquela pessoa e devolve a linha e os bytes.
 
     DEVOLVE OS BYTES em vez de só publicar porque quem chama precisa deles para
-    conferir — e lê-los de volta do armazenamento é o que garante que o que vai
-    ser conferido é exatamente o que ficou gravado, e não o que o servidor
-    pensava ter montado.
+    conferir, e lê-los de volta do armazenamento garante que o conferido é o que
+    ficou gravado, não o que o servidor pensava ter montado.
 
-    PARTE FALTANDO VIRA RECUSA COM NOME, e não erro de leitura: o serviço recusa
-    a lista inteira quando um bloco não está lá, e sem esta tradução a pessoa
-    leria "não consegui abrir o arquivo como planilha" — que manda procurar
-    defeito no arquivo dela.
+    PARTE FALTANDO VIRA RECUSA COM NOME, e não erro de leitura: sem esta
+    tradução a pessoa leria "não consegui abrir o arquivo como planilha", que
+    manda procurar defeito no arquivo dela.
     """
     subida = _em_voo(sessao, subida_id=subida_id, usuario_id=usuario_id)
     subida_em_partes.conferir_a_contagem(
@@ -191,8 +181,8 @@ def montar(
 def concluir(subida: PlanilhaDeBondsRecebida, *, tamanho: int) -> None:
     """Marca a subida como completa, com o tamanho REAL do arquivo montado.
 
-    O DECLARADO ERA AFIRMAÇÃO DO CLIENTE e serviu para dimensionar os tetos; o
-    que fica gravado é o que o arquivo tem.
+    O declarado é afirmação do cliente e serve para dimensionar os tetos; o que
+    fica gravado é o que o arquivo tem.
     """
     subida.tamanho = tamanho
     subida.completa_em = datetime.now().astimezone()
@@ -227,15 +217,15 @@ def recuperar(
 def descartar(sessao: Session, *, subida_id: UUID, usuario_id: UUID) -> str | None:
     """Apaga a linha MONTADA e devolve o caminho do byte, para quem chama apagá-lo.
 
-    DEVOLVE O CAMINHO em vez de apagar aqui: apagar byte é ida à rede, e ela
-    não pertence à transação — quem chama põe numa tarefa de fundo, como a
-    abertura faz com o substituído.
+    DEVOLVE O CAMINHO em vez de apagar aqui: apagar byte é ida à rede, e ela não
+    pertence à transação — quem chama põe numa tarefa de fundo, como a abertura
+    faz com o substituído.
 
-    SÓ A JÁ MONTADA, e isto é endurecimento vindo de revisão. Pela rota não há
-    como chegar aqui com uma subida em voo — `recuperar` roda antes e a recusa.
-    Mas esta é função pública de caso de uso, e sem a guarda ela apaga a subida
-    que outra aba da mesma pessoa está no meio de enviar. Guarda de estado que
-    depende da ordem das chamadas é guarda que o próximo refator desfaz.
+    SÓ A JÁ MONTADA. Pela rota não há como chegar aqui com uma subida em voo,
+    porque `recuperar` roda antes e a recusa; mas esta é função pública de caso
+    de uso, e sem a guarda ela apagaria a subida que outra aba da mesma pessoa
+    está no meio de enviar. Guarda que depende da ordem das chamadas é guarda
+    que o próximo refator desfaz.
     """
     subida = sessao.scalar(
         select(PlanilhaDeBondsRecebida).where(
