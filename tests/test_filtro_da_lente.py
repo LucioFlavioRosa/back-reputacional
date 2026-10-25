@@ -17,9 +17,10 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.api.lentes import obter_dossie, obter_opcoes_de_filtro, obter_recorte
+from app.banco import repositorio_lentes
 from app.banco.tabelas_catalogo import Tema
 from app.banco.tabelas_lentes import EventoMercado
-from app.banco.tabelas_score import Mencao, ScoreFonte, ScoreMesFonte
+from app.banco.tabelas_score import Lente, Mencao, ScoreFonte, ScoreMesFonte
 from app.dominio.score import peso_do_cargo, peso_do_engajamento
 from tests.test_e2e_postgres import URL
 
@@ -384,31 +385,59 @@ def test_a_sociedade_NAO_esconde_o_autor_porque_ele_nao_e_do_cadastro(sessao):
     assert saida.autores == ["deolhoemesteio"]
 
 
-def test_religar_o_crm_devolve_a_institucional_ao_ramo_interno(sessao, institucional_de_junho):
-    """A FONTE MANDA, E NÃO O CÓDIGO DA LENTE — achado da revisão do Codex.
+def test_NENHUMA_LENTE_tem_fonte_interna_ativa(sessao):
+    """A REGRA DO PRODUTO, dita pelo dono em 24/10/2026: "nada deve vir do CRM;
+    as lentes de imprensa, mercado e institucional são exclusivamente de fontes
+    externas de veículos de imprensa neste momento".
 
-    A Institucional entrou em `LENTES_COM_VEICULO_E_TIER`, e isso tornou a ORDEM
-    das condições de `materias_recentes` significativa: o teste do código vinha
-    antes do da fonte, então uma Institucional com a fonte `crm` religada ficaria
-    INTERNA — série e painéis lendo o CRM — e esta lista seguiria trazendo
-    matéria da Clipei. Dois universos lado a lado, cada número certo no seu, e a
-    tela sem nada dizendo que são diferentes.
+    OS KPIs REPUTACIONAIS SE MEDEM DE CLIPEI, BITES E APPROACH. As agendas do
+    CRM ficam no CRM. Este teste é a regra escrita como conta: se alguém ligar
+    uma fonte interna a uma lente, ele cai — e cai aqui, no lugar onde a regra
+    está explicada, e não longe daqui numa nota que não bate.
 
-    O CENÁRIO NÃO É HIPOTÉTICO: religar é um `UPDATE` de uma coluna, e nenhuma
-    migration impede. Aqui ele é exercitado de verdade — com as três matérias do
-    fixture no banco, para que "veio vazia" só possa ser consequência do ramo
-    certo, e não de não haver menção.
+    POR QUE ELE SUBSTITUIU UM TESTE MEU. Eu havia escrito o oposto: um teste que
+    RELIGAVA a fonte `crm` para provar que a leitura ficava coerente nesse
+    cenário. Defender o cenário é documentá-lo como caminho legítimo, e ele não
+    é. O isolamento é que precisa estar claro.
     """
-    crm = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "crm")).one()
-    crm.ativo = True
-    sessao.flush()
+    internas_ligadas = sessao.execute(
+        select(Lente.codigo, ScoreFonte.codigo)
+        .join(ScoreFonte, ScoreFonte.lente_id == Lente.id)
+        .where(ScoreFonte.interna.is_(True), ScoreFonte.ativo.is_(True))
+    ).all()
+
+    assert internas_ligadas == [], (
+        "alguma lente voltou a ter fonte interna ativa: "
+        f"{internas_ligadas}. Os KPIs Reputacionais se medem de Clipei, Bites e "
+        "Approach; agenda de CRM fica no CRM."
+    )
+
+
+def test_a_FONTE_manda_e_nao_o_codigo_da_lente_na_lista_de_materias(
+    sessao, institucional_de_junho, monkeypatch
+):
+    """A ORDEM DAS CONDIÇÕES, que a revisão do Codex pegou.
+
+    A Institucional entrou em `LENTES_COM_VEICULO_E_TIER`, e isso tornou
+    significativa a ordem em `materias_recentes`: o teste do CÓDIGO vinha antes
+    do teste da FONTE. Uma lente que fosse interna E estivesse na constante
+    receberia matéria de clipping enquanto série e painéis lessem o CRM — dois
+    universos lado a lado, cada número certo no seu, e a tela sem nada dizendo
+    que são diferentes.
+
+    O CENÁRIO É FINGIDO AQUI, E DE PROPÓSITO. Religar a fonte `crm` no banco
+    provaria o mesmo, mas escreveria no teste que aquele caminho é suportado — e
+    ele não é (ver o teste acima). O que se prende aqui é a FORMA do código:
+    quem responde é a procedência, não uma lista de códigos.
+    """
+    monkeypatch.setattr(repositorio_lentes, "lente_e_interna", lambda *_: True)
 
     bloco = _itens(sessao, codigo="institucional")
 
     assert bloco.dados == []
     assert "lê o CRM" in bloco.ficha.lacunas[0]
     #: E A LACUNA DIZ O NOME DA LENTE, não "A lente Institucional" fixo: o ramo
-    #: é genérico, e qualquer lente que vire interna passa por ele.
+    #: é genérico, e qualquer lente que caia nele passa por ali.
     assert "Institucional" in bloco.ficha.lacunas[0]
 
 
