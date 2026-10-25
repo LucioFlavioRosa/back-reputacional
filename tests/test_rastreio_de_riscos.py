@@ -280,39 +280,65 @@ def test_a_AGENDA_de_clima_negativo_e_incidente(sessao, com_risco, monkeypatch):
     assert "crm" in agora.fontes
 
 
-def test_a_AGENDA_de_clima_positivo_ou_neutro_nao_e_incidente(sessao, com_risco):
+def test_a_AGENDA_de_clima_positivo_ou_neutro_nao_e_incidente(
+    sessao, bites, com_risco, monkeypatch
+):
+    """O clima é o que separa a agenda-incidente da agenda comum.
+
+    COM O CRM LIGADO SÓ AQUI, e é o que torna esta afirmação possível: com a
+    política de hoje NENHUMA agenda conta, então "positivo não conta" seria
+    indistinguível de "negativo também não" — o teste passaria sem medir a
+    regra que o nome dele promete. Achado da revisão do Codex, nestas palavras:
+    "passam porque a política padrão já remove todas as agendas, sem testar o
+    comportamento que seus nomes prometem".
+
+    A AGENDA TENSA É O CONTROLE, dentro do próprio teste: ela PRECISA somar 1,
+    senão a asserção de baixo volta a ser vácuo por outro motivo (um mecanismo
+    quebrado por inteiro também faria "não contou" passar).
+    """
+    ligar_o_crm(sessao, monkeypatch)
     tema, _risco = com_risco
+    _mencao(sessao, bites, tema, "neg", dia=4)
     antes = _de_agosto(serie_do_indice(sessao, FiltroDeRisco(), TUDO)[0])
-    quantos_antes = antes.incidentes if antes else 0
+    assert antes is not None, "a menção semeada tinha de produzir a linha de agosto"
+
+    _agenda(sessao, tema, "tenso")
+    com_tenso = _de_agosto(serie_do_indice(sessao, FiltroDeRisco(), TUDO)[0])
+    assert com_tenso.incidentes == antes.incidentes + 1, "o clima tenso é incidente"
 
     _agenda(sessao, tema, "propositivo")
     _agenda(sessao, tema, "neutro")
 
     agora = _de_agosto(serie_do_indice(sessao, FiltroDeRisco(), TUDO)[0])
-    quantos_agora = agora.incidentes if agora else 0
-    assert quantos_agora == quantos_antes
-
-
-def test_a_AGENDA_INVISIVEL_ou_ARQUIVADA_nao_e_incidente(sessao, com_risco):
+    assert agora.incidentes == com_tenso.incidentes
+def test_a_AGENDA_INVISIVEL_ou_ARQUIVADA_nao_e_incidente(
+    sessao, bites, com_risco, monkeypatch
+):
     """A mesma regra de visibilidade do resto da plataforma.
 
     Uma tela de risco que conte agenda arquivada mostra como incidente o que
     alguém retirou do registro.
+
+    COM O CRM LIGADO SÓ AQUI, pela mesma razão do teste de cima: sem isso
+    nenhuma agenda contaria, e a regra de visibilidade não seria medida. A
+    agenda VISÍVEL é o controle — ela soma 1, e as duas escondidas não somam
+    mais nada.
     """
     from datetime import datetime
 
     tema, _risco = com_risco
+    ligar_o_crm(sessao, monkeypatch)
+    _mencao(sessao, bites, tema, "neg", dia=4)
     antes = _de_agosto(serie_do_indice(sessao, FiltroDeRisco(), TUDO)[0])
-    quantos_antes = antes.incidentes if antes else 0
+    assert antes is not None, "a menção semeada tinha de produzir a linha de agosto"
 
+    _agenda(sessao, tema, "tenso")
     _agenda(sessao, tema, "tenso", visivel=False)
     _agenda(sessao, tema, "tenso", arquivado_em=datetime(2026, 9, 1))
 
     agora = _de_agosto(serie_do_indice(sessao, FiltroDeRisco(), TUDO)[0])
-    quantos_agora = agora.incidentes if agora else 0
-    assert quantos_agora == quantos_antes
-
-
+    #: UMA, e não três: só a agenda visível e não arquivada é incidente.
+    assert agora.incidentes == antes.incidentes + 1
 # -- a matriz --------------------------------------------------------------------
 
 
@@ -424,23 +450,41 @@ def test_a_JANELA_nao_mexe_na_referencia_de_cem_pontos(sessao, bites, com_risco)
     assert referencia_curta == referencia_inteira
 
 
-def test_o_FILTRO_DE_FONTE_tira_o_CRM_quando_pede_so_uma_fonte(sessao, bites, com_risco):
+def test_o_FILTRO_DE_FONTE_tira_o_CRM_quando_pede_so_uma_fonte(
+    sessao, bites, com_risco, monkeypatch
+):
+    """O filtro por fonte é requisito do dono do produto, e precisa FILTRAR.
+
+    Ele pediu, nestas palavras: "o Risk Tracking deve contar apenas dados de
+    Clipei, Bites e Approach (COM A OPÇÃO DE FILTRO POR FONTE)". O filtro
+    continua valendo para a fonte interna, e é isto que se mede aqui.
+
+    COM O CRM LIGADO SÓ AQUI — achado da revisão do Codex. Com a política de
+    hoje o CRM sai com ou sem filtro, então "o filtro tirou o CRM" passava sem
+    que filtro nenhum fosse exercido. Ligado, o CRM ENTRA sem filtro (o
+    controle) e SAI com ele (a regra).
+    """
+    ligar_o_crm(sessao, monkeypatch)
     tema, _risco = com_risco
     _agenda(sessao, tema, "tenso")
 
     #: UMA MENÇÃO DA BITES garante que agosto existe na série — sem ela, a
     #: asserção abaixo poderia nunca rodar. Achado de revisão: estava dentro de
     #: um `if`, e um recorte que devolvesse lista vazia passaria calado.
-    tema, _risco = com_risco
     _mencao(sessao, bites, tema, "neg")
+
+    #: O CONTROLE: sem filtro, o CRM está lá. Se esta linha falhar, a asserção
+    #: de baixo não prova nada.
+    tudo = _de_agosto(serie_do_indice(sessao, FiltroDeRisco(), TUDO)[0])
+    assert tudo is not None
+    assert "crm" in tudo.fontes, "sem filtro, a agenda do CRM ligado é incidente"
 
     so_bites = serie_do_indice(sessao, FiltroDeRisco(fontes=("bites",)), TUDO)[0]
     de_agosto = _de_agosto(so_bites)
     assert de_agosto is not None, "agosto tem menção da Bites e devia estar na série"
     assert "crm" not in de_agosto.fontes
     assert de_agosto.fontes == ("bites",)
-
-
+    assert de_agosto.incidentes < tudo.incidentes, "o filtro tinha de tirar a agenda"
 # -- os achados da revisão -------------------------------------------------------
 
 

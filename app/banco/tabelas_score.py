@@ -65,8 +65,14 @@ class ScoreFonte(Tabela):
     fornecedor: Mapped[str] = mapped_column(Text)
     #: NULA É "FONTE QUE NÃO ALIMENTA LENTE NENHUMA" — a `0114`. É o caso da
     #: fonte interna: as agendas do CRM ficam no CRM, e nenhuma lente se
-    #: relaciona com elas. Todas as leituras comparam esta coluna por
-    #: igualdade, e nulo não casa com nada, então o isolamento é estrutural.
+    #: relaciona com elas.
+    #:
+    #: AS LEITURAS ALCANÇAM ESTA COLUNA DE TRÊS FORMAS — igualdade
+    #: (`ScoreFonte.lente_id == lente_id`), `in_(...)` e `join` com `lente` —, e
+    #: nulo fica de fora das três, então o isolamento é ESTRUTURAL. Esta nota
+    #: dizia "todas as leituras comparam por igualdade", e era a MESMA afirmação
+    #: imprecisa que a revisão do Codex já tinha derrubado na `0114`: eu corrigi
+    #: lá e esqueci aqui. Quem for conferir precisa saber das três.
     #: Ver `app/dominio/fontes_do_score.py`.
     lente_id: Mapped[int | None] = mapped_column(
         SmallInteger, ForeignKey("lente.id"), nullable=True

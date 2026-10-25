@@ -962,18 +962,38 @@ def test_com_ve_diretorio_a_matriz_continua_vindo(sessao):
     assert "matriz_prioridade" in tipos
 
 
-def test_sem_ve_diretorio_os_orgaos_do_crm_nao_sao_nomeados(sessao):
+def test_sem_ve_diretorio_os_orgaos_do_crm_nao_sao_nomeados(sessao, monkeypatch):
     """O painel da institucional lista com quem a companhia se reuniu.
 
     São os mesmos nomes de `GET /api/instituicoes`, que esse papel não abre —
     chegando por outra porta, agregados por volume de agenda.
+
+    COM O CRM LIGADO SÓ AQUI, e esta é a correção mais importante da revisão do
+    Codex: esta é uma garantia de PRIVACIDADE, e com a política de hoje ela
+    passava por motivo errado — o painel não existe para ninguém, então "ele
+    não aparece para quem não vê o diretório" era verdade por ausência, não por
+    permissão. Nestas palavras: "esse último passa porque o painel CRM nem
+    chega a existir, não porque a permissão de diretório foi exercitada".
+
+    E O CONTROLE MORA DENTRO DESTE TESTE, não no gêmeo de baixo. Religar o CRM
+    não bastou: uma asserção de AUSÊNCIA passa sempre que o painel não existe,
+    por qualquer motivo — inclusive por o painel ter sido removido para todo
+    mundo, que é o conserto errado que este teste existe para barrar. Então
+    aqui se afirmam os DOIS papéis sobre o MESMO estado do cadastro: quem vê o
+    diretório recebe o painel, quem não vê não recebe. É a diferença entre os
+    dois que prova a regra, e nenhuma das duas metades sozinha a prova.
     """
+    ligar_o_crm(sessao, monkeypatch)
+
+    #: O CONTROLE: com o CRM ligado, o painel EXISTE para quem vê o diretório.
+    #: Se esta linha falhar, a de baixo não prova nada.
+    com_diretorio = _dossie_de(sessao, "institucional", ve_diretorio=True).paineis
+    assert "Órgãos com mais interações" in [p.titulo for p in com_diretorio]
+
     paineis = _dossie_de(sessao, "institucional", ve_diretorio=False).paineis
     nomeiam_orgaos = [p for p in paineis if p.titulo == "Órgãos com mais interações"]
 
     assert nomeiam_orgaos == []
-
-
 def test_com_ve_diretorio_os_orgaos_continuam_vindo(sessao, monkeypatch):
     #: COM O CRM RELIGADO (`0108`): "Órgãos com mais interações" é painel da
     #: fonte interna. A regra medida aqui é de PERMISSÃO — quem vê o diretório

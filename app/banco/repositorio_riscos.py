@@ -171,8 +171,15 @@ class FiltroDeRisco:
 
     @property
     def tem_crm(self) -> bool:
-        """O CRM entra quando a política o admite e nem a fonte nem a lente o
-        deixam de fora.
+        """O CRM entra quando a política o admite e o FILTRO DA TELA não o exclui.
+
+        O QUE ESTA PROPRIEDADE OLHA, e só isto: a política de produto, e os dois
+        campos do filtro que o usuário escolheu (`fontes` e `lentes`). Ela NÃO
+        consulta o cadastro — não tem sessão para isso. A primeira redação desta
+        docstring dizia "nem a fonte nem a lente o deixam de fora", e lia-se
+        como se fosse o cadastro; é achado da revisão do Codex, e é exatamente a
+        confusão que já tinha produzido um defeito aqui (eu afirmava `ativo=True`
+        para a política, sobre um cadastro que daqui não se vê).
 
         A POLÍTICA VEM PRIMEIRO, e é de produto: as agendas do CRM ficam no CRM,
         e os KPIs Reputacionais se medem de Clipei, Bites e Approach. A regra
@@ -183,9 +190,14 @@ class FiltroDeRisco:
         O resto deste método continua inteiro para o dia em que a resposta
         mudar.
 
-        A LENTE TAMBÉM O EXCLUI, e esquecer isso seria o pior tipo de erro nesta
-        tela: quem escolhe "Imprensa" receberia as reuniões do CRM no meio das
-        notícias, e o total não corresponderia a nada que se possa conferir.
+        O FILTRO DE LENTE TAMBÉM O EXCLUI, e esquecer isso seria o pior tipo de
+        erro nesta tela: quem escolhe "Imprensa" receberia as reuniões do CRM no
+        meio das notícias, e o total não corresponderia a nada que se possa
+        conferir. `LENTE_DO_CRM` só tem significado com o cadastro religado —
+        ver o "como se desfaz" em `dominio/fontes_do_score`.
+
+        QUEM CONFERE O CADASTRO é `agendas_de_incidente`, que tem a sessão: ela
+        é o gargalo por onde os seis caminhos das agendas passam.
         """
         #: SÓ A POLÍTICA SE PERGUNTA AQUI, e por isso a função é a de uma
         #: pergunta só: este método não tem sessão, e mentir `ativo=True` para
@@ -1004,11 +1016,17 @@ def incidentes_de_risco(
         #: como as outras (`interna = true`), e escrever "crm" na tela seria o
         #: mesmo erro de mostrar código onde o produto mostra nome.
         #:
-        #: E A LENTE NÃO É MAIS ADIVINHADA QUANDO O CADASTRO NÃO TEM UMA. Aqui
-        #: havia `LENTE_DO_CRM` como padrão, e a `0114` tirou a lente da fonte
-        #: interna: o padrão passaria a AFIRMAR "institucional" sobre uma fonte
-        #: que deixou de ser daquela lente. Sem lente no cadastro, a coluna fica
-        #: vazia — que é a resposta verdadeira.
+        #: E A LENTE NÃO É MAIS ADIVINHADA. Aqui havia `LENTE_DO_CRM` como
+        #: padrão, e a `0114` tirou a lente da fonte interna: o padrão passaria a
+        #: AFIRMAR "institucional" sobre uma fonte que deixou de ser daquela
+        #: lente.
+        #:
+        #: O `else None` É CINTO DE SEGURANÇA, E NÃO O COMPORTAMENTO — achado da
+        #: revisão do Codex. Esta nota dizia que "sem lente no cadastro a coluna
+        #: fica vazia", e esse estado é INALCANÇÁVEL daqui: `agendas_de_incidente`
+        #: devolve `None` quando o cadastro não tem lente, então nenhuma linha
+        #: chega a ser construída. Fica pelo tipo (`lente: str` não aceita nulo
+        #: calado) e para o dia em que o gargalo mudar de pergunta.
         do_cadastro = lentes_das_fontes(sessao).get(FONTE_DO_CRM)
         nomes_do_crm = (
             (nomes_das_fontes(sessao).get(FONTE_DO_CRM) or FONTE_DO_CRM),
