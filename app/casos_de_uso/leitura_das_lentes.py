@@ -239,10 +239,9 @@ def _bloco(
         #:
         #: O DEDUZIDO PELO TÍTULO MORRE NO BLOCO VAZIO; o DITO na chamada, não.
         #:
-        #: Achado de revisão: o mapa casa por TÍTULO, e uma lente interna monta
-        #: um "Temas mais falados" vazio (ela lê o CRM, não clipping) que passou
-        #: a anunciar `recorta: "tema"` — contrato prometendo o que não existe.
-        #: O caso era a Institucional, de quando ela era a lente interna.
+        #: O mapa casa por TÍTULO, e uma lente interna monta um "Temas mais
+        #: falados" vazio (ela lê o CRM, não clipping): anunciar `recorta:
+        #: "tema"` ali seria contrato prometendo o que não existe.
         #:
         #: MAS A ABA VAZIA DE "ONDE ESTÁ A CAUSA" CONTINUA DIZENDO O QUE RECORTA,
         #: e é por isso que a distinção existe: ela declara a dimensão na chamada,
@@ -921,9 +920,8 @@ def nomeia_o_diretorio(lente_e_interna: bool, bloco: BlocoSaida) -> bool:
 #: AS LENTES QUE TÊM VEÍCULO E TIER DE VERDADE — hoje isto governa UM lugar só:
 #: a lista de últimas matérias (`materias_recentes`, logo abaixo).
 #:
-#: ESTA LINHA DIZIA "e a aba de Onde está a causa", e não é verdade: as abas
-#: daquele cartão saem de `DIMENSOES_POR_LENTE`, em `causa_da_lente.py`, que não
-#: consulta esta constante. Deixar escrito aqui fazia procurar no lugar errado.
+#: As abas do cartão "Onde está a causa" NÃO saem daqui: saem de
+#: `DIMENSOES_POR_LENTE`, em `causa_da_lente.py`.
 #:
 #: GOVERNAVA TAMBÉM os três blocos de veículo do dossiê (a rosca de volume por
 #: tier e o par top/termômetro), que saíram em 23/10/2026: a tela passou a
@@ -970,26 +968,11 @@ def nomeia_o_diretorio(lente_e_interna: bool, bloco: BlocoSaida) -> bool:
 #:   e sem o bloco não há onde mostrá-la. A constante continua porque outras
 #:   leituras a usam.
 #:
-#: A INSTITUCIONAL ENTROU EM 24/10/2026, e o que a mantinha fora era uma
-#: premissa morta: "fica fora por vir do CRM, e isso é conferido à parte
-#: (`lente_e_interna`), porque a mensagem é outra". Ela deixou de vir do CRM na
-#: `0111`/`0112` — espelha a Clipei recortada pela subcategoria "Institucional"
-#: do Cadastro de Instituições, e a fonte `crm` dela está `ativo = false`, então
-#: `lente_e_interna` já devolve falso e aquele ramo não é mais alcançado.
-#:
-#: O QUE A TELA DIZIA ENQUANTO ISSO, e é por isso que esta linha é conserto e
-#: não feature: a lista vinha VAZIA com a lacuna "Esta lente não traz matéria de
-#: clipping na carga" — uma afirmação falsa sobre o dado, no lugar das matérias
-#: que a lente tem. Mesmo defeito de família do `tema_texto`, da `empresa` e da
-#: UF: a tela afirmando sobre um dado o que deixou de ser verdade.
-#:
-#: AS DUAS COLUNAS SE JUSTIFICAM NELA pelo mesmo argumento medido do Mercado: é
-#: outro conjunto de veículos, não os mesmos repetidos — ela recorta por outra
-#: subcategoria do cadastro.
-#:
-#: O VOLUME AINDA É BAIXO em Mercado e Institucional, e isso é cadastro de
-#: veículo por fazer (dono do produto, 24/10/2026), não lente sem dado: a
-#: classificação das instituições é que ainda não está completa.
+#: A Institucional entra pelo mesmo critério: ela recorta outra subcategoria
+#: do cadastro, então é outro conjunto de veículos, e não os mesmos
+#: repetidos. O volume dela e o do Mercado ainda são baixos porque a
+#: classificação das instituições não está completa — é cadastro por fazer,
+#: não lente sem dado.
 LENTES_COM_VEICULO_E_TIER = ("imprensa", "mercado", "institucional")
 
 
@@ -1001,11 +984,6 @@ def drivers_e_riscos(
 
     NÃO NA LENTE INTERNA, pelo mesmo motivo de `materias_recentes`: lente que
     lê o CRM não tem `atributo` nenhum, porque não vem de `mencao`.
-
-    ESTA RESSALVA DIZIA "a institucional não tem atributo", e o código nunca
-    disse isso — ele pergunta pela FONTE (`lente_e_interna`), e fez bem: a
-    Institucional deixou de ser interna na `0111`/`0112`, e hoje passa direto
-    por esta guarda. Nenhuma lente é interna neste momento.
     """
     if repositorio_lentes.lente_e_interna(sessao, lente.id):
         return _bloco(
@@ -1217,29 +1195,18 @@ def materias_recentes(
     rede precisa — o texto, o link, quem escreveu e o engajamento. Ela ganha a
     lista com as colunas DELA (`_mencoes_da_sociedade`).
 
-    SÓ CLIENTES SEGUE SEM LISTA, por não ter clipping na carga. A Institucional
-    estava nesta frase até 24/10/2026, de quando lia o CRM.
+    SÓ CLIENTES SEGUE SEM LISTA, por não ter clipping na carga.
     """
     if lente.codigo == "sociedade":
         return _mencoes_da_sociedade(sessao, lente, mes, calibracao, filtro)
 
-    #: A FONTE MANDA, E NÃO O CÓDIGO DA LENTE — e por isso este teste vem
-    #: ANTES da constante. É a mesma lição que o bloco da Evolução aprendeu por
-    #: achado de revisão, umas 800 linhas acima: "clima em vez de sentimento" é
-    #: consequência de a lente se ler do CRM, e quem sabe disso é
-    #: `lente_e_interna`, não uma lista de códigos.
-    #:
-    #: A ORDEM ERA A INVERSA, e enquanto a Institucional estava fora de
-    #: `LENTES_COM_VEICULO_E_TIER` dava no mesmo: ela caía no `not in`, e a
-    #: pergunta da fonte era feita lá dentro. Com ela DENTRO da constante
-    #: (24/10/2026), a ordem passou a importar — religar a fonte `crm`
-    #: (`ativo = true`, e existe fixture que faz isso) deixaria a lente INTERNA,
-    #: com série e painéis lendo o CRM, enquanto esta lista seguiria trazendo
-    #: matéria da Clipei: dois universos lado a lado, cada número certo no seu,
-    #: e a tela sem dizer que são diferentes. Achado da revisão do Codex.
-    #:
-    #: E A LACUNA PASSOU A DIZER O NOME DA LENTE em vez de "A lente
-    #: Institucional", que era verdade só enquanto ela era a única interna.
+    #: A FONTE MANDA, E NÃO O CÓDIGO DA LENTE: por isso este teste vem ANTES
+    #: da constante. Com a Institucional DENTRO de
+    #: `LENTES_COM_VEICULO_E_TIER`, a ordem passou a importar — religar a fonte
+    #: `crm` deixaria a lente interna, com série e painéis lendo o CRM,
+    #: enquanto esta lista seguiria trazendo matéria da Clipei: dois universos
+    #: lado a lado, cada número certo no seu, e a tela sem dizer que são
+    #: diferentes.
     if repositorio_lentes.lente_e_interna(sessao, lente.id):
         return _bloco(
             "tabela",

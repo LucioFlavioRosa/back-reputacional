@@ -105,10 +105,6 @@ class Presenca:
 #: TIER NÃO ENTRA NA IMPRENSA porque ele já é o painel A da lente: uma aba que
 #: repete um painel da mesma tela gasta a vez de uma que não está em nenhum.
 #:
-#: A INSTITUCIONAL ESTÁ AQUI desde 21/10/2026, e esta nota dizia o contrário —
-#: "a fonte dela é agenda, não menção ingerida; ela tem ZERO menções". Era
-#: verdade antes da `0111`/`0112`, que a fizeram clipping como as outras duas.
-#:
 #: O MERCADO ESTAVA JUNTO DELA, E ERA ERRO MEU DE PREMISSA. O comentário dizia
 #: "a fonte é estudo e agenda" para os dois. Para o Mercado isso é falso: ele é
 #: o clipping da Clipei recortado por público-alvo Investidores (migration
@@ -122,11 +118,9 @@ class Presenca:
 #: Quatro das cinco dimensões da Imprensa estão 100% preenchidas no Mercado, e
 #: nenhum corte devolveria zero.
 #:
-#: O `autor` ENTRA NAS TRÊS desde 24/10/2026 (paridade literal, pedido do dono
-#: do produto) — ver a nota no "mercado" abaixo, que guarda o argumento que eu
-#: tinha contra e por que ele não se sustentou. O campo está vazio nas três: a
-#: Imprensa tem 25.457 menções e ZERO autores, e a aba dela sempre esteve lá por
-#: decisão de produto, não por ter dado.
+#: O `autor` entra nas três lentes de clipping, por paridade. O campo está
+#: vazio nas três hoje — a Imprensa tem 25.457 menções e zero autores —, e a
+#: aba existe por decisão de produto, não por ter dado.
 DIMENSOES_POR_LENTE: dict[str, tuple[Dimensao, ...]] = {
     "sociedade": (
         Dimensao("tema", "Pilar (N1)", "tema_texto"),
@@ -144,26 +138,18 @@ DIMENSOES_POR_LENTE: dict[str, tuple[Dimensao, ...]] = {
         Dimensao("uf", "UF", "uf"),
         Dimensao("autor", "Jornalista", "autor", nomeia_o_diretorio=True),
     ),
-    #: AS MESMAS DA IMPRENSA, JORNALISTA INCLUSO desde 24/10/2026 — paridade
-    #: literal, por decisão do dono do produto: as três lentes de clipping são a
-    #: mesma tela, e não uma tela com três variações a explicar.
+    #: AS MESMAS DA IMPRENSA, Jornalista incluso: as três lentes de clipping
+    #: são a mesma tela.
     #:
-    #: O ARGUMENTO QUE EU TINHA ESCRITO AQUI CONTRA ERA "o campo `autor` está
-    #: vazio nas duas lentes, e a aba existe para nomear o diretório de
-    #: jornalistas, que é conceito de imprensa, não de relação com investidor".
-    #: O primeiro trecho vale igual para a Imprensa, que tem a aba; o segundo é
-    #: julgamento de produto, e o produto decidiu o contrário.
+    #: `nomeia_o_diretorio=True` NÃO É ENFEITE DA ABA: é de onde a Base das
+    #: Lentes deriva se pode publicar o nome do autor para quem não tem a
+    #: permissão do diretório (ver `nomeia_o_diretorio`, abaixo). A dimensão
+    #: sem a flag daria paridade na tela e vazamento na Base — nome de gente de
+    #: fora, que vem do cadastro, protegido só na Imprensa.
     #:
-    #: A FLAG VEM JUNTO, E É O QUE IMPORTA AQUI: `nomeia_o_diretorio=True` não é
-    #: enfeite da aba — é de onde a Base das Lentes deriva se pode publicar o
-    #: nome do autor para quem NÃO tem a permissão do diretório (ver
-    #: `nomeia_o_diretorio`, abaixo). Acrescentar a dimensão sem a flag daria
-    #: paridade na tela e um vazamento na outra: o nome de gente de fora, que
-    #: vem do cadastro, exposto nestas duas lentes e protegido só na Imprensa.
-    #:
-    #: E É O MESMO AUTOR, não outro: as três são o mesmo export da Clipei pela
-    #: mesma ingestão — o `autor` é o jornalista, e não o perfil que vem dentro
-    #: da menção (a distinção que o teste da Base cobra).
+    #: E é o mesmo autor, não outro: as três são o mesmo export da Clipei pela
+    #: mesma ingestão. O `autor` é o jornalista, e não o perfil que vem dentro
+    #: da menção.
     #:
     #: E O TIER NÃO ENTRA, pela mesma razão que não entra na Imprensa: ele já é
     #: a rosca no alto da tela, e uma aba que repete um painel da mesma tela
@@ -181,14 +167,10 @@ DIMENSOES_POR_LENTE: dict[str, tuple[Dimensao, ...]] = {
         Dimensao("empresa", "Concessionária", "unidade_texto"),
         Dimensao("uf", "UF", "uf"),
     ),
-    #: A INSTITUCIONAL ENTRA PELA MESMA PORTA QUE O MERCADO ENTROU, e pela mesma
-    #: razão: a premissa que a mantinha fora morreu. A nota acima dizia "a fonte
-    #: dela é agenda, não menção ingerida — ela tem ZERO menções"; desde a
-    #: `0111` ela é o clipping da Clipei recortado pela subcategoria
-    #: "Institucional" (que a `0107` criou no cadastro), e desde a `0112` é SÓ
-    #: isso — foi ela que tirou o CRM do índice. As dimensões são as do
-    #: Mercado porque o export é o mesmo, recortado de outro jeito — Jornalista
-    #: incluso, com a flag, pela razão escrita no Mercado acima.
+    #: AS MESMAS DO MERCADO, porque o export é o mesmo, recortado de outro
+    #: jeito: desde a `0111` a Institucional é o clipping da Clipei recortado
+    #: pela subcategoria "Institucional" do cadastro, e a `0112` tirou o CRM do
+    #: índice. Jornalista incluso, com a flag, pela razão escrita no Mercado.
     "institucional": (
         Dimensao("tema", "Pilar (N1)", "tema_texto"),
         Dimensao("atributo", "Atributo", "atributo"),

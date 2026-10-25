@@ -572,27 +572,21 @@ def obter_opcoes_de_filtro(
     cadastro, e duas cópias de uma regra de acesso divergem na primeira
     mudança.
 
-    ISTO FALTAVA — achado da revisão do Codex, em 24/10/2026. A Base fechava os
-    três pontos dela e esta rota entregava a lista de autores a qualquer um com
-    `acessa_score`. Não havia vazamento DE FATO, porque a coluna `autor` está
-    vazia nas cinco lentes, mas uma rota não pode depender disso: encher aquela
-    coluna é uma carga de planilha, não uma mudança de código. A mudança que
-    trouxe isto à tona foi dar a dimensão Jornalista também ao Mercado e à
-    Institucional — o buraco já estava aberto para a Imprensa.
+    Hoje a coluna `autor` está vazia nas cinco lentes, mas a rota não pode
+    depender disso: enchê-la é uma carga de planilha, não uma mudança de
+    código.
     """
     alvo = mes_de(mes)
     lente = repositorio_lentes.lente_por_codigo(sessao, codigo)
     if lente is None:
         raise NaoEncontrado("Lente não encontrada.")
     opcoes = repositorio_lentes.opcoes_de_filtro(sessao, lente.id, alvo)
-    #: O APELIDO NO IMPORT É DE PROPÓSITO: existem DUAS funções chamadas
-    #: `nomeia_o_diretorio`, e elas respondem perguntas diferentes. A de
-    #: `leitura_das_lentes` recebe `(lente_e_interna, bloco)` e pergunta se
-    #: AQUELE PAINEL nomeia o diretório; esta, de `causa_da_lente`, recebe o
+    #: O APELIDO NO IMPORT É OBRIGATÓRIO: há DUAS funções `nomeia_o_diretorio`.
+    #: A de `leitura_das_lentes` recebe `(lente_e_interna, bloco)` e pergunta
+    #: se AQUELE PAINEL nomeia o diretório; esta, de `causa_da_lente`, recebe o
     #: código e pergunta se A LENTE o nomeia. Importar a segunda com o nome nu
-    #: sombreia a primeira — e o erro não aparece na linha do import, aparece
-    #: como `TypeError: takes 1 positional argument but 2 were given` trezentas
-    #: linhas acima, no dossiê. Foi o que eu fiz, e a suíte pegou.
+    #: sombreia a primeira, e o erro aparece trezentas linhas acima, no dossiê,
+    #: como `TypeError: takes 1 positional argument but 2 were given`.
     if a_lente_nomeia_o_diretorio(lente.codigo) and not usuario.ve_diretorio:
         opcoes["autores"] = []
     return OpcoesDeFiltroSaida(**opcoes)
