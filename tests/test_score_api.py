@@ -136,7 +136,7 @@ def test_o_indice_traz_a_imprensa_em_70_com_a_regua_padrao(cliente_do_score, jun
 
 
 def test_a_lente_institucional_vem_das_interacoes_deste_banco(
-    cliente_do_score, sessao, semente, junho
+    cliente_do_score, sessao, semente, junho, monkeypatch
 ):
     """Sem cópia: o clima das interações É a lente.
 
@@ -149,7 +149,7 @@ def test_a_lente_institucional_vem_das_interacoes_deste_banco(
     valendo. O teste que afirma a configuração de HOJE é
     `test_o_crm_fora_do_indice_nao_move_a_institucional`, logo abaixo.
     """
-    ligar_o_crm(sessao)
+    ligar_o_crm(sessao, monkeypatch)
     antes = cliente_do_score.get("/api/score?mes=2026-06").json()
     institucional_antes = next(
         lente for lente in antes["lentes"] if lente["codigo"] == "institucional"
@@ -471,24 +471,60 @@ def test_as_fontes_trazem_cobertura_e_volume_do_mes(cliente_do_score, junho):
     assert clipei["ligada"] is True
 
 
-def test_a_listagem_sobrevive_a_fonte_sem_planilha(cliente_do_score):
-    """A fonte INTERNA tem mapeamento vazio, e a listagem tem de trazê-la.
+def test_a_CALIBRACAO_lista_so_as_fontes_que_alimentam_os_kpis(cliente_do_score):
+    """As seis bases de Clipei, Bites e Approach — e nada do CRM.
 
-    O QUE ISTO PEGOU: `arquivo` (qual export a fonte lê) foi acrescentado
-    lendo o mapeamento por `Mapeamento.de_json`, que exige `data` e
-    `sentimento` — com razão, para quem vai LER planilha. O `crm` não lê
-    nenhuma: o mapeamento dele é `{}`. A listagem inteira estourava por causa
-    da única fonte que não tem arquivo, e com ela caíam a Calibração e a Base.
+    A REGRA É DO DONO DO PRODUTO (24/10/2026): "os dados de agendas do CRM devem
+    ficar somente no CRM; os KPIs Reputacionais são focados nesse momento em
+    bases da Clipei, Bites e Approach". A aba Calibração é o cadastro de quem
+    forma o índice, e mostrava "CRM dos Stakeholders · Institucional",
+    esmaecido — a ligação que a `0114` desfez.
+
+    ESTE TESTE ERA O OPOSTO, e vale dizer o que ele protegia, porque o conserto
+    moveu a proteção em vez de a jogar fora: ele exigia que a fonte INTERNA
+    aparecesse, porque uma versão de `arquivo` lia o mapeamento por
+    `Mapeamento.de_json`, que exige `data` e `sentimento` — e o `crm` tem
+    mapeamento `{}`. A listagem inteira estourava por causa da única fonte sem
+    arquivo, levando com ela a Calibração e a Base. Essa robustez agora é
+    provada onde ela mora, em `test_o_arquivo_de_um_mapeamento_vazio_e_nulo`,
+    logo abaixo: um mapeamento incompleto não precisa ser o do CRM para chegar
+    ali.
     """
     fontes = cliente_do_score.get("/api/score/fontes?mes=2026-06").json()
 
     por_codigo = {f["codigo"]: f for f in fontes}
-    assert por_codigo["crm"]["interna"] is True
-    assert por_codigo["crm"]["arquivo"] is None
+    assert "crm" not in por_codigo
+    assert sorted(por_codigo) == [
+        "approach_cm",
+        "approach_sl",
+        "bites",
+        "clipei",
+        "clipei_institucional",
+        "clipei_investidores",
+    ]
+    #: E NENHUMA DAS LISTADAS É INTERNA: a lista acima é de hoje e pode crescer;
+    #: esta linha é a regra, e continua valendo com uma base nova amanhã.
+    assert [f["codigo"] for f in fontes if f["interna"]] == []
     #: E AS DUAS FONTES DA CLIPEI DIZEM O MESMO ARQUIVO — é o que permite a
     #: tela oferecer uma opção só para as duas.
     assert por_codigo["clipei"]["arquivo"] == "clipei"
     assert por_codigo["clipei_investidores"]["arquivo"] == "clipei"
+
+
+def test_o_arquivo_de_um_mapeamento_vazio_e_nulo():
+    """A robustez que o teste acima protegia, provada onde ela mora.
+
+    `_arquivo_do_mapeamento` lê UMA chave e não valida o resto: uma fonte com
+    mapeamento incompleto tem de aparecer na tela de cadastro, que é justamente
+    onde alguém vai consertá-la. Validar ali esconderia o problema atrás de um
+    500 na tela que o mostraria.
+    """
+    from app.api.score import _arquivo_do_mapeamento
+
+    assert _arquivo_do_mapeamento({}) is None
+    assert _arquivo_do_mapeamento(None) is None
+    assert _arquivo_do_mapeamento({"arquivo": ""}) is None
+    assert _arquivo_do_mapeamento({"arquivo": "clipei"}) == "clipei"
 
 
 def test_as_opcoes_da_calibracao_vem_do_servidor(cliente_do_score):
@@ -1111,7 +1147,7 @@ def test_todo_clima_do_banco_tem_sentimento_no_score(sessao):
 
 
 def test_a_tela_abre_no_mes_mais_completo_e_nao_no_ultimo(
-    cliente_do_score, sessao, semente, junho
+    cliente_do_score, sessao, semente, junho, monkeypatch
 ):
     """O defeito que fazia a tela parecer vazia com o banco cheio.
 
@@ -1124,7 +1160,7 @@ def test_a_tela_abre_no_mes_mais_completo_e_nao_no_ultimo(
     cenário deste teste deixa de existir. Religar é o que o mantém medindo o
     defeito que ele descreve. A mesma regra sem o CRM está no teste seguinte.
     """
-    ligar_o_crm(sessao)
+    ligar_o_crm(sessao, monkeypatch)
     # Junho com DUAS lentes: a `junho` traz a imprensa, e aqui entra a
     # sociedade. É o que faz dele o mês mais completo — com uma lente só,
     # empatado com setembro, o desempate pelo mais recente escolheria setembro,
@@ -1177,7 +1213,9 @@ def test_o_mes_SO_DE_AGENDA_nao_entra_mais_na_lista(cliente_do_score, sessao, se
     assert opcoes["mes_sugerido"] == "2026-06"
 
 
-def test_registro_nao_visivel_nao_move_o_indice(cliente_do_score, sessao, semente, junho):
+def test_registro_nao_visivel_nao_move_o_indice(
+    cliente_do_score, sessao, semente, junho, monkeypatch
+):
     """`visivel = false` é o registro que alguém tirou da vista de propósito.
 
     `filtros_sql.condicoes` o exclui de toda leitura do CRM — é a linha
@@ -1197,7 +1235,7 @@ def test_registro_nao_visivel_nao_move_o_indice(cliente_do_score, sessao, sement
     garantia aqui é de PRIVACIDADE, não de configuração: ela tem de continuar
     valendo no dia em que alguém puser o CRM de volta.
     """
-    ligar_o_crm(sessao)
+    ligar_o_crm(sessao, monkeypatch)
 
     def institucional() -> int | None:
         corpo_ = cliente_do_score.get("/api/score?mes=2026-06").json()
@@ -1229,7 +1267,7 @@ def test_registro_nao_visivel_nao_move_o_indice(cliente_do_score, sessao, sement
 
 
 def test_registro_nao_visivel_nao_nomeia_orgao_no_dossie(
-    cliente_do_score, sessao, semente, junho
+    cliente_do_score, sessao, semente, junho, monkeypatch
 ):
     """A outra ponta: o painel da institucional lista COM QUEM se conversou.
 
@@ -1240,7 +1278,7 @@ def test_registro_nao_visivel_nao_nomeia_orgao_no_dossie(
     órgãos é da fonte interna, e sem ela não há painel onde o nome pudesse
     vazar. O que se protege é o vazamento, não o arranjo de hoje.
     """
-    ligar_o_crm(sessao)
+    ligar_o_crm(sessao, monkeypatch)
     criada = cliente_do_score.post(
         "/api/interacoes",
         json={**corpo(semente), "data_interacao": "2026-06-15", "clima": "propositivo"},

@@ -365,12 +365,19 @@ def test_a_fonte_INTERNA_aposentada_fica_de_fora(sessao, institucional, tema):
     quebraria em silêncio, e a linha apareceria num modal que existe para
     explicar o número do índice — de onde aquela fonte saiu.
     """
+    #: ACHADA PELA NATUREZA, E NÃO PELA LENTE. Esta consulta era
+    #: `lente_id == institucional.lente_id`, e a `0114` desligou a fonte interna
+    #: de qualquer lente: ela voltava `None` e o teste caía na própria busca,
+    #: antes de provar coisa nenhuma. O que ele prova é sobre `ativo`, não sobre
+    #: lente — então é por `interna` que se acha a única fonte aposentada.
     aposentada = sessao.scalar(
-        select(ScoreFonte).where(
-            ScoreFonte.lente_id == institucional.lente_id, ScoreFonte.ativo.is_(False)
-        )
+        select(ScoreFonte).where(ScoreFonte.interna.is_(True), ScoreFonte.ativo.is_(False))
     )
-    assert aposentada is not None, "a institucional tinha de ter a fonte aposentada"
+    assert aposentada is not None, "a fonte interna tinha de estar aposentada no cadastro"
+    #: E A GARANTIA FICOU DUPLA depois da `0114`: a menção dela sai da lista por
+    #: `ativo` (o que este teste sempre quis dizer) E por não haver lente. As
+    #: duas valendo é defesa em profundidade, não redundância a remover: a
+    #: primeira é a que continua valendo se alguém religar a fonte.
 
     _mencao(sessao, institucional, tema.id, data=date(2026, 9, 2), titulo="Da ativa")
     _mencao(sessao, aposentada, tema.id, data=date(2026, 9, 3), titulo="Da aposentada")

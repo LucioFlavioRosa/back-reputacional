@@ -63,7 +63,14 @@ class ScoreFonte(Tabela):
     codigo: Mapped[str] = mapped_column(Text, unique=True)
     nome: Mapped[str] = mapped_column(Text)
     fornecedor: Mapped[str] = mapped_column(Text)
-    lente_id: Mapped[int] = mapped_column(SmallInteger, ForeignKey("lente.id"))
+    #: NULA É "FONTE QUE NÃO ALIMENTA LENTE NENHUMA" — a `0114`. É o caso da
+    #: fonte interna: as agendas do CRM ficam no CRM, e nenhuma lente se
+    #: relaciona com elas. Todas as leituras comparam esta coluna por
+    #: igualdade, e nulo não casa com nada, então o isolamento é estrutural.
+    #: Ver `app/dominio/fontes_do_score.py`.
+    lente_id: Mapped[int | None] = mapped_column(
+        SmallInteger, ForeignKey("lente.id"), nullable=True
+    )
     tipo_arquivo: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: Qual coluna da planilha alimenta qual campo de `mencao`.
     mapeamento_colunas: Mapped[dict] = mapped_column(JSONB, default=dict)

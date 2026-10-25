@@ -48,6 +48,7 @@ from app.banco.tabelas_catalogo import (
 )
 from app.banco.tabelas_interacoes import InteracaoRegistro, InteracaoTema
 from app.banco.tabelas_score import Lente, Mencao, ScoreFonte
+from app.dominio.fontes_do_score import alimenta_os_kpis
 from app.dominio.identidade import Escopo
 from app.dominio.riscos import (
     CARGOS_DA_PROPRIA_COMPANHIA,
@@ -70,8 +71,15 @@ CLIMA_DO_INCIDENTE = "tenso"
 #: O CÓDIGO DA FONTE DO CRM, que é a origem das agendas.
 FONTE_DO_CRM = "crm"
 
-#: E A LENTE DELA, no cadastro: o CRM é a lente institucional. Está aqui porque
-#: o recorte por lente também tem de poder deixar as agendas de fora.
+#: E A LENTE DELA, no cadastro: o CRM era a lente institucional. Está aqui
+#: porque o recorte por lente também tem de poder deixar as agendas de fora.
+#:
+#: HOJE ELA NÃO TEM LENTE. A `0114` desligou a fonte interna de qualquer lente,
+#: e `alimenta_os_kpis` responde `False`: esta constante só volta a ter efeito
+#: no cenário que desfaz as duas coisas juntas — é exatamente o par de passos
+#: escrito em `dominio/fontes_do_score`, e por isso ela continua dizendo
+#: "institucional", que é a lente para onde o desfazer a devolve. Mudar só uma
+#: das duas pontas é que seria incoerente: ver a nota em `tem_crm`.
 LENTE_DO_CRM = "institucional"
 
 
@@ -163,12 +171,29 @@ class FiltroDeRisco:
 
     @property
     def tem_crm(self) -> bool:
-        """O CRM entra quando nem a fonte nem a lente o deixam de fora.
+        """O CRM entra quando a política o admite e nem a fonte nem a lente o
+        deixam de fora.
+
+        A POLÍTICA VEM PRIMEIRO, e é de produto: as agendas do CRM ficam no CRM,
+        e os KPIs Reputacionais se medem de Clipei, Bites e Approach. A regra
+        está escrita uma vez, em `dominio/fontes_do_score` — aqui só se
+        pergunta. Com ela em `False`, `agendas_de_incidente` devolve `None` e as
+        agendas desaparecem de TODOS os caminhos desta tela (série, contagem por
+        risco, lista, conjunto de fontes do mês), porque todos passam por lá.
+        O resto deste método continua inteiro para o dia em que a resposta
+        mudar.
 
         A LENTE TAMBÉM O EXCLUI, e esquecer isso seria o pior tipo de erro nesta
         tela: quem escolhe "Imprensa" receberia as reuniões do CRM no meio das
         notícias, e o total não corresponderia a nada que se possa conferir.
         """
+        #: INTERNA, porque é isso que o CRM é — ver `FONTE_DO_CRM` abaixo e a
+        #: coluna `score_fonte.interna`. `ativo=True` aqui NÃO afirma que a
+        #: fonte está ativa: este método não tem sessão, e a aposentadoria dela
+        #: já é respeitada onde se lê o cadastro. O que se pergunta aqui é só a
+        #: política.
+        if not alimenta_os_kpis(interna=True, ativo=True):
+            return False
         if self.fontes and FONTE_DO_CRM not in self.fontes:
             return False
         return not self.lentes or LENTE_DO_CRM in self.lentes
@@ -956,11 +981,18 @@ def incidentes_de_risco(
         #: O NOME DA FONTE E DA LENTE DO CRM, do cadastro: ele é uma `score_fonte`
         #: como as outras (`interna = true`), e escrever "crm" na tela seria o
         #: mesmo erro de mostrar código onde o produto mostra nome.
+        #:
+        #: E A LENTE NÃO É MAIS ADIVINHADA QUANDO O CADASTRO NÃO TEM UMA. Aqui
+        #: havia `LENTE_DO_CRM` como padrão, e a `0114` tirou a lente da fonte
+        #: interna: o padrão passaria a AFIRMAR "institucional" sobre uma fonte
+        #: que deixou de ser daquela lente. Sem lente no cadastro, a coluna fica
+        #: vazia — que é a resposta verdadeira.
         do_cadastro = lentes_das_fontes(sessao).get(FONTE_DO_CRM)
         nomes_do_crm = (
             (nomes_das_fontes(sessao).get(FONTE_DO_CRM) or FONTE_DO_CRM),
-            (do_cadastro[1] if do_cadastro else LENTE_DO_CRM),
+            (do_cadastro[1] if do_cadastro else None),
         )
+        lente_do_crm = do_cadastro[0] if do_cadastro else None
         de_agendas = (
             das_agendas.with_only_columns(
                 InteracaoRegistro.id.label("id"),
@@ -998,7 +1030,7 @@ def incidentes_de_risco(
                     #: O NOME DO CRM E DA LENTE DELE vêm do cadastro, como os
                     #: das menções — ver `lentes_das_fontes`.
                     fonte_nome=nomes_do_crm[0],
-                    lente=LENTE_DO_CRM,
+                    lente=lente_do_crm,
                     lente_nome=nomes_do_crm[1],
                     tema=linha.tema,
                     tier=None,

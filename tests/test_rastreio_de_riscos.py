@@ -42,6 +42,7 @@ from app.banco.tabelas_interacoes import InteracaoRegistro, InteracaoTema
 from app.banco.tabelas_score import Mencao, ScoreFonte
 from app.dominio.identidade import Escopo
 from app.dominio.riscos import PESO_DA_SEVERIDADE
+from tests.apoio_da_fonte_interna import ligar_o_crm
 from tests.test_e2e_postgres import URL
 
 _engine = create_engine(URL, pool_pre_ping=True)
@@ -200,8 +201,65 @@ def test_a_mencao_POSITIVA_nao_e_incidente(sessao, bites, com_risco):
     assert quantos_agora == quantos_antes
 
 
-def test_a_AGENDA_de_clima_negativo_e_incidente(sessao, com_risco):
-    """O CRM entra pelo CLIMA: `interacao` não tem coluna de sentimento."""
+def test_a_AGENDA_NAO_conta_como_incidente_por_padrao(sessao, com_risco):
+    """A REGRA DE HOJE, e é ela que a tela mostra.
+
+    Dono do produto, 24/10/2026: "os dados de agendas do CRM devem ficar somente
+    no CRM; os KPIs Reputacionais são focados nesse momento em bases da Clipei,
+    Bites e Approach. Esse isolamento nesse momento deve ser claro."
+
+    SEM `ligar_o_crm`, de propósito: é o comportamento padrão que se prova. A
+    diferença entre este teste e o de baixo é uma linha — e é a política em
+    `dominio/fontes_do_score`.
+
+    A AGENDA É SEMEADA MESMO ASSIM. Sem ela, "não contou" poderia ser "não
+    havia", e o teste passaria com a política ligada.
+    """
+    tema, _risco = com_risco
+    antes = _de_agosto(serie_do_indice(sessao, FiltroDeRisco(), TUDO)[0])
+    quantos_antes = antes.incidentes if antes else 0
+
+    _agenda(sessao, tema, "tenso")
+
+    agora = _de_agosto(serie_do_indice(sessao, FiltroDeRisco(), TUDO)[0])
+    #: A SÉRIE PODE NEM TER O MÊS, e foi o que aconteceu ao escrever este teste:
+    #: sem incidente nenhum, agosto não produz linha — e "não produziu linha" é
+    #: a forma mais forte de "a agenda não contou", não um caso a contornar.
+    assert (agora.incidentes if agora else 0) == quantos_antes
+    #: E O CRM NÃO APARECE ENTRE AS FONTES DO MÊS: a tela não nomeia uma
+    #: procedência que não trouxe nada.
+    assert "crm" not in (agora.fontes if agora else ())
+
+
+def test_a_FONTE_INTERNA_nao_e_de_lente_nenhuma(sessao):
+    """O cadastro depois da `0114`: nenhuma lente se relaciona com o CRM.
+
+    A POLÍTICA É METADE DA TRANCA; esta é a outra. Enquanto a fonte interna
+    apontava `lente_id = institucional`, religá-la (`ativo = true`, um `update`
+    de uma coluna) devolvia as agendas ao índice daquela lente, e o Risk
+    Tracking as atribuía a ela. Sem lente, não há a que devolver.
+    """
+    internas_com_lente = sessao.execute(
+        select(ScoreFonte.codigo, ScoreFonte.lente_id)
+        .where(ScoreFonte.interna.is_(True), ScoreFonte.lente_id.is_not(None))
+    ).all()
+
+    assert internas_com_lente == [], (
+        f"fonte interna voltou a ter lente: {internas_com_lente}. "
+        "As agendas do CRM ficam no CRM."
+    )
+
+
+def test_a_AGENDA_de_clima_negativo_e_incidente(sessao, com_risco, monkeypatch):
+    """O CRM entra pelo CLIMA: `interacao` não tem coluna de sentimento.
+
+    O CRM LIGADO SÓ NESTE TESTE. Por decisão do dono do produto (24/10/2026) as
+    agendas não contam como incidente — a política está em
+    `dominio/fontes_do_score`. O MECANISMO continua medido aqui, porque é ele
+    que precisa estar correto no dia em que o CRM voltar; o comportamento
+    PADRÃO (nenhuma agenda na matriz) tem testes próprios, no fim do arquivo.
+    """
+    ligar_o_crm(sessao, monkeypatch)
     tema, _risco = com_risco
     antes = _de_agosto(serie_do_indice(sessao, FiltroDeRisco(), TUDO)[0])
     quantos_antes = antes.incidentes if antes else 0
@@ -269,8 +327,13 @@ def test_a_matriz_traz_TODOS_os_riscos_inclusive_os_SEM_incidente(sessao):
     assert any(linha.incidentes == 0 for linha in matriz)
 
 
-def test_a_matriz_separa_MENCAO_de_AGENDA(sessao, bites, com_risco):
-    """Uma menção e uma reunião não são a mesma coisa, e a tela diz qual é qual."""
+def test_a_matriz_separa_MENCAO_de_AGENDA(sessao, bites, com_risco, monkeypatch):
+    """Uma menção e uma reunião não são a mesma coisa, e a tela diz qual é qual.
+
+    COM O CRM LIGADO SÓ AQUI — ver o teste acima: o que se prova é que a matriz
+    SABE separar as duas, e isso tem de continuar verdade.
+    """
+    ligar_o_crm(sessao, monkeypatch)
     tema, risco = com_risco
     _mencao(sessao, bites, tema, "neg")
     _agenda(sessao, tema, "tenso")
@@ -373,14 +436,20 @@ def test_o_FILTRO_DE_FONTE_tira_o_CRM_quando_pede_so_uma_fonte(sessao, bites, co
 # -- os achados da revisão -------------------------------------------------------
 
 
-def test_o_ESCOPO_DO_USUARIO_esconde_a_agenda(sessao, com_risco):
+def test_o_ESCOPO_DO_USUARIO_esconde_a_agenda(sessao, com_risco, monkeypatch):
     """O achado ALTO: a tela de risco não pode contar o que o CRM esconde.
 
     O CRM restringe por frente e por unidade de negócio (`usuario_escopo`), e a
     primeira versão desta tela não aplicava isso — a mesma agenda ficava
     invisível na listagem do CRM e contava como incidente aqui. É a razão de o
     escopo ser PARÂMETRO OBRIGATÓRIO e não campo opcional do filtro.
+
+    COM O CRM LIGADO SÓ AQUI, e esta é a garantia que MAIS importa preservar:
+    é de privacidade. Ela precisa continuar valendo no dia em que as agendas
+    voltarem, e é por isso que este teste não foi apagado com a decisão de
+    produto.
     """
+    ligar_o_crm(sessao, monkeypatch)
     tema, _risco = com_risco
     agenda = _agenda(sessao, tema, "tenso")
     da_agenda = sessao.scalar(
