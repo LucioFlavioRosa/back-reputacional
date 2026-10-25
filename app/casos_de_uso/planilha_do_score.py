@@ -1,40 +1,32 @@
 """A planilha do Score entre a conferência e a confirmação.
 
 POR QUE ESTE MÓDULO EXISTE. Importar uma planilha são dois pedidos: um que
-confere e não grava nada, outro que grava. Até aqui os dois pediam o ARQUIVO —
-a mesma pessoa mandava os mesmos bytes duas vezes. Medido em 15/10/2026 com o
-clipping real da Clipei (10,53 MB, 75.369 linhas): 21 MB de tráfego e duas
-travessias completas de ingress, nginx e API, para um trabalho que precisa dos
-bytes uma vez.
-
-E a segunda travessia é a pior, porque é a que grava: ela sobe o arquivo de
-novo ANTES de começar, dentro do mesmo relógio de gateway que já estourou uma
-vez — o 504 de 15/10/2026 no cluster do cliente, com 113 s de processamento
-contra um teto de 60 s.
+confere e não grava nada, outro que grava. Pedindo o ARQUIVO nos dois, a mesma
+pessoa manda os mesmos bytes duas vezes — dezenas de MB e duas travessias
+completas de ingress, nginx e API para um trabalho que precisa dos bytes uma
+vez. E a segunda travessia é a pior, porque é a que grava: ela sobe o arquivo de
+novo ANTES de começar, dentro do mesmo relógio de gateway que já estourou em 504
+no cluster do cliente.
 
 GUARDA O BYTE, NUNCA A CONCLUSÃO
 --------------------------------
 A importação de subtemas registra, com razão, que mandar o arquivo de novo "não
-é desperdício: o servidor relê e reconfere contra o banco daquele instante", e
-que guardar as propostas exigiria uma tabela de rascunho que aquele desenho
-dispensa.
+é desperdício: o servidor relê e reconfere contra o banco daquele instante".
+Este módulo não contraria isso: a confirmação segue relendo a planilha do zero e
+reconferindo veículo por veículo e tema por tema contra o cadastro do instante
+em que ela roda. Nada do que a conferência calculou é guardado aqui — nem
+previsão, nem veículo novo, nem contagem. O que se dispensa é o UPLOAD.
 
-O argumento continua valendo inteiro, e este módulo não o contraria: a
-confirmação segue relendo a planilha do zero e reconferindo veículo por veículo
-e tema por tema contra o cadastro do instante em que ela roda. Nada do que a
-conferência calculou é guardado aqui — nem previsão, nem veículo novo, nem
-contagem. O que se dispensa é o UPLOAD.
-
-A diferença, em uma frase: uma tabela de rascunho guarda o que o servidor
-CONCLUIU e corre o risco de concluir diferente depois; esta guarda o que a
-pessoa ENVIOU, que não muda.
+Em uma frase: uma tabela de rascunho guarda o que o servidor CONCLUIU e corre o
+risco de concluir diferente depois; esta guarda o que a pessoa ENVIOU, que não
+muda.
 
 UMA POR FONTE E POR PESSOA
 --------------------------
 Conferir de novo substitui a anterior, byte inclusive. Sem isso, cada
 conferência abandonada deixaria dezenas de MB para sempre no contêiner — e
-abandonar conferência é o caso NORMAL, não o excepcional: é o que acontece toda
-vez que alguém olha a previsão e decide não subir.
+abandonar conferência é o caso NORMAL: é o que acontece toda vez que alguém olha
+a previsão e decide não subir.
 
 A unicidade está declarada no índice da `0092`, e não só aqui: o código pode
 esquecer de apagar a anterior; o banco não.
@@ -46,7 +38,7 @@ link. Então `guardar` devolve `None` em vez de explodir, a conferência respond
 sem `planilha_id`, e a tela manda o arquivo de novo exatamente como antes. Esta
 funcionalidade é uma economia, nunca uma dependência: o dia em que ela virar
 pré-requisito é o dia em que uma conta de armazenamento mal configurada passa a
-impedir a importação, que é um preço que ninguém aceitou pagar.
+impedir a importação.
 """
 
 from __future__ import annotations
@@ -207,28 +199,23 @@ def comecar(
 ) -> Guardada:
     """Abre uma subida em partes: GRAVA A LINHA e devolve o identificador.
 
-    A LINHA NASCE AQUI, e esta é a correção de quatro defeitos de uma vez —
-    todos achados pela revisão do Codex em 16/10/2026, quando esta função não
-    tocava no banco e o estado da subida era só o caminho no Blob:
+    A LINHA NASCE AQUI, e é ela que fecha quatro buracos de uma vez — sem linha,
+    o estado da subida seria só o caminho no Blob:
 
-      1. O IDENTIFICADOR VALIA COMO SENHA AO PORTADOR. Sem linha, `receber_parte`
-         não tinha o que consultar para saber de quem era a subida — então
-         aceitava parte de qualquer sessão, e quem conhecesse o uuid de outra
-         pessoa registrava a planilha dela no próprio nome.
-
-      2. O TETO DECLARADO NÃO LIMITAVA. Declarar 1 MB e enviar oitenta partes de
-         1 MB montava 80 MB. Agora o declarado fica GRAVADO, e é contra ele que
-         cada parte é conferida.
-
-      3. O BYTE FICAVA ÓRFÃO. A linha vinha depois do arquivo, e o commit da
-         sessão roda DEPOIS de a rota retornar (`banco/sessao.py`): um commit
-         que falhasse desfazia a linha e deixava o arquivo publicado. Com a
-         linha nascendo antes, o pior caso é uma linha INCOMPLETA apontando para
-         o byte — que é o que permite achá-lo.
-
-      4. Nada limitava quantas subidas uma pessoa abria. O índice único de
-         (fonte, criado_por) passa a significar "uma subida em voo por fonte e
-         por pessoa".
+      1. O IDENTIFICADOR VALERIA COMO SENHA AO PORTADOR. Sem linha,
+         `receber_parte` não tem o que consultar para saber de quem é a subida, e
+         aceita parte de qualquer sessão: quem conhecesse o uuid de outra pessoa
+         registraria a planilha dela no próprio nome.
+      2. O TETO DECLARADO NÃO LIMITARIA. Declarar 1 MB e enviar oitenta partes de
+         1 MB monta 80 MB. Gravado, o declarado é o que cada parte confere.
+      3. O BYTE FICARIA ÓRFÃO. A linha depois do arquivo, e o commit da sessão
+         rodando DEPOIS de a rota retornar (`banco/sessao.py`), fazem um commit
+         que falhe desfazer a linha e deixar o arquivo publicado. Com a linha
+         nascendo antes, o pior caso é uma linha INCOMPLETA apontando para o byte
+         — que é o que permite achá-lo.
+      4. Nada limitaria quantas subidas uma pessoa abre. O índice único de
+         (fonte, criado_por) significa "uma subida em voo por fonte e por
+         pessoa".
 
     SUBSTITUI A ANTERIOR, como a conferência de uma vez só faz: abrir subida nova
     descarta a planilha pendente daquela pessoa naquela fonte, byte inclusive.
@@ -241,24 +228,17 @@ def comecar(
     armazenamento, e caminho montado com valor que o cliente escolhe é como se
     escreve em pasta alheia.
 
-    DEVOLVE `id` NULO SEM ARMAZENAMENTO, como `guardar` faz — e esta é a
-    correção de um defeito de desenho meu, achado em 16/10/2026 ao baixar o
-    limiar da tela. O docstring desta função e o da rota diziam, os dois, que
-    "a tela cai no envio de uma vez só"; ela não caía. Isto aqui RECUSAVA com
-    422, o cliente não tinha como distinguir essa recusa das outras três desta
-    mesma função, e a pessoa lia "este ambiente não guarda arquivos" sem ter
-    pedido nada sobre armazenamento.
+    DEVOLVE `id` NULO SEM ARMAZENAMENTO, como `guardar` faz, e não 422: o cliente
+    não teria como distinguir essa recusa das outras três desta mesma função, e a
+    pessoa leria "este ambiente não guarda arquivos" sem ter pedido nada sobre
+    armazenamento. O nulo é a convenção que já existe — a conferência de uma vez
+    só devolve `planilha_id` nulo quando o blob está desligado, e a tela entende
+    isso como "mande o arquivo de novo na confirmação".
 
-    O NULO É A CONVENÇÃO QUE JÁ EXISTIA: a conferência de uma vez só devolve
-    `planilha_id` nulo quando o blob está desligado, e a tela entende isso como
-    "mande o arquivo de novo na confirmação". Repetir a convenção custa uma
-    linha e dispensa um código de erro legível por máquina — que o envelope
-    `{detalhe, referencia}` não tem.
-
-    E SEM ISSO O LIMIAR MENOR QUEBRARIA A PILHA LOCAL, onde não há blob: toda
-    planilha acima de um pedaço passaria a ser recusada em ambiente que hoje
-    importa sem reclamar. Vale o princípio do cabeçalho deste módulo — a subida
-    guardada é uma economia, nunca uma dependência.
+    E SEM ISSO A PILHA LOCAL QUEBRARIA, onde não há blob: toda planilha acima de
+    um pedaço passaria a ser recusada em ambiente que hoje importa sem reclamar.
+    Vale o princípio do cabeçalho deste módulo — a subida guardada é uma
+    economia, nunca uma dependência.
     """
     #: O TAMANHO É CONFERIDO ANTES DO ARMAZENAMENTO, de propósito: sem blob a
     #: resposta manda a tela subir de uma vez, e aí um arquivo de 100 MB
@@ -514,30 +494,24 @@ def descartar(sessao: Session, *, planilha_id: UUID) -> str | None:
 def id_da_pendente(sessao: Session, *, fonte: ScoreFonte, usuario_id: UUID) -> UUID | None:
     """Qual planilha daquela pessoa está pendente naquela fonte AGORA.
 
-    POR QUE EXISTE, em uma frase: a importação PELO ARQUIVO também precisa
-    limpar, e ela não tem identificador nenhum para citar — então ela pergunta
-    qual é, ANTES de ingerir, e depois descarta por id como o outro ramo.
-
-    O CAMINHO QUE VAZAVA. Quem manda `arquivo` na confirmação cai no ramo que
-    não conhece `planilha_id`, e esse ramo não descartava nada: a importação
-    terminava com sucesso e a linha mais o byte ficavam guardados — até a pessoa
-    conferir aquela fonte de novo, o que pode nunca acontecer. Mandar o arquivo
-    é caminho legítimo e permanente (a Calibração importa sem conferir, e a tela
+    POR QUE EXISTE: a importação PELO ARQUIVO também precisa limpar, e ela não
+    tem identificador nenhum para citar — então pergunta qual é, ANTES de
+    ingerir, e depois descarta por id como o outro ramo. Sem isso a importação
+    termina com sucesso e a linha mais o byte ficam guardados até a pessoa
+    conferir aquela fonte de novo, o que pode nunca acontecer. Mandar o arquivo é
+    caminho legítimo e permanente (a Calibração importa sem conferir, e a tela
     recai no arquivo sempre que não tem a conferência em mão).
 
-    E POR QUE ESTA FUNÇÃO SÓ PERGUNTA, EM VEZ DE APAGAR. A primeira versão
-    apagava por (fonte, dono) no fim da importação, e isso tinha uma corrida que
-    PERDE TRABALHO — achado da revisão do Codex em 16/10/2026:
+    E POR QUE ESTA FUNÇÃO SÓ PERGUNTA, EM VEZ DE APAGAR: apagar por (fonte, dono)
+    no fim da importação tem uma corrida que PERDE TRABALHO —
 
         1. a pessoa tem a planilha V1 pendente;
-        2. começa a importar por arquivo (62 s de ingestão, medidos);
+        2. começa a importar por arquivo, que leva um minuto;
         3. no meio disso, outra conferência dela na mesma fonte grava V2;
         4. a importação apaga "a pendência" — e leva V2.
 
     V2 era a que ela ainda queria confirmar. Perguntar ANTES e apagar POR ID
-    fecha isso: se a troca aconteceu, o descarte não acha V1 e não toca em V2 —
-    o mesmo desfecho inofensivo que o ramo do identificador já tinha, e pela
-    mesma razão. Era incoerente proteger um ramo e não o outro.
+    fecha isso: se a troca aconteceu, o descarte não acha V1 e não toca em V2.
 
     DESCARTAR CONTINUA SENDO O CERTO para a pendência que existia antes: quem
     importou aquela fonte por arquivo tornou obsoleta a conferência dela — a

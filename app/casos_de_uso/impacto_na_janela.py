@@ -2,55 +2,45 @@
 
 A PERGUNTA, nas palavras de quem pediu: "quero poder clicar em alguma data seja
 no gráfico ou no eixo, que você pega a data e subtrai 15 dias, pega esse recorte
-de data e me traga dois quadros logo abaixo do gráfico, um quadro com os 5 N1 que
-mais impactaram positivamente o score e 5 N1 que mais impactaram negativamente".
+de data e me traga dois quadros logo abaixo do gráfico, um quadro com os 5 que
+mais impactaram positivamente o score e 5 que mais impactaram negativamente".
 
-ERA N1 E PASSOU A SER N2, por pedido dele depois de ver no ar: "ao inves de ser
-n1 pode aparece o n2, pois o n1 esta quase tudo sendo positivo e estamos deixando
-passar alguma informacao valiosa". Sao SETE N1 contra QUARENTA E UM N2 no
-cadastro: num quadro de cinco linhas, sete grupos quase nao escolhem nada, e um
-pilar com muita materia positiva esconde o bolsao negativo que mora dentro dele.
+É N2, E NÃO N1, por pedido: são sete N1 contra quarenta e um N2 no cadastro. Num
+quadro de cinco linhas, sete grupos quase não escolhem nada, e um pilar com
+muita matéria positiva esconde o bolsão negativo que mora dentro dele.
 
-O SCORE É MENSAL E A JANELA TEM QUINZE DIAS, e isso não é contradição — é o que
-ele esclareceu: "seria simplesmente fazer um recorte do período que tem aquele
-score". A nota do mês é a nota; a janela é um recorte das menções que a compõem.
-Daí o denominador ser o DO MÊS (ver `impacto_do_recorte`): é o que faz "−2,3 pt"
-querer dizer "dois vírgula três pontos DA NOTA DAQUELE MÊS", e não dois vírgula
-três pontos de uma régua inventada para esses quinze dias.
+O SCORE É MENSAL E A JANELA TEM QUINZE DIAS, e isso não é contradição: a nota do
+mês é a nota, e a janela é um recorte das menções que a compõem. Daí o
+denominador ser o DO MÊS (ver `impacto_do_recorte`): é o que faz "−2,3 pt" querer
+dizer "dois vírgula três pontos DA NOTA DAQUELE MÊS", e não de uma régua
+inventada para esses quinze dias.
 
 A JANELA ATRAVESSA A VIRADA DO MÊS, por decisão dele: clicar em 10/09 lê de 26/08
 a 10/09, e a régua é a de setembro — o mês em que ele clicou. O que isso custa
-está dito na tela, e o que NÃO custa é a ordem: como todos os pilares dividem
-pelo mesmo denominador, o ranking dos cinco é exato de qualquer forma. O
-denominador só escala o número exibido.
+está dito na tela; o que NÃO custa é a ordem, porque todos os pilares dividem
+pelo mesmo denominador e o ranking dos cinco é exato de qualquer forma.
 
-ERA SÓ A LENTE DE IMPRENSA ("considere nesse momento somente dados da lente de
-impressa"), e desde 21/10/2026 são as TRÊS DE CLIPPING, com o impacto medido em
-pontos do SCORE GERAL: "o impacto deve ser em relação à nota geral, e daí por
-isso tem que pegar nesse caso tanto registros que vêm de imprensa, mercado e
-institucional".
+SÃO AS TRÊS LENTES DE CLIPPING, com o impacto medido em pontos do SCORE GERAL:
+"o impacto deve ser em relação à nota geral, e daí por isso tem que pegar nesse
+caso tanto registros que vêm de imprensa, mercado e institucional".
 
-AS DUAS MUDANÇAS SÃO UMA SÓ, e é o que torna o número conferível. Antes o
-impacto era em pontos da NOTA DA IMPRENSA — a tela dizia isso, em resposta a uma
-pergunta que ele já tinha feito ("esse desconto de pontos de cada pilar ou tema é
-em relação à pontuação total? ou só da lente?"). Agora que o número é do índice,
-o universo tem de ser o do índice: medir uma lente e chamar o resultado de
-"impacto no score geral" omitiria as outras duas que também o movem.
+AS DUAS COISAS SÃO UMA SÓ, e é o que torna o número conferível: se o impacto é
+em ponto do índice, o universo tem de ser o do índice — medir uma lente e chamar
+o resultado de "impacto no score geral" omitiria as outras duas que também o
+movem.
 
-A FÓRMULA É A DO PROJETO, por pedido explícito ("esse impacto deve levar em
-consideração a fórmula de pesos que definimos no projeto"): cada lente contribui
-com `pontos na nota dela × fatia dela no índice`, e a fatia sai de
-`pesos_exatos`, que é o mesmo `Σ score×peso / Σ peso` do ISR — com lente sem dado
-saindo do numerador E do denominador. A conta é POR LENTE e somada depois: as
-menções das três num denominador só apagariam que uma matéria do Mercado e uma
-da Imprensa não valem o mesmo no score geral.
+A FÓRMULA É A DO PROJETO, por pedido explícito: cada lente contribui com `pontos
+na nota dela × fatia dela no índice`, e a fatia sai de `pesos_exatos`, que é o
+mesmo `Σ score×peso / Σ peso` do ISR — com lente sem dado saindo do numerador E
+do denominador. A conta é POR LENTE e somada depois: as menções das três num
+denominador só apagariam que uma matéria do Mercado e uma da Imprensa não valem
+o mesmo no score geral.
 
-O QUE ESTE NÚMERO É, COM PRECISÃO — e a ressalva é correção de revisão, porque
-eu havia afirmado mais do que ele entrega. Ele é a contribuição no ÍNDICE
-CONTÍNUO, antes dos arredondamentos: `calcular_indice` arredonda o score de cada
-lente e depois o ISR, então a soma dos impactos NÃO fecha necessariamente com a
-diferença do inteiro que a tela mostra. "Quanto este tema empurrou o índice" é
-verdade; "exatamente quanto o ISR exibido mudou" seria forte demais.
+O QUE ESTE NÚMERO É, COM PRECISÃO: a contribuição no ÍNDICE CONTÍNUO, antes dos
+arredondamentos. `calcular_indice` arredonda o score de cada lente e depois o
+ISR, então a soma dos impactos NÃO fecha necessariamente com a diferença do
+inteiro que a tela mostra. "Quanto este tema empurrou o índice" é verdade;
+"exatamente quanto o ISR exibido mudou" seria forte demais.
 
 E ELE COBRE AS TRÊS LENTES DE CLIPPING, não o índice inteiro: Sociedade e
 Clientes pesam no ISR e ficam fora desta conta, por pedido. Por isso a tela diz
@@ -75,19 +65,16 @@ from app.dominio.tema_do_mes import PONTOS_POR_NS
 #: A lente desta leitura. Ver o cabeçalho do módulo.
 LENTE = "imprensa"
 
-#: AS LENTES QUE O MODAL DOS REGISTROS LISTA — pedido de 20/10/2026: "quero
-#: adicionar os registros de mercado e institucional também".
+#: AS LENTES QUE O MODAL DOS REGISTROS LISTA.
 #:
-#: AS TRÊS DE CLIPPING, e não todas: são as que leem o export da Clipei
-#: (inteiro ou recortado), então falam do mesmo universo de matéria e do mesmo
-#: vocabulário de tema. Sociedade e Clientes leem OUTROS fornecedores (Bites,
-#: Approach), com outro vocabulário — listá-las aqui misturaria universos no
-#: mesmo modal.
+#: AS TRÊS DE CLIPPING, e não todas: são as que leem o export da Clipei (inteiro
+#: ou recortado), então falam do mesmo universo de matéria e do mesmo vocabulário
+#: de tema. Sociedade e Clientes leem OUTROS fornecedores, com outro vocabulário
+#: — listá-las aqui misturaria universos no mesmo modal.
 #:
-#: E O QUADRO MEDE AS MESMAS TRÊS desde 21/10/2026, quando o impacto virou ponto
-#: do score geral — por um dia esta lista mostrou três lentes e o quadro media a
-#: Imprensa, e era por isso que o cabeçalho do modal nomeava os dois números.
-#: Hoje a lista é o universo da conta, e não um superconjunto dela.
+#: E É O MESMO UNIVERSO QUE O QUADRO MEDE. Lista e quadro medindo conjuntos
+#: diferentes de lentes foi o que obrigou o cabeçalho do modal a nomear dois
+#: números.
 LENTES_DOS_REGISTROS = ("imprensa", "mercado", "institucional")
 
 #: Quantos dias a janela cobre, contados para trás a partir do dia clicado.
@@ -317,19 +304,13 @@ def registros(
     o grupo); quem sabe o que é uma janela é este módulo.
 
     O RECORTE DE DATA, GRUPO E CALIBRAÇÃO É O MESMO DO QUADRO — ver
-    `registros_do_grupo_na_janela`, que explica por que a rota da Base das
-    lentes não serve.
+    `registros_do_grupo_na_janela`, que explica por que a rota da Base das lentes
+    não serve.
 
-    AS TRÊS LENTES DE CLIPPING, E NÃO SÓ A IMPRENSA (pedido de 20/10/2026:
-    "quero adicionar os registros de mercado e institucional também"). Cada
-    linha diz de qual lente veio, porque a lente é decidida pelo VEÍCULO que
-    publicou e a mesma matéria publicada por dois veículos cai em duas.
-
-    E O QUADRO VOLTOU A MEDIR O MESMO UNIVERSO (21/10/2026): quando o impacto
-    passou a ser em pontos do score geral, `ler` passou a somar as três lentes.
-    Por um dia esta lista mostrou três lentes e o quadro media uma — foi por isso
-    que o cabeçalho do modal passou a nomear os dois números. Agora os dois
-    contam o mesmo recorte, e a igualdade que eu tinha desmontado volta a valer.
+    AS TRÊS LENTES DE CLIPPING, e cada linha diz de qual lente veio: a lente é
+    decidida pelo VEÍCULO que publicou, e a mesma matéria publicada por dois
+    veículos cai em duas. É o mesmo universo que `ler` soma — lista e quadro
+    medindo conjuntos diferentes é o que faz os dois números não fecharem.
     """
     if dias < 1:
         raise RegraViolada("A janela precisa de pelo menos um dia.")
@@ -364,28 +345,24 @@ def ler(
 ) -> ImpactoNaJanela:
     """Os temas que mais empurraram o ÍNDICE na janela que termina em `ate`.
 
-    EM PONTOS DO SCORE GERAL, E SOMANDO AS TRÊS LENTES DE CLIPPING (pedido de
-    21/10/2026): "o impacto deve ser em relação à nota geral, e daí por isso tem
-    que pegar nesse caso tanto registros que vêm de imprensa, mercado e
-    institucional".
+    EM PONTOS DO SCORE GERAL, E SOMANDO AS TRÊS LENTES DE CLIPPING: "o impacto
+    deve ser em relação à nota geral, e daí por isso tem que pegar nesse caso
+    tanto registros que vêm de imprensa, mercado e institucional".
 
     AS DUAS COISAS SÃO UMA SÓ, e é o que torna este número conferível: se o
     impacto é em ponto do índice, o universo tem de ser o do índice — medir só a
     Imprensa e chamar o resultado de "impacto no score geral" seria omitir as
     outras duas lentes que também o movem.
 
-    A CONTA É POR LENTE E SOMADA DEPOIS, nunca com as menções das três num
-    mesmo denominador: cada lente tem o denominador DELA (o volume ponderado do
-    mês) e o PESO dela no índice. Uma matéria do Mercado e uma da Imprensa não
-    valem o mesmo no score geral, e somá-las antes de converter apagaria
-    exatamente essa diferença.
+    A CONTA É POR LENTE E SOMADA DEPOIS, nunca com as menções das três num mesmo
+    denominador: cada lente tem o denominador DELA (o volume ponderado do mês) e
+    o PESO dela no índice. Uma matéria do Mercado e uma da Imprensa não valem o
+    mesmo no score geral, e somá-las antes de converter apagaria exatamente essa
+    diferença.
 
     O GRUPO É O MESMO NAS TRÊS porque a taxonomia é uma: "Tarifa" é o mesmo tema
-    tenha a matéria vindo de onde vier. É isso que permite somar por grupo.
-
-    E AGORA O QUADRO E O MODAL MEDEM O MESMO UNIVERSO: o modal dos registros já
-    lista as três lentes desde 20/10/2026, e o quadro media uma. A igualdade que
-    eu tinha desmontado volta a existir — ver `registros` e o cabeçalho do modal.
+    tenha a matéria vindo de onde vier. É isso que permite somar por grupo — e é
+    o mesmo universo que o modal dos registros lista.
     """
     if dias < 1:
         raise RegraViolada("A janela precisa de pelo menos um dia.")
@@ -500,10 +477,8 @@ def ler(
         total_negativos=len(abaixo),
         sem_grupo=sem_grupo,
         nivel=nivel,
-        #: O ACUMULADO DAS LENTES, e não `somas.sem_data` — achado de revisão, e
-        #: era defeito meu de verdade: eu somava no laço e devolvia o valor da
-        #: ÚLTIMA lente que não foi pulada. Com uma menção sem data na Imprensa
-        #: e nenhuma no Mercado, a tela dizia zero. O `sem_grupo` logo acima já
-        #: estava certo, o que torna o deslize mais fácil de passar na leitura.
+        #: O ACUMULADO DAS LENTES, e não `somas.sem_data`: somar no laço e
+        #: devolver o valor da ÚLTIMA lente não pulada faz a tela dizer zero
+        #: quando a menção sem data está em outra lente.
         sem_data=sem_data,
     )

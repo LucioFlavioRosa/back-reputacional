@@ -5,38 +5,36 @@ pertence a categoria de público como imprensa e esfera econômica e de negócio
 todos seus registros devem ser movidos para a lente de mercado, atualizando
 tudo".
 
-COMO ERA. A lente Mercado recorta na INGESTÃO: `clipei_investidores` lê o mesmo
-arquivo e a mesma aba que `clipei`, guardando só as linhas cujo veículo está na
-lista (`0066`/`0067`). A `0067` escreveu a consequência em voz alta: "nada muda
-nos meses já gravados — o novo critério vale a partir da PRÓXIMA subida de cada
-mês". Classificar o Valor Econômico hoje não o fazia entrar em agosto; era
-preciso resubir agosto.
+O QUE ISSO CONTRARIA. A lente Mercado recorta na INGESTÃO:
+`clipei_investidores` lê o mesmo arquivo e a mesma aba que `clipei`, guardando
+só as linhas cujo veículo está na lista (`0066`/`0067`). Sem reconciliação,
+classificar o Valor Econômico hoje não o faz entrar em agosto — é preciso
+resubir agosto.
 
 POR QUE DÁ PARA FAZER SEM O ARQUIVO. As duas fontes leem o MESMO arquivo e a
-MESMA aba, e a única diferença entre elas é a lista. Então a fonte de imprensa já
-tem, no banco, todas as linhas que a fonte de mercado deveria ter — e reconciliar
-é copiar de uma para a outra. O arquivo original não é necessário, e isso importa
+MESMA aba, e a única diferença entre elas é a lista. Então a fonte de imprensa
+já tem, no banco, todas as linhas que a de mercado deveria ter — e reconciliar é
+copiar de uma para a outra. O arquivo original não é necessário, e isso importa
 porque ele não fica guardado.
 
-O RECORTE AQUI É O MESMO DA INGESTÃO, e isto é a parte que mais pode dar errado.
+O RECORTE AQUI É O MESMO DA INGESTÃO, e esta é a parte que mais pode dar errado.
 `ler_planilha` decide por `normalizar(veiculo) in nomes_da_lista` — o TEXTO da
 linha, não o `instituicao_id`. Reconciliar por `instituicao_id` seria um segundo
-critério: mais bonito, e livre para divergir do primeiro no dia seguinte. Aqui o
-caminho é: normalizar em PYTHON os textos distintos do espelho, cruzar com a
+critério: mais bonito, e livre para divergir do primeiro no dia seguinte. O
+caminho é normalizar em PYTHON os textos distintos do espelho, cruzar com a
 lista, e filtrar no SQL por igualdade de texto. Nunca `normalizar` em SQL — a
-`0097` reimplementou essa função em SQL e divergiu em 67 de 87 valores.
+`0097` reimplementou essa função em SQL e divergiu na maioria dos valores.
 
-OS DOIS SENTIDOS, por decisão do dono do produto (19/10/2026): classificar faz
-entrar, e DESclassificar faz sair. "A lente é sempre o espelho do cadastro" é uma
-regra só, e explicável; o preço é que a nota de um mês pode CAIR por causa de uma
-correção de cadastro, e é por isso que a prévia existe.
+OS DOIS SENTIDOS, por decisão do dono do produto: classificar faz entrar, e
+DESclassificar faz sair. "A lente é sempre o espelho do cadastro" é uma regra só,
+e explicável; o preço é que a nota de um mês pode CAIR por causa de uma correção
+de cadastro, e é por isso que a prévia existe.
 
 O QUE ESTA RECONCILIAÇÃO NÃO RECOMPÕE: `mencao_nao_classificada`, a contagem de
 "chegou e ninguém classificou". Ela conta linhas que tinham data e não tinham
 sentimento — linhas que NUNCA viraram menção, e que portanto não estão no banco
-para serem copiadas. Ela fica com o valor da última subida. Afeta só o aviso
-"houve volume, ninguém classificou"; não afeta a nota, porque a nota sai de
-`score_mes_fonte`.
+para serem copiadas. Fica com o valor da última subida, e afeta só o aviso
+"houve volume, ninguém classificou": a nota sai de `score_mes_fonte`.
 """
 
 from __future__ import annotations
@@ -571,40 +569,35 @@ def aplicar(sessao: Session, fonte: ScoreFonte) -> Reconciliacao:
     nem todas as menções têm (`id_fonte` só é mapeado desde a `0063`), e um
     casamento errado duplicaria menção na nota.
 
-    O AGREGADO SAI DE `somar`, a MESMA função que a ingestão usa. Ela precisa de
-    mês, sentimento, tier, engajamento e cargo, e os cinco estão em `mencao` —
-    então não há uma segunda definição de "o que é um mês no banco". Reescrevê-la
-    em SQL seria a segunda régua, livre para divergir da primeira.
+    O AGREGADO SAI DE `somar`, a MESMA função que a ingestão usa: não há uma
+    segunda definição de "o que é um mês no banco". Reescrevê-la em SQL seria a
+    segunda régua, livre para divergir da primeira.
 
-    A RESPOSTA DESCREVE O ESTADO DEPOIS, e isto é conserto de achado ALTO de
-    revisão. A primeira versão devolvia a medida de ANTES, com `mudou=True` nos
-    meses que ela acabara de reescrever: a tela, que pergunta "ainda há desvio?",
-    continuava mostrando o aviso e o botão depois de aplicar com sucesso. O que
-    FOI feito está em `entram`/`saem`, que vêm da medida de antes — é a única
-    coisa que só a medida de antes sabe.
+    A RESPOSTA DESCREVE O ESTADO DEPOIS. Devolvendo a medida de ANTES, a tela —
+    que pergunta "ainda há desvio?" — continuaria mostrando o aviso e o botão
+    depois de aplicar com sucesso. O que FOI feito está em `entram`/`saem`, que
+    vêm da medida de antes, e é a única coisa que só ela sabe.
 
     UM POR VEZ, POR TRAVA DE BANCO. Duas aplicações simultâneas (duas abas, ou um
-    clique que escape do botão desabilitado) apagavam e inseriam o mesmo mês ao
-    mesmo tempo, e a segunda morria com `IntegrityError` na chave primária de
-    `score_mes_fonte` — 500 na cara de quem clicou. O banco final ficava certo,
-    porque a perdedora desfazia tudo; o erro é que a segunda pessoa via um erro
-    para uma operação que simplesmente já tinha sido feita. Com a trava, ela
-    espera, remede, e não acha mês para mudar.
+    clique que escape do botão desabilitado) apagam e inserem o mesmo mês ao
+    mesmo tempo, e a segunda morre com `IntegrityError` na chave primária de
+    `score_mes_fonte` — 500 na cara de quem clicou, para uma operação que já
+    tinha sido feita. Com a trava, ela espera, remede, e não acha mês para mudar.
     """
-    #: A TRAVA É DO ARQUIVO, e não da fonte — correção de achado de revisão.
+    #: A TRAVA É DO ARQUIVO, e não da fonte.
     #:
-    #: Ela era pelo `fonte.id` da recortada, e isso bastava enquanto o espelho
-    #: era só origem: duas recortadas podiam aplicar ao mesmo tempo sem se
-    #: tocar. Agora as duas ESCREVEM no mesmo espelho (apagam o que foi para o
-    #: recorte delas e devolvem o que saiu), e o `score_mes_fonte` dele é
-    #: reescrito pelas duas — rodar juntas mediria estados obsoletos e poderia
-    #: duplicar na sobreposição. A chave é o id do ESPELHO, que é a identidade
-    #: do arquivo: as reconciliações de arquivos diferentes continuam não se
-    #: esperando.
+    #: Pelo `fonte.id` da recortada, duas recortadas do mesmo arquivo aplicariam
+    #: ao mesmo tempo sem se tocar — e as duas ESCREVEM no mesmo espelho (apagam
+    #: o que foi para o recorte delas e devolvem o que saiu), cujo
+    #: `score_mes_fonte` é reescrito pelas duas: rodar juntas mediria estados
+    #: obsoletos e poderia duplicar na sobreposição. A chave é o id do ESPELHO,
+    #: que é a identidade do arquivo; reconciliações de arquivos diferentes
+    #: continuam não se esperando.
     #:
     #: `xact` porque ela morre com a transação, e nada fica preso se o processo
     #: cair. O primeiro argumento é o "namespace", para não colidir com outra
     #: trava desta casa.
+
     #: A MESMA FUNÇÃO QUE A INGESTÃO USA, e é o ponto: as duas escrevem os meses
     #: deste arquivo e precisam se esperar. Duas travas com a mesma intenção em
     #: lugares diferentes é como elas divergem — e divergir aqui significa
