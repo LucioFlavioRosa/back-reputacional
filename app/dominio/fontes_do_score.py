@@ -13,14 +13,26 @@ clara no código, pois isso pode mudar no futuro, então preciso que o código
 seja bem estruturado para que mudanças não gerem muito retrabalho e códigos
 mortos que poluem."*
 
-A regra está escrita UMA vez, aqui. Quem precisa dela pergunta; ninguém a
-reimplementa. Três lugares perguntam hoje:
+A regra está escrita UMA vez, aqui, e quem precisa dela pergunta. Dois lugares
+perguntam hoje:
 
-  * `repositorio_riscos.FiltroDeRisco.tem_crm` — se as agendas contam como
-    incidente na matriz de risco;
-  * `api.score.listar_fontes` — que fontes a aba Calibração mostra;
-  * a migration `0114`, que desliga a fonte interna da lente no cadastro, para
-    que o isolamento não dependa só de código.
+  * `repositorio_riscos.agendas_de_incidente` — se as agendas contam como
+    incidente na matriz de risco (é o gargalo: os seis caminhos das agendas
+    passam por ele);
+  * `api.score.listar_fontes` — que fontes a aba Calibração mostra.
+
+O QUE ESTE MÓDULO *NÃO* É, e eu escrevi o contrário aqui antes — achado da
+revisão do Codex. Ele NÃO é a única guarda do sistema. Os caminhos do ÍNDICE
+(`catalogo_das_lentes`, `_somas_do_crm`, `lente_e_interna`, a série da lente)
+decidem pelo CADASTRO, com a sua própria forma da pergunta
+(`interna and ativo`), e não consultam esta política. Centralizar aqueles seis
+lugares seria mexer no cálculo do índice, e o dono do produto foi explícito:
+*"não deve mudar nenhum tipo de fórmula de cálculo"*. Fica registrado como
+pendência, não feito de carona.
+
+QUEM GARANTE O ÍNDICE, ENTÃO, é o cadastro: a `0112` aposentou a fonte
+(`ativo = false`) e a `0114` a desligou de qualquer lente. É estrutural, e é por
+isso que ela importa tanto quanto esta constante.
 
 E NADA FOI APAGADO, que é a outra metade do pedido. A máquina que lê agendas
 continua inteira e continua correta — ela é dirigida por DADO
@@ -54,15 +66,24 @@ from __future__ import annotations
 FONTE_INTERNA_ALIMENTA_OS_KPIS = False
 
 
-def alimenta_os_kpis(*, interna: bool, ativo: bool) -> bool:
-    """Esta fonte entra na conta dos KPIs Reputacionais?
+def pode_alimentar_os_kpis(*, interna: bool) -> bool:
+    """A POLÍTICA, sozinha: uma fonte desta natureza pode entrar nos KPIs?
 
-    `ativo` é condição em qualquer cenário: fonte aposentada não conta, e isso
-    não é a política deste módulo — é o significado da coluna, que a `0112`
-    documenta.
+    Para quem NÃO tem o cadastro em mão — um filtro que já sabe que está
+    falando do CRM, por exemplo. Responde só o que a política decide, e não
+    finge saber se aquela fonte está ativa.
+    """
+    return FONTE_INTERNA_ALIMENTA_OS_KPIS or not interna
+
+
+def alimenta_os_kpis(*, interna: bool, ativo: bool) -> bool:
+    """Esta fonte, do jeito que ela está no cadastro, entra nos KPIs?
+
+    A POLÍTICA E O CADASTRO, juntos. `ativo` não é regra deste módulo — é o
+    significado da coluna, que a `0112` documenta: fonte aposentada não conta.
 
     POR PALAVRA-CHAVE (`*`), porque os dois parâmetros são booleanos: na ordem
-    posicional, trocá-los compila, passa a suíte de tipos e inverte a regra em
-    silêncio.
+    posicional, trocá-los compila, passa a checagem de tipos e inverte a regra
+    em silêncio.
     """
-    return ativo and (FONTE_INTERNA_ALIMENTA_OS_KPIS or not interna)
+    return ativo and pode_alimentar_os_kpis(interna=interna)

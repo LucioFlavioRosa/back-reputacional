@@ -48,7 +48,7 @@ from app.banco.tabelas_catalogo import (
 )
 from app.banco.tabelas_interacoes import InteracaoRegistro, InteracaoTema
 from app.banco.tabelas_score import Lente, Mencao, ScoreFonte
-from app.dominio.fontes_do_score import alimenta_os_kpis
+from app.dominio.fontes_do_score import alimenta_os_kpis, pode_alimentar_os_kpis
 from app.dominio.identidade import Escopo
 from app.dominio.riscos import (
     CARGOS_DA_PROPRIA_COMPANHIA,
@@ -187,12 +187,12 @@ class FiltroDeRisco:
         tela: quem escolhe "Imprensa" receberia as reuniões do CRM no meio das
         notícias, e o total não corresponderia a nada que se possa conferir.
         """
-        #: INTERNA, porque é isso que o CRM é — ver `FONTE_DO_CRM` abaixo e a
-        #: coluna `score_fonte.interna`. `ativo=True` aqui NÃO afirma que a
-        #: fonte está ativa: este método não tem sessão, e a aposentadoria dela
-        #: já é respeitada onde se lê o cadastro. O que se pergunta aqui é só a
-        #: política.
-        if not alimenta_os_kpis(interna=True, ativo=True):
+        #: SÓ A POLÍTICA SE PERGUNTA AQUI, e por isso a função é a de uma
+        #: pergunta só: este método não tem sessão, e mentir `ativo=True` para
+        #: a outra — como eu havia escrito, achado da revisão do Codex — era
+        #: afirmar sobre o cadastro o que não se sabe daqui. Quem confere o
+        #: cadastro é `agendas_de_incidente`, que tem a sessão.
+        if not pode_alimentar_os_kpis(interna=True):
             return False
         if self.fontes and FONTE_DO_CRM not in self.fontes:
             return False
@@ -334,9 +334,21 @@ def mencoes_de_incidente(filtro: FiltroDeRisco, riscos: list[int] | None) -> Sel
 
 
 def agendas_de_incidente(
-    filtro: FiltroDeRisco, riscos: list[int] | None, escopo: Escopo
+    sessao: Session, filtro: FiltroDeRisco, riscos: list[int] | None, escopo: Escopo
 ) -> Select | None:
     """As agendas do CRM que contam como incidente, ou `None` se o CRM está fora.
+
+    A SESSÃO ENTROU AQUI por achado da revisão do Codex, e fecha um defeito que
+    eu abri: `tem_crm` só sabe da política, e a fonte precisa estar ATIVA e ter
+    LENTE no cadastro para a agenda poder ser contada. Sem a conferência, ligar
+    a política sem reativar a fonte fazia a agenda entrar aposentada — e, sem
+    lente, montava uma linha de incidente com `lente=None` contra um contrato
+    que declara `lente: str`, ou seja, 500 na tela.
+
+    É AQUI E EM NENHUM OUTRO LUGAR porque esta função é o gargalo: os seis
+    caminhos das agendas (série, matriz, recorrência, lista, por tema, total por
+    severidade) todos passam por ela. Uma guarda que se pode esquecer de chamar
+    é guarda que não existe — e esta não se pode esquecer.
 
     `interacao` NÃO TEM SENTIMENTO: tem `clima`, que é o Termômetro da tela do
     CRM. Clima negativo é o equivalente da menção negativa, e é a única leitura
@@ -350,6 +362,16 @@ def agendas_de_incidente(
     pode esquecer de passar é guarda que não existe.
     """
     if not filtro.tem_crm:
+        return None
+    #: E O CADASTRO TEM DE CONCORDAR: fonte interna ativa E com lente. Sem
+    #: lente, a agenda não tem a que pertencer, e a linha do incidente exige
+    #: uma (`lente: str`). Ver a nota do cabeçalho.
+    interna = sessao.scalar(
+        select(ScoreFonte).where(ScoreFonte.codigo == FONTE_DO_CRM)
+    )
+    if interna is None or not alimenta_os_kpis(
+        interna=interna.interna, ativo=interna.ativo
+    ) or interna.lente_id is None:
         return None
     #: DIMENSÃO DE MENÇÃO EXCLUI A AGENDA. Quem filtra por tier ou por cargo está
     #: perguntando sobre imprensa ou sobre redes; a agenda não tem esses campos,
@@ -653,7 +675,7 @@ def serie_do_indice(
         fontes_do_mes.setdefault(mes.strftime("%Y-%m"), set()).update(fontes or ())
 
     #: AS AGENDAS, pela mesma regra.
-    das_agendas = agendas_de_incidente(inteiro, riscos, escopo)
+    das_agendas = agendas_de_incidente(sessao, inteiro, riscos, escopo)
     if das_agendas is not None:
         por_agenda = (
             das_agendas.with_only_columns(
@@ -752,7 +774,7 @@ def matriz_de_risco(
     ):
         por_risco.setdefault(risco_id, {})["mencoes"] = quantas
 
-    das_agendas = agendas_de_incidente(sem_recorte_de_risco, None, escopo)
+    das_agendas = agendas_de_incidente(sessao, sem_recorte_de_risco, None, escopo)
     if das_agendas is not None:
         agendas = das_agendas.subquery()
         for risco_id, quantas in sessao.execute(
@@ -850,7 +872,7 @@ def _recorrencia_por_tema(
         )
     ]
 
-    das_agendas = agendas_de_incidente(inteiro, None, escopo)
+    das_agendas = agendas_de_incidente(sessao, inteiro, None, escopo)
     if das_agendas is not None:
         agendas = das_agendas.subquery()
         partes.append(
@@ -976,7 +998,7 @@ def incidentes_de_risco(
             )
         )
 
-    das_agendas = agendas_de_incidente(filtro, riscos, escopo)
+    das_agendas = agendas_de_incidente(sessao, filtro, riscos, escopo)
     if das_agendas is not None:
         #: O NOME DA FONTE E DA LENTE DO CRM, do cadastro: ele é uma `score_fonte`
         #: como as outras (`interna = true`), e escrever "crm" na tela seria o
@@ -1355,7 +1377,7 @@ def _incidentes_por_tema(
     ):
         contagem[tema] = contagem.get(tema, 0) + quantos
 
-    das_agendas = agendas_de_incidente(filtro, riscos, escopo)
+    das_agendas = agendas_de_incidente(sessao, filtro, riscos, escopo)
     if das_agendas is not None:
         por_agenda = (
             das_agendas.with_only_columns(
@@ -1532,7 +1554,7 @@ def total_por_severidade(
         )
     )
 
-    das_agendas = agendas_de_incidente(filtro, riscos, escopo)
+    das_agendas = agendas_de_incidente(sessao, filtro, riscos, escopo)
     if das_agendas is not None:
         por_agenda = (
             das_agendas.with_only_columns(

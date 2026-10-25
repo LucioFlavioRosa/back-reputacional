@@ -23,11 +23,14 @@
 --: um `null` ganha aqui.
 --:
 --: `lente_id` VIRA OPCIONAL, e o significado é esse: "fonte que não alimenta
---: lente nenhuma". Todas as leituras do código comparam `lente_id` por
---: igualdade (`where ScoreFonte.lente_id == lente_id`), e `null` não casa com
---: nada — então o isolamento passa a ser ESTRUTURAL, e não uma convenção que
---: se pode esquecer. `lentes_das_fontes` faz `join` com `lente` e a linha
---: simplesmente sai do mapa.
+--: lente nenhuma". As leituras do código alcançam a coluna de três formas, e
+--: `null` fica de fora das três: igualdade (`where ScoreFonte.lente_id ==
+--: lente_id`), `in_(...)` e `join` com `lente`. Então o isolamento passa a ser
+--: ESTRUTURAL, e não uma convenção que se pode esquecer.
+--:
+--: (ESTA NOTA DIZIA "todas as leituras comparam por igualdade", e era
+--: imprecisa — achado da revisão do Codex. O comportamento é o mesmo nas três,
+--: mas quem for conferir precisa saber que há `in_` e `join` também.)
 --:
 --: E É ISSO QUE FECHA A PORTA que uma revisão abriu: enquanto a relação
 --: existia, religar a fonte (`ativo = true`, um `update` de uma coluna) devolvia
@@ -54,6 +57,18 @@ begin;
 
 alter table score_fonte alter column lente_id drop not null;
 
+--: DE QUE LENTES AS FONTES INTERNAS ERAM, ANTES do `update` — é o escopo da
+--: segunda conferência lá embaixo. Guardar antes é o que permite conferir só o
+--: que ESTA migration mexeu.
+--:
+--: NUMA SEGUNDA EXECUÇÃO ela vem vazia, e isso é o correto: não há mais nada a
+--: desligar, então não há nada a conferir. É assim que a conferência fica
+--: idempotente junto com o `update`.
+create temporary table fontes_internas_antes on commit drop as
+select distinct lente_id
+  from score_fonte
+ where interna and lente_id is not null;
+
 update score_fonte set lente_id = null where interna;
 
 do $$
@@ -74,15 +89,25 @@ begin
             internas_com_lente;
     end if;
 
-    --: E NENHUMA LENTE PODE FICAR SEM FONTE. O `update` acima é por `interna`,
-    --: e não pelo código `crm`, justamente para não precisar de lista — mas
-    --: isso significa que uma lente cuja ÚNICA fonte fosse interna ficaria sem
-    --: nada de onde se medir. Hoje não é o caso (a Institucional tem a
-    --: `clipei_institucional` desde a `0111`), e é melhor abortar do que
-    --: descobrir pela tela vazia.
+    --: E NENHUMA LENTE PODE FICAR SEM FONTE *POR CAUSA DESTA MIGRATION*. O
+    --: `update` acima é por `interna`, e não pelo código `crm`, justamente para
+    --: não precisar de lista — mas isso significa que uma lente cuja ÚNICA
+    --: fonte fosse interna ficaria sem nada de onde se medir. Hoje não é o caso
+    --: (a Institucional tem a `clipei_institucional` desde a `0111`), e é
+    --: melhor abortar do que descobrir pela tela vazia.
+    --:
+    --: SÓ AS LENTES QUE ESTA MIGRATION TOCOU, e é correção da revisão do Codex:
+    --: a conferência era sobre TODAS as lentes, então um estado antigo e
+    --: inválido — uma lente cadastrada sem fonte nenhuma, por qualquer outro
+    --: motivo — abortaria esta migration reclamando de algo que ela não causou.
+    --: É o mesmo erro que a `0112` já tinha cometido e corrigido na revisão
+    --: dela, com estas palavras: "eu contava as fontes internas do sistema
+    --: INTEIRO, então o dia em que alguém criasse uma fonte interna legítima em
+    --: outra lente esta migration abortaria".
     select string_agg(l.codigo, ', ' order by l.codigo) into lentes_sem_fonte
       from lente l
-     where not exists (select 1 from score_fonte f where f.lente_id = l.id);
+     where l.id in (select lente_id from fontes_internas_antes)
+       and not exists (select 1 from score_fonte f where f.lente_id = l.id);
 
     if lentes_sem_fonte is not null then
         raise exception

@@ -201,7 +201,7 @@ def test_a_mencao_POSITIVA_nao_e_incidente(sessao, bites, com_risco):
     assert quantos_agora == quantos_antes
 
 
-def test_a_AGENDA_NAO_conta_como_incidente_por_padrao(sessao, com_risco):
+def test_a_AGENDA_NAO_conta_como_incidente_por_padrao(sessao, bites, com_risco):
     """A REGRA DE HOJE, e é ela que a tela mostra.
 
     Dono do produto, 24/10/2026: "os dados de agendas do CRM devem ficar somente
@@ -214,21 +214,29 @@ def test_a_AGENDA_NAO_conta_como_incidente_por_padrao(sessao, com_risco):
 
     A AGENDA É SEMEADA MESMO ASSIM. Sem ela, "não contou" poderia ser "não
     havia", e o teste passaria com a política ligada.
+
+    E UMA MENÇÃO VAI JUNTO, por achado da revisão do Codex. A primeira versão
+    afirmava `(agora.incidentes if agora else 0) == quantos_antes`, e sem
+    menção o mês não produz linha nenhuma: o teste passava com `agora is None`,
+    o que também passaria se a série inteira tivesse quebrado. Com a menção, o
+    mês EXISTE, tem exatamente 1 incidente, e a afirmação é sobre a agenda ter
+    sido excluída — não sobre o mês ter desaparecido.
     """
     tema, _risco = com_risco
+    _mencao(sessao, bites, tema, "neg", dia=4)
     antes = _de_agosto(serie_do_indice(sessao, FiltroDeRisco(), TUDO)[0])
-    quantos_antes = antes.incidentes if antes else 0
+    assert antes is not None, "a menção semeada tinha de produzir a linha de agosto"
+    quantos_antes = antes.incidentes
 
     _agenda(sessao, tema, "tenso")
 
     agora = _de_agosto(serie_do_indice(sessao, FiltroDeRisco(), TUDO)[0])
-    #: A SÉRIE PODE NEM TER O MÊS, e foi o que aconteceu ao escrever este teste:
-    #: sem incidente nenhum, agosto não produz linha — e "não produziu linha" é
-    #: a forma mais forte de "a agenda não contou", não um caso a contornar.
-    assert (agora.incidentes if agora else 0) == quantos_antes
+    assert agora is not None
+    assert agora.incidentes == quantos_antes
     #: E O CRM NÃO APARECE ENTRE AS FONTES DO MÊS: a tela não nomeia uma
-    #: procedência que não trouxe nada.
-    assert "crm" not in (agora.fontes if agora else ())
+    #: procedência que não trouxe nada. A Bites aparece, porque trouxe.
+    assert "crm" not in agora.fontes
+    assert "bites" in agora.fontes
 
 
 def test_a_FONTE_INTERNA_nao_e_de_lente_nenhuma(sessao):
