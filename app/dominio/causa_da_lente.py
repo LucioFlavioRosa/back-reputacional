@@ -107,7 +107,7 @@ class Presenca:
 #:
 #: A INSTITUCIONAL ESTÁ AQUI desde 21/10/2026, e esta nota dizia o contrário —
 #: "a fonte dela é agenda, não menção ingerida; ela tem ZERO menções". Era
-#: verdade antes da `0107`/`0108`, que a fizeram clipping como as outras duas.
+#: verdade antes da `0111`/`0112`, que a fizeram clipping como as outras duas.
 #:
 #: O MERCADO ESTAVA JUNTO DELA, E ERA ERRO MEU DE PREMISSA. O comentário dizia
 #: "a fonte é estudo e agenda" para os dois. Para o Mercado isso é falso: ele é
@@ -184,8 +184,9 @@ DIMENSOES_POR_LENTE: dict[str, tuple[Dimensao, ...]] = {
     #: A INSTITUCIONAL ENTRA PELA MESMA PORTA QUE O MERCADO ENTROU, e pela mesma
     #: razão: a premissa que a mantinha fora morreu. A nota acima dizia "a fonte
     #: dela é agenda, não menção ingerida — ela tem ZERO menções"; desde a
-    #: `0107` ela é o clipping da Clipei recortado pela subcategoria
-    #: "Institucional", e desde a `0108` é SÓ isso. As dimensões são as do
+    #: `0111` ela é o clipping da Clipei recortado pela subcategoria
+    #: "Institucional" (que a `0107` criou no cadastro), e desde a `0112` é SÓ
+    #: isso — foi ela que tirou o CRM do índice. As dimensões são as do
     #: Mercado porque o export é o mesmo, recortado de outro jeito — Jornalista
     #: incluso, com a flag, pela razão escrita no Mercado acima.
     "institucional": (

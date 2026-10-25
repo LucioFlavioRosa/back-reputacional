@@ -294,7 +294,7 @@ def test_a_institucional_traz_materia_COMO_A_IMPRENSA(sessao, institucional_de_j
 
     ERA O CONTRÁRIO ATÉ AQUI, e o teste de antes dizia por quê: "a lente
     Institucional lê o CRM, não `mencao` — não há matéria lá". Isso morreu na
-    `0107`/`0108`: ela passou a espelhar a Clipei recortada pela subcategoria
+    `0111`/`0112`: ela passou a espelhar a Clipei recortada pela subcategoria
     "Institucional" do Cadastro de Instituições, e a fonte `crm` dela foi
     aposentada com `ativo = false`.
 
@@ -312,6 +312,104 @@ def test_a_institucional_traz_materia_COMO_A_IMPRENSA(sessao, institucional_de_j
     #: Imprensa (ver `test_materias_recentes_respeita_o_mesmo_filtro_da_tela`).
     assert {linha["tier"] for linha in bloco.dados} == {"Tier 1", "Tier 2", "Tier 3"}
     assert not bloco.ficha.lacunas
+
+
+@pytest.mark.parametrize(
+    ("codigo", "fonte"),
+    [
+        ("imprensa", "clipei"),
+        ("mercado", "clipei_investidores"),
+        ("institucional", "clipei_institucional"),
+    ],
+)
+def test_as_opcoes_do_filtro_escondem_o_autor_de_quem_nao_ve_o_diretorio(sessao, codigo, fonte):
+    """O nome do jornalista não sai nas opções para quem não vê o diretório.
+
+    ACHADO DA REVISÃO DO CODEX. A Base das Lentes fechava os três pontos dela
+    (listagem, filtro e opções) pela declaração `nomeia_o_diretorio`, e ESTA
+    rota entregava a lista de autores a qualquer um com `acessa_score`.
+
+    NÃO HAVIA VAZAMENTO DE FATO: a coluna `autor` está vazia nas cinco lentes.
+    Por isso este teste SEMEIA um autor — sem isso ele passaria com a rota
+    aberta, provando só que a coluna está vazia. É o teste que passa pelo
+    motivo errado se escrito sem cuidado.
+
+    AS TRÊS LENTES, porque as três declaram a dimensão desde 24/10/2026.
+    """
+    da_lente = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == fonte)).one()
+    sessao.add(
+        Mencao(
+            fonte_id=da_lente.id, mes=MES, sentimento="pos",
+            tier="muito_relevante", veiculo="Valor Econômico", autor="Joana Repórter",
+        )
+    )
+    sessao.flush()
+
+    def opcoes(ve_diretorio: bool):
+        return obter_opcoes_de_filtro(
+            sessao=sessao,
+            usuario=_QuemOlha(ve_diretorio=ve_diretorio),
+            codigo=codigo,
+            mes="2026-06",
+        )
+
+    assert opcoes(ve_diretorio=True).autores == ["Joana Repórter"]
+    assert opcoes(ve_diretorio=False).autores == []
+    #: E O RESTO CONTINUA CHEGANDO: esconder o autor não pode esvaziar o
+    #: seletor inteiro — seria um "conserto" que quebra a tela para todos.
+    assert opcoes(ve_diretorio=False).veiculos == ["Valor Econômico"]
+
+
+def test_a_sociedade_NAO_esconde_o_autor_porque_ele_nao_e_do_cadastro(sessao):
+    """A contraprova da regra: a máscara segue a DECLARAÇÃO, não a coluna.
+
+    A Sociedade tem `autor`, e ele NÃO vem do cadastro — é o perfil que a
+    Approach manda dentro da própria linha da planilha ("deolhoemesteio"). A
+    dimensão dela não declara `nomeia_o_diretorio`, e por isso o valor continua
+    aberto. Sem este teste, esconder autor em TODA lente passaria verde.
+    """
+    bites = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "bites")).one()
+    sessao.add(
+        Mencao(
+            fonte_id=bites.id, mes=MES, sentimento="neu",
+            veiculo="Instagram", autor="deolhoemesteio",
+        )
+    )
+    sessao.flush()
+
+    saida = obter_opcoes_de_filtro(
+        sessao=sessao, usuario=_QuemOlha(ve_diretorio=False), codigo="sociedade", mes="2026-06"
+    )
+
+    assert saida.autores == ["deolhoemesteio"]
+
+
+def test_religar_o_crm_devolve_a_institucional_ao_ramo_interno(sessao, institucional_de_junho):
+    """A FONTE MANDA, E NÃO O CÓDIGO DA LENTE — achado da revisão do Codex.
+
+    A Institucional entrou em `LENTES_COM_VEICULO_E_TIER`, e isso tornou a ORDEM
+    das condições de `materias_recentes` significativa: o teste do código vinha
+    antes do da fonte, então uma Institucional com a fonte `crm` religada ficaria
+    INTERNA — série e painéis lendo o CRM — e esta lista seguiria trazendo
+    matéria da Clipei. Dois universos lado a lado, cada número certo no seu, e a
+    tela sem nada dizendo que são diferentes.
+
+    O CENÁRIO NÃO É HIPOTÉTICO: religar é um `UPDATE` de uma coluna, e nenhuma
+    migration impede. Aqui ele é exercitado de verdade — com as três matérias do
+    fixture no banco, para que "veio vazia" só possa ser consequência do ramo
+    certo, e não de não haver menção.
+    """
+    crm = sessao.scalars(select(ScoreFonte).where(ScoreFonte.codigo == "crm")).one()
+    crm.ativo = True
+    sessao.flush()
+
+    bloco = _itens(sessao, codigo="institucional")
+
+    assert bloco.dados == []
+    assert "lê o CRM" in bloco.ficha.lacunas[0]
+    #: E A LACUNA DIZ O NOME DA LENTE, não "A lente Institucional" fixo: o ramo
+    #: é genérico, e qualquer lente que vire interna passa por ele.
+    assert "Institucional" in bloco.ficha.lacunas[0]
 
 
 def test_a_lente_QUE_NAO_E_CLIPPING_segue_sem_lista(sessao):
@@ -666,7 +764,7 @@ def test_as_tres_de_clipping_tem_O_MESMO_onde_esta_a_causa(sessao, codigo, fonte
     estudo e agenda, não menção ingerida. Rodar os cortes devolveria zero, e
     zero numa tela se lê como 'não houve'". Era falso para o Mercado desde
     sempre (327 menções, quatro dimensões 100% preenchidas) e deixou de valer
-    para a Institucional na `0107`/`0108`, que a fizeram clipping.
+    para a Institucional na `0111`/`0112`, que a fizeram clipping.
 
     A ABA DO JORNALISTA VEM VAZIA NAS TRÊS, e isso é verdade sobre o dado, não
     sobre a lente: a Imprensa tem 25.457 menções e ZERO autores. A aba dela

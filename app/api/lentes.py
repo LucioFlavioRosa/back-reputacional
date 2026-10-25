@@ -64,6 +64,7 @@ from app.casos_de_uso.leitura_das_lentes import (
     trilha_do_recorte,
 )
 from app.casos_de_uso.ler_sinais_da_lente import ler_sinais, regua_dos_sinais
+from app.dominio.causa_da_lente import nomeia_o_diretorio as a_lente_nomeia_o_diretorio
 from app.dominio.erros import NaoEncontrado
 from app.dominio.lentes import (
     Conceito,
@@ -565,12 +566,36 @@ def obter_opcoes_de_filtro(
 
     NÃO É DICIONÁRIO: tier é fechado, mas veículo/atributo/tema são texto
     livre de cada fornecedor — ver `repositorio_lentes.opcoes_de_filtro`.
+
+    O AUTOR SÓ PARA QUEM VÊ O DIRETÓRIO, pela MESMA declaração que a Base das
+    Lentes consulta (`nomeia_o_diretorio`): o nome do jornalista vem do
+    cadastro, e duas cópias de uma regra de acesso divergem na primeira
+    mudança.
+
+    ISTO FALTAVA — achado da revisão do Codex, em 24/10/2026. A Base fechava os
+    três pontos dela e esta rota entregava a lista de autores a qualquer um com
+    `acessa_score`. Não havia vazamento DE FATO, porque a coluna `autor` está
+    vazia nas cinco lentes, mas uma rota não pode depender disso: encher aquela
+    coluna é uma carga de planilha, não uma mudança de código. A mudança que
+    trouxe isto à tona foi dar a dimensão Jornalista também ao Mercado e à
+    Institucional — o buraco já estava aberto para a Imprensa.
     """
     alvo = mes_de(mes)
     lente = repositorio_lentes.lente_por_codigo(sessao, codigo)
     if lente is None:
         raise NaoEncontrado("Lente não encontrada.")
-    return OpcoesDeFiltroSaida(**repositorio_lentes.opcoes_de_filtro(sessao, lente.id, alvo))
+    opcoes = repositorio_lentes.opcoes_de_filtro(sessao, lente.id, alvo)
+    #: O APELIDO NO IMPORT É DE PROPÓSITO: existem DUAS funções chamadas
+    #: `nomeia_o_diretorio`, e elas respondem perguntas diferentes. A de
+    #: `leitura_das_lentes` recebe `(lente_e_interna, bloco)` e pergunta se
+    #: AQUELE PAINEL nomeia o diretório; esta, de `causa_da_lente`, recebe o
+    #: código e pergunta se A LENTE o nomeia. Importar a segunda com o nome nu
+    #: sombreia a primeira — e o erro não aparece na linha do import, aparece
+    #: como `TypeError: takes 1 positional argument but 2 were given` trezentas
+    #: linhas acima, no dossiê. Foi o que eu fiz, e a suíte pegou.
+    if a_lente_nomeia_o_diretorio(lente.codigo) and not usuario.ve_diretorio:
+        opcoes["autores"] = []
+    return OpcoesDeFiltroSaida(**opcoes)
 
 
 @rotas.get("/{codigo}/explorador")
