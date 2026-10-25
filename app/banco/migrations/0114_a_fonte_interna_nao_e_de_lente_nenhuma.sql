@@ -1,5 +1,5 @@
---: A fonte interna deixa de ser de lente nenhuma: as agendas do CRM ficam no
---: CRM. A `0112` já a havia aposentado (`ativo = false`), mas o vínculo com a
+--: A fonte interna deixa de estar vinculada a uma lente: as agendas do CRM
+--: ficam no CRM. A `0112` já a havia aposentado (`ativo = false`), mas o vínculo com a
 --: lente sobrevivia no cadastro, e dele saíam duas coisas visíveis: a linha
 --: "CRM dos Stakeholders · Institucional" na aba Calibração, e as agendas
 --: atribuídas àquela lente no Risk Tracking.
@@ -16,7 +16,7 @@
 --: Tracking, "incidentes por mês" cai nos meses que tinham reunião de clima
 --: tenso.
 --:
---: Desfazer, os dois passos juntos:
+--: Para reverter o comportamento, faça os dois passos juntos:
 --:
 --:   update score_fonte set lente_id = (select id from lente where codigo =
 --:     'institucional'), ativo = true where codigo = 'crm';

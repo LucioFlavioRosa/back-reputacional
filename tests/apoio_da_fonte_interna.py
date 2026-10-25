@@ -10,7 +10,7 @@ interna sai das interações, que a agenda de clima tenso é incidente. Apagá-l
 junto com a decisão de produto jogaria fora garantias — a de privacidade,
 principalmente — e deixaria o caminho da fonte interna sem cobertura nenhuma.
 
-Religar são três pontas, e mudar uma e esquecer as outras produz sistema
+Religar exige três ajustes, e fazer um e esquecer os outros produz sistema
 incoerente:
 
   * a POLÍTICA (`dominio/fontes_do_score`) — é o que faz a matriz de risco

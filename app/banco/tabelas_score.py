@@ -63,7 +63,7 @@ class ScoreFonte(Tabela):
     codigo: Mapped[str] = mapped_column(Text, unique=True)
     nome: Mapped[str] = mapped_column(Text)
     fornecedor: Mapped[str] = mapped_column(Text)
-    #: Nula é "fonte que não alimenta lente nenhuma" (`0114`): o caso da
+    #: Nulo é "fonte que não alimenta lente nenhuma" (`0114`): o caso da
     #: fonte interna. As leituras alcançam esta coluna por igualdade, `in_` e
     #: `join`, e nulo fica de fora das três — o isolamento é estrutural.
     #: Ver `app/dominio/fontes_do_score.py`.

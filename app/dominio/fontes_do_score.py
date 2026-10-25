@@ -15,11 +15,14 @@ Nada foi apagado. A máquina que lê agendas é dirigida por dado
 (`score_fonte.interna`), então com a resposta em `False` ela não é alcançada, e
 com `True` volta a ser.
 
-Para somar o CRM de novo, os dois passos juntos:
+Para somar o CRM de novo, faça os dois passos juntos:
 
   1. `FONTE_INTERNA_ALIMENTA_OS_KPIS = True`, aqui;
   2. `update score_fonte set lente_id = (select id from lente where codigo =
      'institucional'), ativo = true where codigo = 'crm';`
+
+Isso devolve o comportamento. A coluna `lente_id` continua aceitando nulo —
+voltar o `not null` pede uma migration nova, e nada depende disso.
 """
 
 from __future__ import annotations

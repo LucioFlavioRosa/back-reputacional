@@ -332,13 +332,13 @@ def agendas_de_incidente(
 ) -> Select | None:
     """As agendas do CRM que contam como incidente, ou `None` se o CRM está fora.
 
-    O gargalo: os seis caminhos das agendas — série, matriz, recorrência, lista,
-    por tema e total por severidade — passam por aqui. A guarda mora neste ponto
-    porque guarda que se pode esquecer de chamar é guarda que não existe.
+    Esta função é o gargalo: os seis caminhos das agendas — série, matriz,
+    recorrência, lista, por tema e total por severidade — passam por aqui, e é
+    por isso que a verificação fica neste ponto.
 
-    Para a agenda contar, três coisas juntas: a política admite fonte interna, o
-    cadastro a tem como ativa, e ela tem lente. Sem lente, a linha do incidente
-    não teria o que pôr em `lente: str`.
+    A agenda só conta quando três condições são atendidas: a política admite
+    fonte interna, o cadastro a tem como ativa, e ela tem lente. Sem lente, a
+    linha do incidente não teria o que pôr em `lente: str`.
 
     `interacao` não tem sentimento: tem `clima`. Clima negativo é o equivalente
     da menção negativa, e a única leitura de "incidente" que o CRM oferece sem

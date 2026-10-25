@@ -314,7 +314,7 @@ def test_a_AGENDA_INVISIVEL_ou_ARQUIVADA_nao_e_incidente(
     _agenda(sessao, tema, "tenso", arquivado_em=datetime(2026, 9, 1))
 
     agora = _de_agosto(serie_do_indice(sessao, FiltroDeRisco(), TUDO)[0])
-    #: Uma, e não três.
+    #: Três agendas semeadas, um incidente: só a visível e não arquivada conta.
     assert agora.incidentes == antes.incidentes + 1
 # -- a matriz --------------------------------------------------------------------
 
@@ -432,9 +432,9 @@ def test_o_FILTRO_DE_FONTE_tira_o_CRM_quando_pede_so_uma_fonte(
 ):
     """O filtro por fonte vale para a fonte interna também.
 
-    Com o CRM ligado: ele ENTRA sem filtro (o controle) e SAI com ele (a
-    regra). Com a política de hoje o CRM sai de qualquer jeito, e o filtro não
-    seria exercido.
+    Com o CRM ligado: sem filtro ele entra (o controle), e é removido quando o
+    filtro seleciona apenas a Bites (a regra). Com a política de hoje o CRM
+    sai de qualquer jeito, e o filtro não seria exercido.
     """
     ligar_o_crm(sessao, monkeypatch)
     tema, _risco = com_risco
@@ -449,6 +449,7 @@ def test_o_FILTRO_DE_FONTE_tira_o_CRM_quando_pede_so_uma_fonte(
     so_bites = serie_do_indice(sessao, FiltroDeRisco(fontes=("bites",)), TUDO)[0]
     de_agosto = _de_agosto(so_bites)
     assert de_agosto is not None, "agosto tem menção da Bites e devia estar na série"
+    assert "crm" not in de_agosto.fontes
     assert de_agosto.fontes == ("bites",)
     assert de_agosto.incidentes < tudo.incidentes, "o filtro tinha de tirar a agenda"
 # -- os achados da revisão -------------------------------------------------------
