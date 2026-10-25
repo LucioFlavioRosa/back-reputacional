@@ -552,10 +552,10 @@ def _conferir_o_declarado(
 
     VOCABULÁRIO FECHADO SE CONFERE ONDE TODOS OS OUTROS SE CONFEREM: no upload,
     junto das demais pendências, com a coluna e o valor na mensagem. As células
-    da AGENDA passam por `_resolver`; as da aba de CADASTRO não passavam por
-    nada, e chegavam ao banco — abrangência fora do domínio da coluna, tier
-    inexistente violando a chave estrangeira, subcategoria de outra categoria
-    descartada em silêncio.
+    da AGENDA passam por `_resolver`; as da aba de CADASTRO precisam ser
+    conferidas aqui, ou chegam ao banco — abrangência fora do domínio da coluna,
+    tier inexistente violando a chave estrangeira, subcategoria de outra
+    categoria descartada em silêncio.
 
     POR QUE NO UPLOAD E NÃO NA CONFIRMAÇÃO: é a diferença entre consertar uma
     célula junto das outras e receber erro interno depois de conferir 500 linhas
@@ -650,10 +650,12 @@ def _conferir_o_declarado(
             tudo_bem = False
         elif conhecido is AMBIGUO:
             # DECLAROU ALGO QUE NÃO RESOLVE, e é diferente de não declarar. O
-            # nome ambíguo ESTÁ no índice, então a checagem acima o aceita;
-            # depois, `_instituicao_declarada` devolve `None` para a sentinela, e
-            # `None` quer dizer "use a instituição da agenda". Sem este caso ela
-            # declara um órgão e o cadastro nasce em OUTRO, em silêncio.
+            # nome ambíguo ESTÁ no índice, então a checagem acima o aceita: é
+            # este caso que o transforma em divergência, para a pessoa escolher.
+            # `_instituicao_declarada` devolve `NAO_RESOLVE` para a sentinela, e
+            # só `None` — ausência de declaração — autoriza usar a instituição da
+            # agenda. Sem isto ela declara um órgão e o cadastro nasce em OUTRO,
+            # em silêncio.
             #
             # A FRASE DÁ AS DUAS SAÍDAS REAIS, e nenhuma é "escreva o nome
             # certo": os dois cadastros têm o MESMO nome, não há o que corrigir
@@ -1941,8 +1943,7 @@ def _decisoes(linhas) -> tuple[dict[tuple[str, str], str], dict[tuple[str, str],
             continue
         for bruta in linha.divergencias or []:
             #: UMA FUNÇÃO SÓ RESPONDE "o que vai acontecer" — ver `acao_efetiva`.
-            #: Eram quatro lugares lendo `acao` cru, e a revisão achou dois deles
-            #: errados depois do conserto do terceiro.
+            #: Ler `acao` cru em vários lugares faz dois deles discordarem.
             acao = acao_efetiva(bruta)
             if acao == "criar":
                 vocabulario = vocabulario_do_campo(bruta["campo"])
@@ -2046,11 +2047,10 @@ def _reconferir(sessao: Session, a_criar, apontados) -> None:
             )
 
 
-#: "Ela declarou uma instituição, e eu não consigo dizer qual é."
-#:
-#: TRÊS ESTADOS, E NÃO DOIS, e foi um achado ALTA de revisão. "Não declarou" e
-#: "declarou algo que não resolve" davam o mesmo `None`, e `None` autorizava usar
-#: a instituição da agenda — então a segunda virava o chute calado que a
+#: TRÊS ESTADOS, E NÃO DOIS. "Não declarou" e "declarou algo que não resolve"
+#: davam o mesmo `None`, e `None` autoriza usar a instituição da agenda — então
+#: a segunda virava o chute calado que a preferência pela aba existe para
+#: fechar.
 #: preferência pela aba existe para fechar.
 #:
 #: SÓ O PRIMEIRO AUTORIZA O PADRÃO. Quem não declarou nada aceita a inferência de
@@ -2098,23 +2098,24 @@ def _instituicao_de_cada_interlocutor(
     fecha uma falha concreta:
 
       1. `escolhidos` — quando duas instituições têm o mesmo nome normalizado, o
-         índice cru devolve `AMBIGUO`, um sentinela e não um id, que estoura no
-         `flush` ("can't adapt type 'object'"). A pessoa já escolheu qual era, na
-         conferência; é aqui que a escolha vale.
+         índice cru devolve `AMBIGUO`, que é uma sentinela e não um id: virando
+         chave estrangeira, ela estoura no `flush` com "can't adapt type
+         'object'". A pessoa já escolheu qual era, na conferência; é aqui que a
+         escolha vale.
       2. O que ela declarou NA ABA — declaração é "quero que exista assim".
-      3. A instituição da agenda — vizinhança de coluna, que acerta quando
-         ninguém disse nada e erra quando alguém disse.
+      3. A instituição da agenda — inferência por vizinhança de coluna, usada
+         somente quando a aba não declarou instituição nenhuma.
 
     E O ESCRITOR CONTINUA SENDO UM SÓ: `_JA_RESOLVIDOS` mantém `instituicao_id`
     fora do que a criação grava a partir do declarado, para as duas verdades não
     discordarem. Quem aprende a declaração é este caminho.
 
-    `a_nascer` É O CONJUNTO DOS QUE VÃO SER CRIADOS, e sem ele a trava volta pela
-    confirmação: a varredura lê as células CRUAS da linha, não os itens que
-    `_listas_da_linha` manteve, então o interlocutor de outra instituição —
-    corretamente omitido da agenda — entrava na checagem de "a mesma pessoa em
-    agendas de instituições diferentes" e levantava `RegraViolada`. A tela dizia
-    "a agenda entra sem Ana" e o servidor recusava tudo.
+    `a_nascer` FILTRA QUEM REALMENTE VAI SER CRIADO, e a varredura lê as células
+    CRUAS da linha, não os itens que `_listas_da_linha` manteve: sem o filtro, o
+    interlocutor de outra instituição — corretamente omitido da agenda — entra na
+    checagem de "a mesma pessoa em agendas de instituições diferentes" e levanta
+    `RegraViolada`. A tela diria "a agenda entra sem Ana" e o servidor recusaria
+    tudo.
 
     E É O PROPÓSITO DA FUNÇÃO: ela responde por interlocutor NOVO. Quem já existe
     tem instituição, e quem foi omitido não vai nascer — `de_quem` é lido num
