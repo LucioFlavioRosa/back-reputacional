@@ -1200,8 +1200,8 @@ def materias_recentes(
     if lente.codigo == "sociedade":
         return _mencoes_da_sociedade(sessao, lente, mes, calibracao, filtro)
 
-    #: A FONTE MANDA, E NÃO O CÓDIGO DA LENTE: por isso este teste vem ANTES
-    #: da constante. Com a Institucional DENTRO de
+    #: A fonte manda, e não o código da lente: por isso esta verificação vem
+    #: antes da constante. Com a Institucional DENTRO de
     #: `LENTES_COM_VEICULO_E_TIER`, a ordem passou a importar — religar a fonte
     #: `crm` deixaria a lente interna, com série e painéis lendo o CRM,
     #: enquanto esta lista seguiria trazendo matéria da Clipei: dois universos

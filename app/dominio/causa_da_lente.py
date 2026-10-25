@@ -118,9 +118,9 @@ class Presenca:
 #: Quatro das cinco dimensões da Imprensa estão 100% preenchidas no Mercado, e
 #: nenhum corte devolveria zero.
 #:
-#: O `autor` entra nas três lentes de clipping, por paridade. O campo está
-#: vazio nas três hoje — a Imprensa tem 25.457 menções e zero autores —, e a
-#: aba existe por decisão de produto, não por ter dado.
+#: O `autor` entra nas três lentes de clipping, por paridade. A carga ainda
+#: não traz valores nessa coluna: a aba existe por decisão de produto, e não
+#: por ter dado.
 DIMENSOES_POR_LENTE: dict[str, tuple[Dimensao, ...]] = {
     "sociedade": (
         Dimensao("tema", "Pilar (N1)", "tema_texto"),
@@ -141,11 +141,11 @@ DIMENSOES_POR_LENTE: dict[str, tuple[Dimensao, ...]] = {
     #: AS MESMAS DA IMPRENSA, Jornalista incluso: as três lentes de clipping
     #: são a mesma tela.
     #:
-    #: `nomeia_o_diretorio=True` NÃO É ENFEITE DA ABA: é de onde a Base das
+    #: `nomeia_o_diretorio=True` não é enfeite da aba: é de onde a Base das
     #: Lentes deriva se pode publicar o nome do autor para quem não tem a
-    #: permissão do diretório (ver `nomeia_o_diretorio`, abaixo). A dimensão
-    #: sem a flag daria paridade na tela e vazamento na Base — nome de gente de
-    #: fora, que vem do cadastro, protegido só na Imprensa.
+    #: permissão do diretório (ver `nomeia_o_diretorio`, abaixo). A flag
+    #: acompanha a dimensão `autor` em TODA lente de clipping — sem ela,
+    #: aquela lente publica o nome do autor para quem não vê o diretório.
     #:
     #: E é o mesmo autor, não outro: as três são o mesmo export da Clipei pela
     #: mesma ingestão. O `autor` é o jornalista, e não o perfil que vem dentro
@@ -254,8 +254,9 @@ def nomeia_o_diretorio(codigo_da_lente: str) -> bool:
     Imprensa, `autor` é o jornalista do cadastro de terceiros; na Sociedade
     digital e em Clientes é o perfil que veio DENTRO da menção — o `Publicador`
     que o fornecedor manda na própria linha, que o indicador "Autor mais
-    negativo" já mostra a todo mundo. Por isso só a Imprensa responde `True`
-    hoje, e por isso o `Publicador` da Approach entra aberto.
+    negativo" já mostra a todo mundo. Por isso respondem `True` as
+    três lentes de clipping, e por isso o `Publicador` da Approach entra
+    aberto.
     """
     return any(
         dimensao.nomeia_o_diretorio

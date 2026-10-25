@@ -572,9 +572,8 @@ def obter_opcoes_de_filtro(
     cadastro, e duas cópias de uma regra de acesso divergem na primeira
     mudança.
 
-    Hoje a coluna `autor` está vazia nas cinco lentes, mas a rota não pode
-    depender disso: enchê-la é uma carga de planilha, não uma mudança de
-    código.
+    A máscara não depende de a coluna ter dado: enchê-la é uma carga de
+    planilha, não uma mudança de código.
     """
     alvo = mes_de(mes)
     lente = repositorio_lentes.lente_por_codigo(sessao, codigo)
@@ -585,8 +584,9 @@ def obter_opcoes_de_filtro(
     #: A de `leitura_das_lentes` recebe `(lente_e_interna, bloco)` e pergunta
     #: se AQUELE PAINEL nomeia o diretório; esta, de `causa_da_lente`, recebe o
     #: código e pergunta se A LENTE o nomeia. Importar a segunda com o nome nu
-    #: sombreia a primeira, e o erro aparece trezentas linhas acima, no dossiê,
-    #: como `TypeError: takes 1 positional argument but 2 were given`.
+    #: sombreia a primeira, e o erro não aparece no import: aparece no ponto
+    #: que chama a função com dois argumentos, como
+    #: `TypeError: takes 1 positional argument but 2 were given`.
     if a_lente_nomeia_o_diretorio(lente.codigo) and not usuario.ve_diretorio:
         opcoes["autores"] = []
     return OpcoesDeFiltroSaida(**opcoes)
