@@ -477,10 +477,10 @@ def criar(
 #: diferentes, não uma.
 #:
 #: NÃO É O MESMO MOTIVO DA IMPORTAÇÃO DE AGENDAS. Lá falta a CATEGORIA, e o tipo
-#: cai em `entidade`. Aqui a categoria vem sempre: `CATEGORIA_DE_QUEM_FALA` dá
-#: "Imprensa" ao veículo, e o cargo dá a do perfil. O que falta é outra coisa em
-#: cada caso — usar a mesma frase mandaria a pessoa procurar um campo que já
-#: está preenchido.
+#: cai em `entidade`. Aqui ela é derivada: `CATEGORIA_DE_QUEM_FALA` dá "Imprensa"
+#: ao veículo, e o cargo dá a do perfil quando a taxonomia o reconhece. O que
+#: falta é outra coisa em cada caso — usar a mesma frase mandaria a pessoa
+#: procurar um campo que já está preenchido.
 
 
 def _motivo_da_revisao(tipo: str, cargo_reconhecido: bool) -> str:
@@ -493,8 +493,8 @@ def _motivo_da_revisao(tipo: str, cargo_reconhecido: bool) -> str:
     veículo fica fora da lente.
 
     PERFIL COM CARGO RECONHECIDO: o enquadramento saiu do cargo que o fornecedor
-    mandou, e o fornecedor erra — cargo ausente, UF de outro estado. O cadastro
-    está completo e ainda assim merece um olhar.
+    mandou, e o fornecedor erra — cargo ausente, UF de outro estado. O
+    enquadramento existe e ainda assim merece um olhar.
 
     PERFIL SEM CARGO RECONHECIDO: não há categoria nenhuma, porque o cargo não
     estava em `CATEGORIA_POR_CARGO`. É o caso em que a fila tem mais a ganhar.

@@ -25,7 +25,7 @@ SÃO AS TRÊS LENTES DE CLIPPING, com o impacto medido em pontos do SCORE GERAL:
 caso tanto registros que vêm de imprensa, mercado e institucional".
 
 AS DUAS COISAS SÃO UMA SÓ, e é o que torna o número conferível: se o impacto é
-em ponto do índice, o universo tem de ser o do índice — medir uma lente e chamar
+em pontos do índice, o universo tem de ser o do índice — medir uma lente e chamar
 o resultado de "impacto no score geral" omitiria as outras duas que também o
 movem.
 
@@ -72,7 +72,7 @@ LENTE = "imprensa"
 #: de tema. Sociedade e Clientes leem OUTROS fornecedores, com outro vocabulário
 #: — listá-las aqui misturaria universos no mesmo modal.
 #:
-#: E É O MESMO UNIVERSO QUE O QUADRO MEDE. Lista e quadro medindo conjuntos
+#: E É O MESMO UNIVERSO QUE O QUADRO MEDE: lista e quadro medindo conjuntos
 #: diferentes de lentes foi o que obrigou o cabeçalho do modal a nomear dois
 #: números.
 LENTES_DOS_REGISTROS = ("imprensa", "mercado", "institucional")

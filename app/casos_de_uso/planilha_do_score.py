@@ -208,11 +208,11 @@ def comecar(
          registraria a planilha dela no próprio nome.
       2. O TETO DECLARADO NÃO LIMITARIA. Declarar 1 MB e enviar oitenta partes de
          1 MB monta 80 MB. Gravado, o declarado é o que cada parte confere.
-      3. O BYTE FICARIA ÓRFÃO. A linha depois do arquivo, e o commit da sessão
-         rodando DEPOIS de a rota retornar (`banco/sessao.py`), fazem um commit
-         que falhe desfazer a linha e deixar o arquivo publicado. Com a linha
-         nascendo antes, o pior caso é uma linha INCOMPLETA apontando para o byte
-         — que é o que permite achá-lo.
+      3. O BYTE FICARIA ÓRFÃO. Se a linha viesse depois do arquivo, o commit da
+         sessão — executado DEPOIS de a rota retornar (`banco/sessao.py`) —
+         poderia falhar, desfazer a linha e deixar o arquivo publicado. Com a
+         linha nascendo antes, o pior caso é uma linha INCOMPLETA apontando para
+         o byte, que é o que permite achá-lo.
       4. Nada limitaria quantas subidas uma pessoa abre. O índice único de
          (fonte, criado_por) significa "uma subida em voo por fonte e por
          pessoa".

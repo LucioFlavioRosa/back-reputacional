@@ -364,8 +364,8 @@ def evolucao(
 
     #: PELO CADASTRO, E NÃO PELO CÓDIGO DA LENTE: "clima em vez de sentimento" é
     #: consequência de a lente se ler do CRM, e quem sabe disso é
-    #: `lente_e_interna`. Com o código escrito aqui, uma lente que trocou de
-    #: fonte fica com a legenda de clima sobre barras de matéria.
+    #: `lente_e_interna`. Se a escolha fosse pelo código, uma lente que trocasse
+    #: de fonte ficaria com a legenda de clima sobre barras de matéria.
     interna = repositorio_lentes.lente_e_interna(sessao, lente.id)
     legenda, cores = (
         _legenda_e_cores_do_clima(sessao) if interna else (SENTIMENTO, CORES_DO_SENTIMENTO)
@@ -594,22 +594,16 @@ def paineis(
     # zero, e zero numa tela se lê como "não houve", nunca como "está noutro
     # lugar".
     #
-    # PELO CADASTRO, E NÃO PELO CÓDIGO: com o código escrito aqui, uma lente que
-    # trocou de fonte fica com os painéis do CRM sobre uma nota que vem de
-    # matérias.
+    # PELO CADASTRO, E NÃO PELO CÓDIGO: pelo código, uma lente que trocasse de
+    # fonte ficaria com os painéis do CRM sobre uma nota que vem de matérias.
     interna = repositorio_lentes.lente_e_interna(sessao, lente.id)
 
-    # OS DOIS PAINÉIS DESTA LENTE FICAM COMO ESTÃO, e isto é uma decisão que eu
-    # TOMEI E DESFIZ no meio do caminho.
-    #
-    # Eu havia trocado o segundo — "Concessionárias com maior repercussão" — por
-    # perfil do autor × sentimento, com o argumento de que o perfil é a dimensão
-    # mais informativa que a tela não tinha. Desfiz ao conferir a ordem de
-    # prioridade que o próprio pacote declara para esta lente: tema, subtema,
-    # EMPRESA CITADA, rede, perfil do autor. A concessionária é a terceira e o
-    # perfil a quinta — a troca entregava uma dimensão do pacote pagando com
-    # outra, mais alta, e ainda tirava da tela a pergunta de negócio que a Aegea
-    # faz primeiro: qual operação está apanhando.
+    # OS DOIS PAINÉIS DESTA LENTE SEGUEM A ORDEM DE PRIORIDADE QUE O PACOTE
+    # DECLARA: tema, subtema, EMPRESA CITADA, rede, perfil do autor. A
+    # concessionária é a terceira e o perfil do autor a quinta — trocar uma pela
+    # outra entregaria uma dimensão do pacote pagando com outra, mais alta, e
+    # tiraria da tela a pergunta de negócio que a Aegea faz primeiro: qual
+    # operação está apanhando.
     #
     # O PERFIL ENTROU ONDE HAVIA ESPAÇO DE VERDADE: nos indicadores da lente
     # (`Figuras públicas` e `Autor mais negativo`) e no filtro, que é o mecanismo
@@ -903,11 +897,11 @@ def nomeia_o_diretorio(lente_e_interna: bool, bloco: BlocoSaida) -> bool:
 #: `GET /{codigo}/explorador-de-veiculos` — essa rota responde para qualquer
 #: lente que não seja interna, e quem decide onde o bloco aparece é a tela.
 #:
-#: AS TRÊS LENTES DE CLIPPING ENTRAM porque cada uma recorta outra subcategoria
-#: do cadastro: são conjuntos de veículos diferentes, e não os mesmos repetidos
-#: em duas telas. O volume de Mercado e Institucional ainda é baixo porque a
-#: classificação das instituições não está completa — é cadastro por fazer, não
-#: lente sem dado.
+#: AS TRÊS LENTES DE CLIPPING ENTRAM, e cada uma tem o seu conjunto de
+#: veículos: a Imprensa é o espelho do arquivo, e Mercado e Institucional
+#: recortam subcategorias do cadastro. Não são os mesmos veículos repetidos em
+#: duas telas. O volume dos recortes ainda é baixo porque a classificação das
+#: instituições não está completa — é cadastro por fazer, não lente sem dado.
 #:
 #: SOCIEDADE E CLIENTES FICAM FORA, por razões DIFERENTES: Clientes não tem
 #: menção nenhuma, e a Sociedade tem `veiculo` e zero tier — mas o que ela

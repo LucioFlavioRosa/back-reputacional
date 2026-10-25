@@ -582,7 +582,8 @@ def aplicar(sessao: Session, fonte: ScoreFonte) -> Reconciliacao:
     clique que escape do botão desabilitado) apagam e inserem o mesmo mês ao
     mesmo tempo, e a segunda morre com `IntegrityError` na chave primária de
     `score_mes_fonte` — 500 na cara de quem clicou, para uma operação que já
-    tinha sido feita. Com a trava, ela espera, remede, e não acha mês para mudar.
+    tinha sido feita. Com a trava, ela espera, mede de novo e não acha mês para
+    mudar.
     """
     #: A TRAVA É DO ARQUIVO, e não da fonte.
     #:

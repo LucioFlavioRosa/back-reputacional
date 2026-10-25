@@ -76,7 +76,7 @@ TIPO_DE_ORIGEM = "perfil_rede"
 #: dois. E num par de nome idêntico e zero menções a perda é por SORTEIO, porque
 #: quem sai é decidido pelo UUID.
 #:
-#: `cargo` NÃO ESTÁ AQUI, e é o único de fora: o CHECK
+#: `cargo` NÃO ESTÁ AQUI, e é o único campo de CLASSIFICAÇÃO de fora: o CHECK
 #: `instituicao_cargo_so_de_perfil` não deixa um veículo ter cargo, então
 #: herdá-lo estouraria o banco. A perda dele está dita no docstring.
 #:
@@ -433,14 +433,16 @@ def fundir(
 
     * o `cargo` de quem sai — o CHECK `instituicao_cargo_so_de_perfil` existe de
       propósito, e um jornal não tem cargo;
-    * o `nome` e o `nome_normalizado`, que são a identidade do sobrevivente — mas
-      o nome NÃO sai de circulação: ele vira APELIDO do cadastro que fica
-      (`instituicao_apelido`, migration `0102`), e é por isso que a ingestão
-      continua reconhecendo o texto que o fornecedor manda todo mês. Sem o
-      apelido, o veículo nasceria de novo na subida seguinte;
+      o nome NÃO sai de circulação: QUANDO ELE DIFERE do nome do sobrevivente,
+      vira APELIDO do cadastro que fica (`instituicao_apelido`, migration
+      `0102`), e é por isso que a ingestão continua reconhecendo o texto que o
+      fornecedor manda todo mês. Sem o apelido, o veículo nasceria de novo na
+      subida seguinte;
     * `criado_em`, que é a data da linha que sai e não diz nada sobre a que fica.
 
-    A PENDÊNCIA DE REVISÃO E O MOTIVO DELA NÃO SE PERDEM. Ver abaixo.
+    A PENDÊNCIA DE REVISÃO PASSA PARA O SOBREVIVENTE que ainda não está
+    pendente, com o motivo de quem sai. Se ele JÁ está pendente, o motivo dele
+    fica — são duas pendências e uma frase só. Ver abaixo.
     """
     if que_sai_id == sobrevivente_id:
         raise RegraViolada("Um cadastro nao funde com ele mesmo.")
