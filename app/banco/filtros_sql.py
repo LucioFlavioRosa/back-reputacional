@@ -241,8 +241,8 @@ def _bate_com_a_busca(termo_pedido: str) -> ColumnElement[bool]:
     a importação usa para deduplicar: assim "Radames" encontra "Radamés", e
     quem digita sem acento não fica sem resultado.
 
-    NENHUM CAMPO É CONDICIONADO AQUI, porque o que se restringe é a LINHA
-    (`condicoes`, com `alcanca_sensivel`): uma agenda que a pessoa alcança, ela
+    NENHUM CAMPO SENSÍVEL É CONDICIONADO AQUI, porque o que se restringe é a
+    LINHA (`condicoes`, com `alcanca_sensivel`): uma agenda que a pessoa alcança, ela
     alcança por inteiro, e uma que não alcança não está no conjunto que a busca
     varre. Esconder coluna aqui não protegeria nada — seria um oráculo, com a
     pessoa deduzindo o texto por tentativa e erro, uma palavra por vez — e só
@@ -315,13 +315,20 @@ def condicoes(
     usuário refina o que já lhe é permitido, jamais o amplia.
 
     `alcanca_sensivel` É FILTRO DE LINHA, e aqui está o coração da coisa.
-    Quando falso, as agendas marcadas `sensivel` saem do conjunto — e saem de
-    TUDO, porque esta função é o único tradutor de filtro do sistema: a
-    listagem, a ficha, a busca, os materiais, as exportações e todas as
-    agregações de `consultas_metricas` passam por aqui. A pessoa não vê a
+    Quando falso, as agendas marcadas `sensivel` saem do conjunto — e saem da
+    listagem, da ficha, da busca, dos materiais, das exportações e de todas as
+    agregações de `consultas_metricas`, que passam por aqui. A pessoa não vê a
     linha, não a acha pela busca, não a abre pela URL e ela não entra em KPI
     nenhum. É por isso que nenhum CAMPO precisa ser escondido — ver
     `_bate_com_a_busca`.
+
+    QUEM NÃO PASSA POR AQUI REPETE O PREDICADO À MÃO, e hoje são quatro:
+    `api/alegacoes._consultas_por_alegacao`, `repositorio_riscos`,
+    `repositorio_score` e `casos_de_uso/importar_agendas` contam ou buscam sem
+    `interacao` como tabela principal, então aplicam `sensivel.is_(False)` por
+    conta própria. Leitura nova que não caiba aqui tem de fazer o mesmo — e
+    cinco cópias de um predicado de segurança é uma a mais do que deveria
+    existir.
 
     CONSEQUÊNCIA QUE PRECISA SER SABIDA: quem não alcança o sensível vê KPI
     MENOR. Duas pessoas na mesma tela veem números diferentes. É inerente a

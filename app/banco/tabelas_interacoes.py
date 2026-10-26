@@ -464,7 +464,8 @@ class Comentario(Tabela):
     O esquema está pronto, com `ondelete="CASCADE"` na agenda e o autor em dois
     campos: `autor` em texto livre, para quem comentou e não é usuário da
     plataforma, e `usuario_id` para quem é. Removê-la é decidir que o produto
-    não quer comentários.
+    não quer comentários — e é migration, modelo e a linha que o README tem
+    sobre ela.
     """
 
     __tablename__ = "comentario"
