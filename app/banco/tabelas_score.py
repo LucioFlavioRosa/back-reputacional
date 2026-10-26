@@ -102,20 +102,18 @@ class Mencao(Tabela):
     #: OS TRÊS NÍVEIS DA TAXONOMIA DO CADASTRO: `bloco_tema` (N1) >
     #: `macro_tema` (N2) > `tema` (N3). Ver `0098`.
     #:
-    #: POR QUE TRÊS COLUNAS E NÃO SÓ O N3. Até a 0098 só existia `tema_id`, e o
-    #: N2 e o N1 eram alcançados por `join` a partir dele — o que funciona para
-    #: a menção que TEM N3 e deixa sem nível nenhum a que o fornecedor só
-    #: descreveu no topo. Medido: 73.928 menções (71% da base) tinham um N1 bom
-    #: em `atributo` e nenhuma ligação com o cadastro, então não apareciam em
-    #: recorte por pilar algum.
+    #: POR QUE TRÊS COLUNAS E NÃO SÓ O N3. Com `tema_id` sozinho, o N2 e o N1
+    #: eram alcançados por `join` a partir dele — o que serve à menção que TEM
+    #: N3 e deixa sem nível nenhum a que o fornecedor só descreveu no topo —
+    #: que então não aparecia em recorte por pilar algum.
     #:
     #: SÃO CHAVE, E O TEXTO DO FORNECEDOR CONTINUA DO LADO. `tema_texto`,
     #: `subtema` e `atributo` guardam a palavra exata da planilha, porque é
     #: contra ela que a carga é auditável; estas três dizem onde o CADASTRO
-    #: colocou a menção. É o mesmo par que `instituicao_id`/`veiculo` já formava.
+    #: colocou a menção. É o mesmo par que `instituicao_id`/`veiculo` forma.
     #:
-    #: NUNCA SE DESCE: um N1 não preenche o N2 nem o N3. A regra inteira, com a
-    #: medição, está em `app/dominio/niveis_de_taxonomia.py`.
+    #: NUNCA SE DESCE: um N1 não preenche o N2 nem o N3. A regra inteira está em
+    #: `app/dominio/niveis_de_taxonomia.py`.
     bloco_tema_id: Mapped[int | None] = mapped_column(
         SmallInteger, ForeignKey("bloco_tema.id"), nullable=True
     )
@@ -124,16 +122,13 @@ class Mencao(Tabela):
     )
     tema_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("tema.id"), nullable=True)
     #: O VEÍCULO NO CADASTRO COMPARTILHADO — `instituicao` com `tipo='veiculo'`.
-    #:
-    #: A terceira ponte para o cadastro, e a última a existir (`0065`). As outras
-    #: duas (`tema_id`, `unidade_negocio_id`) foram projetadas e nunca
-    #: atravessadas: medido em 4.392 menções, zero preenchidas nas duas.
+    #: A terceira ponte para o cadastro, e a última a existir (`0065`).
     #:
     #: É ELA QUE DÁ O CRITÉRIO DA LENTE MERCADO. A subcategoria de público do
     #: veículo ("Econômica e de negócios", sob Imprensa, cuja `padrao_de_quebra`
     #: é `logica_editorial`) substitui o filtro por `Público-alvo =
-    #: Investidores`, que capturava 80 linhas onde a lista de veículos do mercado
-    #: financeiro captura 323.
+    #: Investidores`, que alcançava uma fração do que a lista de veículos do
+    #: mercado financeiro alcança.
     #:
     #: `ondelete="SET NULL"`: apagar um veículo do cadastro não pode apagar a
     #: menção — ela é fato do mês, e o vínculo é enriquecimento.
@@ -159,11 +154,11 @@ class Mencao(Tabela):
     # -- os campos do padrão Aegea que a Sociedade digital usa (0055) ---------
     #
     # O PACOTE DE PRODUÇÃO DAS LENTES define uma planilha única de 40 colunas por
-    # item, igual para as cinco lentes. Onze delas já moram aqui com o nome que o
+    # item, igual para as cinco lentes. Onze delas moram acima com o nome que o
     # índice usa — `sentimento` é `classificacao` no padrão, `veiculo` é
     # `veiculo_rede`, `tema_texto` é `tema`, `unidade_texto` é `empresa_citada`,
-    # `cargo` é `cargo_autor` —, e estas sete faltavam. As colunas das outras
-    # lentes entram na migration da etapa daquela lente, com dado dentro.
+    # `cargo` é `cargo_autor`. As colunas das outras lentes entram na migration
+    # da etapa daquela lente, com dado dentro.
 
     #: O id do item no sistema do fornecedor. É a chave natural da carga: com
     #: ela, reimportar o mesmo mês atualiza em vez de duplicar.

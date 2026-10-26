@@ -354,17 +354,14 @@ class RepositorioSQL:
         """
         # REBAIXA ANTES DE PROMOVER, e descarrega no meio.
         #
-        # O indice unico parcial (`where principal`) e conferido a cada comando,
-        # e nao no fim da transacao. Indice parcial nao pode ser `deferrable`:
-        # so constraints podem, e constraint unica nao aceita `where`.
+        # O índice único parcial (`where principal`) é conferido a cada comando,
+        # e não no fim da transação — índice parcial não pode ser `deferrable`:
+        # só constraints podem, e constraint única não aceita `where`. Sem este
+        # passo, trocar o principal de A para B deixa os dois marcados durante
+        # o flush, e o banco recusa com `duplicate key`.
         #
-        # Sem este passo, trocar o principal de A para B deixava os dois
-        # marcados durante o flush e o banco recusava com `duplicate key`. Dava
-        # 500 em dois caminhos reais — `PATCH` mandando lista e coluna juntas, e
-        # trocar para alguem que ja estava na lista como participante comum.
-        #
-        # So quando a marca MUDA de dono: rebaixar e repromover a mesma pessoa a
-        # cada salvamento seriam dois `UPDATE` inuteis em toda edicao.
+        # Só quando a marca MUDA de dono: rebaixar e repromover a mesma pessoa
+        # a cada salvamento seriam dois `UPDATE` inúteis em toda edição.
         novo_principal = next(
             (p.interlocutor_id for p in interacao.outra_parte if p.principal), None
         )
@@ -409,16 +406,14 @@ class RepositorioSQL:
 
         # A LISTA É A FONTE DA VERDADE; A COLUNA É PROJEÇÃO DELA.
         #
-        # `interacao.interlocutor_id` existe porque 67 usos dependem dele —
-        # filtros, relatórios, exportação, diretório. Mas duas fontes só não
+        # `interacao.interlocutor_id` existe porque muita leitura depende dele
+        # — filtros, relatórios, exportação, diretório. Mas duas fontes só não
         # divergem quando UMA manda e a outra segue, e aqui quem manda é a
         # lista: é ela que a ficha mostra e que o formulário edita.
         #
         # Rederivar o principal a partir da coluna, na ausência de marca, faria
         # o sistema desfazer uma remoção calado: tirar o principal da lista o
         # traria de volta, e `interlocutor_id: null` sozinho não limparia nada.
-        # Não haveria como removê-lo por um caminho só, e nenhuma mensagem
-        # diria isso.
         principal = next(
             (p for p in interacao.outra_parte if p.principal), None
         )
@@ -464,12 +459,10 @@ class RepositorioSQL:
     ) -> None:
         """Casa por `id`: quem já existe é ATUALIZADO, não recriado.
 
-        A primeira versão limpava a lista e reinseria tudo, com o argumento de
-        que material não tem identidade natural. O argumento se contradizia:
-        a resposta da API devolve `id` justamente porque a tela precisa
-        apagar um material específico. Se o `id` muda a cada salvamento, ele não
-        identifica nada — e um `PATCH` de `relato` trocaria os `id`s de todos os
-        materiais da agenda, quebrando a tela aberta de quem estivesse editando.
+        O `id` que a API devolve é o que a tela usa para apagar um material
+        específico. Se ele mudasse a cada salvamento não identificaria nada —
+        um `PATCH` de `relato` trocaria os `id`s de todos os materiais da
+        agenda, quebrando a tela aberta de quem estivesse editando.
 
         Material NOVO chega sem `id` e ganha um. Material que ficou de fora da
         lista some, pelo `delete-orphan`.
@@ -504,17 +497,15 @@ class RepositorioSQL:
 
         registro.materiais[:] = mantidos
 
-        # O ARQUIVO SEGUE O MATERIAL ATE O FIM.
+        # O ARQUIVO SEGUE O MATERIAL ATÉ O FIM. Sem isto, remover um material
+        # pela tela deixa a linha de `arquivo` e o byte no blob para sempre: o
+        # material some pelo `delete-orphan`, e nada olha para o que ele
+        # apontava.
         #
-        # Sem isto, remover um material pela tela deixava a linha de `arquivo`
-        # e o byte no blob para sempre: o material some pelo `delete-orphan`, e
-        # nada olha para o que ele apontava. O painel passaria a pagar
-        # armazenamento por documento que ninguem alcanca mais.
-        #
-        # O BYTE NAO E APAGADO AQUI. Aqui some a LINHA, dentro da transacao;
-        # quem apaga o byte e o caso de uso, DEPOIS do commit. Na ordem
+        # O BYTE NÃO É APAGADO AQUI. Aqui some a LINHA, dentro da transação;
+        # quem apaga o byte é o caso de uso, DEPOIS do commit. Na ordem
         # inversa, um rollback devolveria a linha apontando para o vazio — e
-        # essa perda e irreversivel, enquanto um byte orfao no contenedor nao
+        # essa perda é irreversível, enquanto um byte órfão no contêiner não
         # quebra nada.
         depois = {m.arquivo_id for m in mantidos if m.arquivo_id}
         orfaos = [aid for aid in antes.values() if aid not in depois]
@@ -689,35 +680,22 @@ class RepositorioSQL:
     ) -> Interacao | None:
         """Lê uma interação. `para_edicao` TRAVA a linha até o fim da transação.
 
-        `alcanca_sensivel` É OBRIGATÓRIO, e é o que fecha a porta de trás.
+        `alcanca_sensivel` É OBRIGATÓRIO, e é o que fecha a porta de trás: esta
+        é a leitura por chave primária — a que serve a ficha e a edição — e sem
+        o filtro de linha ela seria o caminho pelo qual uma agenda restrita se
+        abre por URL direta. Sem padrão, de propósito: esquecer é `TypeError`
+        na hora, e não um vazamento numa rota só.
 
-        Esta é a leitura por chave primária — a que serve a ficha e a edição —,
-        e sem o filtro de linha ela seria o caminho pelo qual uma agenda
-        restrita se abre por URL direta. Obrigatório e sem padrão: esquecer é
-        `TypeError` na hora, e não um vazamento numa rota só.
+        POR QUE TRAVAR, E SÓ NA EDIÇÃO. Duas pessoas editando a MESMA agenda
+        liam o estado antigo, cada uma decidia quem é o principal e as duas
+        gravavam; o índice único parcial recusava a segunda com `duplicate key`
+        e a tela recebia 500, sem que ninguém tivesse feito nada errado.
+        Rebaixar antes de promover resolve a ordem DENTRO de uma sessão, não
+        serializa duas — quem serializa é este `for update`.
 
-        Era `busca_em_campos_sensiveis=False` FIXO aqui, com o comentário de que
-        a bandeira era inerte porque `Recorte()` não tem busca. Era verdade
-        naquele desenho. Em 0089 o mesmo argumento passou a filtrar a LINHA, e o
-        `False` fixo trancaria a ficha de uma agenda sensível para TODO mundo —
-        inclusive para quem a marcou.
-
-        Por que travar, e por que só na edição:
-
-        Duas pessoas editando a MESMA agenda ao mesmo tempo liam o estado
-        antigo, cada uma decidia quem é o principal e as duas gravavam. O
-        índice único parcial recusava a segunda com `duplicate key`, e a tela
-        recebia 500 — sem que ninguém tivesse feito nada errado.
-
-        Rebaixar antes de promover resolve a ordem DENTRO de uma sessão; não
-        serializa duas. Quem serializa é este `for update`: a segunda espera a
-        primeira terminar e então lê o estado NOVO, em vez de decidir sobre um
-        retrato vencido.
-
-        A leitura comum não trava — travar em toda consulta serializaria o
-        painel inteiro para proteger um caso que só existe na escrita. É o
-        mesmo desenho de `conceder_acesso` (migration 0006), que trava o alvo
-        exatamente pela mesma razão.
+        A leitura comum não trava: travar em toda consulta serializaria o
+        painel inteiro para proteger um caso que só existe na escrita. Mesmo
+        desenho de `conceder_acesso` (`0006`).
         """
         # NÃO É `sessao.get()`: buscar pela chave primária pularia `condicoes()`
         # inteiro, e seria o caminho de leitura que não respeita filtro nenhum.
@@ -931,16 +909,10 @@ class RepositorioSQL:
                     arquivo_id=material.arquivo_id,
                     referencia_id=material.referencia_id,
                     temas=tuple(sorted(v.tema_id for v in material.temas)),
-                    # O NOME, O TIPO E O TAMANHO VOLTAM JUNTO.
-                    #
-                    # Sem isto a ficha teria o id do arquivo e nada para
-                    # escrever ao lado do icone — e a tela precisaria de uma
-                    # ida ao servidor por material so para descobrir como o
-                    # arquivo se chama.
-                    #
-                    # Foi assim que a presenca do porta-voz se perdeu por tres
-                    # revisoes: o esquema de saida declarava o campo e ninguem
-                    # o preenchia. Declarar nao e preencher.
+                    # O NOME, O TIPO E O TAMANHO VOLTAM JUNTO. Sem isto a ficha
+                    # teria o id do arquivo e nada para escrever ao lado do
+                    # ícone, e a tela precisaria de uma ida ao servidor por
+                    # material só para descobrir como o arquivo se chama.
                     arquivo=(
                         ArquivoDoMaterial(
                             id=material.arquivo.id,
@@ -1018,18 +990,14 @@ class RepositorioSQL:
 def _com_o_principal(registro: InteracaoRegistro) -> tuple[ParticipanteDaOutraParte, ...]:
     """Os participantes da outra parte — e o principal, mesmo sem linha.
 
-    O `backfill` da migration 0011 alcancou as interacoes que EXISTIAM naquele
-    momento. Tudo que entrou depois por fora do repositorio — o semeador de
-    desenvolvimento, a importacao de planilha, um `insert` de manutencao —
-    grava `interlocutor_id` e nao cria a linha de participante.
+    Escrita que não passa pelo repositório — o semeador, a importação de
+    planilha, um `insert` de manutenção — grava `interlocutor_id` e não cria a
+    linha de participante. Sem esta síntese, a ficha dessas agendas diria
+    "nenhum participante" para uma reunião que tem interlocutor.
 
-    Sem esta sintese, a ficha dessas agendas diria "nenhum participante" para
-    uma reuniao que tem interlocutor havia meses. E o mesmo defeito que o
-    backfill existe para corrigir, so que renascendo a cada carga nova.
-
-    A presenca fica NULA: ninguem perguntou a essa pessoa se compareceu.
-    O primeiro salvamento pela tela materializa a linha, e a sintese para de
-    ser necessaria para aquele registro.
+    A presença fica NULA: ninguém perguntou a essa pessoa se compareceu. O
+    primeiro salvamento pela tela materializa a linha, e a síntese para de ser
+    necessária para aquele registro.
     """
     participantes = tuple(
         ParticipanteDaOutraParte(

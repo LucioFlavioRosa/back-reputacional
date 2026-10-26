@@ -172,15 +172,8 @@ class Tema(Tabela):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     nome: Mapped[str] = mapped_column(Text, unique=True)
-    #: `sensivel` | `estrategico` | `gerais` — e a constraint `tema_nivel_check`
-    #: é quem manda.
-    #:
-    #: ESTA LINHA DIZIA "estrategico (vocabulário fechado) | livre (criada por quem
-    #: registra)", E `livre` NÃO É UM NÍVEL. Foi esta frase que me fez escrever
-    #: `Tema(nome=valor, nivel="livre")` na importação de agendas, em 10/10/2026:
-    #: criar tema pela planilha estourava o banco com CheckViolation, e o defeito
-    #: ficou latente porque era preciso declarar o tema na aba para alcançá-lo.
-    #: Comentário errado custa o mesmo que código errado — só demora mais a doer.
+    #: `sensivel` | `estrategico` | `gerais`, e a constraint `tema_nivel_check`
+    #: é quem manda. NÃO existe nível `livre`: gravá-lo estoura CheckViolation.
     nivel: Mapped[str] = mapped_column(Text)
     #: `estruturante` (afeta a tese da companhia) | `operacional` (afeta o dia
     #: a dia). CADASTRO, e não derivação — nada no dado diz qual é qual. Nulo
@@ -206,36 +199,11 @@ class Tema(Tabela):
         SmallInteger, ForeignKey("area_pessoa.id"), nullable=True
     )
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
-    #: ESTE CADASTRO NASCEU DE PLANILHA E NINGUÉM O CONSOLIDOU AINDA.
-    #:
-    #: A FILA DE REVISÃO das três abas de Cadastro compartilhado sai daqui —
-    #: pedido do dono do produto (11/10/2026): "o profissional consegue subir a
-    #: planilha sem problemas e pode revisar depois, e inclusive pode ser trabalho
-    #: de outra pessoa. Queremos dar padronização, mas com menor impacto".
-    #:
-    #: NÃO SE DERIVA DA INCOMPLETUDE, e eu tentei: das 99 instituições que
-    #: aparecem em agendas, só 58 têm categoria de público. A ausência é o estado
-    #: NORMAL do CRM, e a fila nasceria com 250 das 544 agendas dentro — ruído, e
-    #: ruído é o que faz ninguém olhar. O que distingue é a PROCEDÊNCIA.
-    #:
-    #: E NÃO É `ativo`: o que nasce de planilha está EM circulação — a menção
-    #: aponta para ele, a agenda existe —, só falta alguém conferir o
-    #: enquadramento. `ativo=false` esconderia o dado que acabou de entrar.
-    #:
-    #: SAI POR AÇÃO DE QUEM REVISA. "Consolidar" é uma decisão, não um campo que
-    #: ficou preenchido: ligar a saída a um campo faria a fila esvaziar sozinha com
-    #: um preenchimento parcial, e ninguém teria dito nada.
+    #: Nasceu de planilha e ninguém o consolidou ainda — é a fila de revisão da
+    #: aba "Temas". A regra inteira está no cabeçalho de `tabelas_stakeholders`,
+    #: que tem as outras três tabelas com o mesmo par.
     pendente_de_revisao: Mapped[bool] = mapped_column(Boolean, default=False)
-    #: POR QUE ESTE CADASTRO ESPERA REVISÃO. Nulo é "nasceu de planilha", sem mais
-    #: nada a dizer — o caso comum.
-    #:
-    #: A ABA LISTA O REGISTRO PELO BOOLEANO, e quem abre a aba precisa saber POR
-    #: QUÊ. "Apareceu em duas instituições na mesma planilha" é a informação que
-    #: torna a revisão possível em vez de um convite a adivinhar.
-    #:
-    #: TEXTO E NÃO CÓDIGO: um enum obrigaria a prever os motivos, e o motivo é uma
-    #: frase para gente ler. É a mesma escolha de `ator_distinto.motivo`, pela mesma
-    #: razão — "é conhecimento sobre o mundo, não estado de interface".
+    #: Por que espera revisão, em texto livre. Nulo é o caso comum.
     motivo_da_revisao: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: Tag livre nasce datada — é o rastro de quando o vocabulário cresceu.
     criado_em: Mapped[datetime] = mapped_column(
@@ -323,18 +291,17 @@ class AreaPessoa(_Dicionario, Tabela):
 
 
 class CategoriaPublico(_Dicionario, Tabela):
-    """A taxonomia de públicos — 11 categorias (Poder Executivo, Imprensa,
-    Formadores de Opinião...; a 0061 separou Imprensa de Formadores de
-    Opinião, antes uma categoria só). Vive em `instituicao`, não em
-    `interacao`: ver `0036_categoria_de_publico.sql` e `0061`."""
+    """A taxonomia de públicos — Poder Executivo, Imprensa, Formadores de
+    Opinião... Vive em `instituicao`, não em `interacao`: ver
+    `0036_categoria_de_publico.sql` e `0061`."""
 
     __tablename__ = "categoria_publico"
     #: esfera | logica_de_relacao | posicao_de_capital | logica_editorial | sem_quebra
     #: — como esta categoria se subdivide, não uma entidade que se cadastra.
     padrao_de_quebra: Mapped[str] = mapped_column(Text)
     #: Nula só em "Parceiros e Cadeia de Valor": ali a área responsável é quem
-    #: demandou a interação, variável por instituição — não fixa por categoria
-    #: como nas outras nove.
+    #: demandou a interação, variável por instituição — e não fixa por
+    #: categoria, como nas demais.
     area_dona_id: Mapped[int | None] = mapped_column(
         SmallInteger, ForeignKey("area_pessoa.id"), nullable=True
     )
