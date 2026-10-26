@@ -1,13 +1,15 @@
 """O rastreio de risco: a aba que lê a plataforma pela matriz de risco da Aegea.
 
-O QUE LIGA UMA MENÇÃO A UM RISCO: `tema_risco` liga o tema (N3) do cadastro aos
-32 riscos da matriz corporativa, e `mencao.tema_id` liga a menção ao tema. É o
-que faz tudo o que entra na plataforma por assunto chegar a risco — Clipei,
-Bites, recorte de investidores e agendas do CRM.
+O QUE LIGA UM REGISTRO A UM RISCO: `tema_risco` liga o tema (N3) do cadastro
+aos 32 riscos da matriz corporativa. São DOIS caminhos até lá, e não um — a
+menção chega pelo `mencao.tema_id`, a agenda do CRM chega pelo
+`interacao_tema.tema_id` —, e é isso que faz tudo o que entra na plataforma por
+assunto chegar a risco.
 
-DUAS ROTAS, e a divisão é a da tela: uma devolve o painel inteiro (a série do
-índice, os KPIs e a matriz de 32 riscos, que a pessoa clica para filtrar), e a
-outra, o "Relatório de incidentes" — paginado, porque são milhares de linhas.
+AS ROTAS SEGUEM A TELA: o painel inteiro (a série do índice, os KPIs e a matriz
+de 32 riscos, que a pessoa clica para filtrar), o "Relatório de incidentes"
+— paginado, porque são milhares de linhas — e as opções que a barra de filtros
+pode oferecer.
 
 O PORTAL É O DO SCORE, como nas outras rotas daqui. O índice do Score já lê o
 clima das interações institucionais (ver `exigir_portal_score`), então contar
@@ -15,12 +17,11 @@ agenda de clima negativo como incidente não abre nada novo.
 
 A PAUTA DA REUNIÃO NÃO ENTRA NA RESPOSTA, e a razão sustenta a aba inteira:
 ESTA TELA EXISTE PARA CRUZAR FONTES, e só cruza o que é padronizado. Assunto e
-clima vêm do cadastro — mesmo vocabulário no CRM, na Clipei, na Bites e na
-Approach —, então a pauta não acrescenta o que já está em tema e clima. Ela é
-texto livre que só o CRM tem: não cruza com nada, e uma coluna que só uma das
-cinco fontes preenche faz o relatório parecer quebrado nas outras quatro. Além
-disso é texto longo, e num relatório de sete colunas um parágrafo por linha
-arrebenta a grade.
+clima vêm do cadastro, com o mesmo vocabulário em toda fonte, então a pauta não
+acrescenta o que já está em tema e clima. Ela é texto livre que só o CRM tem:
+não cruza com nada, e uma coluna que uma fonte só preenche faz o relatório
+parecer quebrado em todas as outras. Além disso é texto longo, e num relatório
+de sete colunas um parágrafo por linha arrebenta a grade.
 
 A LINHA DA AGENDA DIZ data, assunto, severidade, recorrência e riscos: o
 bastante para ler "houve reunião tensa sobre Tarifa social, que toca o R23". O

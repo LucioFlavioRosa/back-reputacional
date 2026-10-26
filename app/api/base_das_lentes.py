@@ -56,10 +56,10 @@ Sessao = SessaoDoPedido
 
 #: As lentes que têm menção. Mercado também — o recorte de imprensa econômica.
 #:
-#: A INSTITUCIONAL ENTROU na `0108`, quando deixou de ler o CRM: ela é hoje o
-#: clipping da Clipei recortado pela subcategoria "Institucional", e a Base é
-#: onde se confere menção a menção o que uma lente conta. Deixá-la de fora
-#: agora seria esconder justamente as linhas que passaram a formar a nota dela.
+#: A INSTITUCIONAL ENTROU na `0111`, que a pôs a recortar a Imprensa pela
+#: subcategoria "Institucional", e na `0112`, que tirou o CRM do índice. A Base
+#: é onde se confere menção a menção o que uma lente conta, e deixá-la de fora
+#: seria esconder justamente as linhas que passaram a formar a nota dela.
 LENTES_DA_BASE = ("imprensa", "mercado", "sociedade", "clientes", "institucional")
 
 #: O que se pode ordenar, e por qual coluna.
@@ -318,9 +318,9 @@ def listar_mencoes(
         .outerjoin(Tema, Tema.id == Mencao.tema_id)
         .outerjoin(MacroTema, MacroTema.id == Tema.macro_tema_id)
         .outerjoin(BlocoTema, BlocoTema.id == MacroTema.bloco_tema_id)
-        #: A CONCESSIONÁRIA DO CADASTRO (`0099`). `outerjoin` porque há menção
-        #: nomeando operação que o cadastro não resolve, e ela tem de continuar
-        #: na lista com o texto do fornecedor.
+        #: A CONCESSIONÁRIA DO CADASTRO (`0099`). `outerjoin` porque
+        #: `Mencao.unidade_negocio_id` é anulável e `Mencao.unidade_texto` é a
+        #: reserva: a menção sem unidade resolvida continua na lista.
         .outerjoin(UnidadeNegocio, UnidadeNegocio.id == Mencao.unidade_negocio_id)
         .outerjoin(PilarDaMencao, PilarDaMencao.id == Mencao.bloco_tema_id)
         .outerjoin(
@@ -357,7 +357,8 @@ def listar_mencoes(
             #: continua mostrando exatamente o que mostrava. O passo 2 só
             #: preenche o que estava caindo no passo 3.
             #:
-            #: O PASSO 3 É UM RÓTULO ERRADO onde há nível de verdade:
+            #: O PASSO 3 É UM RÓTULO ERRADO quando existe N1 derivado ou
+            #: gravado:
             #: `tema_texto` ali é a `Subcategoria` do fornecedor — um ASSUNTO
             #: —, e a coluna que o exibe se chama "Pilar (N1)", então a pessoa
             #: lê "Falta de água" como se fosse um dos 7 pilares. Com a `0098` o

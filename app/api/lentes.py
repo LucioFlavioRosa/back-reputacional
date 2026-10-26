@@ -7,10 +7,11 @@ ONDE ESTÁ O QUÊ:
     este arquivo                         as rotas, e só
 
 A SEPARAÇÃO NÃO FOI POR TAMANHO. Nenhuma função da leitura toca o pedido HTTP:
-todas recebem `(sessao, lente, mes, calibracao, filtro)` e devolvem modelo de
-saída. Privadas e dentro de `api/`, a única forma de perguntar "como está a
-Imprensa este mês?" era fazer um pedido com sessão de navegador — e automação,
-geração de texto por IA e uma segunda interface querem exatamente esta leitura.
+as que as rotas chamam recebem `(sessao, lente, mes, calibracao, filtro)` e
+devolvem modelo de saída. Por serem privadas e estarem dentro de `api/`, a
+única forma de perguntar "como está a Imprensa este mês?" era fazer um pedido
+com sessão de navegador — e automação, geração de texto por IA e uma segunda
+interface querem exatamente esta leitura.
 
 O QUE FICOU AQUI: receber o pedido, resolver `mes`/`filtro`, decidir o que o
 papel de quem pede PODE ver, chamar a leitura e devolver. Nada mais.
@@ -285,10 +286,9 @@ def obter_dossie(
         # reintroduziria a frase da manchete em cima de um gráfico de contagem:
         # duas unidades diferentes, sem nada dizendo que são diferentes.
         #
-        # A LISTA É QUEM DESENHA SÉRIE DE CONTAGEM. Clientes desenha recebidas ×
-        # respondidas e a Institucional desenha clima de agenda: para nenhuma
-        # das duas a frase de volume de matéria faria sentido, e as duas seguem
-        # herdando o sinal do período.
+        # QUEM FICA DE FORA DA LISTA DESENHA OUTRA COISA — Clientes desenha
+        # recebidas × respondidas — e para essa unidade a frase de volume de
+        # matéria não faria sentido: ela segue herdando o sinal do período.
         evolucao=(
             bloco_da_evolucao
             if lente.codigo in ("imprensa", "sociedade", "mercado")
@@ -382,12 +382,13 @@ def obter_recorte(
     meses = repositorio_lentes.meses_ate(alvo, MESES_DA_EVOLUCAO)
     trilha = trilha_do_recorte(lente.codigo, filtro)
 
-    #: A LENTE QUE LÊ O CRM NÃO TEM O QUE RECORTAR. O filtro é de `mencao`; a
-    #: Institucional conta interações. Sem esta saída a resposta mistura duas
-    #: contas de universos diferentes: a nota vem de `mencao` (zero, porque não
-    #: há) e a composição e o histórico vêm do CRM INTEIRO, porque
-    #: `serie_da_lente` ignora o filtro na lente interna — cada número certo no
-    #: seu mundo, e lado a lado se contradizendo sem nada explicando.
+    #: A LENTE QUE SE LÊ DESTE BANCO NÃO TEM O QUE RECORTAR: o filtro é de
+    #: `mencao`, e uma lente interna conta `interacao_registro`. Sem esta saída
+    #: a resposta mistura duas contas de universos diferentes: a nota vem de
+    #: `mencao` (zero, porque não há) e a composição e o histórico vêm do CRM
+    #: INTEIRO, porque `serie_da_lente` ignora o filtro na lente interna — cada
+    #: número certo no seu mundo, e lado a lado se contradizendo sem nada
+    #: explicando.
     #:
     #: A TRILHA FICA, para a pessoa ver o que pediu e poder desfazer.
     if filtro.ativo and repositorio_lentes.lente_e_interna(sessao, lente.id):
@@ -439,8 +440,9 @@ def obter_recorte(
     #: A NOTA DO MÊS NÃO SE DERIVA AQUI (`50 + impacto`, que é identidade exata
     #: quando não há recorte), por dois motivos concretos:
     #:
-    #:   arredondamento   `impacto` já vem com 2 casas, e `round(50 + 35.50)`
-    #:                    dá 86 onde `para_score` dá 85
+    #:   arredondamento   o impacto desta linha já foi arredondado para 2
+    #:                    casas, e `round(50 + 35.50)` dá 86 onde `para_score`
+    #:                    dá 85
     #:   estimativa       `medir_uma_lente` exclui `score_estimativa` de
     #:                    propósito, então num mês estimado a lente publica nota
     #:                    e este histórico diria "sem base"
