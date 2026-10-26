@@ -113,8 +113,10 @@ def _ultima_linha_preenchida(coluna: str, primeira: int) -> str:
     usa o modo aproximado, que a documentação descreve para intervalo ORDENADO.
     Aqui funciona porque o valor procurado é maior que qualquer texto (ou
     número) e a busca nunca tem para onde descer, mas isso é garantia de
-    implementação. Nenhum braço pode passar da última linha preenchida, então o
-    maior deles nunca aponta para além dela.
+    implementação. Nenhum dos três MEDIDORES passa da última linha preenchida,
+    então o maior deles nunca aponta para além dela. O piso `primeira` é a
+    exceção deliberada: na coluna vazia ele devolve a primeira linha de dados,
+    que é a célula em branco que o intervalo precisa ter para existir.
     """
     return (
         f"MAX(COUNTA({coluna}),"

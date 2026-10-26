@@ -99,9 +99,9 @@ def conferir_a_parte(*, indice: int, dados: bytes, tamanho_declarado: int) -> No
 def conferir_a_contagem(*, partes: int, tamanho_declarado: int, teto_do_arquivo: int) -> None:
     """Recusa a contagem de partes que não corresponde ao que foi declarado.
 
-    `partes` VEM DO CLIENTE, e por isso tem dois tetos: o derivado do teto do
-    arquivo, e o que o tamanho DECLARADO desta subida comporta. Ver
-    `maximo_de_partes`.
+    `partes` VEM DO CLIENTE, e por isso tem dois tetos: `partes_maximas`, que
+    deriva do teto do arquivo, e `partes_esperadas`, que é o que o tamanho
+    DECLARADO desta subida comporta.
     """
     if partes <= 0:
         raise RegraViolada("Diga quantas partes o arquivo tem.")

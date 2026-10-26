@@ -13,7 +13,9 @@ contagem e seus tetos estão em `subida_em_partes`, que não sabe de bonds. Aqui
 mora o que é desta tela: a linha, o dono, o caminho no armazenamento e o que
 fazer com o arquivo montado.
 
-AS CONDIÇÕES DE SEGURANÇA SÃO AS MESMAS DA PLANILHA DO SCORE — ver `_em_voo`.
+A LÓGICA DE SEGURANÇA É A DA PLANILHA DO SCORE, com uma condição menos: lá o
+`where` casa também `fonte_id`, porque cada subida é de uma fonte do Score; aqui
+o export é um só. Ver `_em_voo`.
 """
 
 from __future__ import annotations
