@@ -589,11 +589,10 @@ class FonteSaida(BaseModel):
     lente: str
     #: QUAL EXPORT ESTA FONTE LÊ — `clipei`, `approach`, `bites`.
     #:
-    #: EXISTE PARA A TELA AGRUPAR, e a pergunta do dono do produto é a razão:
-    #: "por que tem clipei e clipei investidores?". Porque `score_fonte` é a
-    #: alimentação de uma LENTE, não um fornecedor — `clipei` alimenta Imprensa
-    #: (peso 30) e `clipei_investidores` alimenta Mercado (peso 20), com o mesmo
-    #: arquivo. Sem a segunda, 20% do índice fica sem alimentação.
+    #: EXISTE PARA A TELA AGRUPAR. `score_fonte` é a alimentação de uma LENTE, e
+    #: não um fornecedor: `clipei` alimenta Imprensa e `clipei_investidores`
+    #: alimenta Mercado, com o MESMO arquivo — sem a segunda, a fatia do Mercado
+    #: fica sem alimentação.
     #:
     #: Mas ninguém SOBE pela segunda: ela é alimentada junto, e expor as duas
     #: num seletor de upload oferece uma escolha que não existe. Com este campo
@@ -1068,9 +1067,9 @@ class ImportacaoSaida(BaseModel):
     """O que a planilha rendeu numa fonte — a tela mostra isto após o upload.
 
     OS DESCARTES SAEM NA RESPOSTA de propósito. Uma importação que diz só
-    "ingeridas 4.973" esconde que 1.426 posts vieram sem classificação de
-    sentimento: quem conferir o número do mês precisa saber que o fornecedor
-    mandou 7.868 linhas e que a diferença não é perda, é recusa declarada.
+    "ingeridas N" esconde quantas linhas vieram sem classificação de sentimento:
+    quem confere o número do mês precisa saber quantas linhas o fornecedor
+    mandou, e que a diferença não é perda, é recusa declarada.
 
     `antes` é a outra metade da honestidade: quantas menções a fonte tinha
     nestes meses antes da troca. É o que deixa um export parcial, baixado antes
@@ -1103,10 +1102,9 @@ class ParecidoSaida(BaseModel):
 class VeiculoNovoSaida(BaseModel):
     """Um veículo que a planilha traz e o cadastro não tem.
 
-    A TELA MARCA TODOS e deixa desmarcar — pedido do dono do produto. Por isso
-    cada um vem com a praça, o alcance e quantas menções o citam: é com esses
-    três que alguém decide tirar a marca de um rádio de bairro sem precisar
-    procurar o que ele é.
+    A TELA MARCA TODOS E DEIXA DESMARCAR. Por isso cada um vem com a praça, o
+    alcance e quantas menções o citam: é com esses três que alguém decide tirar
+    a marca de um rádio de bairro sem precisar procurar o que ele é.
     """
 
     nome: str
@@ -1117,22 +1115,20 @@ class VeiculoNovoSaida(BaseModel):
     #:
     #: É ELE QUE DECIDE O PÚBLICO do perfil no cadastro — vereador entra em
     #: Poder Legislativo / Municipal, e não em Formadores de Opinião. Quem
-    #: autoriza a criação de 1.108 perfis precisa ver "Iriel Sachet —
-    #: Vereador": sem o cargo, a decisão é tomada sobre um nome e um número.
+    #: autoriza a criação em lote precisa ver "Iriel Sachet — Vereador": sem o
+    #: cargo, a decisão é tomada sobre um nome e um número.
     cargo: str | None = None
     #: OS CADASTROS QUE ESTE NOME PODE SER, pela chave achatada — espaço e
     #: pontuação fora.
     #:
     #: PARA QUEM AUTORIZA LER ANTES DE AUTORIZAR, e é a razão de existir: a tela
-    #: marca todos e deixa desmarcar, e sem isto quem desmarca um rádio de bairro
-    #: não tem como ver que "Neo Feed" é o "Neofeed" que já está no cadastro.
-    #: Medido: a ingestão criava o segundo cadastro, porque a busca dela usa
-    #: `normalizar`, que preserva o espaço — e eram 5 pares `veiculo`+`veiculo` e
-    #: 59 `perfil_rede`+`veiculo` fabricados assim.
+    #: marca todos e deixa desmarcar, e sem isto quem desmarca um rádio de
+    #: bairro não tem como ver que "Neo Feed" é o "Neofeed" que já está no
+    #: cadastro. A busca da ingestão usa `normalizar`, que PRESERVA o espaço,
+    #: então o par escapa dela e o segundo cadastro nasce.
     #:
     #: NÃO IMPEDE A CRIAÇÃO: a semelhança não prova identidade, e quem decide é
-    #: gente. É a regra do dono do produto para suspeita de duplicação — mostrar
-    #: para a pessoa decidir.
+    #: gente — mostrar para a pessoa decidir.
     parecidos: list[ParecidoSaida] = []
 
 
@@ -1145,8 +1141,8 @@ class AssuntoNaoReconhecidoSaida(BaseModel):
     mencoes: int
     #: O NOME EXISTE NO CADASTRO, MAS ESTÁ DESATIVADO. São dois problemas com
     #: dois consertos: nome errado se arruma na planilha, tema desativado se
-    #: arruma no cadastro — ou é a planilha que está na taxonomia antiga, e a
-    #: v4 desativou 45 temas.
+    #: arruma no cadastro — ou é a planilha que está na taxonomia antiga, que a
+    #: v4 desativou.
     desativado: bool
 
 
@@ -1172,8 +1168,8 @@ class ConferenciaSaida(BaseModel):
     """O que a subida FARIA, antes de gravar.
 
     `previsao` tem uma linha por fonte irmã, como a importação; `veiculos_novos`
-    é o que nasceria no cadastro. Medido no primeiro arquivo da Clipei: 2.631
-    veículos. É esse número que a pessoa vê antes de decidir.
+    é o que nasceria no cadastro, e é esse número que a pessoa vê antes de
+    decidir.
     """
 
     previsao: list[ImportacaoSaida]
@@ -1188,9 +1184,8 @@ class ConferenciaSaida(BaseModel):
     #: tema; sem vínculo, a linha não entra em recorte nenhum. Subir uma
     #: planilha cujo assunto não casa é subir dado que nenhum filtro alcança.
     mencoes_com_tema: int = 0
-    #: Quantas vieram SEM assunto. Não é erro — a planilha da Bites de
-    #: 01–09/2026 veio com 84% da coluna em branco, e o conteúdo vai ser
-    #: refeito. Mas quem sobe tem de ver o tamanho disso.
+    #: Quantas vieram SEM assunto. Não é erro — um export pode vir com a coluna
+    #: em branco —, mas quem sobe tem de ver o tamanho disso.
     mencoes_sem_assunto: int = 0
     #: OS NOMES QUE O CADASTRO NÃO RECONHECE, por volume. É a lista que a
     #: pessoa leva para o fornecedor — ou para o cadastro, quando o tema existe
@@ -1204,8 +1199,8 @@ class ConferenciaSaida(BaseModel):
     #: no gráfico — a Corsan chega como "Corsan" e como "Companhia Riograndense
     #: de Saneamento (Corsan)". Ver a `0099`.
     mencoes_com_concessionaria: int = 0
-    #: Quantas vieram SEM concessionária. Hoje são 37 em 104.670 — mas o número
-    #: aparece porque um export que a perca não deve passar em silêncio.
+    #: Quantas vieram SEM concessionária. O número aparece porque um export que
+    #: a perca não deve passar em silêncio.
     mencoes_sem_concessionaria: int = 0
     #: OS NOMES QUE O CADASTRO NÃO RESOLVE, por volume.
     concessionarias_nao_reconhecidas: list[ConcessionariaNaoReconhecidaSaida] = []
@@ -1306,7 +1301,7 @@ class VeiculosDoMercadoEntrada(BaseModel):
 
     E porque é assim que a pessoa pensa: ela tem uma LISTA de veículos de
     mercado, mantida numa planilha, e quer que o sistema reflita essa lista.
-    "Estes 81 são" é a frase dela; "marque o 37º" não é.
+    "Estes são" é a frase dela; "marque o 37º" não é.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -1335,11 +1330,11 @@ class VeiculosDoMercadoSaida(BaseModel):
     desmarcados: int
     #: OS QUE NÃO ENTRARAM, pelo nome, por já terem outra classificação.
     #:
-    #: EXISTE PORQUE A RECUSA ERA MUDA. O servidor não sobrescreve subcategoria
-    #: escolhida à mão — está certo —, mas devolvia `{marcados: 0}` sem dizer
-    #: de quem, e a tela imprimia "Nada mudou — a lista já estava assim" e
-    #: limpava a edição. A pessoa achava que salvou, e a lente seguia sem o
-    #: veículo. Nome, e não id: é o que ela reconhece na frase.
+    #: A RECUSA TEM DE TER NOME. O servidor não sobrescreve subcategoria
+    #: escolhida à mão, e sem esta lista ele devolveria `{marcados: 0}` sem
+    #: dizer de quem — a tela imprimiria "nada mudou" e a pessoa acharia que
+    #: salvou, com a lente seguindo sem o veículo. Nome, e não id: é o que ela
+    #: reconhece na frase.
     recusados: list[str] = []
 
 
@@ -1372,8 +1367,7 @@ class ReconciliacaoSaida(BaseModel):
 
 def _reconciliacao(medida: reconciliar_lista_de_veiculos.Reconciliacao) -> ReconciliacaoSaida:
     #: CAMPO A CAMPO, e não `**vars(medida)`: as dataclasses do caso de uso têm
-    #: `slots=True` e não têm `__dict__` — `vars()` levanta `TypeError`, e foi
-    #: assim que uma rota desta casa devolveu 500 em produção.
+    #: `slots=True` e não têm `__dict__`, então `vars()` levanta `TypeError`.
     return ReconciliacaoSaida(
         fonte=medida.fonte,
         espelho=medida.espelho,
@@ -1402,9 +1396,8 @@ def previa_da_reconciliacao_da_lista(
 ) -> list[ReconciliacaoSaida]:
     """A prévia da lista pedida — ver `previa_da_reconciliacao`.
 
-    POR LISTA DESDE A `0107`, quando a Institucional passou a recortar a mesma
-    Clipei por outra subcategoria. O motor já era por lista e por fonte; o que
-    faltava era a rota parar de assumir a do Mercado.
+    POR LISTA, e não só a do Mercado: a Institucional recorta a mesma Clipei por
+    outra subcategoria (`0107`). O motor sempre foi por lista e por fonte.
     """
     _par_da_lista(lista)
     return [
@@ -1461,9 +1454,8 @@ def previa_da_reconciliacao(
     o mesmo gesto em dois tempos, e pedir uma permissão diferente para a segunda
     metade deixaria a lista editável por quem não pode torná-la efetiva.
 
-    UMA POR FONTE QUE RECORTA. Hoje é uma só (`clipei_investidores`), e a lista
-    existe porque duas fontes com a mesma lista são duas reconciliações — cada
-    uma com o próprio espelho.
+    UMA POR FONTE QUE RECORTA: duas fontes com a mesma lista são duas
+    reconciliações, cada uma com o próprio espelho.
     """
     return previa_da_reconciliacao_da_lista(sessao, usuario, LISTA_DO_MERCADO)
 
@@ -1474,9 +1466,9 @@ def aplicar_a_reconciliacao(
 ) -> list[ReconciliacaoSaida]:
     """Faz a lista de agora valer para TODOS os meses já ingeridos.
 
-    REESCREVE MESES FECHADOS, e é por isso que a tela mostra a prévia antes. O
-    pedido do dono do produto foi explícito nos dois sentidos: classificar move
-    os registros para a lente, desclassificar os tira.
+    REESCREVE MESES FECHADOS, e é por isso que a tela mostra a prévia antes.
+    Vale nos dois sentidos: classificar move os registros para a lente,
+    desclassificar os tira.
 
     POST E NÃO PUT: não é "deixe a reconciliação neste estado", é "execute esta
     reconciliação agora". Repetir o POST é inofensivo — a segunda vez não acha
@@ -1494,10 +1486,9 @@ def definir_veiculos_de_investidores(
     """Define quais veículos a lente Mercado considera.
 
     O QUE ISTO RESOLVE. A lente Mercado se separava por `Público-alvo =
-    Investidores`, coluna que o fornecedor preenche: medido contra o export de
-    08–09/2026, captura 80 linhas onde a lista de veículos que a Aegea mantém
-    captura 323. O critério passa a ser o cadastro, e esta rota é como a lista
-    se mantém — por tela, não por SQL.
+    Investidores`, coluna que o fornecedor preenche e que alcança uma fração do
+    que a lista de veículos mantida pela Aegea alcança. O critério passa a ser o
+    cadastro, e esta rota é como a lista se mantém — por tela, não por SQL.
 
     SÓ MEXE NA SUBCATEGORIA DO MERCADO. Um veículo classificado à mão como
     "Geral nacional" ou "Regional das concessões" não é tocado: tirá-lo da lista
@@ -1520,11 +1511,11 @@ def _definir_a_lista(
     A ÚNICA COISA QUE A LISTA MUDA É O ALVO — a subcategoria que entra e sai dos
     veículos. Todo o resto (a trava, a conferência de concorrência, a recusa de
     sobrescrever classificação alheia) é igual, e duplicar isso por lente seria
-    duplicar justamente as partes que levaram revisão.
+    duplicar justamente as partes delicadas.
     """
     alvo, categoria = _subcategoria_da_lista(sessao, lista)
 
-    #: A TRAVA DA LISTA INTEIRA, e ela é conserto de achado ALTO de revisão.
+    #: A TRAVA DA LISTA INTEIRA, e não só das linhas envolvidas.
     #:
     #: A trava de linhas abaixo cobre `pedidos ∪ conhecidos` — as instituições
     #: que esta gravação menciona. Com a LISTA VAZIA, duas pessoas acrescentando
@@ -1534,9 +1525,9 @@ def _definir_a_lista(
     #: inteira era só o seu. A gravação é declarativa; esse resultado não é o
     #: que nenhuma das duas pediu.
     #:
-    #: O DEFEITO É ANTERIOR A ESTA ROTA, e estava dormente porque a lista do
-    #: Mercado nunca está vazia (a `0066` semeou 81). A lista Institucional
-    #: NASCE vazia — é exatamente o estado em que ele acorda.
+    #: VALE PARA QUALQUER LISTA QUE POSSA ESTAR VAZIA, e a Institucional nasce
+    #: vazia — a do Mercado já vem semeada, e por isso o defeito nunca se
+    #: manifestou.
     #:
     #: POR LISTA, e morre com a transação: duas listas diferentes não se
     #: esperam. A chave é o nome da lista num espaço próprio, como
@@ -1621,23 +1612,22 @@ def conferir_planilha(
 ) -> ConferenciaSaida:
     """Lê o export, diz o que a subida faria, e GUARDA o arquivo.
 
-    POR QUE ELA EXISTE. O dono do produto pediu que o veículo sem cadastro nasça
-    junto com a subida, e pediu que a conta apareça antes — o que é o que torna
-    a coisa segura. A importação de agendas tem escrito no próprio código por
-    quê: "importação de planilha sem conferência humana cria duplicata de
-    instituição em massa, e desfazer isso depois é pior que digitar de novo".
+    POR QUE ELA EXISTE. O veículo sem cadastro nasce junto com a subida, e a
+    conta aparece ANTES — é isso que torna a coisa segura. A importação de
+    agendas registra a mesma razão no próprio código: planilha sem conferência
+    humana cria duplicata de instituição em massa, e desfazer depois é pior que
+    digitar de novo.
 
     AS RECUSAS ESTRUTURAIS APARECEM AQUI, antes de a pessoa escolher nada:
     arquivo que não abre, aba que falta, coluna que o cadastro espera e não
     existe. `app/api/erros.py` as traduz para 422.
 
     GUARDAR VEM DEPOIS DE CONFERIR, e a ordem é a economia inteira: planilha
-    que a conferência recusa não chega a ocupar armazenamento. Guardar antes
-    encheria o contêiner justamente com os arquivos que não servem.
+    que a conferência recusa não chega a ocupar armazenamento.
 
     O `planilha_id` que sai daqui poupa à confirmação subir os mesmos bytes de
-    novo — 10,53 MB no clipping real da Clipei. Vem nulo quando o ambiente não
-    tem armazenamento, e aí a tela manda o arquivo, como sempre fez.
+    novo. Vem nulo quando o ambiente não tem armazenamento, e aí a tela manda o
+    arquivo, como sempre fez.
     """
     fonte = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == codigo))
     if fonte is None:
@@ -1700,10 +1690,9 @@ def _saida_da_conferencia(
             AssuntoNaoReconhecidoSaida(
                 nome=item.nome, mencoes=item.mencoes, desativado=item.desativado
             )
-            #: OS TRINTA MAIORES, e não a lista inteira: a Bites de 01–09/2026
-            #: traz 65 valores distintos, e um fornecedor novo pode trazer
-            #: centenas. Quem corrige a planilha ataca por volume, e a lista
-            #: ordenada já põe o que importa no topo.
+            #: OS TRINTA MAIORES, e não a lista inteira: um fornecedor novo pode
+            #: trazer centenas. Quem corrige a planilha ataca por volume, e a
+            #: lista ordenada já põe o que importa no topo.
             for item in assuntos.nao_ligados[:30]
         ],
         mencoes_com_concessionaria=concessionarias.ligadas,
@@ -1712,9 +1701,8 @@ def _saida_da_conferencia(
             ConcessionariaNaoReconhecidaSaida(
                 nome=item.nome, mencoes=item.mencoes, opcoes=list(item.opcoes)
             )
-            #: OS TRINTA MAIORES, pelo mesmo motivo dos assuntos: a base inteira
-            #: tem 65 grafias distintas de concessionária, e quem corrige ataca
-            #: por volume.
+            #: OS TRINTA MAIORES, pelo mesmo motivo dos assuntos: quem corrige
+            #: ataca por volume.
             for item in concessionarias.nao_ligados[:30]
         ],
     )
@@ -1726,9 +1714,8 @@ class SubidaEmPartesSaida(BaseModel):
     `planilha_id` NULO SIGNIFICA "AQUI NÃO DÁ, MANDE DE UMA VEZ", e é a mesma
     convenção que a conferência de uma vez só já usa para dizer que não guardou
     o arquivo. Um ambiente sem armazenamento não tem onde montar as partes, e
-    sem este nulo a tela recebia um 422 indistinguível dos outros três desta
-    rota — então a pessoa lia "este ambiente não guarda arquivos" em vez de a
-    planilha simplesmente subir.
+    sem este nulo a recusa viria como um 422 indistinguível dos outros desta
+    rota — a tela mostraria a mensagem crua em vez de cair no caminho de sempre.
     """
 
     planilha_id: UUID | None
@@ -1746,38 +1733,30 @@ def comecar_subida_em_partes(
 ) -> SubidaEmPartesSaida:
     """Abre uma subida em partes para uma planilha grande.
 
-    POR QUE ESTE CAMINHO EXISTE, com os números medidos em 16/10/2026 no
-    ambiente implantado. O ingress do Container Apps encerra a requisição por
-    volta de 240 s, e isso NÃO é configurável. A telemetria do navegador
-    registrou, do mesmo arquivo e da mesma máquina:
+    POR QUE ESTE CAMINHO EXISTE. O ingress do Container Apps encerra a
+    requisição por volta de 240 s, e isso NÃO é configurável. A banda de subida
+    varia em mais de uma ordem de grandeza na mesma hora, então um clipping de
+    dezenas de MB pode precisar de mais tempo do que o teto — e aí o ingress
+    desiste com 403, que é indistinguível de recusa de permissão.
 
-        1,42 MB  ->    4,1 s  -> 200
-        1,33 MB  ->   73,2 s  -> 200
-       10,53 MB  ->  212,4 s  -> 403   (o ingress desistindo)
+    EM PARTES, NENHUMA REQUISIÇÃO CHEGA PERTO DO TETO. O tempo total pode ser
+    de minutos; o que deixa de existir é a requisição longa.
 
-    A banda de subida variou de ~18 KB/s a ~350 KB/s na mesma hora. A 18 KB/s,
-    10,53 MB precisam de 390 s — e nunca cabem numa requisição.
-
-    EM PARTES, NENHUMA REQUISIÇÃO CHEGA PERTO DO TETO: 1 MB leva ~57 s no pior
-    caso medido. O tempo total pode ser de minutos; o que deixa de existir é a
-    requisição longa.
-
-    NÃO SUBSTITUI A SUBIDA DE UMA VEZ. Arquivo pequeno não paga onze idas, e um
-    ambiente sem armazenamento não tem onde montar — ali esta rota devolve
-    `planilha_id` nulo e a tela usa o de sempre. ANTES ELA RECUSAVA COM 422, e
-    a tela não caía no caminho de sempre porque não tinha como distinguir essa
-    recusa de "fonte inativa" ou "passa de 80 MB": mostrava a mensagem crua.
+    NÃO SUBSTITUI A SUBIDA DE UMA VEZ. Arquivo pequeno não paga várias idas, e
+    um ambiente sem armazenamento não tem onde montar — ali esta rota devolve
+    `planilha_id` nulo e a tela usa o de sempre, em vez de uma recusa que ela
+    não sabe distinguir de "fonte inativa".
     """
     fonte = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == codigo))
     if fonte is None:
         raise NaoEncontrado("Fonte não encontrada.")
     #: AS RECUSAS DE CADASTRO VALEM AQUI TAMBÉM: fonte interna e fonte inativa
-    #: não recebem planilha, e descobrir isso depois de onze partes subirem
-    #: seria fazer a pessoa pagar o upload inteiro para ouvir não.
+    #: não recebem planilha, e descobrir isso depois de as partes subirem seria
+    #: fazer a pessoa pagar o upload inteiro para ouvir não.
     #:
     #: `recusar_a_fonte` E NÃO `recusar_o_que_nao_entra`: a segunda confere
-    #: também o tamanho e a assinatura de ZIP, e aqui não há byte para conferir.
-    #: Chamá-la com `b""` recusava toda planilha — catorze testes de uma vez.
+    #: também o tamanho e a assinatura de ZIP, e aqui não há byte para conferir
+    #: — chamá-la com `b""` recusaria toda planilha.
     ingerir_mencoes.recusar_a_fonte(fonte)
     #: A LINHA NASCE AQUI, e é o que dá dono à subida — ver `comecar`. Abrir
     #: subida nova substitui a pendência daquela pessoa naquela fonte, byte
@@ -1787,8 +1766,7 @@ def comecar_subida_em_partes(
     )
     tarefas.add_task(planilha_do_score.apagar_byte, aberta.caminho_substituido)
     #: `aberta.id` PODE SER NULO, e a tela conta com isso — ver
-    #: `SubidaEmPartesSaida`. Havia um `assert` aqui afirmando o contrário; ele
-    #: valia enquanto `comecar` recusava sem armazenamento.
+    #: `SubidaEmPartesSaida`.
     #:
     #: `tamanho_da_parte` VAI MESMO ASSIM, e não condicionalmente: ele não
     #: depende do armazenamento, e um campo que às vezes falta obrigaria o
@@ -1822,8 +1800,8 @@ def subir_parte_da_planilha(
 
     E A SUBIDA TEM DONO: `receber_parte` consulta a linha por (id, fonte, dono,
     ainda subindo) antes de escrever. Sem isso, conhecer o uuid de outra pessoa
-    bastava para mandar parte na subida dela — achado da revisão do Codex em
-    16/10/2026, e a razão de a `0094` existir.
+    bastaria para mandar parte na subida dela — é isso que a `0094` existe para
+    impedir.
     """
     fonte = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == codigo))
     if fonte is None:
@@ -1853,21 +1831,20 @@ def conferir_planilha_em_partes(
     marcar a subida completa. Marcar antes de conferir deixaria confirmável uma
     planilha que a conferência recusou.
 
-    O `try` COMEÇA ANTES DE `montar`, e esta é correção de defeito. Na primeira
-    versão ele começava DEPOIS: `montar` publicava o arquivo e, se a resposta do
-    Azure se perdesse ou `blob.ler` falhasse, o byte ficava sem ninguém apagar —
-    porque a limpeza morava num `except` que ainda não tinha começado. Achado da
-    revisão do Codex em 16/10/2026.
+    O `try` COMEÇA ANTES DE `montar`, e não depois: `montar` publica o arquivo,
+    e se a resposta do Azure se perder ou `blob.ler` falhar, a limpeza tem de
+    estar no ar — num `except` que ainda não começou, o byte fica sem ninguém
+    para apagá-lo.
 
     E O BYTE NÃO SE PERDE DE VISTA nem quando a limpeza falha, que é a outra
     metade da `0094`: a linha da subida existe desde a abertura e continua
-    apontando para o caminho. Antes, a linha nascia DEPOIS do arquivo, e o
-    commit da sessão roda depois de a rota retornar (`banco/sessao.py`) — um
-    commit que falhasse desfazia a linha e deixava um arquivo que nenhuma linha
-    citava, com id aleatório.
+    apontando para o caminho. Com a linha nascendo DEPOIS do arquivo, um commit
+    que falhasse — e o commit da sessão roda depois de a rota retornar, ver
+    `banco/sessao.py` — deixaria um arquivo que nenhuma linha cita, com id
+    aleatório.
 
-    O NOME NÃO VEM MAIS AQUI: ele é gravado na abertura, porque a linha existe
-    desde lá. Pedi-lo nos dois lugares convidaria os dois a divergirem.
+    O NOME NÃO VEM AQUI: ele é gravado na abertura, porque a linha existe desde
+    lá. Pedi-lo nos dois lugares convidaria os dois a divergirem.
     """
     fonte = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == codigo))
     if fonte is None:
@@ -1915,8 +1892,7 @@ def importar_planilha(
     de `casos_de_uso/ingerir_mencoes.py`.
 
     MESMA PERMISSÃO DA CALIBRAÇÃO, e pelo mesmo motivo: isto muda o número que
-    todo mundo lê na reunião. Ler o Score basta ter o portal; mexer no que o
-    alimenta é da coordenação.
+    todo mundo lê na reunião.
 
     DOIS JEITOS DE DIZER QUAL PLANILHA, e um só por pedido:
 
@@ -1932,8 +1908,7 @@ def importar_planilha(
 
     A RELEITURA CONTINUA INTEIRA. `planilha_id` devolve os BYTES guardados —
     nenhuma conclusão da conferência é reaproveitada. Veículo por veículo e tema
-    por tema são reconferidos contra o cadastro deste instante, que é a razão de
-    a importação de subtemas pedir o arquivo de novo e continua valendo aqui.
+    por tema são reconferidos contra o cadastro deste instante.
     """
     fonte = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == codigo))
     if fonte is None:
@@ -1960,9 +1935,9 @@ def importar_planilha(
     else:
         conteudo = arquivo.file.read()
         #: QUAL PENDÊNCIA EXISTE AGORA, antes de ingerir — e não depois. A
-        #: ingestão leva 62 s medidos, e nesse tempo outra conferência da mesma
-        #: pessoa nesta fonte pode gravar uma planilha NOVA. Perguntar depois e
-        #: apagar "a pendência" levaria essa nova, que ela ainda quer confirmar.
+        #: ingestão demora, e nesse tempo outra conferência da mesma pessoa
+        #: nesta fonte pode gravar uma planilha NOVA; perguntar depois e apagar
+        #: "a pendência" levaria essa nova, que ela ainda quer confirmar.
         a_descartar = planilha_do_score.id_da_pendente(
             sessao, fonte=fonte, usuario_id=usuario.id
         )
@@ -1973,20 +1948,17 @@ def importar_planilha(
             sessao, fonte, conteudo, _nomes_autorizados(veiculos_a_criar)
         )
     ]
-    #: A LINHA SAI NA TRANSAÇÃO, o byte depois dela: gravou, a planilha
-    #: guardada cumpriu o papel e não há por que mantê-la ocupando o contêiner.
+    #: A LINHA SAI NA TRANSAÇÃO, o byte depois dela: gravou, a planilha guardada
+    #: cumpriu o papel e não há por que mantê-la ocupando o contêiner.
     #:
-    #: OS DOIS RAMOS LIMPAM, e antes só o do identificador limpava — o do
-    #: arquivo terminava com sucesso deixando linha e byte guardados para
-    #: sempre. Mandar o arquivo é caminho legítimo e permanente, não só da
-    #: janela de deploy: a Calibração importa sem conferir, e a tela recai no
-    #: arquivo sempre que não tem a conferência em mão.
+    #: OS DOIS RAMOS LIMPAM. Mandar o arquivo é caminho legítimo e permanente,
+    #: não só da janela de deploy: a Calibração importa sem conferir, e a tela
+    #: recai no arquivo sempre que não tem a conferência em mão.
     #:
-    #: OS DOIS APAGAM POR ID, e agora pelo mesmo motivo. O ramo do arquivo
-    #: resolveu o id LÁ ATRÁS, antes de ingerir: apagar "a pendência" aqui no fim
-    #: levaria a planilha que uma conferência concorrente gravou durante os 62 s
-    #: da ingestão — e essa a pessoa ainda quer confirmar. Com o id em mão, a
-    #: troca só faz o descarte não achar nada.
+    #: OS DOIS APAGAM POR ID. O ramo do arquivo resolveu o id LÁ ATRÁS, antes de
+    #: ingerir: apagar "a pendência" aqui no fim levaria a planilha que uma
+    #: conferência concorrente gravou durante a ingestão — e essa a pessoa ainda
+    #: quer confirmar. Com o id em mão, a troca só faz o descarte não achar nada.
     descartado = (
         planilha_do_score.descartar(sessao, planilha_id=a_descartar)
         if a_descartar is not None
@@ -1999,25 +1971,18 @@ def importar_planilha(
 def _nomes_autorizados(bruto: str | None) -> tuple[str, ...]:
     """Os nomes que a pessoa marcou, de UM campo com a lista em JSON.
 
-    UM CAMPO, E NÃO UM POR NOME, e isto é conserto de um defeito que a pessoa
-    encontrou na tela: a primeira versão mandava `veiculos_a_criar` repetido,
-    uma vez por veículo, que é como o FastAPI lê `Form(list[str])`. Com 2.628
-    veículos na primeira carga da Clipei, o parser multipart do Starlette
-    recusou o pedido inteiro:
+    UM CAMPO, E NÃO UM POR NOME. `Form(list[str])` lê um campo REPETIDO, uma vez
+    por veículo, e uma carga inicial traz milhares — aí o parser multipart do
+    Starlette recusa o pedido inteiro:
 
         Too many fields. Maximum number of fields is 1000
 
-    O limite é proteção do servidor e está certo — quem estava errado era o
-    formato. Afrouxá-lo trocaria um defeito desta tela por uma porta aberta em
-    todas as outras.
-
-    OS MEUS TESTES NÃO PEGARAM porque chamavam `ingerir` direto em Python, e os
-    de HTTP usavam listas de dois nomes. O teste novo manda 2.000 pelo cliente
-    de verdade — o número é o que importa aqui, e testar com dois provava o
-    caminho e não o volume.
+    O limite é proteção do servidor e está certo; afrouxá-lo trocaria um defeito
+    desta tela por uma porta aberta em todas as outras. Teste que mande dois
+    nomes prova o caminho e não o volume.
 
     JSON INVÁLIDO É ERRO DE PEDIDO, não lista vazia: aceitar em silêncio faria a
-    tela dizer "2.628 cadastrados" e nada nascer.
+    tela dizer que cadastrou e nada nascer.
     """
     if not bruto or not bruto.strip():
         return ()

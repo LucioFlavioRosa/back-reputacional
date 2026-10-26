@@ -1,14 +1,10 @@
 """As rotas do Painel de Inteligência de Mercado.
 
-PRIMEIRO MÓDULO DO TERCEIRO PORTAL. O cartão dele existe na capa desde o início,
-com `view: null` e `pronto: false`; estas são as primeiras rotas que ele serve.
-
 O GUARDA DO ROUTER CHECA DUAS COISAS — ver
 `dependencias.exigir_portal_de_inteligencia_de_mercado`: o ALCANCE
 (`papel.acessa_inteligencia_de_mercado`) e a PORTA
-(`configuracao.mercado_lancado`). Enquanto a bandeira estiver desligada estas
-rotas recusam para todo mundo, inclusive para quem tem o papel — que é o estado
-em que elas nascem, e o que permite mesclar o back antes de a tela existir.
+(`configuracao.mercado_lancado`). Com a bandeira desligada estas rotas recusam
+para todo mundo, inclusive para quem tem o papel.
 
 ARQUIVO PRÓPRIO, e não uma seção de `score.py`: o preço de um bond não é menção,
 não tem lente e não entra em régua de calibração. O que os dois domínios
@@ -83,16 +79,15 @@ class PontoDoIndiceSaida(BaseModel):
     #: interpolar uma linha diária que não existe.
     mes: date
     isr: int | None
-    #: O SCORE DE CADA LENTE no mês, por código. Pedido de 20/10/2026: o gráfico
-    #: passa a poder mostrar a nota da Imprensa, do Mercado e da Institucional
-    #: ao lado do índice.
+    #: O SCORE DE CADA LENTE no mês, por código: é o que deixa o gráfico mostrar
+    #: a nota da Imprensa, do Mercado e da Institucional ao lado do índice.
     #:
     #: SAI DA MESMA MEDIÇÃO QUE O `isr`, e é por isso que não há rota nova: o
-    #: índice de um mês já mede as cinco lentes para somá-las. Duas rotas
-    #: fariam a mesma conta duas vezes e poderiam discordar.
+    #: índice de um mês já mede as cinco lentes para somá-las. Duas rotas fariam
+    #: a mesma conta duas vezes e poderiam discordar.
     #:
-    #: NULO É "NÃO MEDIDA", como no `isr`: a lente sem dado fica fora do
-    #: índice, e desenhar zero diria que a reputação dela foi péssima.
+    #: NULO É "NÃO MEDIDA", como no `isr`: a lente sem dado fica fora do índice,
+    #: e desenhar zero diria que a reputação dela foi péssima.
     lentes: dict[str, int | None] = {}
 
 
@@ -272,10 +267,9 @@ def registros_da_janela(
         str | None,
         Query(
             pattern="^(imprensa|mercado|institucional)(,(imprensa|mercado|institucional))*$",
-            #: OMITIR, E NÃO MANDAR VAZIO — achado de revisão. A descrição dizia
-            #: "vazio = as três", e `lentes=` é 422: a regex exige ao menos uma
-            #: lente. Quem lesse o contrato ao pé da letra escreveria a chamada
-            #: que a rota recusa. A tela manda a chave só quando há escolha.
+            #: OMITIR, E NÃO MANDAR VAZIO: a regex exige ao menos uma lente, e
+            #: `lentes=` é 422. A descrição diz isso porque quem a lesse ao pé
+            #: da letra escreveria a chamada que a rota recusa.
             description=(
                 "as lentes do quadro, separadas por vírgula. OMITIR o parâmetro é "
                 "pedir as três; mandá-lo vazio é 422."
@@ -351,10 +345,9 @@ def impacto_na_janela_(
         str | None,
         Query(
             pattern="^(imprensa|mercado|institucional)(,(imprensa|mercado|institucional))*$",
-            #: OMITIR, E NÃO MANDAR VAZIO — achado de revisão. A descrição dizia
-            #: "vazio = as três", e `lentes=` é 422: a regex exige ao menos uma
-            #: lente. Quem lesse o contrato ao pé da letra escreveria a chamada
-            #: que a rota recusa. A tela manda a chave só quando há escolha.
+            #: OMITIR, E NÃO MANDAR VAZIO: a regex exige ao menos uma lente, e
+            #: `lentes=` é 422. A descrição diz isso porque quem a lesse ao pé
+            #: da letra escreveria a chamada que a rota recusa.
             description=(
                 "as lentes do quadro, separadas por vírgula. OMITIR o parâmetro é "
                 "pedir as três; mandá-lo vazio é 422."
@@ -417,11 +410,9 @@ def impacto_na_janela_(
         nivel=lida.nivel,
         sem_data=lida.sem_data,
         mes_sem_base=lida.mes_sem_base,
-        #: AS LENTES QUE A CONTA SOMOU, e a fatia delas no índice do mês. Era
-        #: `lente=impacto_na_janela.LENTE` — uma constante, de quando a leitura
-        #: media só a Imprensa. Agora o impacto é em ponto do SCORE GERAL e soma
-        #: as três de clipping, cada uma pelo peso dela; a tela precisa das duas
-        #: coisas para a conta ser conferível, e vêm da RESPOSTA e não de uma
+        #: AS LENTES QUE A CONTA SOMOU, e a fatia delas no índice do mês. O
+        #: impacto é em ponto do SCORE GERAL e soma as três de clipping, cada
+        #: uma pelo peso dela; as duas coisas vêm da RESPOSTA e não de uma
         #: constante, porque a lente sem dado no mês não entrou.
         lentes=list(lida.lentes),
         fatia_das_lentes=lida.fatia_das_lentes,
@@ -433,9 +424,9 @@ class SubidaDeBondsSaida(BaseModel):
     """O que o cliente precisa para subir o export em pedaços.
 
     `subida_id` NULO SIGNIFICA "AQUI NÃO DÁ, MANDE DE UMA VEZ" — ambiente sem
-    armazenamento não tem onde montar. A tela cai no caminho de sempre em vez
-    de mostrar uma recusa crua, que é o que acontecia quando esta resposta era
-    um 422: o cliente não tinha como distinguir essa recusa das outras.
+    armazenamento não tem onde montar. A tela cai no caminho de sempre em vez de
+    mostrar uma recusa crua: um 422 aqui seria indistinguível das outras recusas
+    desta rota.
 
     `tamanho_da_parte` VAI MESMO ASSIM, e não condicionalmente: ele não depende
     do armazenamento, e um campo que às vezes falta obrigaria o cliente a tratar
@@ -457,19 +448,14 @@ def abrir_subida_de_bonds(
     """Abre uma subida em partes para um export grande.
 
     POR QUE ESTE CAMINHO EXISTE. O ingress do Container Apps encerra a
-    requisição por volta de 240 s, e isso NÃO é configurável. Medido em
-    16/10/2026 no ambiente implantado, com a banda variando de ~18 KB/s a
-    ~350 KB/s na mesma hora:
+    requisição por volta de 240 s, e isso NÃO é configurável. A banda de subida
+    varia em mais de uma ordem de grandeza na mesma hora, e o export de bonds é
+    CUMULATIVO: cresce toda semana, então cabe numa requisição só até não caber
+    — e quando deixar de caber, a tela recebe 403 sem explicação, que foi o que
+    aconteceu com a planilha do Score. Mesma razão e mesma solução: ver
+    `api/score.comecar_subida_em_partes`.
 
-        1,42 MB  ->    4,1 s  -> 200
-       10,53 MB  ->  212,4 s  -> 403   (o ingress desistindo)
-
-    O export de bonds é CUMULATIVO e cresce toda semana. Hoje tem 1,05 MB e
-    passa; sem este caminho, é questão de tempo até a tela devolver 403 sem
-    explicação — foi exatamente o que aconteceu com a planilha do Score em
-    15/10/2026.
-
-    NÃO SUBSTITUI A SUBIDA DE UMA VEZ. Arquivo pequeno não paga onze idas, e
+    NÃO SUBSTITUI A SUBIDA DE UMA VEZ. Arquivo pequeno não paga várias idas, e
     ambiente sem armazenamento não tem onde montar: ali esta rota devolve
     `subida_id` nulo e a tela usa o de sempre.
     """
@@ -593,9 +579,9 @@ def importar_bonds_em_partes(
     """Grava as cotações do arquivo que a conferência já montou.
 
     SEM REENVIAR OS BYTES, que é o ponto de toda a subida em partes: o arquivo
-    já está no armazenamento e esta rota o lê de lá. Antes, a tela mandava o
-    export INTEIRO duas vezes — uma para conferir e outra para importar — e cada
-    uma delas tinha de caber nos 240 s do ingress.
+    já está no armazenamento e esta rota o lê de lá. Mandá-lo de novo faria o
+    export INTEIRO passar duas vezes pelo ingress — uma para conferir e outra
+    para importar —, e cada passagem teria de caber nos 240 s.
 
     RELÊ E RECONFERE: a importação não confia no que a conferência calculou. Ela
     lê a planilha de novo e compara com o cadastro do instante em que roda, que
