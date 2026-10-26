@@ -176,15 +176,13 @@ def _busca(q: str) -> object:
     """A busca livre: qualquer pedaço, sem acento, em todo campo de texto.
 
     INCLUI O NOME DO CADASTRO, e não só o texto do fornecedor. A coluna
-    "Concessionária" desta tela mostra `CONCESSIONARIA` desde a `0099` — o nome
-    do cadastro, com o texto do fornecedor como reserva —, e a busca continuava
-    varrendo apenas `unidade_texto`. A pessoa lia "Holding / corporativo",
-    digitava exatamente isso, e recebia zero: o gravado é "Aegea Saneamento e
-    Participações S/A".
-
-    É o pior tipo de busca vazia, porque nada na tela indica que a palavra certa
-    era outra. E `Corsan` esconde o defeito — a razão social dela contém a
-    palavra —, então ele sobreviveu ao caso que todo mundo testa.
+    "Concessionária" mostra `CONCESSIONARIA` desde a `0099` — o nome do
+    cadastro, com o texto do fornecedor como reserva —, e uma busca que varra só
+    `unidade_texto` devolve zero para quem lê "Holding / corporativo" na tela e
+    digita exatamente isso, porque o gravado é "Aegea Saneamento e Participações
+    S/A". É o pior tipo de busca vazia, porque nada na tela indica que a palavra
+    certa era outra — e a razão social da Corsan contém "Corsan", então o caso
+    que todo mundo testa esconde o defeito.
 
     OS DOIS, e não um no lugar do outro: quem procura pela razão social está
     lendo a planilha que tem na mão, e não pode perder o resultado. `like` sobre
@@ -320,9 +318,9 @@ def listar_mencoes(
         .outerjoin(Tema, Tema.id == Mencao.tema_id)
         .outerjoin(MacroTema, MacroTema.id == Tema.macro_tema_id)
         .outerjoin(BlocoTema, BlocoTema.id == MacroTema.bloco_tema_id)
-        #: A CONCESSIONÁRIA DO CADASTRO (`0099`). `outerjoin` porque 28.549
-        #: menções nomeiam operação que o cadastro não resolve, e elas têm de
-        #: continuar na lista com o texto do fornecedor.
+        #: A CONCESSIONÁRIA DO CADASTRO (`0099`). `outerjoin` porque há menção
+        #: nomeando operação que o cadastro não resolve, e ela tem de continuar
+        #: na lista com o texto do fornecedor.
         .outerjoin(UnidadeNegocio, UnidadeNegocio.id == Mencao.unidade_negocio_id)
         .outerjoin(PilarDaMencao, PilarDaMencao.id == Mencao.bloco_tema_id)
         .outerjoin(
@@ -355,19 +353,18 @@ def listar_mencoes(
             #:   2. o GRAVADO na menção pela `0098` (`mencao.bloco_tema_id`)
             #:   3. o tema que o fornecedor escreveu
             #:
-            #: O DERIVADO PRIMEIRO, de propósito: onde ele existia, a coluna
+            #: O DERIVADO PRIMEIRO, de propósito: onde ele existe, a coluna
             #: continua mostrando exatamente o que mostrava. O passo 2 só
             #: preenche o que estava caindo no passo 3.
             #:
-            #: E O PASSO 3 ERA UM RÓTULO ERRADO para 73.014 linhas (71% da base
-            #: da Clipei): `tema_texto` ali é a `Subcategoria` do fornecedor — um
-            #: ASSUNTO —, e a coluna que o exibia se chama "Pilar (N1)". A pessoa
-            #: lia "Falta de água" como se fosse um dos 7 pilares. Com a `0098`
-            #: existe o pilar de verdade dessas linhas, e é ele que aparece.
+            #: O PASSO 3 É UM RÓTULO ERRADO onde há nível de verdade:
+            #: `tema_texto` ali é a `Subcategoria` do fornecedor — um ASSUNTO
+            #: —, e a coluna que o exibe se chama "Pilar (N1)", então a pessoa
+            #: lê "Falta de água" como se fosse um dos 7 pilares. Com a `0098` o
+            #: pilar de verdade existe, e é ele que aparece.
             #:
-            #: O passo 3 fica para as 1.955 que não têm nível nenhum — nelas a
-            #: coluna segue mostrando o que o fornecedor disse, que é mais útil
-            #: que vazio e é o comportamento de hoje.
+            #: O passo 3 fica para a linha sem nível nenhum: ali a coluna mostra
+            #: o que o fornecedor disse, que é mais útil que vazio.
             tema_n1=n1 or n1_da_mencao or m.tema_texto,
             tema_n2=n2 or n2_da_mencao,
             tema_n3=n3,

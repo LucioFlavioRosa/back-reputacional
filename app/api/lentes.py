@@ -1,22 +1,19 @@
 """As três rotas das lentes. A LEITURA não mora mais aqui.
 
-ESTE ARQUIVO TINHA 2.403 LINHAS, e 1.344 delas eram 30 funções auxiliares
-privadas — mais da metade das 3.183 linhas que `docs/ESTRUTURA_E_EXPANSAO.md`
-§7.1 mediu em auxiliares de rota no projeto inteiro. Em 17/10/2026 elas saíram:
+ONDE ESTÁ O QUÊ:
 
-    casos_de_uso/leitura_das_lentes.py   a leitura (30 funções)
-    esquemas/lentes.py                   os modelos de resposta (11 classes)
+    casos_de_uso/leitura_das_lentes.py   a leitura
+    esquemas/lentes.py                   os modelos de resposta
     este arquivo                         as 3 rotas, e só
 
-O MOTIVO NÃO FOI TAMANHO. Nenhuma daquelas funções tocava o pedido HTTP: todas
-recebiam `(sessao, lente, mes, calibracao, filtro)` e devolviam modelo de
-saída. Mas, privadas e dentro de `api/`, a única forma de perguntar "como está
-a Imprensa este mês?" era fazer um pedido com sessão de navegador. O painel vai
-ganhar mais automações de leitura, geração de texto por IA e uma segunda
-interface, e as três querem exatamente esta leitura.
+A SEPARAÇÃO NÃO FOI POR TAMANHO. Nenhuma função da leitura toca o pedido HTTP:
+todas recebem `(sessao, lente, mes, calibracao, filtro)` e devolvem modelo de
+saída. Privadas e dentro de `api/`, a única forma de perguntar "como está a
+Imprensa este mês?" era fazer um pedido com sessão de navegador — e automação,
+geração de texto por IA e uma segunda interface querem exatamente esta leitura.
 
-O QUE FICOU: receber o pedido, resolver `mes`/`filtro`, decidir o que o papel de
-quem pede PODE ver, chamar a leitura e devolver. Nada mais.
+O QUE FICOU AQUI: receber o pedido, resolver `mes`/`filtro`, decidir o que o
+papel de quem pede PODE ver, chamar a leitura e devolver. Nada mais.
 
 UM ENDPOINT, UMA TELA. A regra 2 do pacote: o front não calcula. Ele recebe a
 nota, os KPIs, a série, os dois painéis e as frases já montados — e só decide
@@ -28,16 +25,13 @@ dado muda a frase. Guardá-los faria a tela afirmar em setembro o que era
 verdade em junho.
 
 CADA BLOCO VIAJA COM A SUA FICHA. `Ficha` diz de onde o número veio (planilha,
-CRM, cadastro, relatório transcrito), que colunas o alimentam, o que FALTA hoje
-e se o conteúdo é exemplo. É o conteúdo do "?" que abre em cima de cada
-gráfico.
-
-Isso não é documentação: é parte do dado. Metade do que esta tela mostra não
-sai das planilhas — a matriz de jornalistas, a trajetória de rating, o estudo
-de percepção e quantas mensagens foram respondidas vêm do relatório do cliente,
-transcritos. Apresentá-los com a mesma cara de uma contagem medida é o jeito
-mais barato de destruir a confiança num painel: basta o leitor descobrir
-sozinho, uma vez.
+CRM, cadastro, relatório transcrito), que colunas o alimentam, o que falta hoje
+e se o conteúdo é exemplo — é o conteúdo do "?" que abre em cima de cada
+gráfico. Isso é parte do dado, e não documentação: a matriz de jornalistas, a
+trajetória de rating, o estudo de percepção e quantas mensagens foram
+respondidas vêm do relatório do cliente, transcritos, e não das planilhas.
+Apresentar transcrição com a mesma cara de contagem medida é o jeito mais
+barato de destruir a confiança num painel.
 """
 
 from __future__ import annotations
@@ -213,20 +207,17 @@ def obter_dossie(
         )
         delta_versus = "mes_anterior"
 
-    #: OS LOCAIS NÃO PODEM TER O NOME DA FUNÇÃO. Eles tinham, enquanto as
-    #: funções eram `_evolucao`/`_paineis`/`_volume_por_tier` neste mesmo
-    #: arquivo. Quando a leitura saiu para `casos_de_uso/leitura_das_lentes` as
-    #: funções perderam o `_`, e `evolucao = evolucao(...)` passou a sombrear o
-    #: import — `UnboundLocalError` na primeira chamada. O `ruff` pegou os três
-    #: antes de qualquer teste rodar (F823).
+    #: OS LOCAIS NÃO PODEM TER O NOME DA FUNÇÃO IMPORTADA: `evolucao =
+    #: evolucao(...)` sombreia o import e dá `UnboundLocalError` na primeira
+    #: chamada. O `ruff` pega isso (F823) antes de qualquer teste rodar.
     bloco_da_evolucao = evolucao(sessao, lente, alvo, meses, calibracao, None, filtro)
     blocos_dos_paineis = paineis(sessao, lente, alvo, meses, calibracao, filtro)
     drivers = drivers_e_riscos(sessao, lente, alvo, calibracao, filtro)
     temas_falados = temas_mais_falados(sessao, lente, alvo, calibracao, filtro)
-    #: `ve_diretorio` CHEGA ATÉ AQUI porque uma das abas publica nome de gente de
-    #: fora: na Imprensa, `autor` é o jornalista — o mesmo cadastro de terceiros
-    #: que a matriz de jornalistas publica e que esta permissão guarda. Achado de
-    #: revisão: a aba entregava por outra porta o que o painel esconde.
+    #: `ve_diretorio` CHEGA ATÉ AQUI porque uma das abas publica nome de gente
+    #: de fora: na Imprensa, `autor` é o jornalista — o mesmo cadastro de
+    #: terceiros que a matriz de jornalistas publica e que esta permissão
+    #: guarda. Sem isto a aba entrega por outra porta o que o painel esconde.
     causa = onde_esta_a_causa(
         sessao, lente, alvo, calibracao, filtro, ve_diretorio=usuario.ve_diretorio
     )
@@ -291,20 +282,13 @@ def obter_dossie(
         manchete=leitura.manchete,
         # QUEM DESENHA CONTAGEM SAI COM A PRÓPRIA CONCLUSÃO (sobre matéria, não
         # sobre nota) — ver o comentário em `evolucao`. Sobrescrevê-la aqui
-        # reintroduziria a mesma frase da manchete em cima de um gráfico de
-        # contagem: duas unidades diferentes sem nada dizendo que são
-        # diferentes.
+        # reintroduziria a frase da manchete em cima de um gráfico de contagem:
+        # duas unidades diferentes, sem nada dizendo que são diferentes.
         #
-        # O MERCADO ENTROU NESTA LISTA junto com o gráfico. Ele herdava a frase
-        # da nota porque desenhava o eventograma, onde não havia contagem com
-        # que a frase pudesse se confundir. Agora desenha a mesma série da
-        # Imprensa — e deixá-lo herdando a frase da nota traria de volta,
-        # exatamente nele, o defeito que esta lista existe para evitar.
-        #
-        # Clientes e Institucional continuam herdando o sinal do período:
-        # Clientes desenha recebidas × respondidas e a Institucional desenha
-        # clima de agenda, e para nenhuma das duas a frase de volume de matéria
-        # faria sentido.
+        # A LISTA É QUEM DESENHA SÉRIE DE CONTAGEM. Clientes desenha recebidas ×
+        # respondidas e a Institucional desenha clima de agenda: para nenhuma
+        # das duas a frase de volume de matéria faria sentido, e as duas seguem
+        # herdando o sinal do período.
         evolucao=(
             bloco_da_evolucao
             if lente.codigo in ("imprensa", "sociedade", "mercado")
@@ -365,12 +349,10 @@ def obter_recorte(
 ) -> RecorteSaida:
     """O nível 3 do pacote: o que o drawer abre quando alguém clica num dado.
 
-    POR QUE NÃO BASTAVA O RECORTE NA TELA INTEIRA — e esta foi a correção que o
-    dono do produto pediu com estas palavras: "ao clicar em um dado temos que
-    abrir um modal com o deep diving, e não como é feito hoje". Aplicar o filtro
-    na tela inteira REFAZ o mês: a nota muda, os painéis se refazem, e quem
-    clicou perde de vista o mês de onde saiu. É recortar, não aprofundar. O
-    drawer põe o pedaço AO LADO do mês, com a trilha de volta.
+    POR QUE NÃO BASTA O RECORTE NA TELA INTEIRA: aplicar o filtro na tela REFAZ
+    o mês — a nota muda, os painéis se refazem, e quem clicou perde de vista o
+    mês de onde saiu. É recortar, não aprofundar. O drawer põe o pedaço AO LADO
+    do mês, com a trilha de volta.
 
     OS MESMOS PARÂMETROS DO DOSSIÊ, e isso não é repetição preguiçosa: é o que
     faz um link reproduzir o ponto exato do caminho, e o que permite a mesma
@@ -400,12 +382,12 @@ def obter_recorte(
     meses = repositorio_lentes.meses_ate(alvo, MESES_DA_EVOLUCAO)
     trilha = trilha_do_recorte(lente.codigo, filtro)
 
-    #: A LENTE QUE LÊ O CRM NÃO TEM O QUE RECORTAR, e isto foi achado de revisão.
-    #: O filtro é de `mencao`; a Institucional conta interações. A resposta
-    #: misturava duas contas de universos diferentes: a nota vinha de `mencao`
-    #: (zero, porque não há) e a composição e o histórico vinham do CRM INTEIRO,
-    #: porque `serie_da_lente` ignora o filtro na lente interna — cada número
-    #: certo no seu mundo, e lado a lado se contradizendo sem nada explicando.
+    #: A LENTE QUE LÊ O CRM NÃO TEM O QUE RECORTAR. O filtro é de `mencao`; a
+    #: Institucional conta interações. Sem esta saída a resposta mistura duas
+    #: contas de universos diferentes: a nota vem de `mencao` (zero, porque não
+    #: há) e a composição e o histórico vêm do CRM INTEIRO, porque
+    #: `serie_da_lente` ignora o filtro na lente interna — cada número certo no
+    #: seu mundo, e lado a lado se contradizendo sem nada explicando.
     #:
     #: A TRILHA FICA, para a pessoa ver o que pediu e poder desfazer.
     if filtro.ativo and repositorio_lentes.lente_e_interna(sessao, lente.id):
@@ -454,26 +436,20 @@ def obter_recorte(
     #: lado porque um impacto pequeno com muitos itens e um impacto pequeno com
     #: dois itens são situações diferentes.
     #:
-    #: A NOTA DO MÊS NÃO SAI DAQUI, e eu já tentei que saísse — duas vezes achado
-    #: de revisão, pela mesma razão de fundo: um segundo caminho para o mesmo
-    #: número.
+    #: A NOTA DO MÊS NÃO SE DERIVA AQUI (`50 + impacto`, que é identidade exata
+    #: quando não há recorte), por dois motivos concretos:
     #:
-    #: O DONO DO PRODUTO LEU A COLUNA COMO VARIAÇÃO MÊS A MÊS, e ele leu certo o
-    #: que a tela mostrava: cada número é a distância da nota daquele mês até 50,
-    #: e nada dizia isso. Eu resolvi derivando a nota aqui (`50 + impacto`, que é
-    #: identidade exata quando não há recorte) — e a revisão mostrou DOIS furos:
-    #:
-    #:   arredondamento   `impacto` já vinha com 2 casas, e `round(50 + 35.50)`
+    #:   arredondamento   `impacto` já vem com 2 casas, e `round(50 + 35.50)`
     #:                    dá 86 onde `para_score` dá 85
     #:   estimativa       `medir_uma_lente` exclui `score_estimativa` de
     #:                    propósito, então num mês estimado a lente publica nota
     #:                    e este histórico diria "sem base"
     #:
-    #: A NOTA OFICIAL JÁ ESTÁ NA TELA: `PontoDaSerie.notas_das_lentes` é o número
-    #: que a própria Jornada desenha, mês a mês, estimativa incluída. Medi-lo de
-    #: novo aqui custaria `indice_do_mes` oito vezes (cinco lentes por chamada)
-    #: para chegar, na melhor das hipóteses, ao mesmo valor. A tela junta os dois;
-    #: aqui fica só o que é desta conta — o impacto.
+    #: A NOTA OFICIAL JÁ ESTÁ NA TELA: `PontoDaSerie.notas_das_lentes` é o
+    #: número que a própria Jornada desenha, mês a mês, estimativa incluída.
+    #: Medi-lo de novo aqui custaria `indice_do_mes` oito vezes (cinco lentes
+    #: por chamada) para chegar, na melhor das hipóteses, ao mesmo valor. A tela
+    #: junta os dois; aqui fica só o que é desta conta — o impacto.
     historico = []
     for linha in serie:
         do_mes = round(
@@ -494,27 +470,23 @@ def obter_recorte(
                 "impacto": do_mes,
                 "itens": int(linha["pos"] + linha["neu"] + linha["neg"]),
                 "sem_base": bool(linha["sem_base"]),
-                #: A PONTUAÇÃO DO RECORTE, mês a mês — pedido do dono do produto:
-                #: "traga a pontuação, que é mais fácil de comunicar".
+                #: A PONTUAÇÃO DO RECORTE, mês a mês.
                 #:
-                #: O IMPACTO CONTINUA SENDO A CONTA CERTA para "quanto este pedaço
-                #: mexe na nota da lente", e é o número grande do topo do painel.
-                #: Mas numa coluna de oito meses ele não se lê: −2,1 ao lado de
-                #: +1,0 diz que mexeu para baixo e para cima, e não se o pedaço
-                #: está bem ou mal. A nota diz as duas coisas, na escala que todo
-                #: mundo na Aegea já usa.
+                #: O IMPACTO CONTINUA SENDO A CONTA CERTA para "quanto este
+                #: pedaço mexe na nota da lente", e é o número grande do topo do
+                #: painel. Mas numa coluna de oito meses ele não se lê: −2,1 ao
+                #: lado de +1,0 diz que mexeu para baixo e para cima, e não se o
+                #: pedaço está bem ou mal. A nota diz as duas coisas, na escala
+                #: que todo mundo na Aegea já usa.
                 #:
-                #: SÓ COM RECORTE ATIVO, e a divisão é deliberada: sem recorte, o
-                #: número certo é o da série que desenha a Jornada (estimativa
-                #: incluída), e a tela já o tem. Derivá-lo aqui foi duas vezes
-                #: achado de revisão — arredondamento duplo, e "sem base" nos
-                #: meses de nota estimada.
+                #: SÓ COM RECORTE ATIVO: sem recorte, o número certo é o da
+                #: série que desenha a Jornada (estimativa incluída), e a tela
+                #: já o tem. Derivá-lo aqui tem dois furos — ver o comentário do
+                #: `historico`, acima.
                 #:
-                #: 21 ms PARA OS OITO MESES, medido: a nota de um pedaço não
-                #: existe em lugar nenhum senão medindo.
-                #: O MÊS ALVO JÁ FOI MEDIDO para o topo do painel — achado de
-                #: revisão: ele lia as somas filtradas três vezes (a medida, o
-                #: impacto e esta nota). Os outros sete se medem aqui.
+                #: O MÊS ALVO JÁ FOI MEDIDO para o topo do painel; os outros
+                #: sete se medem aqui, e medir é a única forma, porque a nota de
+                #: um pedaço não existe gravada em lugar nenhum.
                 "nota": (
                     medida.score
                     if linha["mes"] == alvo
