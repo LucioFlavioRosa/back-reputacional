@@ -104,8 +104,8 @@ class Mencao(Tabela):
     #:
     #: POR QUE TRÊS COLUNAS E NÃO SÓ O N3. Com `tema_id` sozinho, o N2 e o N1
     #: eram alcançados por `join` a partir dele — o que serve à menção que TEM
-    #: N3 e deixa sem nível nenhum a que o fornecedor só descreveu no topo. Essa
-    #: segunda é a maior parte da base, e não aparecia em recorte por pilar.
+    #: N3 e deixa sem nível nenhum a que o fornecedor só descreveu no topo —
+    #: que então não aparecia em recorte por pilar algum.
     #:
     #: SÃO CHAVE, E O TEXTO DO FORNECEDOR CONTINUA DO LADO. `tema_texto`,
     #: `subtema` e `atributo` guardam a palavra exata da planilha, porque é

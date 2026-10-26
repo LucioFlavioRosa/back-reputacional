@@ -1,12 +1,14 @@
 """Quem está do outro lado, e quem representa a Aegea.
 
-A FILA DE REVISÃO DO CADASTRO COMPARTILHADO sai do par `pendente_de_revisao`
-+ `motivo_da_revisao`, que `Instituicao`, `Interlocutor` e `PessoaAegea`
-repetem — uma aba por tabela. O que vale para as três:
+A FILA DE REVISÃO DO CADASTRO COMPARTILHADO sai do par `pendente_de_revisao` +
+`motivo_da_revisao` (`0085` e `0086`), que `Instituicao`, `Interlocutor` e
+`PessoaAegea` repetem aqui e `Tema` repete em `tabelas_catalogo`: QUATRO
+TABELAS PARA AS TRÊS ABAS, como `casos_de_uso/fila_de_revisao` as mapeia. O que
+vale para as quatro:
 
-- MARCA PROCEDÊNCIA, NÃO INCOMPLETUDE. Cadastro sem categoria de público é o
-  estado normal do que vem do CRM; fila derivada da ausência de campo nasceria
-  com metade das agendas dentro, e ruído é o que faz ninguém olhar.
+- MARCA PROCEDÊNCIA, NÃO INCOMPLETUDE. Campo vazio é o estado normal do que
+  vem de planilha, e uma fila derivada da ausência de campo nasceria com
+  metade da base dentro — ruído é o que faz ninguém olhar.
 - NÃO É `ativo`. O que nasce de planilha está EM circulação — a menção aponta
   para ele, a agenda existe —, só falta alguém conferir o enquadramento;
   `ativo=false` esconderia o dado que acabou de entrar.

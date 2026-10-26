@@ -200,8 +200,8 @@ class Tema(Tabela):
     )
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
     #: Nasceu de planilha e ninguém o consolidou ainda — é a fila de revisão da
-    #: aba. A regra inteira está no cabeçalho de `tabelas_stakeholders`, que
-    #: tem o mesmo par em três tabelas.
+    #: aba "Temas". A regra inteira está no cabeçalho de `tabelas_stakeholders`,
+    #: que tem as outras três tabelas com o mesmo par.
     pendente_de_revisao: Mapped[bool] = mapped_column(Boolean, default=False)
     #: Por que espera revisão, em texto livre. Nulo é o caso comum.
     motivo_da_revisao: Mapped[str | None] = mapped_column(Text, nullable=True)
