@@ -396,14 +396,21 @@ def condicoes_do_filtro(filtro: FiltroDeMencoes | None) -> list:
     1. UMA CONDIÇÃO POR DIMENSÃO PREENCHIDA, todas no mesmo `where`. É o `and`
        que faz os recortes se EMPILHAREM (nível 3 do pacote), em vez de o último
        escolhido vencer os anteriores.
-    2. QUEM TEM RÓTULO DERIVADO CASA PELAS DUAS FORMAS. A tela mostra
-       `coalesce(cadastro, texto do fornecedor)` e soma as duas grafias na mesma
-       barra; comparar só o texto cru manda ao servidor um valor que a coluna não
-       tem, e o clique abre modal VAZIO sobre barra cheia. Acrescentar o disjunto
-       só GANHA linha — o conjunto novo é superconjunto do antigo.
-    3. SUBCONSULTA, E NÃO JUNÇÃO. Estas condições entram em nove consultas
-       diferentes, algumas das quais já juntam `Tema` ou `UnidadeNegocio` por
-       conta própria, e uma junção aqui mudaria o `from` delas por baixo.
+    2. QUEM TEM RÓTULO DERIVADO CASA POR TODAS AS FORMAS QUE A TELA SOMA NA
+       MESMA BARRA, e não só pelo texto cru. O rótulo pode vir de um `coalesce`
+       com o cadastro (concessionária, tema), de uma canonização (a UF, que tem
+       três formas) ou de uma expressão SQL (`ATRIBUTO_SEM_PREFIXO`). Comparar só
+       o texto cru manda ao servidor um valor que a coluna não tem, e o clique
+       abre modal VAZIO sobre barra cheia. Cada forma entra como um disjunto a
+       mais, então o conjunto novo é SUPERCONJUNTO do antigo
+       (`test_o_recorte_por_pilar_e_superconjunto_do_antigo`). As dimensões de
+       texto cru — tier, veículo, perfil do autor, subtema, autor, sentimento e o
+       N3 — não têm rótulo derivado, e casam por igualdade simples.
+    3. SUBCONSULTA, E NÃO JUNÇÃO. Estas condições entram em toda leitura de
+       menção da plataforma (quinze chamadores hoje, em `repositorio_lentes`,
+       `repositorio_score` e `api/base_das_lentes`), e algumas dessas consultas já
+       juntam `Tema` ou `UnidadeNegocio` por conta própria: uma junção aqui
+       mudaria o `from` delas por baixo.
     """
     if filtro is None:
         return []

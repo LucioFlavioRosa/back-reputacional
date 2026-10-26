@@ -809,8 +809,9 @@ def _por_taxonomia(
     O CAMINHO DO N2 ACEITA DUAS COLUNAS: `condicoes_do_filtro` casa
     `Mencao.macro_tema_id` (a chave gravada) ALÉM da derivação por `tema_id`,
     porque o fornecedor que fala N2 não tem N3 para derivar. O agrupamento tem de
-    aceitar as duas também — senão o filtro alcança 30.932 menções e a barra conta
-    29.701, e a diferença são exatamente as que só têm N2.
+    aceitar as duas também: aceitando só a derivação, a barra deixa de contar a
+    menção que tem `macro_tema_id` e não tem `tema_id`, enquanto o filtro — que a
+    alcança — devolve mais linhas do que a barra prometia.
 
     `coalesce(Mencao.macro_tema_id, Tema.macro_tema_id)`: a chave gravada
     primeiro, a derivada depois. Elas concordam onde as duas existem (a gravação
@@ -870,16 +871,11 @@ def _presenca_da_taxonomia(
     POR QUE NÃO SERVE A PRESENÇA DE `tema_id`, que é o `campo` destas duas
     dimensões: `presenca_das_dimensoes` conta `count(tema_id)`, toda menção com
     vínculo. Mas `_por_taxonomia` chega ao N2 ATRAVESSANDO `MacroTema`, e
-    `Tema.macro_tema_id` É NULÁVEL — há temas órfãos no cadastro, que a
-    reconciliação da `0058` deixou para trás por casar só pelo nome exato. Uma
-    menção presa a um tema órfão seria CONTADA no "vem em X menções do mês" e
-    EXCLUÍDA das barras pelo join, que é a ficha mentindo por omissão —
+    `Tema.macro_tema_id` É NULÁVEL: tema sem pilar é estado que o schema permite,
+    e a reconciliação da `0058` deixa um para trás sempre que o nome não casa
+    exato. A menção presa a um tema assim seria CONTADA no "vem em X menções do
+    mês" e EXCLUÍDA das barras pelo join — a ficha mentindo por omissão,
     exatamente o que ela existe para impedir.
-
-    Hoje nenhuma menção está nessa situação, porque os órfãos são os temas que a
-    taxonomia v4 desativou e nada novo se liga a eles. Então isto não conserta um
-    número errado na tela: impede que ele apareça no dia em que um tema nascer sem
-    pilar.
 
     O `count()` SEM COLUNA depois de joins internos já é "quantas menções a aba
     alcança": o join é o filtro. E `distintas` conta o nível certo — macro tema no

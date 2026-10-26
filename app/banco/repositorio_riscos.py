@@ -66,8 +66,8 @@ CLIMA_DO_INCIDENTE = "tenso"
 #: O CÓDIGO DA FONTE DO CRM, que é a origem das agendas.
 FONTE_DO_CRM = "crm"
 
-#: E A LENTE DELA, no cadastro. Está aqui porque o recorte por lente também tem
-#: de poder deixar as agendas de fora.
+#: E A LENTE DELA, no cadastro. É lida por `FiltroDeRisco.tem_crm`, porque o
+#: recorte por lente também tem de poder deixar as agendas de fora.
 #:
 #: HOJE A FONTE INTERNA NÃO TEM LENTE: a `0114` a desligou de qualquer uma, e
 #: `alimenta_os_kpis` responde `False`. Esta constante só volta a ter efeito no
@@ -435,9 +435,10 @@ def _mencoes_cuja_pior_e(
 
     E O ÍNDICE TAMBÉM É RECORTE-ESCOPO: pela medida global, um recorte de um risco
     alto pesaria 3 pontos por incidente e mostraria um balde `crítico` num recorte
-    sem risco crítico nenhum. Dentro do recorte as cinco contas dão o mesmo número
-    por construção, e a coluna responde "a pior severidade entre os riscos que
-    você está olhando" — com "Riscos relacionados" ao lado mostrando os demais.
+    sem risco crítico nenhum. Dentro do recorte, todas as contas da tela dão o
+    mesmo número por construção, e a coluna responde "a pior severidade entre os
+    riscos que você está olhando" — com "Riscos relacionados" ao lado mostrando os
+    demais.
     """
     consulta = (
         select(Mencao.id)
