@@ -1,18 +1,24 @@
-"""Entrada e saída do sistema: o fluxo OIDC e a sessão.
+"""Entrada e saída do sistema, e a administração de quem entra.
 
-Quatro rotas, e três delas são públicas por necessidade — quem ainda não entrou
-não tem sessão para provar nada:
+TRÊS ROTAS PÚBLICAS por necessidade — quem ainda não entrou não tem sessão para
+provar nada:
 
     GET  /api/auth/login      começa o fluxo, redireciona ao Entra ID
     GET  /api/auth/callback   recebe o `code`, valida, cria a sessão
     POST /api/auth/logout     apaga a sessão
-    GET  /api/eu              quem sou eu, o que posso, e o token anti-CSRF
 
-`/api/eu` é a única protegida — e é a peça que fecha o CSRF: o token vive no
-cookie `httpOnly`, que nenhum script lê, e chega ao front pelo CORPO desta
-resposta. Um site de outra origem consegue disparar a requisição, mas não
-consegue LER a resposta: o CORS impede. Sem ler, não há token; sem token, o
-`POST` forjado é recusado.
+`GET /api/eu` exige sessão, e é a peça que fecha o CSRF: o token vive no cookie
+`httpOnly`, que nenhum script lê, e chega ao front pelo CORPO desta resposta. Um
+site de outra origem consegue disparar a requisição, mas não consegue LER a
+resposta: o CORS impede. Sem ler, não há token; sem token, o `POST` forjado é
+recusado.
+
+AS DEMAIS SÃO A ADMINISTRAÇÃO DE ACESSOS — listar quem existe, os papéis
+disponíveis, conceder, mudar situação e ler a trilha de um acesso. O guarda delas
+é `administrar_acessos.exigir_administrador` chamado NO CORPO, e não uma
+dependência do router: três rotas aqui são públicas, então um guarda no router
+teria de ser desligado nelas — e guarda que se desliga é guarda que se esquece de
+religar.
 """
 
 from __future__ import annotations
@@ -328,11 +334,11 @@ def callback(
         # O COOKIE DE PEDIDO MORRE AQUI TAMBÉM, e não só no sucesso.
         #
         # Ele vale dez minutos e carrega `estado|nonce|verificador`. Depois de
-        # uma recusa não serve para mais nada, mas sobrevivia — e com ele o
-        # mesmo pedido podia ser reapresentado ao callback por todo o prazo.
-        # Nenhuma dessas tentativas concede sessão (a recusa não grava cookie de
-        # sessão, e há teste disso); o defeito era a assimetria com o sucesso,
-        # que apaga. Achado de revisão.
+        # uma recusa não serve para mais nada, e deixá-lo vivo permitiria
+        # reapresentar o mesmo pedido ao callback por todo o prazo. Nenhuma
+        # dessas tentativas concede sessão — a recusa não grava cookie de
+        # sessão, e há teste disso —, mas a assimetria com o sucesso, que
+        # apaga, não tem razão de ser.
         recusada.delete_cookie(COOKIE_DO_PEDIDO, path="/")
         return recusada
 

@@ -135,11 +135,10 @@ def _consultas_por_alegacao(
     A AGENDA RESTRITA NÃO ENTRA NA CONTA de quem não a alcança, e é por isso que
     esta função ganhou um `join` que não precisava ter.
 
-    Ela contava `interacao_alegacao` direto, sem tocar em `interacao` — e por
-    isso escapou da varredura que eu fiz por `InteracaoRegistro`. Uma alegação
-    citada SOMENTE por agendas sensíveis aparecia com `consultas: 1` para quem
-    não alcança nenhuma delas: a contagem afirma que a consulta existe, que é o
-    que a marca protege. Achado de revisão.
+    Contar `interacao_alegacao` direto, sem tocar em `interacao`, não vê a
+    marca: uma alegação citada SOMENTE por agendas sensíveis sairia com
+    `consultas: 1` para quem não alcança nenhuma delas, e a contagem afirma que
+    a consulta existe — que é o que a marca protege.
 
     `alcanca_sensivel` é OBRIGATÓRIO e sem padrão: esta função serve resposta de
     API, e um padrão aqui seria a escolha que ninguém revisa.

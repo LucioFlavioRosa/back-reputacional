@@ -45,21 +45,19 @@ ROTULOS_DE_GRUPO = {
 
 #: AS COLUNAS DE CONTROLE, que o dicionário NÃO serve.
 #:
-#: ERA UM `!= "ativo"` SOLTO, repetido nos TRÊS lugares que montam payload aqui
-#: (`dicionarios`, `temas_inativos`, `formatos_interacao_inativos`) — a revisão
-#: apontou dois, e o terceiro apareceu ao consertar. A
-#: coluna `pendente_de_revisao` nasceu em 11/10/2026 e VAZOU na hora — achado de
-#: revisão: ela apareceu em `temas` e em `temas_inativos` antes de existir
-#: qualquer tela para ela.
+#: NOMEADAS UMA VEZ, e usadas nos TRÊS lugares que montam payload aqui
+#: (`dicionarios`, `temas_inativos`, `formatos_interacao_inativos`). Um
+#: `!= "ativo"` solto em cada um deixa a coluna de controle nova vazar para o
+#: payload no dia em que nascer.
 #:
-#: E O PROBLEMA NÃO É O BYTE A MAIS. Este payload alimenta filtro e formulário de
-#: toda tela, e um campo que aparece ali sem ninguém ter desenhado o que ele
+#: E O PROBLEMA NÃO É O BYTE A MAIS. Este payload alimenta filtro e formulário
+#: de toda tela, e um campo que aparece ali sem ninguém ter desenhado o que ele
 #: significa é um campo que alguém vai LER e usar. A fila de revisão não é "um
-#: tema a menos no filtro": é trabalho pendente de outra natureza, e vai ter rota
+#: tema a menos no filtro": é trabalho pendente de outra natureza, e tem rota
 #: própria.
 #:
-#: COM NOME E COM TESTE, para a quarta coluna de controle não vazar por
-#: esquecimento — foi assim que esta vazou.
+#: COM NOME E COM TESTE, para a próxima coluna de controle não vazar por
+#: esquecimento.
 COLUNAS_DE_CONTROLE: frozenset[str] = frozenset(
     {"ativo", "pendente_de_revisao", "motivo_da_revisao"}
 )
@@ -76,16 +74,14 @@ def listar_dicionarios(sessao: Sessao) -> dict[str, list[dict[str, Any]]]:
     resposta: dict[str, list[dict[str, Any]]] = {}
     for chave, tabela in DICIONARIOS.items():
         consulta = select(tabela).where(tabela.ativo.is_(True))  # type: ignore[attr-defined]
-        #: DESEMPATE PELO ID, e é achado de revisão.
+        #: DESEMPATE PELO ID.
         #:
         #: `ordem` NÃO é única dentro de nenhum destes dicionários — só o par
-        #: (pai, codigo) é, onde há pai. Hoje nenhum tem empate, mas duas linhas
-        #: com a mesma `ordem` sairiam na ordem que o banco devolvesse, e ela
-        #: pode mudar entre duas cargas da MESMA tela, sobre o MESMO dado. É o
-        #: mesmo defeito que o quadro da janela teve (lá o desempate é o nome) e
-        #: a mesma razão: quem lê não tem como saber que a diferença é
-        #: arbitrária. O `id` é o desempate estável — quem foi semeado antes
-        #: aparece antes.
+        #: (pai, codigo) é, onde há pai. Duas linhas com a mesma `ordem` sairiam
+        #: na ordem que o banco devolvesse, e ela pode mudar entre duas cargas
+        #: da MESMA tela, sobre o MESMO dado: quem lê não tem como saber que a
+        #: diferença é arbitrária. O `id` é o desempate estável — quem foi
+        #: semeado antes aparece antes.
         if hasattr(tabela, "ordem"):
             consulta = consulta.order_by(tabela.ordem, tabela.id)  # type: ignore[attr-defined]
         else:
@@ -103,16 +99,16 @@ def listar_dicionarios(sessao: Sessao) -> dict[str, list[dict[str, Any]]]:
     # OS TEMAS DESATIVADOS, e SÓ para resolver nome de registro antigo.
     #
     # `temas` acima continua sendo o vocabulário de escrita e de filtro — só os
-    # ativos, como o docstring promete. Mas uma agenda de 2025 aponta para o
-    # tema com que foi classificada, e esse tema pode ter sido desativado desde
-    # então: a `0058` desativou 45 de uma vez ao trocar a taxonomia pela v4.
+    # ativos, como o docstring promete. Mas uma agenda antiga aponta para o tema
+    # com que foi classificada, e esse tema pode ter sido desativado desde
+    # então: a `0058` desativou em bloco ao trocar a taxonomia pela v4.
     #
-    # SEM ESTA CHAVE OS DOIS LADOS DISCORDAVAM, e era um achado de revisão de
-    # 08/10/2026: `consultas_metricas.serie_mensal` e `repositorio_lentes`
-    # agrupam por `Tema.nome` sem filtrar `ativo`, então a série mensal mostrava
-    # "Regulação" e "Leilões"; o front resolvia nome pelo dicionário de ativos e
-    # descartava o que não achava, então a MESMA agenda aparecia sem tema na
-    # tela e não entrava no KPI por tema. Três respostas para um dado só.
+    # SEM ESTA CHAVE OS DOIS LADOS DISCORDAM:
+    # `consultas_metricas.serie_mensal` e `repositorio_lentes` agrupam por
+    # `Tema.nome` sem filtrar `ativo`, então a série mensal mostra o tema
+    # desativado; o front resolve nome pelo dicionário de ativos e descarta o
+    # que não acha, então a MESMA agenda aparece sem tema na tela e fica fora do
+    # KPI por tema. Três respostas para um dado só.
     #
     # Esconder nos dois lados também igualaria, e foi recusado: a agenda FOI
     # classificada como "Regulação", e omitir isso faria o painel afirmar menos
@@ -133,12 +129,11 @@ def listar_dicionarios(sessao: Sessao) -> dict[str, list[dict[str, Any]]]:
 
     # OS TIPOS DE INTERAÇÃO APOSENTADOS, pela MESMA razão dos temas acima.
     #
-    # CONSERTO PREVENTIVO, e a palavra importa: numa base recriada hoje este
-    # caso tem ZERO ocorrências, porque os semeadores só atribuem formato ativo.
-    # Mas a `0060` aposentou o formato `midia`, e na base que acumulou dado antes
-    # dela havia 106 interações apontando para ele — cada uma mostrando "—" no
-    # lugar de "Mídia", porque `nomeDoFormatoDeInteracao` devolve `'—'` quando o
-    # id não resolve. A carga real em produção traz esse histórico de volta.
+    # NUMA BASE RECRIADA ISTO NÃO APARECE, porque os semeadores só atribuem
+    # formato ativo — e é justamente por isso que o conserto é preventivo. A
+    # `0060` aposentou o formato `midia`, e a interação que apontava para ele
+    # mostra "—" no lugar de "Mídia", porque `nomeDoFormatoDeInteracao` devolve
+    # `'—'` quando o id não resolve. A carga real traz esse histórico de volta.
     #
     # A `0060` diz, no próprio comentário, que o vínculo histórico deve ser
     # preservado. Preservar o vínculo e esconder o nome é meia preservação: a
