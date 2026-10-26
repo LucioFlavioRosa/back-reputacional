@@ -105,10 +105,10 @@ def ler_sinais(
     """
     #: O DETECTOR DO CRM É ESCOLHIDO PELO CADASTRO, e não pelo código da lente —
     #: achado de revisão. `_do_institucional` lê temas e órgãos das INTERAÇÕES;
-    #: desde a `0108` a lente Institucional é clipping recortado, e mandá-la
-    #: para lá daria manchete de agenda sobre uma nota de matéria. Quando o CRM
-    #: voltar ao índice — é um `update` de uma coluna —, a escolha volta
-    #: sozinha, em vez de depender de alguém se lembrar deste dicionário.
+    #: desde a `0111` a lente Institucional é clipping recortado, e mandá-la
+    #: para lá daria manchete de agenda sobre uma nota de matéria. Se o CRM
+    #: voltar a alimentar uma lente, a escolha volta sozinha, em vez de depender
+    #: de alguém se lembrar deste dicionário.
     #: E A INSTITUCIONAL USA OS DETECTORES DA IMPRENSA, que é o que ela passou a
     #: ser: série em MATÉRIAS e composição por tier. Cair no padrão
     #: (`_da_sociedade`) diria "menções" e procuraria sinal de rede numa lente
