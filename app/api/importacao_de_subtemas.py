@@ -23,9 +23,10 @@ confirmação recebe a planilha outra vez, reconfere contra o banco daquele
 instante e recusa se o resultado diferir do que a pessoa aprovou.
 
 NÃO ENTROU NO `_CAMINHOS_DE_UPLOAD` de `protecao_http.py`, e isso é
-deliberado — aquela lista isenta rotas do teto global de 1 MB. Uma planilha de
-subtemas no teto do leitor tem dezenas de KB, e isentar do limite global uma
-rota que cabe nele com folga só alargaria a superfície de upload sem motivo.
+deliberado — aquela lista isenta rotas do teto global de 1 MB. O leitor recusa
+acima de `importar_subtemas.TETO_DE_LINHAS`, então esta planilha é limitada por
+construção e cabe no teto genérico; isentar uma rota que já cabe nele só
+alargaria a superfície de upload sem motivo.
 """
 
 from __future__ import annotations

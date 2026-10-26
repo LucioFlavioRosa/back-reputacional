@@ -450,9 +450,9 @@ def abrir_subida_de_bonds(
     POR QUE ESTE CAMINHO EXISTE. O ingress do Container Apps encerra a
     requisição por volta de 240 s, e isso NÃO é configurável. A banda de subida
     varia em mais de uma ordem de grandeza na mesma hora, e o export de bonds é
-    CUMULATIVO: cresce toda semana. Hoje ele passa numa requisição; sem este
-    caminho, é questão de tempo até a tela devolver 403 sem explicação — que foi
-    o que aconteceu com a planilha do Score. Mesma razão e mesma solução: ver
+    CUMULATIVO: cresce toda semana, então cabe numa requisição só até não caber
+    — e quando deixar de caber, a tela recebe 403 sem explicação, que foi o que
+    aconteceu com a planilha do Score. Mesma razão e mesma solução: ver
     `api/score.comecar_subida_em_partes`.
 
     NÃO SUBSTITUI A SUBIDA DE UMA VEZ. Arquivo pequeno não paga várias idas, e

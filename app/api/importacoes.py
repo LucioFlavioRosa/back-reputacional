@@ -481,11 +481,10 @@ def subir(sessao: Sessao, usuario: UsuarioLogado, arquivo: Arquivo) -> Importaca
     não uma falha.
     """
     conteudo = arquivo.file.read()
-    # MESMO TETO DAS OUTRAS ROTAS DE UPLOAD (`blob.exigir_tamanho_aceito`) — e
-    # a mesma isenção do limite global de 1 MB em `protecao_http.py`, sem a
-    # qual esta chamada nunca seria alcançada: uma planilha de algumas centenas
-    # de agendas preenchidas passa de 1 MiB, e o middleware devolveria 413
-    # antes da rota rodar.
+    # MESMO TETO DAS OUTRAS ROTAS DE UPLOAD (`blob.exigir_tamanho_aceito`), e
+    # não o teto global de 1 MB: `/api/importacoes` está no
+    # `_CAMINHOS_DE_UPLOAD` de `protecao_http.py`, sem o que o middleware
+    # recusaria pelo `Content-Length` antes de a rota rodar.
     blob.exigir_tamanho_aceito(len(conteudo))
     # As recusas estruturais levantam `RegraViolada` ANTES de qualquer escrita —
     # `app/api/erros.py` a traduz para 422. Sem isso, um `.xls` renomeado daria

@@ -1168,8 +1168,8 @@ class ConferenciaSaida(BaseModel):
     """O que a subida FARIA, antes de gravar.
 
     `previsao` tem uma linha por fonte irmã, como a importação; `veiculos_novos`
-    é o que nasceria no cadastro — e pode ser na ordem dos milhares, que é o
-    número que a pessoa vê antes de decidir.
+    é o que nasceria no cadastro, e é esse número que a pessoa vê antes de
+    decidir.
     """
 
     previsao: list[ImportacaoSaida]
@@ -1526,7 +1526,8 @@ def _definir_a_lista(
     #: que nenhuma das duas pediu.
     #:
     #: VALE PARA QUALQUER LISTA QUE POSSA ESTAR VAZIA, e a Institucional nasce
-    #: vazia — a do Mercado já vem semeada, e por isso nunca acordou isto.
+    #: vazia — a do Mercado já vem semeada, e por isso o defeito nunca se
+    #: manifestou.
     #:
     #: POR LISTA, e morre com a transação: duas listas diferentes não se
     #: esperam. A chave é o nome da lista num espaço próprio, como
@@ -1799,7 +1800,7 @@ def subir_parte_da_planilha(
 
     E A SUBIDA TEM DONO: `receber_parte` consulta a linha por (id, fonte, dono,
     ainda subindo) antes de escrever. Sem isso, conhecer o uuid de outra pessoa
-    bastaria para mandar parte na subida dela — é o que a `0094` existe para
+    bastaria para mandar parte na subida dela — é isso que a `0094` existe para
     impedir.
     """
     fonte = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == codigo))

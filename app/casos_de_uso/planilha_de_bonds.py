@@ -1,24 +1,18 @@
 """A subida em partes do export de bonds: a linha, o dono e a montagem.
 
 POR QUE ESTA TELA PRECISA DISSO. O ingress do Container Apps encerra a
-requisição por volta de 240 s e isso NÃO é configurável. Medido em 16/10/2026,
-na mesma máquina e na mesma hora, com a banda variando de ~18 KB/s a ~350 KB/s:
-
-    1,42 MB  ->    4,1 s  -> 200
-   10,53 MB  ->  212,4 s  -> 403   (o ingress desistindo)
-
-A planilha do Score ganhou a subida em partes por causa disso. A de bonds ficou
-sem — e manda o arquivo inteiro, DUAS VEZES, porque a tela confere e depois
-importa. O export é CUMULATIVO e cresce toda semana: hoje tem 1,05 MB e passa.
+requisição por volta de 240 s, e isso NÃO é configurável. A banda de subida
+varia em mais de uma ordem de grandeza na mesma hora, e o export é CUMULATIVO:
+cresce toda semana, então cabe numa requisição só até não caber. Mesma razão e
+mesmo desenho da planilha do Score — ver `api/score.comecar_subida_em_partes`.
 
 O QUE ESTE MÓDULO NÃO FAZ: as regras do pedaço. Tamanho da parte, índice,
 contagem e seus tetos estão em `subida_em_partes`, que não sabe de bonds. Aqui
 mora o que é desta tela: a linha, o dono, o caminho no armazenamento e o que
 fazer com o arquivo montado.
 
-AS QUATRO CONDIÇÕES DE SEGURANÇA SÃO AS MESMAS DA PLANILHA DO SCORE, e não
-foram inventadas aqui: saíram da revisão de 16/10/2026 contra o desenho que
-emitia um identificador sem gravá-lo. Ver `_em_voo`.
+AS CONDIÇÕES DE SEGURANÇA SÃO AS MESMAS DA PLANILHA DO SCORE, e são três — ver
+`_em_voo`, que recusa as três com uma mensagem só, de propósito.
 """
 
 from __future__ import annotations
