@@ -1,10 +1,10 @@
-"""As três rotas das lentes. A LEITURA não mora mais aqui.
+"""As rotas das lentes. A LEITURA não mora mais aqui.
 
 ONDE ESTÁ O QUÊ:
 
     casos_de_uso/leitura_das_lentes.py   a leitura
     esquemas/lentes.py                   os modelos de resposta
-    este arquivo                         as 3 rotas, e só
+    este arquivo                         as rotas, e só
 
 A SEPARAÇÃO NÃO FOI POR TAMANHO. Nenhuma função da leitura toca o pedido HTTP:
 todas recebem `(sessao, lente, mes, calibracao, filtro)` e devolvem modelo de
