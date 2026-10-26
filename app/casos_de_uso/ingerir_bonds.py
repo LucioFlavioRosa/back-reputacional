@@ -8,27 +8,25 @@ gravar. É a mesma divisão de `ingerir_mencoes` com `dominio/ingestao_score`.
 CONFERIR ANTES DE GRAVAR, e a razão está escrita na importação de agendas:
 "importação de planilha sem conferência humana cria duplicata de instituição em
 massa, e desfazer isso depois é pior que digitar de novo". Aqui o risco é outro e
-igualmente caro — uma planilha errada substitui a série que o gráfico desenha —,
-e a resposta é a mesma: a conta aparece primeiro.
+igualmente caro — uma planilha errada substitui a série que o gráfico desenha.
 
 A SUBIDA SEMANAL É UM `upsert`, NÃO UM `append`. O pedido falou em append, mas o
-arquivo é CUMULATIVO: o de hoje traz as 1.750 datas desde 2022, e o da semana que
-vem trará 1.755. Append cego duplicaria ~33 mil cotações por semana e o gráfico
-passaria a somar o mesmo pregão várias vezes. A chave `(bond_ticker, data)` da
-`0100` é o que torna isto seguro, e `on conflict do update` é o que torna subir
-o mesmo arquivo duas vezes inofensivo.
+arquivo é CUMULATIVO: o de hoje traz todas as datas desde 2022, e o da semana que
+vem trará cinco a mais. Append cego duplicaria dezenas de milhares de cotações
+por semana, e o gráfico passaria a somar o mesmo pregão várias vezes. A chave
+`(bond_ticker, data)` da `0100` é o que torna isto seguro, e
+`on conflict do update` é o que torna subir o mesmo arquivo duas vezes
+inofensivo.
 
 O TICKER DESCONHECIDO NÃO ENTRA, e aparece na conferência. É a doutrina do
 cadastro de assuntos (`temas_da_mencao`): o cadastro é a autoridade, o upload
 não inventa taxonomia. Bond novo emitido pede uma linha em `bond` — decisão de
 quem acompanha o mercado, não efeito colateral de um arquivo.
 
-NÃO HÁ SUBIDA EM PARTES AQUI, e é medição, não esquecimento: o arquivo tem 1,05
-MB e o limite do front para fatiar é 1,2 MB, então ele já sobe de uma vez hoje.
-Ele cresce ~3 KB por semana (cinco pregões × 31 tickers), o que põe a travessia
-do limite a anos de distância. Generalizar a montagem por partes de
-`planilha_do_score` — que é por fonte do Score — para outro domínio é bloco
-próprio, e seria código sem usuário agora.
+NÃO HÁ SUBIDA EM PARTES AQUI, e é medição, não esquecimento: o arquivo cabe com
+folga no limite do front para fatiar, e cresce poucos KB por semana. Generalizar
+a montagem por partes de `planilha_do_score` — que é por fonte do Score — para
+outro domínio seria código sem usuário agora.
 """
 
 from __future__ import annotations
@@ -97,37 +95,33 @@ def ler_arquivo(conteudo: bytes) -> Leitura:
 
     TAMANHO E ASSINATURA ANTES DE ABRIR, com as mesmas constantes do leitor de
     menções: um `.xlsx` é um ZIP, e `load_workbook` sobre bytes que não são ZIP
-    levanta exceção de biblioteca — que vira 500 em vez de dizer à pessoa que
-    ela escolheu o arquivo errado.
+    levanta exceção de biblioteca — que vira 500 em vez de dizer à pessoa que ela
+    escolheu o arquivo errado.
 
-    MATERIALIZA AS LINHAS numa lista de propósito. `ler` recebe `Sequence` (usa
-    `len`), e passar o gerador de `iter_rows` falharia — uma revisão apontou
-    essa armadilha. A lista é o formato que o domínio puro aceita, e é também o
-    que permite ao leitor olhar as cinco primeiras linhas de cabeçalho antes de
-    percorrer a série.
+    MATERIALIZA AS LINHAS numa lista de propósito: `ler` recebe `Sequence` (usa
+    `len`), e passar o gerador de `iter_rows` falharia. A lista é também o que
+    permite ao leitor olhar as primeiras linhas de cabeçalho antes de percorrer a
+    série.
 
-    O MESMO MECANISMO DAS LENTES desde 22/10/2026: calamine primeiro, openpyxl
-    de reserva, pelo `leitor_de_planilha`. Antes esta tela abria o arquivo pelo
-    openpyxl direto — a plataforma tinha cinco leitores e três comportamentos, e
-    o mesmo arquivo era lido de um jeito aqui e de outro na tela ao lado.
+    O MESMO MECANISMO DAS LENTES — calamine primeiro, openpyxl de reserva, pelo
+    `leitor_de_planilha`. Com um leitor próprio aqui, o mesmo arquivo seria lido
+    de um jeito nesta tela e de outro na tela ao lado.
     """
     if len(conteudo) > TAMANHO_MAXIMO:
         raise RegraViolada("A planilha de bonds passa do tamanho que se aceita ler.")
     if not conteudo.startswith(ASSINATURA_ZIP):
         raise RegraViolada("O arquivo não é um .xlsx — os primeiros bytes não são de ZIP.")
 
-    #: A MEMÓRIA É MEDIDA ANTES DE QUALQUER LEITOR, e isto voltou atrás numa
-    #: decisão minha. Eu havia movido esta guarda para dentro do leitor de
-    #: reserva, com o argumento de que o calamine "não produz preenchimento" —
-    #: e esse argumento é falso: ele ignora a dimensão DECLARADA, mas
-    #: materializa o retângulo da área usada. Um `.xlsx` de 4,7 KB com `A1=1` e
-    #: `BR54254=2` custa 63,8 MB pelo caminho rápido, medido. Deixar o caminho
-    #: rápido sem guarda era trocar uma recusa indevida por um processo morto.
+    #: A MEMÓRIA É MEDIDA ANTES DE QUALQUER LEITOR.
     #:
-    #: O QUE CONSERTOU O DEFEITO DO Q&A NÃO FOI TIRAR A GUARDA, foi corrigir o
-    #: PREÇO da célula vazia (`MEMORIA_POR_CELULA_VAZIA`): com ele, o arquivo
-    #: dele estima 104 MB contra 204 de orçamento e passa. A guarda podia ter
-    #: ficado onde estava desde o começo.
+    #: O caminho rápido também precisa da guarda: o calamine ignora a dimensão
+    #: DECLARADA, mas materializa o retângulo da área usada — um `.xlsx` de
+    #: poucos KB com uma célula em `A1` e outra no canto oposto custa dezenas de
+    #: MB. Deixar o rápido sem guarda troca uma recusa indevida por um processo
+    #: morto.
+    #:
+    #: O que faz um arquivo legítimo passar não é tirar a guarda: é o PREÇO
+    #: correto da célula vazia (`MEMORIA_POR_CELULA_VAZIA`).
     custo = custo_da_leitura(conteudo)
     orcamento = orcamento_de_leitura()
     if custo is not None and custo > orcamento:

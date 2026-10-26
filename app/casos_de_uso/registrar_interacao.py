@@ -82,17 +82,13 @@ def guardar_arquivo(
 ) -> Arquivo:
     """Grava a linha e sobe o byte, nesta ordem.
 
-    A LINHA PRIMEIRO, E O BYTE DEPOIS. É o inverso do que a intuição sugere,
-    e é o único jeito de o pior caso ser recuperável.
+    A LINHA PRIMEIRO, E O BYTE DEPOIS, que é o inverso do que a intuição sugere.
+    Byte antes: se a gravação falhar, o byte fica no contêiner sem ninguém que o
+    conheça — invisível e pago para sempre. Linha antes: se o upload falhar, a
+    transação volta atrás e a linha some junto, e nada sobra.
 
-    Byte antes, linha depois: se a gravação falhar, o byte fica no contêiner
-    sem ninguém que o conheça — invisível e pago para sempre.
-
-    Linha antes, byte depois: se o upload falhar, a transação volta atrás e a
-    linha some junto. Nada sobra.
-
-    O `id` da linha entra no caminho do blob, então ele precisa existir antes
-    de o byte subir — o que faz a ordem certa ser também a única possível.
+    O `id` da linha entra no caminho do blob, então ele precisa existir antes de
+    o byte subir — o que faz a ordem certa ser também a única possível.
     """
     arquivo = Arquivo(
         # Caminho ainda vazio: ele depende do `id`, que o `flush` atribui.

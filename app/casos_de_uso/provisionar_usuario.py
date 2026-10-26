@@ -63,18 +63,14 @@ def provisionar(
     agora = datetime.now(UTC)
 
     if registro is None:
-        # O e-mail também é único, e a busca acima foi por `entra_object_id`.
-        # Se já existe alguém com este e-mail e OUTRO identificador, o `flush`
-        # abaixo levantaria `UniqueViolation` — e o usuário veria um 500 opaco,
-        # sem pista do que houve.
+        # O e-mail também é único, e a busca acima foi por `entra_object_id`: se
+        # já existe alguém com este e-mail e OUTRO identificador, o `flush`
+        # abaixo levantaria `UniqueViolation`, e a pessoa veria um 500 opaco.
         #
         # NÃO reatribuímos o `entra_object_id` da linha existente: o `oid` é a
         # identidade estável, e trocá-lo em silêncio entregaria a conta de uma
-        # pessoa a outra que apenas tenha o mesmo e-mail. Preferimos recusar e
-        # dizer o motivo — a resolução é humana.
-        #
-        # Acontece de verdade em desenvolvimento: alternar entre `AUTH_MOCK` e
-        # o SSO real cria dois `oid` para o mesmo e-mail.
+        # pessoa a outra que apenas tenha o mesmo e-mail. Acontece de verdade em
+        # desenvolvimento, alternando entre `AUTH_MOCK` e o SSO real.
         conflito = sessao.scalar(select(Usuario).where(Usuario.email == email))
         if conflito is not None:
             raise NaoAutorizado(
@@ -101,20 +97,16 @@ def provisionar(
             registro.email = email
         if registro.nome != nome:
             registro.nome = nome
-        # CONTA DESATIVADA NÃO CARIMBA ÚLTIMO ACESSO.
+        # CONTA DESATIVADA NÃO CARIMBA ÚLTIMO ACESSO. O login dela vai ser
+        # recusado logo adiante, mas este ponto vem antes da decisão, e sem a
+        # guarda o "último acesso" de quem acabou de ser REMOVIDO passava a ser
+        # agora: na tela de acessos ela apareceria como quem entrou há um
+        # instante, sugerindo que a remoção não pegou. Tentativa não é acesso, e
+        # `acesso_log` grava a recusa com motivo, hora e IP.
         #
-        # O login dela vai ser recusado logo adiante, mas este ponto vem antes
-        # da decisão — e sem a guarda o "último acesso" da pessoa que alguém
-        # acabou de REMOVER passava a ser agora. Na tela de acessos ela
-        # apareceria como quem entrou há um instante, sugerindo que a remoção
-        # não pegou.
-        #
-        # Tentativa não é acesso. Quem quiser saber que ela tentou tem a
-        # trilha: `acesso_log` grava a recusa, com motivo, hora e IP.
-        #
-        # Para quem está apenas SEM PAPEL o carimbo continua — essa pessoa é
-        # legítima, está esperando concessão, e "tentou entrar" é justamente o
-        # que faz quem administra saber que há alguém à espera.
+        # Para quem está apenas SEM PAPEL o carimbo continua: essa pessoa é
+        # legítima, está esperando concessão, e "tentou entrar" é o que faz quem
+        # administra saber que há alguém à espera.
         if registro.ativo and _passou_da_folga(registro.ultimo_acesso_em, agora):
             registro.ultimo_acesso_em = agora
 

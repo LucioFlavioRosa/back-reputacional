@@ -1,27 +1,24 @@
 """Bytes de um `.xlsx` viram linhas brutas, ou o arquivo é recusado inteiro.
 
-O QUE ESTE MÓDULO NÃO FAZ. Ele não resolve nome contra cadastro, não decide o
-que é divergência e não monta interação nenhuma — isso é da Tarefa 5 em diante.
-Aqui só se responde "consigo entender a estrutura deste arquivo?", e o valor de
-cada célula sai como a pessoa digitou.
+O QUE ESTE MÓDULO NÃO FAZ: resolver nome contra cadastro, decidir o que é
+divergência, montar interação — isso é da Tarefa 5 em diante. Aqui só se
+responde "consigo entender a estrutura deste arquivo?", e o valor de cada célula
+sai como a pessoa digitou.
 
-A FRONTEIRA ENTRE RECUSAR O ARQUIVO E MARCAR A LINHA é a regra de desenho deste
-módulo, e ela não é arbitrária:
+A FRONTEIRA ENTRE RECUSAR O ARQUIVO E MARCAR A LINHA é a regra de desenho:
 
-  - recusa o ARQUIVO o que não tem conserto linha a linha — uma aba que não
-    existe, um cabeçalho que não bate, dois códigos iguais, um participante
-    apontando para agenda nenhuma. Nesses casos ninguém sabe o que a pessoa
-    quis dizer, e propor 54 agendas a partir de um palpite seria pedir
-    conferência de uma coisa que ela não preencheu.
+  - recusa o ARQUIVO o que não tem conserto linha a linha — aba que não existe,
+    cabeçalho que não bate, dois códigos iguais, participante apontando para
+    agenda nenhuma. Ninguém sabe o que a pessoa quis dizer, e propor cinquenta
+    agendas a partir de um palpite é pedir conferência do que ela não preencheu.
 
-  - deixa passar CRU o que é de uma linha só — uma data que não dá para ler,
-    um nome que não existe no cadastro. Derrubar o arquivo por isso puniria as
-    53 agendas certas pelo erro de uma, e é exatamente o que a tela de
-    conferência existe para resolver.
+  - deixa passar CRU o que é de uma linha só — data ilegível, nome que não
+    existe no cadastro. Derrubar o arquivo puniria as outras linhas certas, e é
+    isso que a tela de conferência existe para resolver.
 
-É o `LinhaBruta` que carrega `numero`, e ele é o número da linha NO ARQUIVO,
-contando o cabeçalho. É o que a `importacao_linha.linha_origem` grava e o que
-deixa a pessoa voltar à planilha e conferir o que digitou.
+`LinhaBruta.numero` é o número da linha NO ARQUIVO, contando o cabeçalho: é o
+que `importacao_linha.linha_origem` grava, e o que deixa a pessoa voltar à
+planilha e conferir o que digitou.
 """
 
 import io
@@ -69,11 +66,9 @@ class LinhaBruta:
     numero: int
     celulas: Mapping[str, object]
     #: O que veio da linha de cima por `idem`, coluna → valor.
-    #:
-    #: EXISTE PARA A CONFERÊNCIA MOSTRAR. A herança é a única parte desta
-    #: funcionalidade cujo resultado é invisível antes de as agendas nascerem: a
-    #: célula continua visualmente vazia na planilha. Sem isto, a pessoa
-    #: confirmaria 54 agendas confiando na memória do que havia acima.
+    #: EXISTE PARA A CONFERÊNCIA MOSTRAR: a herança é a única parte desta
+    #: funcionalidade cujo resultado é invisível antes de as agendas nascerem,
+    #: porque a célula continua visualmente vazia na planilha.
     herdado: Mapping[str, object] = field(default_factory=dict)
 
 
@@ -148,13 +143,10 @@ def _indices(aba: Aba, cabecalho: tuple) -> dict[str, int]:
         if isinstance(valor, str) and _texto(valor)
     }
     # SÓ AS OBRIGATÓRIAS SÃO EXIGIDAS, e é o que faz os dois modelos coexistirem
-    # sem o leitor precisar saber qual deles chegou: o simplificado tem 22 das 59
-    # colunas, e exigir o cabeçalho inteiro recusaria o arquivo do próprio modelo.
-    #
-    # Isso também acolhe o arquivo de quem apagou as colunas que não ia usar — que
-    # é o que se faz numa planilha. Recusar por coluna apagada é o pior erro
-    # possível num arquivo de 500 linhas: nada aproveitado, e nada a consertar
-    # linha a linha.
+    # sem o leitor saber qual deles chegou: o simplificado tem 22 das 59 colunas,
+    # e exigir o cabeçalho inteiro recusaria o arquivo do próprio modelo. Também
+    # acolhe quem apagou as colunas que não ia usar — recusar por coluna apagada
+    # deixa um arquivo de 500 linhas sem nada aproveitado e nada a consertar.
     faltando = [
         coluna.nome
         for coluna in aba.colunas
@@ -202,18 +194,14 @@ def _linhas_da_aba(aba: Aba, folha) -> list[LinhaBruta]:
         if all(valor is None for valor in celulas.values()):
             continue
 
-        # UMA COLUNA DECIDE PELA LINHA TODA, e é aí que está a economia: escrever a
-        # instrução em cada uma das 37 colunas trocaria digitar 37 valores por
-        # digitar 22 instruções, e não pouparia nada.
+        # UMA COLUNA DECIDE PELA LINHA TODA, e é aí que está a economia: escrever
+        # a instrução em cada uma das 37 colunas trocaria digitar 37 valores por
+        # digitar 22 instruções.
         #
-        # A LINHA OPTA POR HERDAR. Quem não marcou não herda: vazio continua vazio,
-        # e um esquecimento continua virando pendência em vez de dado inventado. É a
+        # A LINHA OPTA POR HERDAR. Quem não marcou não herda: vazio continua
+        # vazio, e um esquecimento vira pendência em vez de dado inventado. É a
         # diferença entre isto e "vazio herda", que tiraria a possibilidade de
         # deixar um campo vazio de propósito.
-        #
-        # ANTES ERA O MARCADOR `idem`, escolhido dentro de qualquer lista suspensa:
-        # funcionava e era indescobrível. A instrução virou coluna, e a palavra
-        # `idem` numa célula voltou a ser só texto.
         marca = celulas.get(COLUNA_DE_REPETICAO)
         repete = isinstance(marca, str) and normalizar(marca) == normalizar(
             VALOR_DA_REPETICAO
@@ -296,27 +284,22 @@ def ler(conteudo: bytes) -> dict[str, list[LinhaBruta]]:
 def ler_declarados(conteudo: bytes) -> dict[str, frozenset[str]]:
     """Os nomes que a pessoa ESCREVEU nas abas de vocabulário editáveis.
 
-    É a metade da regra central da classificação que não vem do banco: escrever
-    um nome novo na aba de cadastro é declaração de intenção — "quero que isto
-    exista" —, e é o que separa cadastro novo de erro de grafia digitado direto
-    na célula da agenda. Ver `classificar`, no domínio.
+    É a metade da regra de classificação que não vem do banco: escrever um nome
+    novo na aba de cadastro é declaração de intenção, e é o que separa cadastro
+    novo de erro de grafia digitado direto na célula da agenda. Ver
+    `classificar`, no domínio.
 
-    ABRE O ARQUIVO UMA SEGUNDA VEZ, de propósito, em vez de `ler` passar a
-    devolver as duas coisas. `ler` tem contrato e testes próprios em torno das
-    quatro abas de preenchimento, e alargá-lo para carregar vocabulário
-    misturaria duas perguntas diferentes — "a estrutura se sustenta?" e "o que a
-    pessoa quer cadastrar?". O custo é um `load_workbook` a mais sobre bytes que
-    já estão na memória, para um arquivo de no máximo 500 agendas.
+    ABRE O ARQUIVO UMA SEGUNDA VEZ, de propósito: `ler` tem contrato e testes em
+    torno das quatro abas de preenchimento, e alargá-lo misturaria duas
+    perguntas — "a estrutura se sustenta?" e "o que a pessoa quer cadastrar?". O
+    custo é um `load_workbook` a mais sobre bytes que já estão na memória.
 
-    SÓ AS EDITÁVEIS. Ler as fechadas não mudaria nada — `classificar` recusa
-    valor novo nelas de qualquer jeito — e carregá-las sugeriria que declarar um
-    clima novo significa algo, quando não significa.
+    SÓ AS EDITÁVEIS: `classificar` recusa valor novo nas fechadas de qualquer
+    jeito, e carregá-las sugeriria que declarar um clima novo significa algo.
 
-    Uma aba de vocabulário que não existe vale como vazia, e não como recusa: o
-    arquivo de quem apagou a aba que não ia usar continua tendo agendas
-    perfeitamente resolvíveis contra o banco, e o efeito de tolerar é o seguro —
-    o nome novo vira divergência para a pessoa resolver na tela, em vez de
-    cadastro criado sem ela ter declarado nada.
+    Aba de vocabulário que não existe vale como vazia, e não como recusa: o nome
+    novo vira divergência para a pessoa resolver na tela, em vez de cadastro
+    criado sem ela ter declarado nada.
     """
     pasta = _abrir(conteudo)
     declarados: dict[str, frozenset[str]] = {}
@@ -332,13 +315,9 @@ def ler_declarados(conteudo: bytes) -> dict[str, frozenset[str]]:
                 nomes.add(normalizar(aparado))
         declarados[chave] = frozenset(nomes)
     # AS ABAS DE DUAS COLUNAS TÊM CABEÇALHO, e a palavra do cabeçalho não é um
-    # cadastro declarado. Sem isto, "Instituição" entraria como instituição a
-    # criar. Vale para as duas abas — instituições e interlocutores —, e vem do
-    # mapa do domínio em vez de uma linha escrita à mão por aba: a terceira aba de
-    # duas colunas já nasceria coberta.
-    # O CABEÇALHO NÃO É UM CADASTRO DECLARADO, e o nome dele vem da descrição — não
-    # de uma lista escrita à mão, que envelhecia quando um rótulo mudava e fazia a
-    # palavra "Instituição" virar uma instituição a criar.
+    # cadastro declarado: sem isto, "Instituição" entraria como instituição a
+    # criar. O nome vem do mapa do domínio, e não de uma lista escrita à mão por
+    # aba — a terceira aba de duas colunas já nasce coberta.
     for chave in declarados:
         colunas = colunas_do_cadastro(chave)
         if len(colunas) > 1:
@@ -353,19 +332,16 @@ def ler_declarados(conteudo: bytes) -> dict[str, frozenset[str]]:
 def ler_cadastros_declarados(conteudo: bytes) -> dict[str, dict[str, dict[str, object]]]:
     """Por aba de cadastro: nome normalizado → o que a pessoa escreveu nas outras colunas.
 
-    O PENTE FINO DO DONO DO PRODUTO. As abas de cadastro passaram a ter os campos do
-    formulário da plataforma — a abrangência e a relevância da instituição, o cargo e o
-    e-mail do interlocutor —, e nada disso servia para nada se o leitor continuasse
-    olhando só a coluna B.
+    As abas de cadastro têm os campos do formulário da plataforma — abrangência
+    e relevância da instituição, cargo e e-mail do interlocutor —, e nada disso
+    serviria se o leitor olhasse só a coluna B.
 
-    LÊ PELA DESCRIÇÃO, coluna por coluna, e é o que faz uma coluna nova passar a ser
-    lida sem nenhuma linha nova aqui. O cabeçalho é reconhecido pelo próprio nome
-    descrito, e não por uma lista de nomes possíveis escrita à mão — que era o que
-    envelhecia quando um rótulo mudava, e fazia a palavra do cabeçalho virar um cadastro
-    a criar.
+    LÊ PELA DESCRIÇÃO, coluna por coluna: uma coluna nova passa a ser lida sem
+    nenhuma linha nova aqui, e o cabeçalho é reconhecido pelo próprio nome
+    descrito, não por uma lista escrita à mão.
 
-    O VALOR SAI CRU e não normalizado: o cargo e o e-mail vão para o banco como a pessoa
-    escreveu. Quem precisa comparar — a categoria, a instituição — normaliza na hora.
+    O VALOR SAI CRU: cargo e e-mail vão para o banco como a pessoa escreveu, e
+    quem precisa comparar — a categoria, a instituição — normaliza na hora.
     """
     pasta = _abrir(conteudo)
     declarados: dict[str, dict[str, dict[str, object]]] = {}
