@@ -109,13 +109,14 @@ def lente_e_interna(sessao: Session, lente_id: int) -> bool:
     valendo, porque está gravado em `score_mes_fonte` — é o que
     `catalogo_das_lentes` documenta. A fonte interna não tem histórico gravado:
     ela é recontada de `interacao_registro` a cada leitura. Aposentá-la só pode
-    significar "para de contar", e é o que a `0108` fez com o CRM.
+    significar "para de contar", e é o que a `0112` fez com o CRM.
 
-    SEM ISTO, A INSTITUCIONAL FICARIA PARTIDA AO MEIO — achado de revisão. Ela
-    tem as duas fontes cadastradas (o CRM aposentado e a Clipei recortada), e com
-    `any(interna)` a nota viria das menções enquanto série, explorador, recorte e
-    painéis continuariam no CRM: dois números para a mesma lente, cada um certo
-    no seu mundo, lado a lado se contradizendo.
+    SEM ISTO, A LENTE FICARIA PARTIDA AO MEIO: uma fonte interna aposentada
+    cadastrada ao lado de uma fonte de planilha ativa faria, com `any(interna)`,
+    a nota vir das menções enquanto série, explorador, recorte e painéis
+    continuariam no CRM — dois números para a mesma lente, cada um certo no seu
+    mundo, lado a lado se contradizendo. A `0114` tirou `lente_id` da fonte
+    interna, então nenhuma lente tem esse par hoje e a condição está dormente.
     """
     return any(
         fonte.interna and fonte.ativo for fonte in fontes_da_lente(sessao, lente_id)

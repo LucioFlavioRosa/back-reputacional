@@ -76,7 +76,7 @@ VERSAO = "api-1"
 #: As lentes que esta consulta sabe montar: as que são menção da CLIPEI, inteira
 #: ou recortada — é a Clipei que traz o pilar por matéria, na coluna `Atributo`.
 #:
-#: A INSTITUCIONAL É A TERCEIRA desde a `0108`. Ela estava fora por ler o CRM; a
+#: A INSTITUCIONAL É A TERCEIRA desde a `0111`. Ela estava fora por ler o CRM; a
 #: razão caiu quando ela passou a ler o mesmo export que as outras duas,
 #: recortado pela subcategoria "Institucional". As outras duas lentes (redes e
 #: canais próprios) continuam fora: elas não são Clipei.
@@ -185,7 +185,7 @@ APRESENTACAO: dict[str, Apresentacao] = {
         contraida="do Mercado",
         cartao="divergentes",
     ),
-    #: A TERCEIRA, DESDE A `0108`. Sem esta entrada a rota responderia `KeyError`
+    #: A TERCEIRA, DESDE A `0111`. Sem esta entrada a rota responderia `KeyError`
     #: para uma lente que `LENTES_DA_CONSULTA` passou a aceitar — foi achado de
     #: revisão, e é o par que faltava: incluir a lente na lista sem lhe dar
     #: apresentação é habilitar meia funcionalidade.

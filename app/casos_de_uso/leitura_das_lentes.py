@@ -293,7 +293,7 @@ def _nomes_das_fontes(sessao, lente_id: int) -> str:
     assimetria de `lente_e_interna`, pela mesma razão: o histórico de uma fonte
     de planilha aposentada continua gravado em `score_mes_fonte` e continua
     dentro do número, então nomeá-la é dizer a verdade; a interna é recontada a
-    cada leitura, e aposentada ela não contribui com nada. Depois da `0108`, a
+    cada leitura, e aposentada ela não contribui com nada. Depois da `0112`, a
     ficha da Institucional dizia "CRM dos Stakeholders · Clipei · imprensa
     institucional" sobre um dado em que o CRM não tem parte nenhuma.
     """
@@ -382,7 +382,7 @@ def evolucao(
     #: PELO CADASTRO, E NÃO PELO CÓDIGO DA LENTE — achado de revisão. "Clima em
     #: vez de sentimento" é consequência de a lente se ler do CRM, e quem sabe
     #: disso é `lente_e_interna`. Com o código escrito aqui, a Institucional
-    #: continuaria com a legenda de clima depois da `0108`, que a fez ler
+    #: continuaria com a legenda de clima depois da `0111`, que a fez ler
     #: menções: a legenda diria "Proativo/Reativo" sobre barras de matérias.
     interna = repositorio_lentes.lente_e_interna(sessao, lente.id)
     legenda, cores = (
@@ -907,7 +907,7 @@ def nomeia_o_diretorio(lente_e_interna: bool, bloco: BlocoSaida) -> bool:
 
     E NÃO SE RESPONDE PELO CÓDIGO DA LENTE — achado de revisão. A pergunta era
     "é a Institucional?", porque ali o bloco horizontal era o de órgãos. Depois
-    da `0108` o bloco horizontal DELA é "Concessionárias com maior
+    da `0111` o bloco horizontal DELA é "Concessionárias com maior
     repercussão", que é dado da casa: quem não vê o diretório perdia um painel
     por uma regra de privacidade que não tinha mais o que proteger. Quem
     responde é a procedência — o painel de órgãos só existe na lente interna.
@@ -1324,7 +1324,7 @@ def kpis(
 
     #: OS KPIs DO CRM SÃO ESCOLHIDOS PELO CADASTRO — achado de revisão. Eles
     #: dizem "Agendas no período" e "Termômetro propositivo/tenso", que é a
-    #: semântica da fonte interna; depois da `0108` a Institucional mede
+    #: semântica da fonte interna; depois da `0111` a Institucional mede
     #: matérias, e manter a escolha pelo código da lente poria rótulo de agenda
     #: sobre contagem de clipping. A pergunta certa é de onde o número vem.
     if repositorio_lentes.lente_e_interna(sessao, lente.id):

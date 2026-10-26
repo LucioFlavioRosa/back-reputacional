@@ -303,7 +303,7 @@ def catalogo_das_lentes(sessao: Session) -> list[LenteNoCadastro]:
             # uma fonte de planilha está gravado em `score_mes_fonte` e continua
             # valendo depois de aposentada; o da fonte interna não existe — ela
             # é recontada de `interacao_registro` a cada leitura. Aposentá-la só
-            # pode significar "para de contar", que é o que a `0108` fez com o
+            # pode significar "para de contar", que é o que a `0112` fez com o
             # CRM ao tirá-lo do índice. Ver `repositorio_lentes.lente_e_interna`,
             # que precisa dizer o mesmo: as duas derivações divergindo partiriam
             # a lente ao meio (nota de um lado, série do outro).
@@ -1049,7 +1049,7 @@ def meses_da_lente(
 
     `ativo` CONTA NA RECUSA, como conta em `_tem_fonte_interna` e em
     `lente_e_interna` — achado de revisão. Sem isso, a Institucional continuava
-    recusada DEPOIS da `0108` por causa de uma fonte interna que não alimenta
+    recusada DEPOIS da `0112` por causa de uma fonte interna que não alimenta
     mais nada, e a consulta de profundidade dela respondia erro.
     """
     fontes = list(sessao.scalars(select(ScoreFonte).where(ScoreFonte.lente_id == lente.id)))
@@ -1399,7 +1399,7 @@ def mes_mais_completo(sessao: Session, calibracao: Calibracao) -> date | None:
     # A fonte interna vem das interações, e não de `score_mes_fonte`.
     #
     # `ativo` ENTRA NA JUNÇÃO — achado de revisão. Com o CRM aposentado pela
-    # `0108`, um mês que só tivesse agenda registrada continuava aparecendo no
+    # `0112`, um mês que só tivesse agenda registrada continuava aparecendo no
     # seletor e podia virar o "mês mais completo": a tela abriria num mês em que
     # nenhuma lente do Score foi medida, pela conta de uma fonte que não conta
     # mais. A assimetria é a mesma dos outros três lugares, e pelo mesmo motivo:
@@ -1442,7 +1442,7 @@ def meses_com_dado(sessao: Session) -> list[date]:
     abrir sem número e parecer quebrada.
 
     E OFERECER UM MÊS QUE SÓ TEM AGENDA É O MESMO DEFEITO ao contrário, depois
-    da `0108`: o CRM aposentado não alimenta lente nenhuma, então um mês só
+    da `0112`: o CRM aposentado não alimenta lente nenhuma, então um mês só
     dele abriria a tela sem número — com a diferença de que ninguém saberia por
     quê. Achado de revisão; a condição é a mesma dos outros quatro lugares.
     """
@@ -1476,7 +1476,7 @@ def meses_com_dado(sessao: Session) -> list[date]:
 def _a_fonte_interna_conta(sessao: Session) -> bool:
     """A fonte do CRM está ativa — ou seja, ainda alimenta alguma lente.
 
-    A `0108` a aposentou. Enquanto ela estiver assim, interação registrada não
+    A `0112` a aposentou. Enquanto ela estiver assim, interação registrada não
     entra em conta nenhuma do Score, e por isso também não põe mês no seletor.
     """
     return (
@@ -1929,12 +1929,12 @@ def registros_do_grupo_na_janela(
         #: A MESMA CONDIÇÃO DE `leitura_das_lentes._nomes_das_fontes`
         #: (`fonte.ativo or not fonte.interna`), e não uma terceira forma de
         #: dizer a mesma regra.
-        #: Com uma lente só, a Imprensa, a sua única fonte estava ativa e a
-        #: condição era desnecessária. Agora a Institucional tem DUAS fontes
-        #: cadastradas: a Clipei recortada, ativa, e o CRM, que a `0108`
-        #: aposentou por `ativo = false` sem apagar. A fonte aposentada saiu do
-        #: índice, então a menção dela não pode voltar num modal que existe para
-        #: explicar o número do índice.
+        #: A CONDIÇÃO PROTEGE A LENTE COM FONTE INTERNA APOSENTADA ao lado de
+        #: uma fonte de planilha ativa: a aposentada saiu do índice, então a menção
+        #: dela não pode voltar num modal que existe para explicar o número do
+        #: índice. Foi o par da Institucional — a Clipei recortada pela `0111` e
+        #: o CRM aposentado pela `0112` — até a `0114` tirar `lente_id` da fonte
+        #: interna.
         #:
         #: HOJE O CRM NÃO TEM LINHA EM `mencao` (a ingestão recusa fonte interna,
         #: e só ela, a reconciliação e o semeador escrevem lá), então esta
