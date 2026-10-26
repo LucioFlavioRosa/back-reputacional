@@ -178,7 +178,7 @@ class ImportacaoSaida(BaseModel):
 
     #: Quantas LINHAS ainda seguram a confirmação — não quantos grupos. Doze
     #: linhas travadas por um mesmo valor são doze pendências, e dizer "1" faria
-    #: o cabeçalho mentir sobre o tamanho do trabalho. Foi um achado de revisão.
+    #: o cabeçalho mentir sobre o tamanho do trabalho.
     pendencias: int
     #: Quantas DECISÕES resolvem essas linhas. É o número de cliques que a pessoa
     #: tem pela frente, e os dois juntos é que contam a história: "12 linhas
@@ -221,15 +221,13 @@ def _alvo_de(sessao, campo: str, nome: str, indice) -> str | None:
 def _sugestoes_de(sessao, grupo, indice) -> list[SugestaoSaida]:
     """Os atalhos de um grupo: um por cadastro que a pessoa pode apontar.
 
-    UM NOME, UM ATALHO — menos quando o nome casa com DOIS cadastros. Aí ele vira
-    dois atalhos, cada um com o seu id e com um rótulo que os distingue, porque é
-    a divergência que diz "escolha qual na conferência" e a escolha tem de ser
-    possível. Antes de 11/10/2026 ela não era: o grupo trazia um botão só, com o
-    rótulo dos dois e com o repr da sentinela `AMBIGUO` no lugar do id.
+    UM NOME, UM ATALHO — menos quando o nome casa com DOIS cadastros. Aí ele
+    vira dois atalhos, cada um com o seu id e com um rótulo que os distingue,
+    porque é a divergência que diz "escolha qual na conferência" e a escolha tem
+    de ser possível.
 
-    A SUGESTÃO SEM ALVO NÃO ENTRA: oferecer um atalho que o servidor recusa é pior
-    que não oferecer atalho — é o que o docstring de `SugestaoSaida` registra da
-    primeira vez que esta classe de defeito apareceu.
+    A SUGESTÃO SEM ALVO NÃO ENTRA: oferecer um atalho que o servidor recusa é
+    pior que não oferecer atalho — ver `SugestaoSaida`.
     """
     saida: list[SugestaoSaida] = []
     for nome in grupo.sugestoes:
@@ -239,7 +237,7 @@ def _sugestoes_de(sessao, grupo, indice) -> list[SugestaoSaida]:
             continue
         #: Sem alvo por AMBIGUIDADE: os candidatos de verdade. Para um nome que
         #: simplesmente não existe, `candidatos_do_nome` devolve vazio e o grupo
-        #: segue sem atalho, como antes.
+        #: segue sem atalho.
         saida.extend(
             SugestaoSaida(nome=rotulo, alvo=candidato)
             for candidato, rotulo in importar_agendas.candidatos_do_nome(
@@ -256,9 +254,9 @@ def _decididas(linhas) -> list[ACriarSaida]:
         if linha.aba != "Agendas" or linha.decisao == "descartada":
             continue
         for bruta in linha.divergencias or []:
-            #: PELA AÇÃO EFETIVA: o bloco "vou criar" da resposta tem de
-            #: mostrar também o que a confirmação criará por PADRÃO, senão a tela
-            #: promete menos do que o servidor vai fazer. Achado de revisão.
+            #: PELA AÇÃO EFETIVA: o bloco "vou criar" da resposta tem de mostrar
+            #: também o que a confirmação criará por PADRÃO, senão a tela promete
+            #: menos do que o servidor vai fazer.
             if not acao_efetiva(bruta):
                 continue
             chave = (
@@ -318,9 +316,9 @@ def _grupos(sessao, linhas) -> list[GrupoSaida]:
     }
     conhecidos_por_campo = {campo: _nomes_conhecidos(sessao, campo) for campo in campos}
 
-    #: UMA VEZ PARA A RESPOSTA INTEIRA, e não uma por grupo. `indice_completo`
-    #: diz o que isso custava: 19 consultas fixas viraram 499 em 30 grupos quando
-    #: cada grupo passou a reconstruí-lo. Achado de revisão, 11/10/2026.
+    #: UMA VEZ PARA A RESPOSTA INTEIRA, e não uma por grupo: `indice_completo`
+    #: faz um punhado de consultas fixas, e reconstruí-lo por grupo multiplica
+    #: isso pelo número de grupos.
     indice = importar_agendas.indice_completo(sessao)
     saida: list[GrupoSaida] = []
     for campo in sorted(campos):
@@ -338,7 +336,7 @@ def _grupos(sessao, linhas) -> list[GrupoSaida]:
                     #: E NÃO SÓ PELO CAMPO. Um nome AMBÍGUO já existe duas
                     #: vezes: oferecer "Cadastrar como novo" ali é oferecer a
                     #: terceira duplicata, e o que a pessoa tem de fazer é
-                    #: escolher um dos dois. Achado de revisão, 11/10/2026.
+                    #: escolher um dos dois.
                     pode_criar=(
                         importar_agendas.pode_criar(grupo.campo)
                         and not importar_agendas.e_ambiguo(
@@ -485,19 +483,20 @@ def subir(sessao: Sessao, usuario: UsuarioLogado, arquivo: Arquivo) -> Importaca
     conteudo = arquivo.file.read()
     # MESMO TETO DAS OUTRAS ROTAS DE UPLOAD (`blob.exigir_tamanho_aceito`) — e
     # a mesma isenção do limite global de 1 MB em `protecao_http.py`, sem a
-    # qual esta chamada nunca seria alcançada: uma planilha de 500 agendas
-    # preenchidas passa de 1 MiB (medido), e o middleware devolveria 413 antes
-    # da rota rodar.
+    # qual esta chamada nunca seria alcançada: uma planilha de algumas centenas
+    # de agendas preenchidas passa de 1 MiB, e o middleware devolveria 413
+    # antes da rota rodar.
     blob.exigir_tamanho_aceito(len(conteudo))
     # As recusas estruturais levantam `RegraViolada` ANTES de qualquer escrita —
     # `app/api/erros.py` a traduz para 422. Sem isso, um `.xls` renomeado daria
     # 500 e a pessoa leria "erro interno" para um arquivo que ela pode trocar.
+    #
     # `alcanca_sensivel` DECIDE SE O AVISO DE DUPLICATA PODE CITAR UMA AGENDA
     # RESTRITA. O par (instituição, data) é precisamente o que identifica uma
     # reunião — é por isso que ele serve para detectar duplicata —, e avisar
     # sobre uma agenda que, para esta pessoa, "não existe" conta a ela que o
-    # encontro existiu. Uma planilha de 500 linhas sondaria 500 pares de uma
-    # vez. Ver `importar_agendas._ja_existem`. Achado de revisão.
+    # encontro existiu. Uma planilha de centenas de linhas sondaria centenas de
+    # pares de uma vez. Ver `importar_agendas._ja_existem`.
     propostas, nomes_declarados, campos_declarados = (
         importar_agendas.propor_com_as_declaracoes(
             sessao, conteudo, alcanca_sensivel=usuario.ve_campos_sensiveis

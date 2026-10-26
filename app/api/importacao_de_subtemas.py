@@ -4,22 +4,19 @@
     POST /api/taxonomia/subtemas/conferencia  sobe a planilha e vê o que muda
     POST /api/taxonomia/subtemas/confirmacao  aplica o que foi conferido
 
-NÃO FICAM SOB `/api/importacoes`, e a primeira versão ficava. O teste de rota
-pegou o erro: a importação de agendas tem
-`POST /api/importacoes/{importacao_id}/confirmacao`, e o parâmetro casa com o
-literal `subtemas` — a chamada caía na rota de agendas e voltava 422 de "uuid
-inválido" em vez de confirmar. Qualquer segmento literal sob
-`/api/importacoes/` é mina pelo mesmo motivo, e registrar este roteador antes
-do outro só esconderia a armadilha atrás de uma ordem de registro que ninguém
-lembraria de preservar. `/api/taxonomia` não tem rota com parâmetro no
-primeiro nível.
+NÃO FICAM SOB `/api/importacoes`. A importação de agendas tem
+`POST /api/importacoes/{importacao_id}/confirmacao`, e o parâmetro casa com
+QUALQUER segmento literal: a chamada cairia na rota de agendas e voltaria 422 de
+"uuid inválido" em vez de confirmar. Registrar este roteador antes do outro só
+esconderia a armadilha atrás de uma ordem de registro que ninguém lembraria de
+preservar. `/api/taxonomia` não tem rota com parâmetro no primeiro nível.
 
 SÃO TRÊS, E NÃO SETE. A importação de agendas tem subir, resolver divergência,
 corrigir linha, confirmar, cancelar e retomar — porque lá o rascunho vive em
 `importacao_linha` e a pessoa trabalha nele dentro do sistema por vários dias.
 Aqui não há rascunho: a pessoa corrige a PLANILHA e sobe de novo, então não há
-o que cancelar (fechar a tela já é o cancelamento) nem o que retomar. O
-docstring de `importar_subtemas.aplicar` explica a escolha e o seu custo.
+o que cancelar (fechar a tela já é o cancelamento) nem o que retomar. Ver
+`importar_subtemas.aplicar` para a escolha e o custo dela.
 
 O CUSTO É A RECONFERÊNCIA, e está pago por `impressao_das_propostas`: a
 confirmação recebe a planilha outra vez, reconfere contra o banco daquele
@@ -27,9 +24,8 @@ instante e recusa se o resultado diferir do que a pessoa aprovou.
 
 NÃO ENTROU NO `_CAMINHOS_DE_UPLOAD` de `protecao_http.py`, e isso é
 deliberado — aquela lista isenta rotas do teto global de 1 MB. Uma planilha de
-subtemas no teto do leitor (400 linhas de 6 colunas) tem dezenas de KB: a de
-150 linhas gerada hoje tem 24 KB, medidos. Isentar do limite global uma rota
-que cabe nele com folga só alargaria a superfície de upload sem motivo.
+subtemas no teto do leitor tem dezenas de KB, e isentar do limite global uma
+rota que cabe nele com folga só alargaria a superfície de upload sem motivo.
 """
 
 from __future__ import annotations
