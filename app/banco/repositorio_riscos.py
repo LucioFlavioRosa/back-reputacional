@@ -2,19 +2,14 @@
 
 O CAMINHO É UM SÓ, e é o que torna esta tela possível: `tema_risco` liga o tema
 (N3) do cadastro aos riscos da matriz corporativa, e TUDO o que entra na
-plataforma por assunto chega a risco pelo mesmo vínculo. Medido em 10/10/2026:
-
-    clipei ................. 25.248 de 25.457 menções chegam a um risco
-    bites ...................  2.322 de  2.842
-    clipei_investidores .....    319 de    327
-    CRM (agendas) ...........    401 de    544, por `interacao_tema`
-    approach ................ zero hoje; entra sozinha quando a fonte subir
+plataforma por assunto chega a risco pelo mesmo vínculo — na base medida, 25.248
+de 25.457 menções da Clipei e 401 de 544 agendas do CRM.
 
 NÃO HÁ LÓGICA POR FORNECEDOR aqui, e isso é desenho: a fonte é uma dimensão de
-filtro, não um caminho de código. Fonte nova que mapeie `tema` aparece nesta
-tela sem uma linha a mais.
+filtro, não um caminho de código. Fonte nova que mapeie `tema` aparece nesta tela
+sem uma linha a mais.
 
-AS DUAS FAMÍLIAS DE INCIDENTE, que não se somam por acidente: menção negativa
+AS DUAS FAMÍLIAS DE INCIDENTE não se somam por acidente: menção negativa
 (`mencao.sentimento = 'neg'`) e agenda de clima negativo (`clima.codigo =
 'tenso'`). São contadas separadas e somadas no fim, porque uma menção e uma
 reunião não são a mesma coisa — e a tela diz qual é qual.
@@ -71,15 +66,14 @@ CLIMA_DO_INCIDENTE = "tenso"
 #: O CÓDIGO DA FONTE DO CRM, que é a origem das agendas.
 FONTE_DO_CRM = "crm"
 
-#: E A LENTE DELA, no cadastro: o CRM era a lente institucional. Está aqui
-#: porque o recorte por lente também tem de poder deixar as agendas de fora.
+#: E A LENTE DELA, no cadastro. É lida por `FiltroDeRisco.tem_crm`, porque o
+#: recorte por lente também tem de poder deixar as agendas de fora.
 #:
-#: HOJE ELA NÃO TEM LENTE. A `0114` desligou a fonte interna de qualquer lente,
-#: e `alimenta_os_kpis` responde `False`: esta constante só volta a ter efeito
-#: no cenário que desfaz as duas coisas juntas — é exatamente o par de passos
-#: escrito em `dominio/fontes_do_score`, e por isso ela continua dizendo
-#: "institucional", que é a lente para onde o desfazer a devolve. Mudar só uma
-#: das duas pontas é que seria incoerente: ver a nota em `tem_crm`.
+#: HOJE A FONTE INTERNA NÃO TEM LENTE: a `0114` a desligou de qualquer uma, e
+#: `alimenta_os_kpis` responde `False`. Esta constante só volta a ter efeito no
+#: cenário que desfaz as duas coisas juntas — o par de passos escrito em
+#: `dominio/fontes_do_score` —, e continua dizendo "institucional" porque é a
+#: lente para onde o desfazer a devolve.
 LENTE_DO_CRM = "institucional"
 
 
@@ -102,16 +96,14 @@ class FiltroDeRisco:
     #: lentes (imprensa e mercado, pelo público investidores) e a Bites e a
     #: Approach dividem a sociedade digital. Quem pergunta "como está a imprensa"
     #: não está perguntando por um fornecedor, e quem desconfia de uma planilha
-    #: não está perguntando por uma lente. Medido no cadastro: 6 fontes, 5
-    #: lentes, e o CRM é a institucional.
+    #: não está perguntando por uma lente.
     lentes: tuple[str, ...] = ()
     #: `critico` | `alto` | `moderado` — a PIOR severidade do incidente.
     #:
     #: PELA PIOR, e não "toca um risco desta severidade": é a mesma régua que
     #: empilha a barra do mês, preenche a coluna da tabela e soma os três números
-    #: do topo. Filtrar por "toca" faria o incidente cujo pior é crítico
-    #: aparecer também em "alto", e os três números deixariam de somar o total —
-    #: exatamente o defeito que a revisão apontou no caminho contrário.
+    #: do topo. Por "toca", o incidente cujo pior é crítico apareceria também em
+    #: "alto", e os três números deixariam de somar o total.
     severidade: str | None = None
     #: OS TRÊS NÍVEIS DO CADASTRO DE TEMAS: `bloco_tema` (N1) > `macro_tema`
     #: (N2) > `tema` (N3). Pelos códigos do cadastro, e o N3 pelo nome, que é o
@@ -120,10 +112,7 @@ class FiltroDeRisco:
     #: ELES CRUZAM TODAS AS FONTES, e é por isso que estão aqui e não entre as
     #: `DIMENSOES`: a premissa da aba é que tudo chega a risco pelo tema do
     #: cadastro, então o tema é a única dimensão que nenhuma fonte deixa de ter.
-    #: Medido em 10/10/2026: 7 blocos, 41 macro temas, 104 temas, 100 com risco.
-    #:
-    #: E SÃO O CAMINHO NATURAL DO APROFUNDAMENTO — N1 > N2 > N3 > incidente —,
-    #: que é o que o dono do produto pediu: sair do macro e chegar ao registro.
+    #: É também o caminho do aprofundamento — N1 > N2 > N3 > incidente.
     bloco: str | None = None
     macro: str | None = None
     tema: str | None = None
@@ -136,11 +125,8 @@ class FiltroDeRisco:
     #:
     #: UM DICIONÁRIO, e não seis campos: as dimensões que existem saem do DADO
     #: (ver `dimensoes_do_recorte`), e seis campos fixos aqui obrigariam a mexer
-    #: nesta classe a cada dimensão nova — exatamente a rigidez que a tela
-    #: deixou de ter. Chave que não está em `DIMENSOES` é recusada na rota.
-    #:
-    #: ACHADO DE REVISÃO: a rota `/opcoes` oferecia as dimensões e NENHUMA rota
-    #: as aceitava. A tela ia desenhar filtros que não fazem nada.
+    #: nesta classe a cada dimensão nova. Chave que não está em `DIMENSOES` é
+    #: recusada na rota.
     por_dimensao: tuple[tuple[str, str], ...] = ()
 
     @property
@@ -173,19 +159,14 @@ class FiltroDeRisco:
     def tem_crm(self) -> bool:
         """O CRM entra quando a política o admite e o filtro da tela não o exclui.
 
-        Olha a política e os campos `fontes` e `lentes` do filtro. Não consulta o
-        cadastro, porque não tem sessão: quem confere o cadastro é
-        `agendas_de_incidente`.
+        Olha a política e os campos `fontes` e `lentes`. NÃO CONSULTA O CADASTRO,
+        porque não tem sessão: afirmar daqui que a fonte está ativa seria afirmar
+        o que não se sabe, e quem confere o cadastro é `agendas_de_incidente`.
 
-        O filtro de lente também o exclui, e esquecer isso seria o pior erro
-        nesta tela: quem escolhe "Imprensa" receberia as reuniões do CRM no meio
-        das notícias. `LENTE_DO_CRM` só tem significado com o cadastro religado.
+        O filtro de LENTE também o exclui, e esquecer isso seria o pior erro nesta
+        tela — quem escolhe "Imprensa" receberia as reuniões do CRM no meio das
+        notícias. `LENTE_DO_CRM` só tem significado com o cadastro religado.
         """
-        #: SÓ A POLÍTICA SE PERGUNTA AQUI, e por isso a função é a de uma
-        #: pergunta só: este método não tem sessão, e mentir `ativo=True` para
-        #: a outra — como eu havia escrito, achado da revisão do Codex — era
-        #: afirmar sobre o cadastro o que não se sabe daqui. Quem confere o
-        #: cadastro é `agendas_de_incidente`, que tem a sessão.
         if not pode_alimentar_os_kpis(interna=True):
             return False
         if self.fontes and FONTE_DO_CRM not in self.fontes:
@@ -245,10 +226,9 @@ def mencoes_de_incidente(filtro: FiltroDeRisco, riscos: list[int] | None) -> Sel
             #: Cada fonte preenche as suas: tier e público-alvo na imprensa,
             #: cargo e autor nas redes, praça e concessionária nas duas.
             Mencao.uf.label("uf"),
-            #: A CONCESSIONÁRIA PELO NOME DO CADASTRO, com o texto do
-            #: fornecedor como reserva (`0099`). Sem isto a Corsan é DUAS
-            #: opções no seletor desta aba — "Corsan" e a razão social dela —,
-            #: e escolher uma recorta metade das 16.130 menções.
+            #: A CONCESSIONÁRIA PELO NOME DO CADASTRO, com o texto do fornecedor
+            #: como reserva (`0099`): sem isto a Corsan é DUAS opções no seletor
+            #: desta aba, e escolher uma recorta metade das menções dela.
             CONCESSIONARIA.label("unidade_texto"),
             Mencao.publico_alvo.label("publico_alvo"),
             Mencao.cargo.label("cargo"),
@@ -278,17 +258,13 @@ def mencoes_de_incidente(filtro: FiltroDeRisco, riscos: list[int] | None) -> Sel
             Mencao.sentimento == SENTIMENTO_DO_INCIDENTE,
             Risco.ativo.is_(True),
             Tema.ativo.is_(True),
-            #: A PRÓPRIA COMPANHIA FALANDO NÃO É INCIDENTE. Medido em
-            #: 10/10/2026: 125 menções da Bites são posts da Aegea e das
-            #: concessionárias dela, e SEIS delas vinham classificadas como
-            #: negativas com assunto — entravam na conta como se alguém tivesse
-            #: criticado a empresa. A aba responde "o que se fala da companhia";
-            #: o que a companhia publica é comunicação, não exposição a risco.
-            #:
-            #: SEIS DE 5.885 é pouco, e o motivo de consertar não é o tamanho: é
-            #: que uma dessas linhas aberta numa reunião ("este aqui é nosso
-            #: próprio post") derruba a confiança no resto da tabela, que está
-            #: certo.
+            #: A PRÓPRIA COMPANHIA FALANDO NÃO É INCIDENTE: posts da Aegea e das
+            #: concessionárias dela chegavam classificados como negativos com
+            #: assunto, e entravam na conta como se alguém tivesse criticado a
+            #: empresa. A aba responde "o que se fala da companhia"; o que a
+            #: companhia publica é comunicação, não exposição a risco — e uma
+            #: dessas linhas aberta numa reunião derruba a confiança no resto da
+            #: tabela, que está certo.
             Mencao.cargo.not_in(CARGOS_DA_PROPRIA_COMPANHIA)
             | Mencao.cargo.is_(None),
         )
@@ -319,7 +295,7 @@ def mencoes_de_incidente(filtro: FiltroDeRisco, riscos: list[int] | None) -> Sel
         )
     #: O RECORTE POR DIMENSÃO. Pelas mesmas colunas que `dimensoes_do_recorte`
     #: oferece — uma cópia da lista aqui seria a chance de oferecer uma coisa e
-    #: filtrar outra. Achado de revisão.
+    #: filtrar outra.
     for chave, valor in filtro.dimensoes.items():
         condicao = condicao_da_dimensao(chave, valor)
         if condicao is not None:
@@ -332,19 +308,19 @@ def agendas_de_incidente(
 ) -> Select | None:
     """As agendas do CRM que contam como incidente, ou `None` se o CRM está fora.
 
-    Esta função é o gargalo: os seis caminhos das agendas — série, matriz,
-    recorrência, lista, por tema e total por severidade — passam por aqui, e é
-    por isso que a verificação fica neste ponto.
+    ESTA FUNÇÃO É O GARGALO: os seis caminhos das agendas — série, matriz,
+    recorrência, lista, por tema e total por severidade — passam por aqui, e é por
+    isso que a verificação fica neste ponto.
 
-    A agenda só conta quando três condições são atendidas: a política admite
-    fonte interna, o cadastro a tem como ativa, e ela tem lente. Sem lente, a
-    linha do incidente não teria o que pôr em `lente: str`.
+    A agenda só conta com TRÊS condições: a política admite fonte interna, o
+    cadastro a tem como ativa, e ela tem lente. Sem lente, a linha do incidente
+    não teria o que pôr em `lente: str`.
 
-    `interacao` não tem sentimento: tem `clima`. Clima negativo é o equivalente
-    da menção negativa, e a única leitura de "incidente" que o CRM oferece sem
+    `interacao` não tem sentimento: tem `clima`. Clima negativo é o equivalente da
+    menção negativa, e a única leitura de "incidente" que o CRM oferece sem
     inventar campo.
 
-    O escopo do usuário é parâmetro, e não campo opcional do filtro: o CRM
+    O ESCOPO DO USUÁRIO É PARÂMETRO, e não campo opcional do filtro: o CRM
     restringe por frente e por unidade de negócio, e sem isso esta tela contaria
     como incidente a agenda que a listagem do CRM esconde daquele usuário.
     """
@@ -386,19 +362,13 @@ def agendas_de_incidente(
             #: não arquivada, e dentro do alcance do usuário.
             InteracaoRegistro.visivel.is_(True),
             InteracaoRegistro.arquivado_em.is_(None),
-            #: E A AGENDA SENSÍVEL FICA FORA (migration 0089).
-            #:
-            #: Esta consulta devolve `interacao_id` e `data` POR LINHA, não
-            #: agregado: a matriz de risco listaria a data de uma agenda
-            #: restrita ligada a um risco, e a data de um encontro com um órgão
-            #: é a informação que a marca existe para guardar. Abrir a ficha
-            #: daria 404, e seria pior — a pessoa saberia que existe e não
-            #: entenderia por que não abre.
-            #:
-            #: Sem a bandeira de quem pede, como no Score (ver
-            #: `repositorio_score.so_interacoes_visiveis`): a matriz é leitura
-            #: da companhia, e o custo é o mesmo — a agenda restrita não conta
-            #: como incidente para ninguém.
+            #: E A AGENDA SENSÍVEL FICA FORA (migration 0089). Esta consulta
+            #: devolve `interacao_id` e `data` POR LINHA, não agregado: a matriz
+            #: listaria a data de uma agenda restrita ligada a um risco, e a data
+            #: de um encontro com um órgão é a informação que a marca existe para
+            #: guardar. Sem a bandeira de quem pede, como no Score (ver
+            #: `repositorio_score.so_interacoes_visiveis`), e com o mesmo custo: a
+            #: agenda restrita não conta como incidente para ninguém.
             InteracaoRegistro.sensivel.is_(False),
             *condicoes_de_escopo(escopo),
             Risco.ativo.is_(True),
@@ -456,26 +426,19 @@ def _mencoes_cuja_pior_e(
 ) -> Select:
     """As menções cuja PIOR severidade, DENTRO DO RECORTE, é esta.
 
-    DENTRO DO RECORTE, e não sobre todos os riscos do cadastro — e isto é
-    correção de achado de revisão. A primeira versão media a pior severidade
-    GLOBAL do fato, com o argumento de que "a severidade é propriedade do fato,
-    não do recorte". O argumento é defensável, mas CRIAVA UMA SEGUNDA DEFINIÇÃO:
-    a coluna da tabela, a pilha da barra, o índice e os três números do topo
-    todos medem `max(peso)` DEPOIS do recorte por risco.
+    DENTRO DO RECORTE, e não sobre todos os riscos do cadastro: a coluna da
+    tabela, a pilha da barra, o índice e os três números do topo todos medem
+    `max(peso)` DEPOIS do recorte por risco, e medir globalmente criaria uma
+    SEGUNDA definição. Com o risco X (alto) escolhido, um incidente que também
+    toca um risco crítico apareceria no topo como `alto` — certo, porque dentro do
+    recorte só o X conta — e sumiria ao filtrar por `alto`, caindo em `critico`.
 
-    O QUE ISSO CAUSAVA: com o risco X (alto) escolhido, um incidente que também
-    toca um risco crítico aparecia no topo como `alto` (certo, porque dentro do
-    recorte só o X conta) e o filtro `severidade=alto` NÃO o traía — ele caía em
-    `severidade=critico`, e lá era exibido como `alto`. Clicar no "14" e receber
-    outra quantidade de linhas.
-
-    POR QUE O RECORTE GANHOU: o índice também é recorte-escopo. Medir a
-    severidade globalmente faria um recorte de um risco alto pesar 3 pontos por
-    incidente e mostrar um balde `crítico` num recorte que não tem risco crítico
-    nenhum — que se lê como tela quebrada. Dentro do recorte, as cinco contas
-    dão o mesmo número por construção, e a coluna responde "a pior severidade
-    entre os riscos que você está olhando" — com a coluna "Riscos relacionados"
-    ao lado mostrando os demais.
+    E O ÍNDICE TAMBÉM É RECORTE-ESCOPO: pela medida global, um recorte de um risco
+    alto pesaria 3 pontos por incidente e mostraria um balde `crítico` num recorte
+    sem risco crítico nenhum. Dentro do recorte, todas as contas da tela dão o
+    mesmo número por construção, e a coluna responde "a pior severidade entre os
+    riscos que você está olhando" — com "Riscos relacionados" ao lado mostrando os
+    demais.
     """
     consulta = (
         select(Mencao.id)
@@ -487,9 +450,8 @@ def _mencoes_cuja_pior_e(
             Risco.ativo.is_(True),
             Tema.ativo.is_(True),
             #: A MESMA EXCLUSÃO da consulta principal: se a subconsulta contasse
-            #: o post da casa, uma menção excluída lá poderia ser classificada
-            #: por ele aqui — e os números do topo deixariam de fechar com a
-            #: tabela. É o mesmo defeito que a revisão achou na severidade.
+            #: o post da casa, uma menção excluída lá poderia ser classificada por
+            #: ele aqui, e os números do topo deixariam de fechar com a tabela.
             Mencao.cargo.not_in(CARGOS_DA_PROPRIA_COMPANHIA)
             | Mencao.cargo.is_(None),
         )
@@ -508,9 +470,9 @@ def _mencoes_cuja_pior_e(
 def _so_os_temas_do_recorte(consulta: Select, filtro: FiltroDeRisco, coluna) -> Select:
     """As mesmas restrições de tema que a consulta principal aplica.
 
-    EXTRAÍDO PARA UM LUGAR SÓ porque é a terceira cópia das mesmas três linhas, e
-    a divergência entre elas foi exatamente o achado de revisão: a subconsulta da
-    pior severidade não aplicava o recorte de tema, e a consulta principal sim.
+    EXTRAÍDO PARA UM LUGAR SÓ porque eram três cópias das mesmas três linhas, e
+    elas divergiram: a subconsulta da pior severidade não aplicava o recorte de
+    tema, e a consulta principal sim.
     """
     if filtro.tema:
         consulta = consulta.where(Tema.nome == filtro.tema)
@@ -528,14 +490,12 @@ def _agendas_cuja_pior_e(
     E AQUI O RECORTE DE TEMA É DECISIVO, ao contrário da menção: `interacao_tema`
     é N:N, e uma agenda pode tratar de vários assuntos. Sem o recorte, uma agenda
     com o tema A (alto, dentro do recorte) e o tema B (crítico, fora dele)
-    aparecia no topo como `alto` e sumia ao clicar em `alto` — a pior severidade
-    era medida sobre os dois temas, e o resto da tela sobre um. Achado de
-    revisão.
+    aparecia no topo como `alto` e sumia ao clicar em `alto`.
 
-    SEM O ESCOPO DO USUÁRIO AQUI de propósito: esta subconsulta só responde
-    "qual é a pior severidade desta agenda", e a consulta que a usa já aplica a
-    visibilidade e o escopo. Repeti-los aqui não mudaria o resultado e daria
-    duas respostas para a mesma pergunta de permissão.
+    SEM O ESCOPO DO USUÁRIO AQUI, de propósito: esta subconsulta só responde "qual
+    é a pior severidade desta agenda", e a consulta que a usa já aplica a
+    visibilidade e o escopo. Repeti-los daria duas respostas para a mesma pergunta
+    de permissão.
     """
     consulta = (
         select(InteracaoRegistro.id)
@@ -633,8 +593,8 @@ def serie_do_indice(
     #: AS MENÇÕES: o pior peso por menção, e depois a soma por mês.
     #:
     #: AS FONTES SAEM NA MESMA AGREGAÇÃO (`array_agg distinct`), e não numa
-    #: segunda consulta: achado de revisão — a versão anterior repetia o mesmo
-    #: join sobre 28 mil menções só para saber quais fontes alimentaram o mês.
+    #: segunda consulta que repetiria o mesmo join sobre 28 mil menções só para
+    #: saber quais fontes alimentaram o mês.
     por_mencao = (
         mencoes_de_incidente(inteiro, riscos)
         .with_only_columns(
@@ -732,20 +692,18 @@ def matriz_de_risco(
     """Os 32 riscos do cadastro, com os incidentes de cada um na janela.
 
     TODOS OS RISCOS, e não só os atingidos: "sem incidente" é a informação mais
-    útil da matriz — risco que ninguém citou negativamente no período. Uma
-    consulta que só trouxesse os atingidos deixaria a tela sem o silêncio, que é
-    metade do que ela tem para dizer.
+    útil da matriz — risco que ninguém citou negativamente no período. Sem ele, a
+    tela fica sem o silêncio, que é metade do que ela tem para dizer.
 
     O RECORTE DE CLUSTER E RISCO NÃO SE APLICA AQUI: a matriz é o que se clica
-    para abrir o aprofundamento, e esconder os outros riscos tiraria o caminho
-    de volta. TODO O RESTO SE APLICA — janela, fontes, lente, severidade, os três
+    para abrir o aprofundamento, e esconder os outros riscos tiraria o caminho de
+    volta. TODO O RESTO SE APLICA — janela, fontes, lente, severidade, os três
     níveis do tema, as dimensões e a busca.
 
-    POR `replace`, E NÃO RECONSTRUINDO A MÃO: a versão anterior listava quatro
-    campos, e os cinco filtros que entraram depois (lente, severidade, bloco,
-    macro, tema, dimensões) ficaram de fora em silêncio — a tela recortava e a
-    matriz continuava contando a base inteira. Achado de revisão. Com `replace`,
-    o campo novo entra sozinho e só sai quem for nomeado aqui.
+    POR `replace`, E NÃO RECONSTRUINDO A MÃO: uma lista de campos escrita aqui
+    deixa de fora, em silêncio, todo filtro que entrar depois — e foi o que
+    aconteceu, com a tela recortando e a matriz contando a base inteira. Com
+    `replace`, o campo novo entra sozinho e só sai quem for nomeado aqui.
     """
     sem_recorte_de_risco = replace(filtro, cluster=None, risco=None)
 
@@ -839,10 +797,9 @@ def _recorrencia_por_tema(
     NA SÉRIE INTEIRA, e não na janela: "este assunto já voltou sete vezes" é um
     fato sobre o assunto, não sobre o período que a pessoa está olhando.
 
-    CONTADO NO BANCO, e só dos assuntos QUE ESTÃO NA PÁGINA. Antes esta função
-    trazia o par (tema, mês) de TODOS os incidentes da série — 28 mil menções em
-    linhas Python — para montar um dicionário do qual a tabela usava cinquenta
-    entradas, a cada pedido e a cada virada de página. Achado de revisão.
+    CONTADO NO BANCO, e só dos assuntos QUE ESTÃO NA PÁGINA. Trazer o par (tema,
+    mês) de todos os incidentes da série são 28 mil linhas Python para montar um
+    dicionário do qual a tabela usa cinquenta entradas, a cada virada de página.
     """
     if not temas:
         return {}
@@ -983,12 +940,10 @@ def incidentes_de_risco(
 
     das_agendas = agendas_de_incidente(sessao, filtro, riscos, escopo)
     if das_agendas is not None:
-        #: O nome da fonte e o da lente vêm do cadastro: escrever "crm" na
-        #: tela seria mostrar código onde o produto mostra nome.
-        #:
-        #: A lente não é adivinhada. Aqui havia `LENTE_DO_CRM` como padrão, e
-        #: desde a `0114` isso afirmaria "institucional" sobre uma fonte que
-        #: não é mais dela. O `else None` é cinto de segurança:
+        #: O nome da fonte e o da lente vêm do cadastro: escrever "crm" na tela
+        #: seria mostrar código onde o produto mostra nome. A LENTE NÃO É
+        #: ADIVINHADA — `LENTE_DO_CRM` como padrão afirmaria "institucional"
+        #: sobre uma fonte que já não é dela. O `else None` é cinto de segurança:
         #: `agendas_de_incidente` já devolve `None` quando não há lente.
         do_cadastro = lentes_das_fontes(sessao).get(FONTE_DO_CRM)
         nomes_do_crm = (
@@ -1048,11 +1003,9 @@ def incidentes_de_risco(
 
     #: ORDENADAS JUNTAS e cortadas na página: as duas famílias se intercalam por
     #: data, senão a tabela mostraria todas as menções antes de qualquer agenda.
-    #:
     #: COM DESEMPATE PELO ID, e não só por data: dezenas de incidentes caem no
-    #: mesmo dia, e sem critério estável a ordem entre eles podia mudar de uma
-    #: chamada para a outra — a mesma linha aparecendo na página 1 e na 2, ou em
-    #: nenhuma. Achado de revisão.
+    #: mesmo dia, e sem critério estável a mesma linha podia aparecer na página 1
+    #: e na 2, ou em nenhuma.
     linhas.sort(key=lambda incidente: (incidente.data, incidente.tipo, incidente.id))
     linhas.reverse()
     comeco = (pagina - 1) * tamanho
@@ -1076,15 +1029,14 @@ def _severidade_do_peso(peso: int | None, qualquer: str | None) -> str:
     O SQL devolve o PESO (para somar), e a tela mostra o NOME.
 
     PELA ORDEM DE GRAVIDADE, e não pela ordem do dicionário: se dois níveis
-    tivessem o mesmo peso, varrer o mapa devolveria o primeiro inserido — uma
+    tivessem o mesmo peso, varrer o mapa devolveria o primeiro inserido, e uma
     linha só `alto` podia aparecer como `critico`. Percorrendo `SEVERIDADES`, do
-    pior para o menos grave, o empate resolve a favor do mais grave, que é o
-    único lado em que errar não esconde problema. Achado de revisão.
+    pior para o menos grave, o empate resolve a favor do mais grave — o único lado
+    em que errar não esconde problema.
 
     E PESO ZERO NÃO É "MODERADO": é severidade que o cadastro tem e o mapa de
-    pesos não conhece. Aí o nome vem do banco (`qualquer`), e só na falta dos
-    dois é que sobra o menos grave — com o aviso de que isso é o fim da linha, e
-    não uma informação.
+    pesos não conhece. Aí o nome vem do banco (`qualquer`), e só na falta dos dois
+    sobra o menos grave.
     """
     if peso:
         for nome in SEVERIDADES:
@@ -1115,21 +1067,15 @@ _COLUNA_DA_DIMENSAO: dict[str, str] = {chave: coluna for chave, _rotulo, coluna 
 def condicao_da_dimensao(chave: str, valor: str) -> ColumnElement[bool] | None:
     """Como se recorta por uma dimensão. `None` quando a chave não existe.
 
-    POR QUE NÃO É MAIS `getattr(Mencao, coluna) == valor`. A coluna que a opção
-    OFERECE e a coluna por que o filtro RECORTA têm de ser a mesma — é um achado
-    de revisão, e `_COLUNA_DA_DIMENSAO` existe exatamente para isso. Desde a
-    `0099` a opção de concessionária não sai mais de `Mencao.unidade_texto`: ela
-    sai de `CONCESSIONARIA`, o nome do cadastro com o texto do fornecedor como
-    reserva, porque a Corsan chega em duas grafias e eram duas opções para a
-    mesma empresa.
+    POR QUE NÃO É `getattr(Mencao, coluna) == valor`: a coluna que a opção OFERECE
+    e a coluna por que o filtro RECORTA têm de ser a mesma, e é para isso que
+    `_COLUNA_DA_DIMENSAO` existe. A opção de concessionária sai de `CONCESSIONARIA`
+    (`0099`), o nome do cadastro com o texto do fornecedor como reserva, porque a
+    Corsan chega em duas grafias — com a igualdade simples, o seletor ofereceria
+    "Corsan" com 16.130 menções e o clique recortaria 1.111.
 
-    Mantida a igualdade simples, o seletor ofereceria "Corsan" (16.130) e o
-    clique recortaria 1.111 — a mesma dessincronia que a barra do N2 teve na
-    `0098`, e que custou um segundo PR para consertar.
-
-    AS DUAS CONDIÇÕES, e não só a chave: a menção que o cadastro não resolve
-    ("Águas do Rio", 9.411) é oferecida pelo texto do fornecedor e tem de ser
-    recortada por ele.
+    AS DUAS CONDIÇÕES, e não só a chave: a menção que o cadastro não resolve é
+    oferecida pelo texto do fornecedor e tem de ser recortada por ele.
     """
     coluna = _COLUNA_DA_DIMENSAO.get(chave)
     if coluna is None:
@@ -1148,9 +1094,9 @@ def condicao_da_dimensao(chave: str, valor: str) -> ColumnElement[bool] | None:
 #: AS DIMENSÕES QUE NOMEIAM PESSOA, e que só quem vê o diretório pode listar.
 #:
 #: A Base das Lentes já esconde o autor da imprensa de quem não tem
-#: `ve_diretorio` — é o cadastro de terceiros, o mesmo que a matriz de
-#: jornalistas protege. Oferecer o autor como FILTRO publicaria a lista inteira
-#: de nomes num seletor. Achado de revisão.
+#: `ve_diretorio` — é o cadastro de terceiros, o mesmo que a matriz de jornalistas
+#: protege. Oferecer o autor como FILTRO publicaria a lista inteira de nomes num
+#: seletor.
 DIMENSOES_QUE_NOMEIAM_PESSOA: frozenset[str] = frozenset({"autor"})
 
 #: ACIMA DE QUANTOS VALORES uma dimensão deixa de ser lista e passa a ser busca.
@@ -1194,34 +1140,30 @@ def dimensoes_do_recorte(
     """As dimensões com valor no recorte, para a tela oferecer só o que existe.
 
     PADRONIZAÇÃO COM ESPAÇO PARA A PARTICULARIDADE, que é o pedido do dono do
-    produto: praça e concessionária cruzam todas as fontes; tier e público-alvo
-    só a imprensa tem; cargo e autor, só as redes. Oferecer tier a quem está
-    olhando a Bites é prometer um filtro que volta vazio; esconder cargo de quem
-    está na Bites é tirar o melhor filtro que ela tem.
+    produto: praça e concessionária cruzam todas as fontes; tier e público-alvo só
+    a imprensa tem; cargo e autor, só as redes. Oferecer tier a quem está olhando
+    a Bites é prometer um filtro que volta vazio; esconder cargo de quem está na
+    Bites é tirar o melhor filtro que ela tem.
 
-    É O DADO QUE RESPONDE, e não uma lista fixa por fonte: dimensão aparece
-    quando tem valor no recorte. Fonte nova que mande cargo entra sozinha.
+    É O DADO QUE RESPONDE, e não uma lista fixa por fonte: dimensão aparece quando
+    tem valor no recorte, e fonte nova que mande cargo entra sozinha.
 
     SÓ DAS MENÇÕES. As agendas do CRM têm as suas próprias dimensões (frente,
     esfera, unidade), e o filtro delas é a tela do CRM — esta aba as conta por
-    risco, não as recorta por dentro. Quando isso virar pedido, entra aqui com a
-    mesma régua.
+    risco, não as recorta por dentro.
 
     E A DIMENSÃO QUE A FONTE TEM NÃO DESAPARECE QUANDO O RECORTE A ESVAZIA: ela
     vem como `vazia`, com as fontes que a classificam e zero preenchidas. É a
-    MESMA REGRA DA FILEIRA DE ABAS DAS LENTES, decidida pelo dono do produto em
-    05/10/2026 — "uma fileira de filtros que muda a cada clique se lê como tela
-    quebrada", e o filtro vazio diz algo acionável: a fonte não classificou
-    aquilo neste corte. O que sai de vez é só a dimensão que NENHUMA fonte do
-    recorte preenche, porque aí a ausência é da fonte, não do corte. Achado de
-    revisão: a resposta tinha de deixar a tela distinguir as duas coisas.
+    MESMA REGRA DA FILEIRA DE ABAS DAS LENTES — uma fileira de filtros que muda a
+    cada clique se lê como tela quebrada, e o filtro vazio diz algo acionável: a
+    fonte não classificou aquilo neste corte. O que sai de vez é só a dimensão que
+    NENHUMA fonte do recorte preenche, porque aí a ausência é da fonte, e não do
+    corte.
     """
     candidatas = [
         (chave, rotulo, coluna)
         for chave, rotulo, coluna in DIMENSOES
-        #: O AUTOR NOMEIA PESSOA, e listá-lo num seletor publicaria o cadastro de
-        #: terceiros que `ve_diretorio` protege — a Base das Lentes já esconde o
-        #: autor da imprensa de quem não o tem. Achado de revisão.
+        #: O autor nomeia pessoa — ver `DIMENSOES_QUE_NOMEIAM_PESSOA`.
         if ve_o_diretorio or chave not in DIMENSOES_QUE_NOMEIAM_PESSOA
     ]
     if not candidatas:
@@ -1230,10 +1172,9 @@ def dimensoes_do_recorte(
     riscos = _riscos_do_filtro(sessao, filtro)
     das_mencoes = mencoes_de_incidente(filtro, riscos).subquery()
 
-    #: (1) OS VALORES DO RECORTE, NUMA CONSULTA SÓ. Antes eram seis, uma por
-    #: dimensão, cada uma agrupando a subconsulta inteira de incidentes. Aqui as
-    #: seis colunas viram linhas (`chave`, `valor`) e o banco agrupa uma vez.
-    #: Achado de revisão.
+    #: (1) OS VALORES DO RECORTE, NUMA CONSULTA SÓ. Eram seis, uma por dimensão,
+    #: cada uma agrupando a subconsulta inteira de incidentes. Aqui as seis
+    #: colunas viram linhas (`chave`, `valor`) e o banco agrupa uma vez.
     empilhadas = union_all(
         *[
             select(
@@ -1401,10 +1342,9 @@ def arvore_dos_temas(
         .join(TemaRisco, TemaRisco.tema_id == Tema.id)
         .join(Risco, Risco.id == TemaRisco.risco_id)
         #: `outerjoin` E NÃO `join`: `tema.macro_tema_id` é anulável, e o join
-        #: interno fazia o tema sem macro DESAPARECER da árvore — ele continuava
-        #: na tabela e nos incidentes, e a soma dos nós deixava de fechar com o
-        #: total. Achado de revisão. Hoje os 104 temas ativos têm macro, mas o
-        #: cadastro aceita um sem, e é o caso que ninguém olharia.
+        #: interno faz o tema sem macro DESAPARECER da árvore — ele continua na
+        #: tabela e nos incidentes, e a soma dos nós deixa de fechar com o total.
+        #: Hoje todos os temas ativos têm macro, mas o cadastro aceita um sem.
         .outerjoin(MacroTema, MacroTema.id == Tema.macro_tema_id)
         .outerjoin(BlocoTema, BlocoTema.id == MacroTema.bloco_tema_id)
         .where(
@@ -1508,10 +1448,10 @@ def total_por_severidade(
 ) -> dict[str, int]:
     """Quantos incidentes por severidade na janela — o "Total de incidentes".
 
-    POR INCIDENTE, E PELA PIOR SEVERIDADE, como o índice e como a linha da
-    tabela. Somar a matriz por risco daria outro número: o incidente de um tema
-    que toca um crítico e um alto entraria nos dois baldes, e os três números do
-    topo somariam mais que o total de incidentes. Achado de revisão.
+    POR INCIDENTE, E PELA PIOR SEVERIDADE, como o índice e como a linha da tabela.
+    Somar a matriz por risco daria outro número: o incidente de um tema que toca
+    um crítico e um alto entraria nos dois baldes, e os três números do topo
+    somariam mais que o total de incidentes.
     """
     riscos = _riscos_do_filtro(sessao, filtro)
     contagem = dict.fromkeys(SEVERIDADES, 0)
