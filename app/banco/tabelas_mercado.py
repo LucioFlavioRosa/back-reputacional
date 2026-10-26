@@ -4,9 +4,9 @@ Espelham `app/banco/migrations/0100_o_bond_tem_empresa_e_cotacao_diaria.sql`.
 
 ARQUIVO PRÓPRIO, e não uma seção de `tabelas_score.py`: o portal
 `inteligencia_de_mercado` é outro domínio — ele lê o índice do Score, mas o
-preço de um bond não é menção, não tem lente e não entra em nenhuma régua de
-calibração. Misturar os dois faria o módulo do Score crescer com um assunto que
-não é dele, e é justamente a organização por domínio que o dono do produto pediu.
+preço de um bond não é menção, não tem lente e não entra em régua de calibração
+nenhuma. Misturar os dois faria o módulo do Score crescer com assunto que não é
+dele.
 """
 
 from __future__ import annotations
@@ -111,7 +111,7 @@ class PlanilhaDeBondsRecebida(Tabela):
     POR QUE ELA EXISTE. O ingress do Container Apps encerra a requisição por
     volta de 240 s e não é configurável; o export de bonds é cumulativo e cresce
     toda semana. Sem subir em pedaços, é questão de tempo até a tela devolver
-    403 sem explicação — foi o que aconteceu com a planilha do Score em 15/10.
+    403 sem explicação.
 
     É A MESMA IDEIA DE `PlanilhaRecebida`, SEM A FONTE: a importação de bonds é
     uma só, então o dono sozinho já identifica a subida em voo.

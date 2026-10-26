@@ -1,10 +1,5 @@
 """As duas tabelas da importação. Espelha `migrations/0008_importacao.sql`.
 
-A 0008 EXISTE DESDE ANTES DESTE CÓDIGO, e o cabeçalho dela diz por quê: a forma
-das tabelas foi decidida junto com o resto do modelo, e `interacao.fonte`,
-`interacao.origem_aba` e `interacao.origem_linha` já apontavam para este fluxo.
-Este módulo mapeia o que já está lá e NÃO altera nada — nenhuma migration nova.
-
 O DESENHO QUE A 0008 DESCREVE, e que a spec desta funcionalidade repete:
 
   1. o arquivo é lido e cada linha vira uma `importacao_linha`, com os dados

@@ -241,35 +241,22 @@ def _bate_com_a_busca(termo_pedido: str) -> ColumnElement[bool]:
     a importação usa para deduplicar: assim "Radames" encontra "Radamés", e
     quem digita sem acento não fica sem resultado.
 
-    NÃO HÁ MAIS CAMPO ATRÁS DE BANDEIRA AQUI, e a razão é a troca de semântica
-    da migration 0089.
-
-    Enquanto a informação sensível era uma lista de CAMPOS, a linha aparecia
-    para todos e alguns campos vinham nulos — e mantê-los pesquisáveis seria um
-    oráculo: sem receber o texto, a pessoa descobriria o conteúdo por tentativa
-    e erro, uma palavra por vez, e ainda saberia quais registros casam. Foi
-    exatamente o defeito que `encaminhamentos` teve ao entrar naquela lista e
-    ficar nesta.
-
-    Agora o que se restringe é a LINHA (`condicoes`, com `alcanca_sensivel`).
-    Uma agenda que a pessoa alcança, ela alcança por inteiro; uma que não
-    alcança não está no conjunto que a busca varre. Sem campo escondido, não há
-    o que deduzir — e condicionar colunas aqui só esconderia da pessoa o texto
-    que ela pode ler na tela ao lado.
+    NENHUM CAMPO É CONDICIONADO AQUI, porque o que se restringe é a LINHA
+    (`condicoes`, com `alcanca_sensivel`): uma agenda que a pessoa alcança, ela
+    alcança por inteiro, e uma que não alcança não está no conjunto que a busca
+    varre. Esconder coluna aqui não protegeria nada — seria um oráculo, com a
+    pessoa deduzindo o texto por tentativa e erro, uma palavra por vez — e só
+    sonegaria a ela o que pode ler na tela ao lado.
     """
     termo = f"%{termo_pedido.strip()}%"
     termo_normalizado = f"%{normalizar(termo_pedido)}%"
 
-    # `expectativa` E OS TEMAS ENTRAM AQUI porque a pauta saiu da tela.
-    #
-    # A busca procurava o assunto em `pauta`, e agenda criada pelo
-    # formulario nao tem mais pauta: o assunto dela mora em `temas` (o
-    # classificado) e em `expectativa` (o que se quer da reuniao). Sem
-    # estes dois, procurar por "reajuste" acharia so os 60 registros
-    # vindos da planilha — e a busca pareceria funcionar, o que e pior do
-    # que quebrar.
-    #
-    # `pauta` continua na lista: e o que os registros antigos tem.
+    # `expectativa` E OS TEMAS ENTRAM AQUI porque a pauta saiu da tela. Agenda
+    # criada pelo formulário não tem pauta: o assunto dela mora em `temas` (o
+    # classificado) e em `expectativa` (o que se quer da reunião). Sem estes
+    # dois, a busca acharia só os registros vindos da planilha — e pareceria
+    # funcionar, o que é pior do que quebrar. `pauta` continua na lista: é o
+    # que os registros antigos têm.
     colunas = [
         InteracaoRegistro.pauta.ilike(termo),
         InteracaoRegistro.expectativa.ilike(termo),
@@ -322,26 +309,19 @@ def condicoes(
     """Traduz o Recorte e o escopo do usuário para uma lista de condições `where`.
 
     A lista pode ser aplicada a qualquer consulta que tenha `interacao` como
-    tabela principal — inclusive às agregações que ainda serão escritas.
+    tabela principal.
 
     O escopo entra **depois** dos filtros pedidos e nunca no lugar deles: o
     usuário refina o que já lhe é permitido, jamais o amplia.
 
     `alcanca_sensivel` É FILTRO DE LINHA, e aqui está o coração da coisa.
-
     Quando falso, as agendas marcadas `sensivel` saem do conjunto — e saem de
     TUDO, porque esta função é o único tradutor de filtro do sistema: a
     listagem, a ficha, a busca, os materiais, as exportações e todas as
-    agregações de `consultas_metricas` passam por aqui. A pessoa não vê a linha,
-    não a acha pela busca, não a abre pela URL e ela não entra em KPI nenhum.
-
-    ERA `alcanca_sensivel`, e decidia só se `q=` varria `relato`:
-    naquele desenho a linha aparecia para todos e alguns CAMPOS vinham nulos. A
-    migration 0089 trocou a semântica — quem classifica é quem registra, uma
-    agenda por vez, e o efeito é sobre a linha inteira. Com a linha fora, não há
-    mais oráculo a fechar: a busca só pode casar o que a pessoa já alcança por
-    inteiro, então `relato` e `encaminhamentos` voltaram a ser pesquisáveis sem
-    condição (ver `_condicao_de_busca`).
+    agregações de `consultas_metricas` passam por aqui. A pessoa não vê a
+    linha, não a acha pela busca, não a abre pela URL e ela não entra em KPI
+    nenhum. É por isso que nenhum CAMPO precisa ser escondido — ver
+    `_bate_com_a_busca`.
 
     CONSEQUÊNCIA QUE PRECISA SER SABIDA: quem não alcança o sensível vê KPI
     MENOR. Duas pessoas na mesma tela veem números diferentes. É inerente a
