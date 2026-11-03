@@ -17,7 +17,12 @@
 --: linhas mudando, não "este arquivo, mandado por esta pessoa, alimentou estas
 --: fontes irmãs" — e não distingue carga de reconciliação. Então o nome fica
 --: fora do sufixo e a imutabilidade vem do `revoke` explícito lá embaixo, mais
---: `test_carga_de_fonte_nao_e_alteravel_pela_aplicacao`.
+--: `test_carga_de_fonte_e_append_only_mas_a_aplicacao_insere`.
+--:
+--: O QUE ELA NÃO COBRE, e é limite declarado: só a CARGA de fonte. Quem altera
+--: menção por fora da ingestão — a reconciliação da lista de veículos, a edição
+--: de jornalista, a fusão de atores — não aparece aqui. Por isso a tela diz
+--: "última carga", e não "última atualização".
 --:
 --: SEM `check` EM `origem` de propósito: origem nova é chamador novo, não
 --: migration nova. A lista vivida está em `ingerir_mencoes.ORIGENS`.
@@ -45,8 +50,16 @@ create table if not exists carga_de_fonte (
   --: ZERO É RESULTADO VÁLIDO, e é a razão de esta tabela existir.
   mencoes      integer     not null,
   --: Os meses SUBSTITUÍDOS, inclusive os que ficaram zerados.
+  --:
+  --: SEM `check` DE LISTA NÃO VAZIA de propósito: abortar uma ingestão de 25 mil
+  --: linhas por causa de um invariante da linhagem troca uma perda real por uma
+  --: cosmética. Linha sem mês é estranha e visível, não danosa.
   meses        date[]      not null,
-  concluida_em timestamptz not null default now()
+  --: `clock_timestamp()` E NÃO `now()`: `now()` é o início da TRANSAÇÃO, e fica
+  --: congelado nela. A ingestão mede 62 s, então a coluna chamada `concluida_em`
+  --: registraria o começo da carga — medido: duas leituras de `now()` com dois
+  --: segundos entre elas devolvem o mesmo valor, e `clock_timestamp()` anda.
+  concluida_em timestamptz not null default clock_timestamp()
 );
 
 comment on table carga_de_fonte is
@@ -64,6 +77,10 @@ create index if not exists carga_de_fonte_fonte_concluida_idx
 --: A lista cronológica da aba da plataforma.
 create index if not exists carga_de_fonte_concluida_idx
   on carga_de_fonte (concluida_em desc);
+--: "Quais fontes esta carga alimentou" — a pergunta que a tabela-pai responderia
+--: se existisse. Sem este índice ela varre a tabela inteira.
+create index if not exists carga_de_fonte_lote_idx
+  on carga_de_fonte (lote_id);
 
 --: A tabela NASCE GRAVÁVEL por causa do `alter default privileges` da `0009`,
 --: que concede `select, insert, update` em toda tabela futura a `painel_app`.

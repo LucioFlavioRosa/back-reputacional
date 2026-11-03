@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 from app.armazenamento import blob
 from app.banco.sessao import obter_sessao
 from app.banco.tabelas_acesso import Papel, Usuario
-from app.banco.tabelas_score import Mencao, PlanilhaRecebida, ScoreFonte
+from app.banco.tabelas_score import CargaDeFonte, Mencao, PlanilhaRecebida, ScoreFonte
 from app.banco.tabelas_stakeholders import Instituicao
 from app.casos_de_uso import ingerir_mencoes
 from main import app
@@ -236,6 +236,43 @@ def test_o_byte_e_a_linha_somem_quando_a_importacao_grava(
 
     assert sessao.get(PlanilhaRecebida, planilha_id) is None
     assert caminho not in armazenamento
+
+
+def test_a_trilha_DA_ROTA_guarda_quem_carregou_e_o_nome_do_arquivo(
+    cliente, sessao, armazenamento
+):
+    """O que a `planilha_recebida` levava embora ao ser apagada (`0115`).
+
+    PELA ROTA, e não chamando `ingerir`: é a rota que conhece o usuário e o nome,
+    e o nome tem de ser lido ANTES de `descartar` apagar a linha. Um teste que
+    chame o caso de uso direto não cobre esse encadeamento.
+    """
+    planilha_id = _conferir(cliente, _planilha(), nome="clipping-agosto.xlsx").json()[
+        "planilha_id"
+    ]
+
+    assert _importar_pelo_id(cliente, planilha_id).status_code == 201
+
+    cargas = sessao.scalars(select(CargaDeFonte)).all()
+    assert cargas, "a importação pela rota não deixou rastro"
+    carga = cargas[0]
+    assert carga.origem == "api:planilha"
+    assert carga.arquivo == "clipping-agosto.xlsx"
+    #: QUEM, de verdade: a chave estrangeira já recusaria um uuid inventado, e o
+    #: `get` prova que o id aponta para gente que existe.
+    assert carga.usuario_id is not None
+    assert sessao.get(Usuario, carga.usuario_id) is not None
+
+
+def test_a_trilha_pelo_ARQUIVO_pega_o_nome_do_upload(cliente, sessao, armazenamento):
+    """O ramo sem conferência não tem `planilha_recebida` de onde ler o nome."""
+    assert _importar_pelo_arquivo(cliente, _planilha()).status_code == 201
+
+    carga = sessao.scalars(select(CargaDeFonte)).first()
+    assert carga is not None
+    assert carga.arquivo == "export.xlsx"
+    assert carga.origem == "api:planilha"
+    assert carga.usuario_id is not None
 
 
 def test_a_confirmacao_le_exatamente_os_bytes_que_a_conferencia_recebeu(

@@ -33,6 +33,7 @@ from sqlalchemy import (
     SmallInteger,
     Text,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
@@ -371,6 +372,9 @@ class CargaDeFonte(Tabela):
     mencoes: Mapped[int] = mapped_column(Integer)
     #: Os meses substituídos, inclusive os que ficaram zerados.
     meses: Mapped[list[date]] = mapped_column(ARRAY(Date))
+    #: `clock_timestamp()` e NÃO `func.now()`: `now()` é o início da transação e
+    #: fica congelado nela, então numa ingestão de 62 s a coluna registraria o
+    #: começo da carga em vez do fim. Ver o comentário na `0115`.
     concluida_em: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        DateTime(timezone=True), server_default=text("clock_timestamp()")
     )

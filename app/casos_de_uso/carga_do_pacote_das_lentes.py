@@ -302,6 +302,13 @@ def carregar(sessao: Session, conteudo: bytes, lente: str) -> ResumoDaCarga:
     #: da trilha têm de dizer que vieram da mesma carga. `arquivo` e `usuario_id`
     #: ficam nulos porque `carregar` recebe bytes e não sabe de quem — nulo com
     #: `origem` preenchida é a assinatura de carga feita fora da tela.
+    #:
+    #: FONTE SÓ COM VOLUME NÃO CLASSIFICADO FICA DE FORA, e é defeito ANTIGO que
+    #: a trilha expõe: `ler_aba_da_lente` manda a linha sem sentimento para
+    #: `nao_classificadas` e nunca cria chave em `por_fonte` (ver o `continue` na
+    #: leitura), então o laço abaixo não a visita — nem o agregado dela nem a
+    #: linha da trilha são escritos. Consertar é mexer no laço da carga, que é
+    #: decisão de outra mudança.
     procedencia = Procedencia(origem="carga_do_pacote")
     for codigo, mencoes in sorted(leitura.por_fonte.items()):
         fonte = sessao.scalars(

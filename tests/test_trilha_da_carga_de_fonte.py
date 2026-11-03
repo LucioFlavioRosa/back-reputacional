@@ -25,12 +25,12 @@ from datetime import date
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
 from app.banco.tabelas_acesso import Papel, Usuario
 from app.banco.tabelas_catalogo import CategoriaPublico, SubcategoriaPublico
-from app.banco.tabelas_score import CargaDeFonte, ScoreFonte, ScoreMesFonte
+from app.banco.tabelas_score import CargaDeFonte, Mencao, ScoreFonte, ScoreMesFonte
 from app.banco.tabelas_stakeholders import Instituicao
 from app.casos_de_uso import ingerir_mencoes
 from app.dominio.ingestao_score import Leitura, MencaoLida
@@ -186,6 +186,29 @@ def test_a_carga_grava_quem_quando_e_quanto(sessao, usuario):
     assert carga.concluida_em is not None
 
 
+def test_o_carimbo_e_o_FIM_e_nao_o_inicio_da_transacao(sessao):
+    """`now()` ficaria congelado no começo da transação.
+
+    No Postgres, `now()` é `transaction_timestamp()`: duas leituras com dois
+    segundos entre elas devolvem o mesmo valor. A ingestão mede 62 s, então uma
+    coluna chamada `concluida_em` com `default now()` registraria o COMEÇO da
+    carga. A `0115` usa `clock_timestamp()`, e é isto que esta comparação cobra:
+    com `now()` os dois valores seriam IGUAIS, e a asserção falha.
+    """
+    fonte = _fonte(sessao, "zz_trilha_8", com_lista=False)
+    comeco_da_transacao = sessao.execute(text("select now()")).scalar()
+
+    ingerir_mencoes.ingerir(
+        sessao,
+        fonte,
+        _planilha([[date(2026, 8, 3), "Positiva", "Valor Econômico zz8", "Geral"]]),
+        (),
+        ingerir_mencoes.Procedencia(origem="api:planilha"),
+    )
+
+    assert _trilha(sessao, fonte)[0].concluida_em > comeco_da_transacao
+
+
 def test_cada_carga_acrescenta_uma_linha(sessao):
     """Resubir o mês não sobrescreve o rastro da carga anterior."""
     fonte = _fonte(sessao, "zz_trilha_2", com_lista=False)
@@ -259,6 +282,19 @@ def test_a_irma_SEM_LISTA_que_fica_sem_nada_nao_grava(sessao):
     com_lista = _fonte(sessao, "zz_trilha_4a", com_lista=True, arquivo="zz_pacote_4")
     sem_lista = _fonte(sessao, "zz_trilha_4b", com_lista=False, arquivo="zz_pacote_4")
 
+    #: O MÊS DA IRMÃ JÁ TEM DADO, e a afirmação é que ele SOBREVIVE. Gravado por
+    #: `add` e não por `regravar`, que deixaria rastro e falsearia o teste.
+    sessao.add(
+        Mencao(
+            fonte_id=sem_lista.id,
+            mes=date(2026, 8, 1),
+            data=date(2026, 8, 1),
+            sentimento="pos",
+            veiculo="Carga anterior zz4",
+        )
+    )
+    sessao.flush()
+
     ingerir_mencoes.ingerir(
         sessao,
         com_lista,
@@ -276,6 +312,15 @@ def test_a_irma_SEM_LISTA_que_fica_sem_nada_nao_grava(sessao):
     assert len(_trilha(sessao, com_lista)) == 1
     assert _trilha(sessao, com_lista)[0].mencoes == 2
     assert _trilha(sessao, sem_lista) == []
+    #: E O DADO DELA CONTINUA LÁ: a trilha vazia não é só ausência de linha, é a
+    #: afirmação de que nada foi apagado naquela fonte.
+    sobreviveu = sessao.scalars(
+        select(Mencao).where(
+            Mencao.fonte_id == sem_lista.id, Mencao.mes == date(2026, 8, 1)
+        )
+    ).all()
+    assert len(sobreviveu) == 1
+    assert sobreviveu[0].veiculo == "Carga anterior zz4"
 
 
 # -- o laço entre fontes irmãs --------------------------------------------------
