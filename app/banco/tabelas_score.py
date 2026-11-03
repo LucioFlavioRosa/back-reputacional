@@ -10,6 +10,7 @@ O índice mensal tem quatro coisas guardadas e uma calculada:
     score_config        a régua em vigor, versionada
     score_fato          o que explica a curva, escrito por gente
     planilha_recebida   o arquivo esperando entre conferir e confirmar (0092)
+    carga_de_fonte      quem carregou o quê, quando, e quantas menções (0115)
 
 O score em si não mora aqui: é calculado na leitura, por `app/dominio/score.py`,
 porque a régua que o produz é configurável — ver o cabeçalho da 0048.
@@ -24,6 +25,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     Date,
+    DateTime,
     ForeignKey,
     Identity,
     Integer,
@@ -32,7 +34,7 @@ from sqlalchemy import (
     Text,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -332,3 +334,43 @@ class PlanilhaRecebida(Tabela):
         um arquivo que não existe, ou pior, um pela metade.
         """
         return self.completa_em is None
+
+
+class CargaDeFonte(Tabela):
+    """Uma carga que entrou numa fonte: quando, por quem, quanto. Espelha a `0115`.
+
+    RESPONDE O QUE `score_mes_fonte.atualizado_em` NÃO RESPONDE. Aquele carimbo
+    nasce novo a cada carga porque `regravar` apaga e reinsere o mês — mas uma
+    carga de ZERO menção apaga e não insere nada, e aí o carimbo não anda. Esta
+    linha é gravada mesmo nesse caso, que é a razão de ela existir.
+
+    APPEND-ONLY PELO `revoke` DA `0115`, e não pelo nome: a rede automática de
+    `test_nenhuma_trilha_e_gravavel_pela_aplicacao` pega só tabelas `*_auditoria`,
+    e essa rede proibiria justamente o `insert` que a aplicação precisa fazer
+    aqui. Quem escreve é a aplicação porque um gatilho não sabe de que arquivo a
+    linha veio nem que fontes irmãs o mesmo arquivo alimentou.
+    """
+
+    __tablename__ = "carga_de_fonte"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    fonte_id: Mapped[int] = mapped_column(SmallInteger, ForeignKey("score_fonte.id"))
+    #: Nulo onde o chamador não tem nome a dar: `ingerir` recebe bytes.
+    arquivo: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Nulo no comando de linha. Nulo com `origem` preenchida é carga feita fora
+    #: da aplicação — a mesma convenção que a `0005` usa nas trilhas dela.
+    usuario_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("usuario.id"), nullable=True
+    )
+    #: Ver `ingerir_mencoes.ORIGENS`.
+    origem: Mapped[str] = mapped_column(Text)
+    #: O mesmo valor nas fontes irmãs que o mesmo arquivo alimentou.
+    lote_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True))
+    mencoes: Mapped[int] = mapped_column(Integer)
+    #: Os meses substituídos, inclusive os que ficaram zerados.
+    meses: Mapped[list[date]] = mapped_column(ARRAY(Date))
+    concluida_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

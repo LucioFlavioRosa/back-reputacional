@@ -454,6 +454,36 @@ def test_nao_adultera_a_trilha_de_auditoria(sessao_restrita, semente):
         )
 
 
+def test_carga_de_fonte_e_append_only_mas_a_aplicacao_insere(sessao_restrita, semente):
+    """A trilha da carga (`0115`) é o caso contrário das trilhas de gatilho.
+
+    QUEM ESCREVE É A APLICAÇÃO, e tem de ser: um gatilho vê linhas mudando, não
+    "este arquivo, mandado por esta pessoa, alimentou estas fontes irmãs" — nem
+    distingue carga de reconciliação. Então `insert` é concedido.
+
+    E É POR ISSO QUE ESTE TESTE EXISTE. A rede automática que varre `%_auditoria`
+    não alcança este nome, e não poderia: ela proíbe exatamente o `insert` de que
+    a aplicação precisa. A imutabilidade aqui vem do `revoke update, delete` da
+    `0115`, e sem este teste nada cobraria esse revoke.
+    """
+    inserir = text(
+        "insert into carga_de_fonte (fonte_id, origem, lote_id, mencoes, meses) "
+        "select id, 'teste', gen_random_uuid(), 0, array[date '2026-08-01'] "
+        "  from score_fonte limit 1"
+    )
+
+    #: O caminho que a aplicação usa de verdade.
+    with _isolado(sessao_restrita):
+        sessao_restrita.execute(inserir)
+        assert sessao_restrita.execute(text("select count(*) from carga_de_fonte")).scalar() >= 1
+
+    with pytest.raises(ProgrammingError, match="permission denied"), _isolado(sessao_restrita):
+        sessao_restrita.execute(text("update carga_de_fonte set mencoes = 999"))
+
+    with pytest.raises(ProgrammingError, match="permission denied"), _isolado(sessao_restrita):
+        sessao_restrita.execute(text("delete from carga_de_fonte"))
+
+
 def test_nao_escala_o_proprio_privilegio(sessao_restrita, semente):
     """A conta da aplicação não se promove dentro do banco.
 

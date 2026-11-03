@@ -33,7 +33,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.banco.tabelas_score import ScoreFonte
-from app.casos_de_uso.ingerir_mencoes import ASSINATURA_ZIP, TAMANHO_MAXIMO, regravar
+from app.casos_de_uso.ingerir_mencoes import (
+    ASSINATURA_ZIP,
+    TAMANHO_MAXIMO,
+    Procedencia,
+    regravar,
+)
 from app.dominio.erros import RegraViolada
 from app.dominio.ingestao_score import (
     SENTIMENTOS,
@@ -293,6 +298,11 @@ def carregar(sessao: Session, conteudo: bytes, lente: str) -> ResumoDaCarga:
     gravadas = 0
     por_fonte: dict[str, int] = {}
     meses: set[date] = set()
+    #: UMA SÓ PARA O LAÇO: a aba de uma lente alimenta várias fontes, e as linhas
+    #: da trilha têm de dizer que vieram da mesma carga. `arquivo` e `usuario_id`
+    #: ficam nulos porque `carregar` recebe bytes e não sabe de quem — nulo com
+    #: `origem` preenchida é a assinatura de carga feita fora da tela.
+    procedencia = Procedencia(origem="carga_do_pacote")
     for codigo, mencoes in sorted(leitura.por_fonte.items()):
         fonte = sessao.scalars(
             select(ScoreFonte).where(ScoreFonte.codigo == codigo)
@@ -316,6 +326,7 @@ def carregar(sessao: Session, conteudo: bytes, lente: str) -> ResumoDaCarga:
                 linhas=len(mencoes),
                 nao_classificadas=da_fonte,
             ),
+            procedencia=procedencia,
         )
         gravadas += len(mencoes)
         por_fonte[codigo] = len(mencoes)
