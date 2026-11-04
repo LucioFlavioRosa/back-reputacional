@@ -64,46 +64,31 @@ FONTE_INTERNA_DO_CRM = "crm"
 
 #: O ATRIBUTO SEM O PREFIXO NUMÉRICO da planilha real ("7. Prosperidade
 #: Compartilhada" → "Prosperidade Compartilhada"). É por este rótulo que a aba
-#: N1 agrupa, e por isso o filtro `atributo` aceita os dois: o valor cru (o
-#: mock e links antigos) e o limpo (o que a aba mostra e o clique manda).
+#: N1 agrupa, e por isso o filtro `atributo` aceita os dois: o valor cru (o mock
+#: e links antigos) e o limpo (o que a aba mostra e o clique manda).
 #:
-#: O SEPARADOR É OBRIGATÓRIO, e isto é conserto. O padrão era `[.)-]?` — com o
-#: `?`, o que vinha antes de um dígito era comido sem precisar de pontuação
-#: nenhuma, e aí valor legítimo virava outro valor:
-#:
-#:     "5G e cobertura"     -> "G e cobertura"
-#:     "2024 Resultados"    -> "Resultados"
-#:     "2 Ruas sem asfalto" -> "Ruas sem asfalto"
-#:     "2024"               -> ""
-#:
-#: Dois atributos diferentes podiam cair na MESMA pílula da aba N1, e a barra
-#: contaria os dois como um. Hoje os 7 atributos do cadastro usam ". " e nenhum
-#: deles disparava o defeito — ele esperava o primeiro valor que começasse com
-#: dígito sem pontuação. Achado da revisão do Codex em 16/10/2026.
-#:
-#: `^[0-9]+(?:[.)-]\s*|\s+)`, que foi a proposta da revisão, não resolve: ela
-#: aceita ESPAÇO como separador e continua comendo "2024 " e "2 ". Medido contra
-#: o banco antes de escolher.
+#: O SEPARADOR É OBRIGATÓRIO. Com `[.)-]?`, o dígito inicial era comido sem
+#: pontuação nenhuma e valor legítimo virava outro valor — "5G e cobertura" ->
+#: "G e cobertura", "2024" -> "" —, e dois atributos diferentes caíam na MESMA
+#: pílula da aba N1. Espaço também não serve de separador, pelo mesmo motivo:
+#: `^[0-9]+(?:[.)-]\s*|\s+)` continua comendo "2024 " e "2 ".
 ATRIBUTO_SEM_PREFIXO = func.regexp_replace(Mencao.atributo, r"^[0-9]+[.)-]\s*", "")
 
 #: A CONCESSIONÁRIA COMO O CADASTRO A CHAMA, com o texto do fornecedor como
 #: reserva. Exige `outerjoin(UnidadeNegocio, UnidadeNegocio.id ==
 #: Mencao.unidade_negocio_id)` em quem a usa.
 #:
-#: É O QUE FAZ A NORMALIZAÇÃO APARECER. A chave que a subida resolve (`0099`)
-#: não muda nada sozinha: quem desenha a dimensão "Concessionária" é o NOME, e
-#: a mesma operação chega em grafias diferentes — "Corsan" (1.111) e "Companhia
-#: Riograndense de Saneamento (Corsan)" (15.019) eram duas barras e dois
-#: valores de filtro para 16.130 menções da mesma empresa. A holding, três.
+#: É O QUE FAZ A NORMALIZAÇÃO APARECER: quem desenha a dimensão
+#: "Concessionária" é o NOME, e a mesma operação chega em grafias diferentes —
+#: "Corsan" e "Companhia Riograndense de Saneamento (Corsan)" eram duas barras e
+#: dois valores de filtro para 16 mil menções da mesma empresa.
 #:
-#: `coalesce` E NÃO O NOME SECO: 28.549 menções nomeiam operação que o cadastro
-#: não resolve — "Águas do Rio" (9.411), que são dois blocos, e as ~45 grafias
-#: de operações que o cadastro não tem. Elas continuam aparecendo com a palavra
-#: do fornecedor, porque sumir do seletor é o oposto de normalizar.
+#: `coalesce` E NÃO O NOME SECO: dezenas de milhares de menções nomeiam operação
+#: que o cadastro não resolve, e elas continuam aparecendo com a palavra do
+#: fornecedor — sumir do seletor é o oposto de normalizar.
 #:
-#: AQUI, E NÃO EM CADA LEITOR, pelo mesmo motivo de `ATRIBUTO_SEM_PREFIXO` —
-#: ver o cabeçalho deste módulo. Quem agrupa por esta expressão e quem filtra
-#: por `condicoes_do_filtro` têm de concordar, e duas cópias divergem.
+#: AQUI, E NÃO EM CADA LEITOR: quem agrupa por esta expressão e quem filtra por
+#: `condicoes_do_filtro` têm de concordar, e duas cópias divergem.
 CONCESSIONARIA = func.coalesce(UnidadeNegocio.nome, Mencao.unidade_texto)
 
 #: Como o clima de uma interação vira sentimento do índice (`SCORE.md` §2).
@@ -223,15 +208,13 @@ def _somas_do_crm(sessao: Session, mes: date) -> list[SomasDaFonte]:
     for codigo, total in sessao.execute(consulta):
         sentimento = SENTIMENTO_DO_CLIMA.get(codigo)
         if sentimento is None:
-            # UM CLIMA NOVO NÃO PODE SUMIR EM SILÊNCIO. `clima` é dicionário
-            # fechado, então chegar aqui significa que alguém o abriu — e a
-            # lente institucional passaria a ignorar as interações desse clima
-            # sem nenhum sinal, devolvendo um número menor e plausível.
-            #
-            # Não é erro fatal de propósito: derrubar o Score inteiro da
-            # companhia porque uma linha de dicionário mudou seria pior que o
-            # desvio. O sinal é o log — e o teste de mapeamento, que quebra no
-            # CI no mesmo dia em que o clima for criado.
+            # UM CLIMA NOVO NÃO PODE SUMIR EM SILÊNCIO: `clima` é dicionário
+            # fechado, e chegar aqui significa que alguém o abriu — a lente
+            # institucional passaria a ignorar as interações desse clima,
+            # devolvendo um número menor e plausível. Não é erro fatal porque
+            # derrubar o Score inteiro da companhia por uma linha de dicionário
+            # seria pior que o desvio; o sinal é o log, e o teste de mapeamento
+            # quebra no CI no mesmo dia em que o clima for criado.
             logger.warning(
                 "Clima %r sem mapeamento em SENTIMENTO_DO_CLIMA: "
                 "%s interações ficaram fora da lente institucional de %s.",
@@ -274,16 +257,14 @@ class LenteNoCadastro:
 def catalogo_das_lentes(sessao: Session) -> list[LenteNoCadastro]:
     """O cadastro inteiro em DUAS consultas, e não em onze.
 
-    POR QUE ISTO EXISTE. `medir_lentes` perguntava, PARA CADA MÊS, quais lentes
-    existem, quais fontes cada uma tem e qual delas é interna — respostas que
-    não mudam entre um mês e outro. A série de dez meses saía em 147 consultas,
-    das quais 110 repetiam a mesma pergunta; e a conta piora a cada mês
-    ingerido, que é exatamente o que vai acontecer.
+    `medir_lentes` perguntava, PARA CADA MÊS, quais lentes existem, quais fontes
+    cada uma tem e qual delas é interna — respostas que não mudam entre um mês e
+    outro. Numa série de dez meses, 110 das 147 consultas repetiam a mesma
+    pergunta, e a conta piora a cada mês ingerido.
 
-    O CADASTRO É LIDO UMA VEZ e atravessa a série inteira. Não é cache: é o
-    mesmo pedido lendo o que não varia dentro dele uma vez só, o que também
-    elimina a chance de dois meses da mesma resposta enxergarem cadastros
-    diferentes.
+    O CADASTRO É LIDO UMA VEZ e atravessa a série inteira. Não é cache: é o mesmo
+    pedido lendo uma vez só o que não varia dentro dele, o que também elimina a
+    chance de dois meses da mesma resposta enxergarem cadastros diferentes.
     """
     lentes = lentes_cadastradas(sessao)
     por_lente: dict[int, list[ScoreFonte]] = {}
@@ -301,12 +282,11 @@ def catalogo_das_lentes(sessao: Session) -> list[LenteNoCadastro]:
             fontes=tuple(f.codigo for f in por_lente.get(lente.id, ())),
             # A FONTE INTERNA É A EXCEÇÃO, e `ativo` conta nela. O histórico de
             # uma fonte de planilha está gravado em `score_mes_fonte` e continua
-            # valendo depois de aposentada; o da fonte interna não existe — ela
-            # é recontada de `interacao_registro` a cada leitura. Aposentá-la só
-            # pode significar "para de contar", que é o que a `0108` fez com o
-            # CRM ao tirá-lo do índice. Ver `repositorio_lentes.lente_e_interna`,
-            # que precisa dizer o mesmo: as duas derivações divergindo partiriam
-            # a lente ao meio (nota de um lado, série do outro).
+            # valendo depois de aposentada; o da interna não existe — ela é
+            # recontada de `interacao_registro` a cada leitura, então aposentá-la
+            # só pode significar "para de contar". `lente_e_interna` e
+            # `_tem_fonte_interna` precisam dizer o mesmo: divergindo, partem a
+            # lente ao meio (nota de um lado, série do outro).
             tem_fonte_interna=any(
                 f.interna and f.ativo for f in por_lente.get(lente.id, ())
             ),
@@ -384,13 +364,12 @@ def medir_uma_lente(
 
 
 def _tem_fonte_interna(sessao: Session, lente_id: int) -> bool:
-    """A TERCEIRA derivação da mesma pergunta, e ela também tem de olhar `ativo`.
+    """A TERCEIRA derivação da mesma pergunta, e ela também olha `ativo`.
 
-    ACHADO DE REVISÃO, e no lugar exato onde eu tinha escrito que o perigo
-    estava: `catalogo_das_lentes` e `repositorio_lentes.lente_e_interna` já
-    exigiam `interna AND ativo`, e esta aqui não — então a nota da lente vinha
-    das matérias enquanto o dossiê e a composição ainda somavam o CRM
-    aposentado. Era a lente partida de novo, uma camada abaixo.
+    `catalogo_das_lentes` e `repositorio_lentes.lente_e_interna` exigem
+    `interna AND ativo`. Sem o `ativo` aqui, a nota da lente vinha das matérias
+    enquanto o dossiê e a composição ainda somavam o CRM aposentado — a lente
+    partida ao meio, uma camada abaixo.
     """
     return (
         sessao.scalar(
@@ -411,12 +390,30 @@ def condicoes_do_filtro(filtro: FiltroDeMencoes | None) -> list:
 
     Vazia quando não há filtro — mesma convenção de `so_fontes_ligadas`: lista,
     não sentinela, para não depender de um valor mágico "sem filtro".
+
+    TRÊS REGRAS VALEM PARA TODAS AS DIMENSÕES ABAIXO:
+
+    1. UMA CONDIÇÃO POR DIMENSÃO PREENCHIDA, todas no mesmo `where`. É o `and`
+       que faz os recortes se EMPILHAREM (nível 3 do pacote), em vez de o último
+       escolhido vencer os anteriores.
+    2. QUEM TEM RÓTULO DERIVADO CASA POR TODAS AS FORMAS QUE A TELA SOMA NA
+       MESMA BARRA, e não só pelo texto cru. O rótulo pode vir de um `coalesce`
+       com o cadastro (concessionária, tema), de uma canonização (a UF, que tem
+       três formas) ou de uma expressão SQL (`ATRIBUTO_SEM_PREFIXO`). Comparar só
+       o texto cru manda ao servidor um valor que a coluna não tem, e o clique
+       abre modal VAZIO sobre barra cheia. Cada forma entra como um disjunto a
+       mais, então o conjunto novo é SUPERCONJUNTO do antigo
+       (`test_o_recorte_por_pilar_e_superconjunto_do_antigo`). As dimensões de
+       texto cru — tier, veículo, perfil do autor, subtema, autor, sentimento e o
+       N3 — não têm rótulo derivado, e casam por igualdade simples.
+    3. SUBCONSULTA, E NÃO JUNÇÃO. Estas condições entram em toda leitura de
+       menção da plataforma (quinze chamadores hoje, em `repositorio_lentes`,
+       `repositorio_score` e `api/base_das_lentes`), e algumas dessas consultas já
+       juntam `Tema` ou `UnidadeNegocio` por conta própria: uma junção aqui
+       mudaria o `from` delas por baixo.
     """
     if filtro is None:
         return []
-    #: UMA CONDIÇÃO POR DIMENSÃO PREENCHIDA, e todas no mesmo `where`: é o `and`
-    #: que faz os recortes se EMPILHAREM (nível 3 do pacote), em vez de o último
-    #: escolhido vencer os anteriores.
     de_cada = (
         (Mencao.tier, filtro.tier),
         (Mencao.veiculo, filtro.veiculo),
@@ -428,47 +425,22 @@ def condicoes_do_filtro(filtro: FiltroDeMencoes | None) -> list:
     )
     condicoes = [coluna == valor for coluna, valor in de_cada if valor]
     if filtro.uf:
-        #: O ESTADO CASA PELAS DUAS FORMAS, pelo mesmo motivo do tema e da
-        #: concessionária logo abaixo — e aqui a assimetria é do nosso próprio
-        #: modelo: `mencao.uf` guarda o NOME ("Santa Catarina", decisão do dono
-        #: do produto em 09/10/2026 — ver `para_uf`), enquanto o mapa e a lista
-        #: da Síntese executiva mostram a SIGLA, que `grupos_do_explorador`
-        #: deriva com `para_sigla`. Comparando só o valor recebido, clicar na
-        #: linha "SC" — que acabou de somar as matérias do estado — mandaria
-        #: aqui um valor que a coluna não tem: modal VAZIO sobre uma barra
-        #: cheia, o mesmo defeito que `tema_texto` e `empresa` tiveram.
-        #:
-        #: AS DUAS, E NÃO SÓ O NOME: linha gravada antes de 09/10/2026 pode ter
-        #: ficado com a sigla, e a barra soma as duas juntas (`para_sigla` leva
-        #: "SC" e "Santa Catarina" para a mesma sigla) — casar só uma forma
-        #: faria o modal contar menos que a linha clicada.
-        #:
-        #: `para_uf` TAMBÉM CANONIZA caixa e espaço ("SAO PAULO" -> "São
-        #: Paulo"), e o valor recebido entra no conjunto de todo jeito: o que
-        #: vem da barra de filtros da tela (que oferece os valores crus da
-        #: coluna, `_distintos(Mencao.uf)`) continua casando como antes, e
-        #: estado estrangeiro — "Comunidade de Madrid", que não tem sigla —
-        #: casa pelo texto que o fornecedor deu.
+        #: O ESTADO CASA PELAS TRÊS FORMAS, e aqui a assimetria é do nosso próprio
+        #: modelo: `mencao.uf` guarda o NOME ("Santa Catarina" — ver `para_uf`), o
+        #: mapa e a lista da Síntese executiva mostram a SIGLA, e linha gravada
+        #: antes da canonização pode ter ficado com a sigla na coluna. O valor
+        #: recebido entra no conjunto de todo jeito: é por ele que o que vem da
+        #: barra de filtros continua casando, e que estado estrangeiro sem sigla
+        #: ("Comunidade de Madrid") casa pelo texto do fornecedor.
         formas = {filtro.uf, para_uf(filtro.uf), para_sigla(filtro.uf)}
         condicoes.append(Mencao.uf.in_(sorted(forma for forma in formas if forma)))
     if filtro.empresa:
-        #: A CONCESSIONÁRIA CASA POR DUAS COLUNAS, pelo mesmo motivo do tema
-        #: logo abaixo — e aqui o efeito é maior. O rótulo que a tela mostra
+        #: A CONCESSIONÁRIA, pela regra 2 — e aqui o efeito é o maior: o rótulo
         #: passou a ser `coalesce(UnidadeNegocio.nome, Mencao.unidade_texto)`
-        #: (`0099`), e a Corsan chega em duas grafias: "Corsan" (1.111) e
-        #: "Companhia Riograndense de Saneamento (Corsan)" (15.019). Comparando
-        #: só o texto cru, clicar na barra "Corsan" — que acabou de somar as
-        #: duas — devolveria 1.111 menções de 16.130.
-        #:
-        #: AS DUAS, E NÃO SÓ A CHAVE: a menção que o cadastro não resolve
-        #: ("Águas do Rio", 9.411) continua tendo o texto como único recorte,
-        #: e tirar a primeira condição a tiraria do filtro que ela tem hoje.
-        #: Acrescentar disjunção só GANHA linha — ver
-        #: `tests/test_filtro_por_concessionaria.py`.
-        #:
-        #: SUBCONSULTA, E NÃO JUNÇÃO: `condicoes_do_filtro` entra em nove
-        #: consultas diferentes, e acrescentar uma junção mudaria o `from`
-        #: delas por baixo.
+        #: (`0099`), e a Corsan chega em duas grafias, de modo que clicar na barra
+        #: devolvia 1.111 das 16.130 menções. A menção que o cadastro não resolve
+        #: continua tendo o texto como único recorte, e é por isso que a primeira
+        #: condição fica. Ver `tests/test_filtro_por_concessionaria.py`.
         condicoes.append(
             or_(
                 Mencao.unidade_texto == filtro.empresa,
@@ -484,17 +456,10 @@ def condicoes_do_filtro(filtro: FiltroDeMencoes | None) -> list:
             or_(Mencao.atributo == filtro.atributo, ATRIBUTO_SEM_PREFIXO == filtro.atributo)
         )
     if filtro.tema_texto:
-        #: O TEMA CASA POR DUAS COLUNAS, e isto foi achado de revisão. O rótulo
-        #: que a tela mostra é `coalesce(Tema.nome, Mencao.tema_texto)` — o nome
-        #: do dicionário do CRM vence a grafia do fornecedor —, e o filtro
-        #: comparava só o texto cru. Com `tema_id` preenchido e grafia diferente
-        #: ("SAN BASICO" para o tema "Saneamento básico"), clicar no rótulo
-        #: mandava ao servidor um valor que o dado não tem: nenhuma menção
-        #: encontrada, numa barra que acabou de mostrar três.
-        #:
-        #: SUBCONSULTA, E NÃO JUNÇÃO: `condicoes_do_filtro` entra em nove
-        #: consultas diferentes, e algumas já juntam `Tema` por conta própria —
-        #: acrescentar uma junção aqui mudaria o `from` delas por baixo.
+        #: O TEMA, pela regra 2: o rótulo é `coalesce(Tema.nome,
+        #: Mencao.tema_texto)` — o nome do dicionário do CRM vence a grafia do
+        #: fornecedor —, então "SAN BASICO" e "Saneamento básico" são a mesma
+        #: barra, e comparar só o texto cru não achava nenhuma menção.
         condicoes.append(
             or_(
                 Mencao.tema_texto == filtro.tema_texto,
@@ -503,9 +468,8 @@ def condicoes_do_filtro(filtro: FiltroDeMencoes | None) -> list:
                 ),
             )
         )
-    #: OS TRÊS NÍVEIS DA TAXONOMIA, cada um um `and` a mais — escolher o pilar e,
-    #: dentro dele, um tema estratégico estreita, como no CRM. SUBCONSULTA pelo
-    #: mesmo motivo do tema acima: este recorte entra em nove consultas.
+    #: OS TRÊS NÍVEIS DA TAXONOMIA, cada um um `and` a mais: escolher o pilar e,
+    #: dentro dele, um tema estratégico estreita, como no CRM.
     if filtro.tema_n3:
         condicoes.append(
             Mencao.tema_id.in_(select(Tema.id).where(Tema.nome == filtro.tema_n3).scalar_subquery())
@@ -529,37 +493,20 @@ def condicoes_do_filtro(filtro: FiltroDeMencoes | None) -> list:
         )
     if filtro.tema_n1:
         #: O FORNECEDOR TRAZ UM NÍVEL E O CADASTRO DERIVA O RESTO (decisão do
-        #: dono do produto, 18/10/2026) — e a `0098` gravou o resultado em
-        #: `mencao.bloco_tema_id`. É por ELE que o recorte por pilar passa a
-        #: entrar, e era o que faltava para este filtro contar a verdade.
+        #: dono do produto), e a `0098` gravou o resultado em
+        #: `mencao.bloco_tema_id`. É por ELE que o recorte por pilar entra, e era
+        #: o que faltava para este filtro contar a verdade: medido na base local,
+        #: o pilar alcançava 29.701 das 104.670 menções e passa a alcançar
+        #: 102.715 — filtrar por "Eficiência Operacional e Qualidade" devolvia
+        #: 12.386 de 60.114, escondendo quatro de cada cinco com a conta certa na
+        #: tela.
         #:
-        #: MEDIDO ANTES DE MUDAR (base local, 104.670 menções): o recorte por
-        #: pilar alcançava 29.701 linhas e passa a alcançar 102.715. Por pilar:
-        #:
-        #:     Eficiência Operacional e Qualidade   12.386 -> 60.114
-        #:     Prosperidade Compartilhada            3.614 -> 13.281
-        #:     Governança                            5.537 -> 10.336
-        #:     Responsabilidade Social               5.548 ->  8.687
-        #:     Crescimento e Solidez Financeira      1.131 ->  6.763
-        #:     Responsabilidade Ambiental              839 ->  2.888
-        #:     Inovação e Tecnologia                   646 ->    646
-        #:
-        #: Filtrar por "Eficiência Operacional e Qualidade" devolvia 12.386 de
-        #: 60.114 — escondia quatro de cada cinco, com a conta certa na tela.
-        #:
-        #: AS DUAS CONDIÇÕES ANTIGAS FICAM, e isso é deliberado: com um `or`, o
-        #: conjunto novo é SUPERCONJUNTO do antigo. Nenhuma menção que o filtro
-        #: achava hoje deixa de ser achada — a mudança só pode ganhar linhas,
-        #: nunca perder. É o que torna "mantém tudo funcionando" verificável em
-        #: vez de prometido (`test_o_filtro_por_pilar_e_superconjunto_do_antigo`).
-        #:
-        #: E A COLUNA NÃO DEPENDE DE REGRA DE PREFIXO. O `atributo` tem 15
-        #: grafias para 7 pilares porque metade do volume vem numerado, e há
-        #: DUAS regras de recorte diferentes no repo — a de
-        #: `dominio/niveis_de_taxonomia` (separador opcional) e a
-        #: `ATRIBUTO_SEM_PREFIXO` daqui (separador obrigatório, escolhida com
-        #: medição em 16/10/2026). Comparar `bloco_tema_id` não passa por
-        #: nenhuma das duas: a normalização aconteceu uma vez, na gravação.
+        #: E A COLUNA NÃO DEPENDE DE REGRA DE PREFIXO. O `atributo` tem 15 grafias
+        #: para 7 pilares porque metade do volume vem numerado, e há DUAS regras
+        #: de recorte no repositório — a de `dominio/niveis_de_taxonomia`
+        #: (separador opcional) e `ATRIBUTO_SEM_PREFIXO` (obrigatório). Comparar
+        #: `bloco_tema_id` não passa por nenhuma das duas: a normalização
+        #: aconteceu uma vez, na gravação.
         condicoes.append(
             or_(
                 Mencao.bloco_tema_id.in_(
@@ -636,9 +583,8 @@ def somas_da_lente_filtradas(
 class GrupoNaJanela:
     """A identidade de um grupo da janela — um pilar (N1) ou um tema (N2).
 
-    O `id` É A CHAVE e o `nome` é o rótulo. Separá-los é o conserto de um achado
-    de revisão: enquanto o nome era a chave, dois temas homônimos sob pilares
-    diferentes viravam uma linha só.
+    O `id` É A CHAVE e o `nome` é o rótulo: enquanto o nome era a chave, dois
+    temas homônimos sob pilares diferentes viravam uma linha só.
     """
 
     id: int
@@ -650,19 +596,15 @@ class GrupoNaJanela:
 
 #: Os dois níveis em que a janela se agrupa.
 #:
-#: A CHAVE EXISTE PORQUE OS DOIS RESPONDEM PERGUNTAS DIFERENTES, e ele pediu
-#: assim depois de ver as duas: o PILAR tem ~98% de cobertura na Clipei e diz "a
-#: imprensa está amplamente positiva" sobre o TODO; o TEMA tem sete vezes mais
-#: grupos e acha o bolsão negativo, mas só sobre o quarto que está classificado
-#: (a migration 0098 mede 72.590 menções com pilar e sem tema).
-#:
-#: Escolher um dos dois perderia uma das perguntas. E a cobertura do tema MELHORA
-#: com o tempo: ela depende de o fornecedor mandar o N3 que o cadastro reconhece,
-#: trabalho que está em curso com eles.
+#: OS DOIS RESPONDEM PERGUNTAS DIFERENTES: o PILAR tem ~98% de cobertura na
+#: Clipei e diz "a imprensa está amplamente positiva" sobre o TODO; o TEMA tem
+#: sete vezes mais grupos e acha o bolsão negativo, mas só sobre o quarto que
+#: está classificado. Escolher um perderia uma das perguntas, e a cobertura do
+#: tema melhora conforme o fornecedor passa a mandar o N3 que o cadastro
+#: reconhece.
 NIVEL_DO_PILAR = "n1"
 NIVEL_DO_TEMA = "n2"
-#: O SUBTEMA (N3), por pedido de 21/10/2026: a aba Bonds e reputação lê os
-#: quadros no N3. `mencao.tema_id` já existia; faltava a janela agrupar por ele.
+#: O SUBTEMA (N3): a aba Bonds e reputação lê os quadros neste nível.
 NIVEL_DO_SUBTEMA = "n3"
 NIVEIS_DA_JANELA = (NIVEL_DO_PILAR, NIVEL_DO_TEMA, NIVEL_DO_SUBTEMA)
 
@@ -695,30 +637,26 @@ class SomasNaJanela:
     defeito que `impacto_do_recorte` descreve sobre o denominador local.
     """
 
-    #: Pelo `id` do cadastro, E NÃO POR NOME — achado de revisão. O cadastro tem
-    #: 41 temas e 41 nomes distintos, mas `macro_tema.nome` NÃO é único no schema
-    #: (só `codigo` é): a unicidade era um fato do dado, não uma garantia.
-    #: Agrupar por nome fundia dois homônimos de pilares diferentes numa linha
-    #: só, somando os impactos e exibindo o pai do último que passasse.
+    #: Pelo `id` do cadastro, E NÃO POR NOME: `macro_tema.nome` não é único no
+    #: schema (só `codigo` é), e agrupar por nome fundiria dois homônimos de
+    #: pilares diferentes numa linha só, somando os impactos e exibindo o pai de
+    #: um deles.
     por_grupo: dict[int, dict[str, list[SomasDaFonte]]]
     #: Quem é cada grupo — o nome é rótulo, não chave.
     grupos: dict[int, GrupoNaJanela]
     #: As menções da janela que não têm o nível pedido.
     sem_grupo: int
-    #: As menções SEM DATA de todos os meses que a janela atravessa. Contava só o
-    #: mês da ponta — achado de revisão: numa janela que cruza a virada, as sem
-    #: data do mês anterior também ficam fora dela, e ficavam invisíveis.
+    #: As menções SEM DATA de TODOS os meses que a janela atravessa: numa janela
+    #: que cruza a virada, as sem data do mês anterior também ficam fora dela.
     sem_data: int
 
 
 def meses_da_janela(de: date, ate: date) -> list[date]:
     """Os primeiros dias de TODOS os meses que a janela atravessa.
 
-    ACHADO DE REVISÃO, e era perda silenciosa de dado: isto era
-    `{primeiro_dia(de), primeiro_dia(ate)}` — as duas PONTAS. Numa janela de
-    noventa dias de 20/02 a 20/05 são fevereiro e maio, e março e abril inteiros
-    eram descartados; o impacto saía menor sem nada dizer que faltou metade da
-    janela. A rota aceita `dias` até 90, então o caminho era alcançável.
+    TODOS, E NÃO AS DUAS PONTAS: numa janela de 20/02 a 20/05 as pontas são
+    fevereiro e maio, e março e abril inteiros ficariam fora — o impacto sairia
+    menor sem nada dizer que faltou metade da janela. A rota aceita `dias` até 90.
 
     A COLUNA `mes` ENTRA NA CONSULTA PELO ÍNDICE, e é por isso que esta lista
     existe em vez de só comparar `data`: `mencao_por_mes` cobre `mes`, e `data`
@@ -743,39 +681,33 @@ def somas_por_nivel_na_janela(
 ) -> SomasNaJanela:
     """As somas da lente entre dois DIAS, agrupadas pelo nível pedido.
 
-    OS DOIS NÍVEIS, PORQUE OS DOIS RESPONDEM PERGUNTAS DIFERENTES — ver
-    `NIVEIS_DA_JANELA`. Começou só com o pilar; ele pediu a troca para o tema
-    ("o n1 esta quase tudo sendo positivo e estamos deixando passar alguma
-    informação valiosa"); e virou chave quando a medição mostrou que o tema cobre
-    um quarto da Clipei. O pilar dá cobertura, o tema dá profundidade.
+    OS TRÊS NÍVEIS RESPONDEM PERGUNTAS DIFERENTES — ver `NIVEIS_DA_JANELA`: o
+    pilar dá cobertura, o tema dá profundidade.
 
     O NÍVEL DE CIMA VAI COMO CONTEXTO quando o grupo é o tema: quarenta e um
-    nomes sem o pilar a que pertencem dão uma lista mais granular e menos
-    legível. No pilar não há contexto — ele já é o topo da árvore.
+    nomes sem o pilar a que pertencem dão uma lista granular e menos legível. No
+    pilar não há contexto, porque ele já é o topo da árvore.
 
-    MESMO MOLDE DE `somas_da_lente_filtradas`, e de propósito: ela agrega
-    `mencao` ao vivo porque `score_mes_fonte` só tem grão de (fonte, mês,
-    sentimento, tier) e não responde por dimensão nenhuma. Aqui o motivo é o
-    mesmo e mais um: aquele agregado não tem grão de DIA, então uma janela de
-    quinze dias não tem como sair dele.
+    MESMO MOLDE DE `somas_da_lente_filtradas`: `score_mes_fonte` só tem grão de
+    (fonte, mês, sentimento, tier) e não responde por dimensão nenhuma. Aqui há
+    um motivo a mais — ele também não tem grão de DIA, então uma janela de quinze
+    dias não sai dele.
 
     AS FÓRMULAS SÃO AS DA INGESTÃO (`peso_do_engajamento`, `peso_do_cargo`) e a
     ponderação é `ponderar`, do domínio. Reimplementar o peso aqui faria esta
-    tela discordar da nota que a tela do Score mostra ao lado — e a divergência
-    apareceria como "o impacto não fecha", sem ninguém saber de onde veio.
+    tela discordar da nota que a tela do Score mostra ao lado, e a divergência
+    apareceria como "o impacto não fecha".
 
     O FILTRO POR `mes` ENTRA JUNTO COM O DE `data`, e não é redundância: os dois
-    índices são `(mes, …)` e `data` não tem índice nenhum. Sem a coluna indexada
-    na cláusula, a janela varre a tabela inteira.
+    índices são `(mes, …)` e `data` não tem índice. Sem a coluna indexada na
+    cláusula, a janela varre a tabela inteira.
 
-    O GRUPO INATIVO ENTRA, e é consistente com o resto: nenhuma leitura do índice
-    filtra `ativo`, porque a menção existe e pesou na nota. Esconder o tema
-    desativado faria a soma dos pedaços não fechar com o período — e o impacto
-    dele é real, mesmo que o nome venha de uma taxonomia antiga.
+    O GRUPO INATIVO ENTRA: nenhuma leitura do índice filtra `ativo`, porque a
+    menção existe e pesou na nota, e esconder o tema desativado faria a soma dos
+    pedaços não fechar com o período.
 
     A FONTE INTERNA (CRM) FICA DE FORA, como em `somas_da_lente_filtradas`: ela
-    não vem de `mencao` e não tem dia nenhum. Para a lente de imprensa isso é
-    vazio — ela tem uma fonte só, a Clipei.
+    não vem de `mencao` e não tem dia nenhum.
     """
     if nivel not in NIVEIS_DA_JANELA:
         raise ValueError(f"nível desconhecido: {nivel!r}")
@@ -807,16 +739,12 @@ def somas_por_nivel_na_janela(
         .outerjoin(coluna_do_grupo, coluna_do_grupo.id == coluna_da_mencao)
         .where(
             ScoreFonte.lente_id == lente_id,
-            #: A MESMA CONDIÇÃO DO MODAL, e é conserto de uma assimetria que a
-            #: revisão REPRODUZIU: uma menção na fonte interna aposentada dava
-            #: `quadro = 104.001` contra `modal = 104.000`. O quadro e a lista
-            #: que ele abre têm de contar o mesmo conjunto, e a fonte interna
-            #: aposentada saiu do índice (`0112`) — ela não pode voltar aqui.
-            #:
-            #: A DE PLANILHA APOSENTADA FICA, pelo mesmo motivo de ficar no
-            #: modal: ali `ativo = false` é "parou de receber importação", e o
-            #: histórico continua pesando na nota — `denominador_do_mes` filtra
-            #: `calibracao.ligada`, não `ativo`.
+            #: A MESMA CONDIÇÃO DO MODAL: o quadro e a lista que ele abre têm de
+            #: contar o mesmo conjunto, e a fonte interna aposentada saiu do
+            #: índice (`0112`). A DE PLANILHA APOSENTADA FICA, pelo mesmo motivo
+            #: de ficar no modal: ali `ativo = false` é "parou de receber
+            #: importação", e o histórico continua pesando na nota —
+            #: `denominador_do_mes` filtra `calibracao.ligada`, não `ativo`.
             or_(ScoreFonte.interna.is_(False), ScoreFonte.ativo.is_(True)),
             Mencao.mes.in_(meses),
             Mencao.data.is_not(None),
@@ -830,10 +758,9 @@ def somas_por_nivel_na_janela(
         #: por uma resolução que parou no pilar — aí ela fala de outro nível.
         consulta = consulta.outerjoin(BlocoTema, BlocoTema.id == MacroTema.bloco_tema_id)
     if tier:
-        #: O TIER DO QUADRO (pedido de 22/10/2026): "ver a lista do que pressiona
-        #: para cima ou para baixo pelo Tier". Recorta o NUMERADOR; o
-        #: denominador continua o do mês inteiro, e é o que faz o número seguir
-        #: em pontos do índice — "quanto as matérias Tier 1 moveram a nota".
+        #: O TIER DO QUADRO recorta o NUMERADOR; o denominador continua o do mês
+        #: inteiro, e é o que faz o número seguir em pontos do índice — "quanto as
+        #: matérias Tier 1 moveram a nota".
         consulta = consulta.where(Mencao.tier == tier)
     if no_subtema:
         #: O MESMO NO SUBTEMA: o tema estratégico vem do cadastro do subtema.
@@ -854,11 +781,11 @@ def somas_por_nivel_na_janela(
     ) in sessao.execute(consulta):
         if id_grupo is None:
             #: SEM O NÍVEL É CASO VOLUMOSO NO TEMA, e não exceção: o resolvedor
-            #: da Clipei pelo `atributo` devolve só o pilar, e a migration 0098
-            #: mede 72.590 menções nesse estado. Elas pesam na nota e não
-            #: pertencem a grupo nenhum — contar é o que impede o quadro de
-            #: parecer o todo. No pilar este número é pequeno, e o contraste
-            #: entre os dois é exatamente o que a chave serve para mostrar.
+            #: da Clipei pelo `atributo` devolve só o pilar, e dezenas de milhares
+            #: de menções ficam nesse estado. Elas pesam na nota e não pertencem a
+            #: grupo nenhum — contar é o que impede o quadro de parecer o todo. No
+            #: pilar o número é pequeno, e o contraste entre os dois é o que a
+            #: chave serve para mostrar.
             sem_grupo += 1
             continue
         grupos.setdefault(
@@ -885,9 +812,8 @@ def somas_por_nivel_na_janela(
         por_grupo[id_do_grupo] = por_fonte
 
     #: AS MENÇÕES SEM DIA, em TODOS os meses da janela: elas pertencem ao mês e
-    #: não a um dia, então janela nenhuma as alcança — e uma janela que atravessa
-    #: a virada tem dois meses de onde elas podem vir. Contar só o da ponta fazia
-    #: o número mentir por omissão, que é o defeito que ele existe para evitar.
+    #: não a um dia, então janela nenhuma as alcança, e uma janela que atravessa
+    #: a virada tem dois meses de onde elas podem vir.
     sem_data = (
         sessao.execute(
             select(func.count())
@@ -939,16 +865,13 @@ def composicao_da_lente(
 ) -> Contagem:
     """Os três números da fórmula, já ponderados — o que a barra desenha.
 
-    SOMA DAS FONTES LIGADAS. Hoje é também como o SCORE sai (um denominador só,
-    ver `medir_lente`); antes a nota era a média dos NS das fontes e esta soma
-    existia porque a barra mostra VOLUME, e volume se soma. As duas contas
-    convergiram, e é bom que tenham: a barra e o número agora dizem a mesma coisa.
+    SOMA DAS FONTES LIGADAS, que é também como o SCORE sai (um denominador só,
+    ver `medir_lente`): a barra mostra VOLUME, e volume se soma.
 
-    A RÉGUA É A DA LENTE, e este era um achado de revisão — eu havia passado a
-    nota para a régua do conjunto e deixado esta chamada com a régua por fonte.
-    Numa lente com duas fontes, uma com engajamento e outra sem, a barra mediria
-    uma em curtidas e a outra em menções: a composição exibida no detalhe
-    discordaria da nota exibida ao lado dela, sem nada explicando a diferença.
+    A RÉGUA É A DA LENTE, e não a de cada fonte. Numa lente com duas fontes, uma
+    com engajamento e outra sem, a régua por fonte mediria uma em curtidas e a
+    outra em menções: a composição exibida no detalhe discordaria da nota exibida
+    ao lado dela.
     """
     ligadas = {
         fonte: linhas
@@ -973,15 +896,11 @@ def denominador_do_mes(
     """A régua e o total ponderado do mês — o denominador do impacto, de uma
     leitura só.
 
-    ACHADO DE REVISÃO (desempenho). Antes eram duas funções: uma lia as somas do
-    mês para decidir a régua, a outra as lia DE NOVO para somar o total. E o
-    impacto é chamado uma vez por mês do período no histórico — oito meses,
-    dezesseis leituras do mesmo agregado, metade delas para redescobrir a mesma
-    régua. O endpoint levava 472 ms no mês mais cheio.
-
     AS DUAS COISAS SAEM DA MESMA LEITURA porque dependem do mesmo dado: a régua é
     o que todas as fontes ligadas cumprem, e o total é a soma delas sob essa
-    régua.
+    régua. Separadas, eram duas leituras do mesmo agregado por mês — e o impacto
+    é chamado uma vez por mês do período, o que levava o endpoint a 472 ms no mês
+    mais cheio.
     """
     ligadas = {
         fonte: linhas
@@ -1012,18 +931,17 @@ def impacto_do_recorte(
 
         impacto(S) = 50 × Σ(sinal × peso de S) ÷ Σ(peso de TODOS os itens do mês)
 
-    O DENOMINADOR É O DO MÊS, e é tudo o que importa aqui: é o que faz a soma dos
-    impactos de todos os valores de uma dimensão fechar em `nota − 50`, em
-    qualquer nível. Um denominador local daria a cada pedaço o seu próprio 100%
-    — cada barra pareceria enorme, nenhuma somaria o todo, e a tela estaria
-    mostrando pedaços que não compõem a coisa que dizem compor.
+    O DENOMINADOR É O DO MÊS, e é o que faz a soma dos impactos de todos os
+    valores de uma dimensão fechar em `nota − 50`, em qualquer nível. Um
+    denominador local daria a cada pedaço o seu próprio 100%: cada barra
+    pareceria enorme, nenhuma somaria o todo, e a tela mostraria pedaços que não
+    compõem a coisa que dizem compor.
 
-    A MESMA RÉGUA NOS DOIS LADOS, por `denominador_do_mes`: um recorte cujas fontes não
-    mandam engajamento seria medido em menções e dividido por um mês medido em
-    curtidas.
+    A MESMA RÉGUA NOS DOIS LADOS, por `denominador_do_mes`: um recorte cujas
+    fontes não mandam engajamento seria medido em menções e dividido por um mês
+    medido em curtidas.
 
-    ZERO QUANDO O MÊS NÃO TEM BASE, e não divisão por zero: sem denominador não
-    há pergunta a responder.
+    ZERO QUANDO O MÊS NÃO TEM BASE, e não divisão por zero.
     """
     regua, total_do_mes = denominador or denominador_do_mes(sessao, lente_id, mes, calibracao)
     if not total_do_mes:
@@ -1037,20 +955,16 @@ def meses_da_lente(
 ) -> dict[date, MesDaLente]:
     """A nota oficial, o NS da contagem, a régua e o D de cada mês — de uma vez.
 
-    É `denominador_do_mes` e `medir_lentes` juntos, para os seis meses da
-    Consulta em profundidade em TRÊS leituras (fontes, `score_mes_fonte` e
-    estimativas), e não dezoito. A conta é a mesma, pelas mesmas funções do
-    domínio (`regua_da_lente`, `ponderar`, `medir_lente`): a nota que sai daqui
-    é a que a tela mostra, inclusive quando é estimada.
+    É `denominador_do_mes` e `medir_lentes` juntos, para os seis meses da Consulta
+    em profundidade em TRÊS leituras (fontes, `score_mes_fonte` e estimativas), e
+    não dezoito. A conta é a mesma, pelas mesmas funções do domínio: a nota que
+    sai daqui é a que a tela mostra, inclusive quando é estimada.
 
-    SÓ PARA LENTE DE PLANILHA. A fonte interna (CRM) não passa por
-    `score_mes_fonte`: uma lente que a tenha ATIVA teria aqui a nota sem o CRM,
-    e por isso a função se recusa a medi-la.
-
-    `ativo` CONTA NA RECUSA, como conta em `_tem_fonte_interna` e em
-    `lente_e_interna` — achado de revisão. Sem isso, a Institucional continuava
-    recusada DEPOIS da `0108` por causa de uma fonte interna que não alimenta
-    mais nada, e a consulta de profundidade dela respondia erro.
+    SÓ PARA LENTE DE PLANILHA, e `ativo` conta na recusa — como em
+    `_tem_fonte_interna` e em `lente_e_interna`. A fonte interna não passa por
+    `score_mes_fonte`, então uma lente que a tenha ATIVA teria aqui a nota sem o
+    CRM; mas uma fonte interna aposentada não alimenta mais nada, e recusar por
+    causa dela deixava a Institucional sem consulta de profundidade.
     """
     fontes = list(sessao.scalars(select(ScoreFonte).where(ScoreFonte.lente_id == lente.id)))
     if any(fonte.interna and fonte.ativo for fonte in fontes):
@@ -1204,8 +1118,8 @@ def mencoes_da_consulta(
     pilares, dezenas de temas e subtemas, seriam centenas de idas ao banco para
     somar as mesmas linhas de jeitos diferentes. Lê-se a menção crua uma vez e a
     árvore inteira se agrega em Python (`dominio.consulta_profundidade`) —
-    O(linhas), e as mesmas réguas. Só este mês precisa da linha inteira (os
-    recortes e as matérias); os anteriores vêm de `grupos_da_consulta`.
+    O(linhas), e as mesmas réguas. Só este mês precisa da linha inteira; os
+    anteriores vêm de `grupos_da_consulta`.
 
     A CALIBRAÇÃO VALE AQUI COMO NA NOTA: fonte desligada não entra, senão a
     árvore explicaria um número do qual ela não participou.
@@ -1319,18 +1233,17 @@ def temas_da_lente(
     """Os temas mais falados da lente no mês, com positivo × negativo.
 
     Vem de `mencao`, que só a INGESTÃO preenche: sem planilha importada a lista
-    volta vazia, e a tela diz por quê. Preferir uma lista vazia a números
-    inventados é o que mantém a leitura honesta.
+    volta vazia, e a tela diz por quê.
 
-    A CALIBRAÇÃO VALE AQUI TAMBÉM. Desligar a Bites tira os posts dela do
-    score da lente; deixar os temas dela na aba de Drivers explicaria o número
-    por um dado que não entrou nele. Quem lê o gráfico não tem como saber.
+    A CALIBRAÇÃO VALE AQUI TAMBÉM: desligar a Bites tira os posts dela do score
+    da lente, e deixar os temas dela na aba de Drivers explicaria o número por um
+    dado que não entrou nele.
 
-    O NOME SAI DE DOIS LUGARES. `tema_id` aponta para o vocabulário do CRM,
-    que é o bom: é por ele que um tema do Score e um tema de reunião são o
-    mesmo tema. Mas o fornecedor manda o tema no vocabulário DELE, e enquanto
-    ninguém casou as duas listas é o texto bruto que a tela tem para mostrar.
-    Exigir a correspondência deixaria a aba de Drivers vazia com o banco cheio.
+    O NOME SAI DE DOIS LUGARES. `tema_id` aponta para o vocabulário do CRM, que é
+    o bom — é por ele que um tema do Score e um tema de reunião são o mesmo tema.
+    Mas o fornecedor manda o tema no vocabulário DELE, e enquanto ninguém casou
+    as duas listas é o texto bruto que a tela tem para mostrar. Exigir a
+    correspondência deixaria a aba de Drivers vazia com o banco cheio.
     """
     rotulo = func.coalesce(Tema.nome, Mencao.tema_texto)
     consulta = (
@@ -1396,15 +1309,11 @@ def mes_mais_completo(sessao: Session, calibracao: Calibracao) -> date | None:
     das_estimativas = select(
         ScoreEstimativa.mes.label("mes"), ScoreEstimativa.lente_id.label("lente_id")
     ).distinct()
-    # A fonte interna vem das interações, e não de `score_mes_fonte`.
-    #
-    # `ativo` ENTRA NA JUNÇÃO — achado de revisão. Com o CRM aposentado pela
-    # `0108`, um mês que só tivesse agenda registrada continuava aparecendo no
-    # seletor e podia virar o "mês mais completo": a tela abriria num mês em que
-    # nenhuma lente do Score foi medida, pela conta de uma fonte que não conta
-    # mais. A assimetria é a mesma dos outros três lugares, e pelo mesmo motivo:
-    # a fonte interna não tem agregado gravado, então aposentá-la é apagá-la da
-    # conta.
+    # A fonte interna vem das interações, e não de `score_mes_fonte`, e `ativo`
+    # ENTRA NA JUNÇÃO: com o CRM aposentado, um mês que só tivesse agenda
+    # registrada continuava no seletor e podia virar o "mês mais completo" — a
+    # tela abriria num mês em que nenhuma lente do Score foi medida. A fonte
+    # interna não tem agregado gravado, então aposentá-la é apagá-la da conta.
     do_crm = (
         select(
             func.date_trunc("month", InteracaoRegistro.data_interacao)
@@ -1438,13 +1347,10 @@ def mes_mais_completo(sessao: Session, calibracao: Calibracao) -> date | None:
 def meses_com_dado(sessao: Session) -> list[date]:
     """Os meses que têm alguma leitura — de planilha, de estimativa ou do CRM.
 
-    É o que alimenta o seletor de mês: oferecer um mês vazio faria a tela
-    abrir sem número e parecer quebrada.
-
-    E OFERECER UM MÊS QUE SÓ TEM AGENDA É O MESMO DEFEITO ao contrário, depois
-    da `0108`: o CRM aposentado não alimenta lente nenhuma, então um mês só
-    dele abriria a tela sem número — com a diferença de que ninguém saberia por
-    quê. Achado de revisão; a condição é a mesma dos outros quatro lugares.
+    É o que alimenta o seletor de mês: oferecer um mês vazio faria a tela abrir
+    sem número e parecer quebrada. OFERECER UM MÊS QUE SÓ TEM AGENDA é o mesmo
+    defeito ao contrário, agora que o CRM aposentado não alimenta lente nenhuma —
+    com a diferença de que ninguém saberia por quê.
     """
     das_planilhas = select(ScoreMesFonte.mes.label("mes")).distinct()
     das_estimativas = select(ScoreEstimativa.mes.label("mes")).distinct()
@@ -1494,19 +1400,18 @@ def _a_fonte_interna_conta(sessao: Session) -> bool:
 
 # -- a aba de Drivers e riscos --------------------------------------------------
 #
-# As três leituras desta aba respondem "POR QUE o índice deu isso", e todas as
-# três se fazem MENÇÃO A MENÇÃO — não saem de `score_mes_fonte`, que já perdeu o
-# atributo, o tema e a unidade ao somar. É por isso que elas só acenderam quando
-# a ingestão passou a gravar `mencao`.
+# As três leituras desta aba respondem "POR QUE o índice deu isso", e todas se
+# fazem MENÇÃO A MENÇÃO: não saem de `score_mes_fonte`, que perdeu o atributo, o
+# tema e a unidade ao somar.
 #
 # TODAS RESPEITAM A CALIBRAÇÃO. Explicar o número com o dado de uma fonte que a
-# coordenação tirou do cálculo é pior do que não explicar: quem lê o gráfico não
-# tem como saber que aquela barra não entrou na conta.
+# coordenação tirou do cálculo é pior do que não explicar, porque quem lê o
+# gráfico não tem como saber que aquela barra não entrou na conta.
 #
 # E NENHUMA APLICA A RÉGUA DE TIER OU DE ENGAJAMENTO. Aqui se conta matéria e
 # post, um a um: a pergunta é "sobre o que falaram e com que tom", e não "quanto
-# isso pesou no índice". Ponderar aqui faria uma matéria do Valor aparecer como
-# dez, e a barra deixaria de ser contagem sem avisar.
+# isso pesou no índice". Ponderar faria uma matéria do Valor aparecer como dez, e
+# a barra deixaria de ser contagem sem avisar.
 
 
 def pesos_por_tema(
@@ -1514,22 +1419,21 @@ def pesos_por_tema(
 ) -> dict[date, list[PesosDoTema]]:
     """Os temas de cada mês, já ponderados pelas MESMAS réguas do índice.
 
-    POR QUE NÃO BASTA CONTAR MENÇÕES. A primeira versão desta consulta contava
-    positivas e negativas por tema, e a decomposição errava por 4,3 pontos
-    num mês real: a lente de imprensa pondera cada matéria pelo tier do veículo
-    (10, 5 ou 1 na régua da Aegea) e as de rede aplicam a régua de engajamento.
-    Um tema de blog local contado como uma unidade parecia pesar o mesmo que
-    uma capa do Valor.
+    POR QUE NÃO BASTA CONTAR MENÇÕES: a decomposição errava por 4,3 pontos num
+    mês real. A lente de imprensa pondera cada matéria pelo tier do veículo (10,
+    5 ou 1 na régua da Aegea) e as de rede aplicam a régua de engajamento, então
+    um tema de blog local contado como uma unidade parecia pesar o mesmo que uma
+    capa do Valor.
 
     AS FÓRMULAS NÃO SE REPETEM EM SQL. O agrupamento desce até `tier`, `cargo` e
     `engajamento`, e quem multiplica é `peso_do_tier` e a medida de engajamento
     de `dominio/score` — as mesmas funções que `ponderar` usa. Escrever
-    `1 + log10(1 + engajamento)` numa expressão SQL criaria um segundo lugar
-    para a mesma regra, e dois lugares para uma regra é como eles divergem.
+    `1 + log10(1 + engajamento)` numa expressão SQL criaria um segundo lugar para
+    a mesma regra.
 
-    O GRÃO DESCE ATÉ A FONTE porque é nela que o NS se forma: a lente é a média
-    simples dos NS das fontes dela, e juntar tudo num denominador só dá outro
-    número.
+    O GRÃO DESCE ATÉ A FONTE porque é por fonte que a RÉGUA se decide: basta uma
+    sem o dado pedido para a lente inteira ser contada por menções (ver o
+    comentário de `regua_de`, abaixo). O denominador, esse, é da lente inteira.
     """
     rotulo = func.coalesce(Tema.nome, Mencao.tema_texto)
     consulta = (
@@ -1570,17 +1474,14 @@ def pesos_por_tema(
 
     linhas = list(sessao.execute(consulta))
 
-    # A MESMA RÉGUA QUE A LENTE USA, E ELA É DA LENTE. `regua_da_lente` decide,
-    # lá no domínio, que basta UMA fonte sem o dado pedido para a lente inteira
-    # ser contada por menções — e esta conta TEM de decidir igual, ou ela para de
+    # A MESMA RÉGUA QUE A LENTE USA, E ELA É DA LENTE. `regua_da_lente` decide, no
+    # domínio, que basta UMA fonte sem o dado pedido para a lente inteira ser
+    # contada por menções — e esta conta TEM de decidir igual, ou ela para de
     # fechar com o número que explica. Não é a mesma chamada porque não é o mesmo
     # dado de entrada: a lente soma `score_mes_fonte`, já agregado, e aqui se lê a
     # menção crua, que é o que permite abrir por tema. A regra é uma; a
-    # matéria-prima, duas.
-    #
-    # ERA POR FONTE, e deixou de ser quando a nota passou a ter um denominador
-    # só: a fonte sem engajamento seria medida em menções e a outra em curtidas,
-    # dentro da mesma razão.
+    # matéria-prima, duas. Por fonte, a fonte sem engajamento seria medida em
+    # menções e a outra em curtidas, dentro da mesma razão.
     medido_por_fonte: dict[tuple[date, str], float] = {}
     fontes_da_lente: dict[tuple[date, str], set[str]] = {}
     for mes, lente, fonte, _tema, _sent, tier, cargo, engajamento, quantas in linhas:
@@ -1735,12 +1636,10 @@ def unidades_do_mes(
     problema. O total vai junto porque 300 negativas em 400 menções é uma
     situação, e 300 em 3.000 é outra.
 
-    PELO NOME DO CADASTRO (`CONCESSIONARIA`), e não pela grafia do fornecedor.
-    Esta leitura ficou de fora quando a `0099` levou o rótulo cadastral às
-    outras cinco, e a revisão do Codex a encontrou: a Corsan aparecia em DUAS
-    barras — "Corsan" e "Companhia Riograndense de Saneamento (Corsan)" —, o que
-    num painel chamado "onde a pressão se concentra" divide ao meio justamente a
-    pressão que ele existe para mostrar.
+    PELO NOME DO CADASTRO (`CONCESSIONARIA`), e não pela grafia do fornecedor:
+    sem isso a Corsan aparece em duas barras, o que num painel chamado "onde a
+    pressão se concentra" divide ao meio justamente a pressão que ele existe para
+    mostrar.
 
     `outerjoin` E NÃO `join`: "Águas do Rio" são dois blocos e fica sem chave de
     propósito (ver `casos_de_uso/unidade_da_mencao`). Um `join` a sumiria do
@@ -1774,44 +1673,33 @@ def so_interacoes_visiveis() -> list:
 
     UMA REGRA, SEIS CONSULTAS. O Score lê `interacao` em seis lugares — a lente
     institucional, o seletor de mês, o mês em que a tela abre e três painéis de
-    dossiê — e cada um escrevia o próprio filtro. Cinco pegavam o arquivamento,
-    nenhum pegava `visivel`, e o sexto (`meses_com_dado`) não pegava nem o
-    arquivamento: um mês cujas agendas foram todas arquivadas continuava no
-    seletor e chegava à tela como ponto sem número, que é exatamente o que o
-    docstring dele diz existir para evitar.
+    dossiê — e cada um escrevia o próprio filtro: cinco pegavam o arquivamento,
+    nenhum pegava `visivel`, e `meses_com_dado` não pegava nem o arquivamento.
 
     `visivel = false` É O REGISTRO QUE ALGUÉM TIROU DA VISTA, de propósito, e
-    `filtros_sql.condicoes` o exclui de toda leitura do CRM desde sempre. Por
-    aqui ele continuava movendo o índice da companhia — e devolvendo o nome da
-    instituição dele no painel da institucional, que é a informação que o CRM
-    guarda com mais cuidado.
+    `filtros_sql.condicoes` o exclui de toda leitura do CRM. Por aqui ele
+    continuava movendo o índice da companhia — e devolvendo o nome da instituição
+    dele no painel da institucional, que é a informação que o CRM guarda com mais
+    cuidado. NÃO É O MESMO QUE ARQUIVAR, e os dois entram juntos porque as duas
+    respostas são "não leia".
 
-    NÃO É O MESMO QUE ARQUIVAR, e os dois entram juntos porque as duas respostas
-    são "não leia": o arquivado saiu do ciclo de vida, o não visível continua nele
-    e foi retirado da vista. Uma leitura que aplica um e não o outro está errada
-    das duas formas.
     A AGENDA SENSÍVEL ENTRA NA MESMA REGRA (migration 0089), e esta é a decisão
-    mais pesada do conjunto — está escrita aqui porque é aqui que ela acontece.
-
-    O QUE ELA FECHA: `orgaos_do_crm` devolve NOME DE INSTITUIÇÃO com contagem
-    por mês, e `temas_do_crm` devolve nome de tema. Uma agenda restrita
-    apareceria ali; com contagem 1 num mês, o par instituição-mês revela que o
-    encontro existiu — que é exatamente o que a marca protege. É a mesma classe
-    de vazamento que o parágrafo de `visivel` acima descreve, e o mesmo lugar o
-    conserta.
+    mais pesada do conjunto. O QUE ELA FECHA: `orgaos_do_crm` devolve NOME DE
+    INSTITUIÇÃO com contagem por mês, e `temas_do_crm` nome de tema — com
+    contagem 1 num mês, o par instituição-mês revela que o encontro existiu, que
+    é exatamente o que a marca protege.
 
     SEM A BANDEIRA DE QUEM PEDE, de propósito, e aqui está a diferença de
     `filtros_sql.condicoes`: o Score é um índice DA COMPANHIA, não do leitor.
     Passá-lo por pessoa faria duas pessoas lerem notas diferentes para o mesmo
-    mês e discutirem qual é a verdadeira — num número que existe para ser
-    citado em reunião, isso é pior do que o custo abaixo.
+    mês e discutirem qual é a verdadeira.
 
     O CUSTO, E ELE É REAL: agenda restrita não move o índice nem aparece nos
     dossiês, para NINGUÉM — inclusive para quem a marcou. Uma reunião delicada é
-    justamente o tipo de encontro que pesaria na reputação, e ela deixa de
-    pesar. A alternativa era entregar o nome da instituição a quem não alcança a
-    agenda. Se o dono do produto preferir o contrário, o lugar de mudar é este,
-    e a mudança é por pessoa — com as duas notas que ela implica.
+    justamente o tipo de encontro que pesaria na reputação, e ela deixa de pesar.
+    A alternativa era entregar o nome da instituição a quem não alcança a agenda.
+    Se o dono do produto preferir o contrário, o lugar de mudar é este, e a
+    mudança é por pessoa — com as duas notas que ela implica.
     """
     return [
         InteracaoRegistro.arquivado_em.is_(None),
@@ -1831,11 +1719,10 @@ class RegistroDaJanela:
     link: str | None
     sentimento: str
     tier: str | None
-    #: DE QUAL LENTE VEM ESTE REGISTRO — pedido de 20/10/2026, junto com o de
-    #: listar as três. É coluna na tela, e não enfeite: A LENTE DE UMA LINHA É
-    #: DECIDIDA PELO VEÍCULO QUE PUBLICOU, então a mesma matéria publicada por
-    #: dois veículos — um na lista do Mercado, outro não — aparece em duas
-    #: lentes, com o mesmo título. Sem a coluna, isso parece erro do sistema.
+    #: DE QUAL LENTE VEM ESTE REGISTRO. É coluna na tela, e não enfeite: A LENTE
+    #: DE UMA LINHA É DECIDIDA PELO VEÍCULO QUE PUBLICOU, então a mesma matéria
+    #: publicada por dois veículos — um na lista do Mercado, outro não — aparece
+    #: em duas lentes, com o mesmo título. Sem a coluna, isso parece erro.
     lente: str
     lente_nome: str
 
@@ -1862,44 +1749,33 @@ def registros_do_grupo_na_janela(
 ) -> RegistrosDaJanela:
     """As menções que compõem UM grupo do quadro, paginadas.
 
-    O RECORTE É O MESMO DE `somas_por_nivel_na_janela`, linha por linha, e isso
-    é o ponto inteiro desta função. A rota da Base das lentes já lista menções
-    por período e por tema — e não serve aqui, por três diferenças medidas:
+    O RECORTE É O MESMO DE `somas_por_nivel_na_janela`, linha por linha, e isso é
+    o ponto inteiro desta função. A rota da Base das lentes já lista menções por
+    período e por tema, e não serve aqui, por três diferenças medidas:
 
     * ela casa a data por `coalesce(data, mes)`, de propósito, para a linha sem
       data continuar achável pelo mês. A janela faz o OPOSTO: exige `data` e
-      conta as sem data à parte, naquela linha "fora desta conta". Pela rota da
-      Base, o modal traria de volta justamente as que o quadro excluiu;
+      conta as sem data à parte. Pela rota da Base, o modal traria de volta
+      justamente as que o quadro excluiu;
     * ela não tira as fontes que a calibração desligou, e o impacto do quadro
-      tira — "contá-las faria o impacto de um pilar incluir o que a nota
-      ignorou";
-    * ela filtra o nível por NOME, e nome de N2 não é único no cadastro. O
-      quadro agrupa por id desde o achado dos homônimos; clicar em "Tarifa"
-      traria a "Tarifa" de outro pilar junto.
+      tira — contá-las faria o impacto de um pilar incluir o que a nota ignorou;
+    * ela filtra o nível por NOME, e nome de N2 não é único no cadastro. O quadro
+      agrupa por id, então clicar em "Tarifa" traria a "Tarifa" de outro pilar.
 
-    Qualquer uma das três faz a lista discordar do número que está ao lado dela
-    na mesma tela — e quem lê não tem como saber qual das duas está certa.
+    Qualquer uma das três faz a lista discordar do número ao lado dela na mesma
+    tela, e quem lê não tem como saber qual das duas está certa.
 
-    PAGINADA, e com o total: um pilar de janela cheia passa de centena, e a
-    tela precisa dizer "8 de 312" em vez de fingir que mostrou tudo.
+    PAGINADA, e com o total: um pilar de janela cheia passa de centena, e a tela
+    precisa dizer "8 de 312" em vez de fingir que mostrou tudo.
 
-    VÁRIAS LENTES DESDE 20/10/2026, por pedido ("quero adicionar os registros de
-    mercado e institucional também"). Cada linha diz de qual lente veio, porque
-    a MESMA matéria pode aparecer duas vezes com o mesmo título: a lente de uma
-    linha é decidida pelo VEÍCULO que publicou, e duas publicações da mesma
-    matéria — uma do Valor Econômico, que está na lista do Mercado, outra de um
-    veículo que não está — caem em lentes diferentes. Sem a coluna, isso parece
-    erro.
+    VÁRIAS LENTES, e cada linha diz de qual veio, pelo motivo de
+    `RegistroDaJanela.lente`.
 
-    O TOTAL VOLTOU A SER O NÚMERO DA LINHA DO QUADRO, e isso é consequência de
-    o impacto ter virado ponto do score geral (21/10/2026): o quadro passou a
-    somar as MESMAS três lentes desta lista. Por um dia ele media uma só, e era
-    por isso que o cabeçalho do modal nomeava os dois números.
-
-    ELES AINDA PODEM DIVERGIR num caso: a lente sem base de mês não entra no
-    quadro, porque sem denominador ela não contribui em ponto do índice — e esta
-    lista mostra as menções dela, que existem. O cabeçalho do modal nomeia os
-    dois números quando isso acontece.
+    O TOTAL É O NÚMERO DA LINHA DO QUADRO, porque o quadro soma as MESMAS lentes
+    desta lista. ELES AINDA PODEM DIVERGIR num caso: a lente sem base de mês não
+    entra no quadro, porque sem denominador ela não contribui em ponto do índice,
+    e esta lista mostra as menções dela, que existem. O cabeçalho do modal nomeia
+    os dois números quando isso acontece.
     """
     if nivel not in NIVEIS_DA_JANELA:
         raise ValueError(f"nível desconhecido: {nivel!r}")
@@ -1909,38 +1785,23 @@ def registros_do_grupo_na_janela(
     coluna_da_mencao = coluna_da_mencao_no_nivel(nivel)
     onde = [
         ScoreFonte.lente_id.in_(list(lentes_id)),
-        #: A FONTE INTERNA APOSENTADA SAI; a de planilha, NÃO — e a diferença é
-        #: a correção de um defeito meu, achado ao revisar o impacto da janela.
-        #:
-        #: EU TINHA ESCRITO `ScoreFonte.ativo.is_(True)`, genérico, raciocinando
-        #: que "fonte aposentada saiu do índice". Isso vale para a INTERNA: o
-        #: score dela é recontado a cada leitura, e a `0112` a aposentou para
-        #: tirar as agendas da nota — `lente_e_interna` respeita `ativo` por
-        #: isso. Para fonte de PLANILHA é falso, e a própria `0112` diz: ali
-        #: `ativo = false` é "parou de receber importação", e o histórico
-        #: continua valendo porque está gravado em `score_mes_fonte`.
-        #:
-        #: `denominador_do_mes` CONFIRMA: ele filtra por `calibracao.ligada`, e
-        #: não por `ativo`. Então a planilha aposentada ainda pesa na nota — e o
-        #: filtro genérico escondia deste modal justamente a menção que a
-        #: compõe. Hoje não mudava contagem (o CRM não tem linha em `mencao`),
-        #: mas quebraria no primeiro fornecedor trocado.
+        #: A FONTE INTERNA APOSENTADA SAI; a de planilha, NÃO. Para a INTERNA o
+        #: score é recontado a cada leitura, e aposentá-la é tirá-la do índice
+        #: (`0112`, as agendas fora da nota). Para fonte de PLANILHA `ativo =
+        #: false` é "parou de receber importação", e o histórico continua valendo
+        #: porque está gravado em `score_mes_fonte` — `denominador_do_mes`
+        #: confirma, filtrando por `calibracao.ligada` e não por `ativo`. Um
+        #: filtro genérico por `ativo` esconderia deste modal justamente a menção
+        #: que compõe a nota.
         #:
         #: A MESMA CONDIÇÃO DE `leitura_das_lentes._nomes_das_fontes`
-        #: (`fonte.ativo or not fonte.interna`), e não uma terceira forma de
-        #: dizer a mesma regra.
-        #: Com uma lente só, a Imprensa, a sua única fonte estava ativa e a
-        #: condição era desnecessária. Agora a Institucional tem DUAS fontes
-        #: cadastradas: a Clipei recortada, ativa, e o CRM, que a `0108`
-        #: aposentou por `ativo = false` sem apagar. A fonte aposentada saiu do
-        #: índice, então a menção dela não pode voltar num modal que existe para
-        #: explicar o número do índice.
+        #: (`fonte.ativo or not fonte.interna`), e não uma terceira forma de dizer
+        #: a mesma regra.
         #:
-        #: HOJE O CRM NÃO TEM LINHA EM `mencao` (a ingestão recusa fonte interna,
-        #: e só ela, a reconciliação e o semeador escrevem lá), então esta
-        #: condição não muda nenhuma contagem — ACHADO DE REVISÃO: aquilo é uma
-        #: premissa operacional, não uma garantia do banco. Um `insert` à mão ou
-        #: um seed futuro a quebraria, e a consulta pode se garantir sozinha.
+        #: HOJE O CRM NÃO TEM LINHA EM `mencao`, porque a ingestão recusa fonte
+        #: interna — mas isso é premissa operacional, não garantia do banco: um
+        #: `insert` à mão ou um seed futuro a quebraria, e a consulta pode se
+        #: garantir sozinha.
         or_(ScoreFonte.interna.is_(False), ScoreFonte.ativo.is_(True)),
         #: O MESMO PAR `mes`+`data` da janela: `mes` é quem tem índice, e sem
         #: ele a consulta varre a tabela inteira.
@@ -2040,20 +1901,20 @@ def temas_em_perpetuacao(
 ) -> list[tuple[str, int, date, date, int, list[str]]]:
     """Os temas negativos que atravessam meses — o risco que não passa.
 
-    A DIFERENÇA ENTRE ISTO E "TEMAS DA LENTE" é o tempo. Aquela lista responde
-    "do que falaram neste mês"; esta responde "o que já vinha e continua". Um
-    tema que explode e some é ruído; o que reaparece cinco meses seguidos é
-    posição consolidada, e é com esse que a comunicação precisa lidar.
+    A DIFERENÇA ENTRE ISTO E "TEMAS DA LENTE" é o tempo: aquela lista responde "do
+    que falaram neste mês", esta responde "o que já vinha e continua". Um tema que
+    explode e some é ruído; o que reaparece cinco meses seguidos é posição
+    consolidada.
 
-    Conta MESES DISTINTOS, e não menções: um tema com 900 negativas num mês só
-    é um episódio, e um com 40 por mês durante cinco é uma narrativa.
+    Conta MESES DISTINTOS, e não menções: um tema com 900 negativas num mês só é
+    um episódio, e um com 40 por mês durante cinco é uma narrativa.
 
     A CONSULTA INTEIRA OLHA SÓ PARA A NEGATIVA, e não apenas a contagem final.
-    Contar meses de qualquer sentimento deixava entrar um tema com UMA negativa
-    em março e menções neutras de abril a junho: quatro meses de "perpetuação"
-    de um tema que parou de incomodar no primeiro. Pelo mesmo motivo a lista
-    de lentes sai daqui — dizer que o risco está na imprensa porque a imprensa
-    falou bem do tema seria o contrário do que a tela promete.
+    Contar meses de qualquer sentimento deixava entrar um tema com UMA negativa em
+    março e menções neutras de abril a junho: quatro meses de "perpetuação" de um
+    tema que parou de incomodar no primeiro. Pelo mesmo motivo a lista de lentes
+    sai daqui — dizer que o risco está na imprensa porque a imprensa falou BEM do
+    tema seria o contrário do que a tela promete.
     """
     alvo = primeiro_dia(mes)
     inicio = alvo

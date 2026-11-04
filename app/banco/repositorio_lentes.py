@@ -104,18 +104,18 @@ def fontes_da_lente(sessao: Session, lente_id: int) -> list[ScoreFonte]:
 def lente_e_interna(sessao: Session, lente_id: int) -> bool:
     """A lente se lê deste banco (o CRM), e não de menção ingerida.
 
-    `ativo` CONTA AQUI, e só aqui ele significa isto. Para uma fonte de planilha,
-    `ativo=false` é "parou de receber importação" e o histórico dela continua
+    `ativo` CONTA AQUI, e só na fonte interna ele significa isto. Para fonte de
+    planilha, `ativo=false` é "parou de receber importação" e o histórico continua
     valendo, porque está gravado em `score_mes_fonte` — é o que
-    `catalogo_das_lentes` documenta. A fonte interna não tem histórico gravado:
-    ela é recontada de `interacao_registro` a cada leitura. Aposentá-la só pode
-    significar "para de contar", e é o que a `0108` fez com o CRM.
+    `catalogo_das_lentes` documenta. A interna não tem histórico gravado: é
+    recontada de `interacao_registro` a cada leitura, e aposentá-la só pode
+    significar "para de contar".
 
-    SEM ISTO, A INSTITUCIONAL FICARIA PARTIDA AO MEIO — achado de revisão. Ela
-    tem as duas fontes cadastradas (o CRM aposentado e a Clipei recortada), e com
-    `any(interna)` a nota viria das menções enquanto série, explorador, recorte e
-    painéis continuariam no CRM: dois números para a mesma lente, cada um certo
-    no seu mundo, lado a lado se contradizendo.
+    SEM ISTO A INSTITUCIONAL FICA PARTIDA AO MEIO. Ela tem as duas fontes
+    cadastradas (o CRM aposentado e a Clipei recortada), e com `any(interna)` a
+    nota viria das menções enquanto série, explorador, recorte e painéis
+    continuariam no CRM: dois números para a mesma lente, cada um certo no seu
+    mundo, lado a lado se contradizendo.
     """
     return any(
         fonte.interna and fonte.ativo for fonte in fontes_da_lente(sessao, lente_id)
@@ -433,21 +433,17 @@ def opcoes_de_filtro(sessao: Session, lente_id: int, mes: date) -> dict[str, lis
         """As concessionárias do mês, PELO NOME DO CADASTRO quando ele resolve.
 
         É `_mais_presentes` com uma junção a mais, e a junção é a razão de esta
-        função existir em vez de um parâmetro: sem ela, a Corsan aparece DUAS
-        vezes na lista — "Corsan" (1.111 menções) e "Companhia Riograndense de
-        Saneamento (Corsan)" (15.019) —, e escolher uma perde a outra. A
-        holding aparecia três vezes.
+        função existir em vez de um parâmetro: sem ela a Corsan aparece DUAS vezes
+        na lista, e escolher uma perde a outra.
 
         `coalesce` E `outerjoin`, e não um `join`: a menção que o cadastro não
-        resolve — "Águas do Rio" (9.411), que são dois blocos — continua na
-        lista com a palavra do fornecedor. Um `join` a sumiria do seletor, que
-        é o oposto de normalizar.
+        resolve continua na lista com a palavra do fornecedor, e um `join` a
+        sumiria do seletor, que é o oposto de normalizar.
 
         AGRUPA PELA MESMA EXPRESSÃO QUE O FILTRO RECORTA (`condicoes_do_filtro`
-        casa o nome do cadastro OU o texto cru). Agrupar por um caminho e
-        filtrar por outro faria a opção escolhida devolver menos linhas do que
-        a lista prometia — foi exatamente o que aconteceu com a barra do N2 na
-        `0098`, e o conserto está no `_por_taxonomia`.
+        casa o nome do cadastro OU o texto cru). Agrupar por um caminho e filtrar
+        por outro faz a opção escolhida devolver menos linhas do que a lista
+        prometia.
         """
         consulta = (
             select(CONCESSIONARIA, func.count().label("total"))
@@ -526,27 +522,20 @@ def materias_recentes(
 ) -> list[dict]:
     """As `quantas` menções do mês que têm o que mostrar — o drill-down até a linha.
 
-    JÁ FOI SÓ METADADO, e o docstring dizia que `mencao` não guardava título nem
-    link porque o importador não tinha como lê-los. Deixou de ser verdade na
-    0055: o padrão Aegea traz o texto e o endereço da menção, e a carga da
-    Sociedade digital pôs 2.208 deles no banco — as negativas, as de tier alto e
-    as mais engajadas, que é a amostra que o pacote avisa que vem na primeira
-    carga.
+    QUEM TEM TEXTO VEM PRIMEIRO, e isto é o que faz a lista servir: a maior parte
+    dos itens chega sem texto, então ordenar só por data devolveria cinco linhas
+    de metadado, sem nada a ler. Dentro dos que têm, o maior engajamento antes —
+    a ordem que o pacote pede para esta lente.
 
-    QUEM TEM TEXTO VEM PRIMEIRO, e isto é o que faz a lista servir: 86% dos itens
-    chegam sem texto, então ordenar só por data devolveria cinco linhas de
-    metadado, sem nada a ler. Dentro dos que têm, o maior engajamento antes — a
-    ordem que o pacote pede para esta lente.
+    A DATA É O ÚLTIMO CRITÉRIO, e o nulo dela fica por último: uma linha sem data
+    não é "a mais antiga", é "não se sabe quando".
 
-    A DATA CONTINUA SENDO O ÚLTIMO CRITÉRIO, e o nulo dela fica por último: uma
-    linha sem data não é "a mais antiga", é "não se sabe quando".
+    A CALIBRAÇÃO VALE AQUI TAMBÉM: uma menção de fonte desligada não entrou na
+    nota lá em cima, e listá-la aqui embaixo contaria uma história que o número
+    não sustenta.
 
-    A CALIBRAÇÃO VALE AQUI TAMBÉM, pela mesma razão do resto do dossiê: uma
-    menção de fonte desligada não entrou na nota lá em cima, e listá-la aqui
-    embaixo contaria uma história que o número não sustenta.
-
-    SEM DADO É LISTA VAZIA, igual ao resto do dossiê — nunca uma linha
-    inventada para preencher a tabela.
+    SEM DADO É LISTA VAZIA, igual ao resto do dossiê — nunca uma linha inventada
+    para preencher a tabela.
     """
     rotulo = func.coalesce(Tema.nome, Mencao.tema_texto)
     consulta = (
@@ -723,27 +712,22 @@ def _por_coluna_de_texto(
 ) -> list[dict]:
     """O corte do mês por uma coluna de texto da própria menção.
 
-    UMA FUNÇÃO PARA OS QUATRO CORTES NOVOS — perfil do autor, UF, subtema e
-    autor —, porque é literalmente a mesma consulta: agrupar por uma coluna de
-    `mencao`, contar por sentimento, ignorar nulo. A irmã mais velha
-    (`temas_por_sentimento`) é separada porque tem a sua particularidade: tema
-    casa com o dicionário do CRM por `coalesce`. Estas quatro não têm nenhuma, e
-    quatro cópias da mesma consulta divergiriam na primeira correção.
-
-    HAVIA UMA TERCEIRA IRMÃ, `veiculos_por_sentimento`, citada aqui até
-    23/10/2026 — ela separava-se por ter grafia de veículo a normalizar. Saiu
-    com os blocos de veículo do dossiê, que eram os únicos a chamá-la.
+    UMA FUNÇÃO PARA QUATRO CORTES — perfil do autor, UF, subtema e autor —,
+    porque é literalmente a mesma consulta: agrupar por uma coluna de `mencao`,
+    contar por sentimento, ignorar nulo. A irmã `temas_por_sentimento` é separada
+    por ter particularidade (tema casa com o dicionário do CRM por `coalesce`);
+    estas quatro não têm nenhuma, e quatro cópias divergiriam na primeira
+    correção.
 
     NULO FICA FORA, e isto é decisão de leitura: a UF vem em pouco mais da metade
     dos itens e o subtema em 15%. Uma linha "sem classificação" seria a maior de
-    todas em quase todo mês, dizendo nada sobre a reputação — e empurrando para
+    todas em quase todo mês, dizendo nada sobre a reputação e empurrando para
     baixo as que dizem algo. Quanto falta de cada campo é assunto da ficha de
     procedência do bloco, que a tela já mostra.
 
-    `ordenar_pelo_negativo` É PARA O AUTOR, e a diferença importa: o corte por
-    perfil responde "como se divide o mês" e se ordena por volume; o de autor
-    responde "quem pesou contra", e aí quem falou muito e elogiou não é a
-    resposta.
+    `ordenar_pelo_negativo` É PARA O AUTOR: o corte por perfil responde "como se
+    divide o mês" e se ordena por volume; o de autor responde "quem pesou
+    contra", e aí quem falou muito e elogiou não é a resposta.
     """
     negativas = func.count().filter(Mencao.sentimento == "neg")
     consulta = (
@@ -789,17 +773,16 @@ _DIMENSOES_DA_TAXONOMIA = frozenset({"tema_n2", "tema_n3"})
 def coluna_da_dimensao(campo: str):
     """A coluna por que uma dimensão da aba "Onde está a causa" agrupa e conta.
 
-    QUASE SEMPRE É O ATRIBUTO DE `Mencao` DE MESMO NOME — `causa_da_lente.
-    Dimensao.campo` guarda o nome e diz que "o repositório resolve". A exceção é
-    a CONCESSIONÁRIA, e a razão é a mesma que o caso do `tema` logo acima
-    registra como achado de revisão: a aba agrupava pelo texto cru enquanto o
-    painel ao lado agrupava pelo nome do cadastro, e aí os dois ficam na mesma
-    tela com rótulos diferentes para o mesmo mês — e o clique no rótulo manda ao
-    servidor uma grafia que o dado não tem.
+    QUASE SEMPRE É O ATRIBUTO DE `Mencao` DE MESMO NOME: `Dimensao.campo`, em
+    `causa_da_lente`, guarda o nome e diz que o repositório resolve. A exceção é a
+    CONCESSIONÁRIA, pela mesma razão do caso do `tema` logo acima — a aba agrupava
+    pelo texto cru enquanto o painel ao lado agrupava pelo nome do cadastro, e aí
+    os dois ficam na mesma tela com rótulos diferentes para o mesmo mês, com o
+    clique mandando ao servidor uma grafia que o dado não tem. Para a
+    concessionária isso é visível: a Corsan seriam duas fatias aqui e uma no
+    seletor.
 
-    Para a concessionária isso é visível: a Corsan seria duas fatias de 1.111 e
-    15.019 aqui, e uma de 16.130 no seletor. Quem usa a função tem de ter
-    `outerjoin(UnidadeNegocio, ...)` na consulta.
+    Quem usa a função tem de ter `outerjoin(UnidadeNegocio, ...)` na consulta.
     """
     if campo == "unidade_texto":
         return CONCESSIONARIA
@@ -818,28 +801,27 @@ def _por_taxonomia(
     """O corte do mês pelo N2 (tema estratégico) ou pelo N3 (subtema) do
     cadastro, contado por sentimento.
 
-    PELO MESMO CAMINHO DO FILTRO, sempre — é esta a regra, e ela é mais forte
-    que "pelo `tema_id`". Agrupar por um caminho e recortar por outro faria a
-    coluna contar menções que o clique nela não recorta. Menção que o caminho
-    não alcança fica fora, como o nulo das outras abas; quanto falta vai na
-    ficha.
+    PELO MESMO CAMINHO DO FILTRO, sempre — é esta a regra, e ela é mais forte que
+    "pelo `tema_id`". Agrupar por um caminho e recortar por outro faria a coluna
+    contar menções que o clique nela não recorta. Menção que o caminho não alcança
+    fica fora, como o nulo das outras abas; quanto falta vai na ficha.
 
-    E O CAMINHO DO N2 MUDOU NA `0098`: `condicoes_do_filtro` passou a aceitar
+    O CAMINHO DO N2 ACEITA DUAS COLUNAS: `condicoes_do_filtro` casa
     `Mencao.macro_tema_id` (a chave gravada) ALÉM da derivação por `tema_id`,
-    porque o fornecedor que fala N2 não tem N3 para derivar. Então o
-    agrupamento tem de aceitar as duas também — senão o filtro alcança 30.932
-    menções e a barra conta 29.701, e as 1.231 de diferença são exatamente as
-    que só têm N2.
+    porque o fornecedor que fala N2 não tem N3 para derivar. O agrupamento tem de
+    aceitar as duas também: aceitando só a derivação, a barra deixa de contar a
+    menção que tem `macro_tema_id` e não tem `tema_id`, enquanto o filtro — que a
+    alcança — devolve mais linhas do que a barra prometia.
 
     `coalesce(Mencao.macro_tema_id, Tema.macro_tema_id)`: a chave gravada
-    primeiro, a derivada depois. Elas concordam onde as duas existem — a
-    gravação deriva uma da outra (ver `temas_da_mencao.Arvore`) —, então a ordem
-    só decide quem responde quando a outra é nula.
+    primeiro, a derivada depois. Elas concordam onde as duas existem (a gravação
+    deriva uma da outra — ver `temas_da_mencao.Arvore`), então a ordem só decide
+    quem responde quando a outra é nula.
 
-    E O `Tema` VIRA `outerjoin` NO N2, por consequência: a menção com N2 e sem
-    N3 não tem linha em `Tema`, e o join interno a descartaria antes do
-    `coalesce` ter chance. O N3 segue com join INTERNO, porque lá não há o que
-    aceitar além do `tema_id` — o filtro `tema_n3` também só usa ele.
+    E O `Tema` É `outerjoin` NO N2, por consequência: a menção com N2 e sem N3 não
+    tem linha em `Tema`, e o join interno a descartaria antes do `coalesce` ter
+    chance. O N3 segue com join INTERNO, porque lá não há o que aceitar além do
+    `tema_id` — o filtro `tema_n3` também só usa ele.
     """
     nome = MacroTema.nome if nivel == "tema_n2" else Tema.nome
     consulta = (
@@ -887,30 +869,21 @@ def _presenca_da_taxonomia(
     """Quanto a aba de taxonomia PODE mostrar — pelo mesmo caminho que ela usa.
 
     POR QUE NÃO SERVE A PRESENÇA DE `tema_id`, que é o `campo` destas duas
-    dimensões. `presenca_das_dimensoes` conta `count(tema_id)`: toda menção com
+    dimensões: `presenca_das_dimensoes` conta `count(tema_id)`, toda menção com
     vínculo. Mas `_por_taxonomia` chega ao N2 ATRAVESSANDO `MacroTema`, e
-    `Tema.macro_tema_id` É NULÁVEL — há 45 temas órfãos em 149 no cadastro, que
-    a reconciliação da `0058` deixou para trás por casar só pelo nome exato.
-
-    Uma menção presa a um tema órfão seria CONTADA no "vem em X menções do mês"
-    e EXCLUÍDA das barras pelo join. Isto é exatamente o que a ficha existe para
-    impedir — "quanto falta vai escrito, e é o que impede a aba de mentir por
-    omissão" —, e seria ela mesma mentindo.
-
-    Hoje são 0 menções nessa situação na Imprensa (os 45 órfãos são os temas que
-    a taxonomia v4 desativou, e nada novo se liga a eles). Então isto não
-    conserta um número errado na tela: impede que ele apareça no dia em que um
-    tema nascer sem pilar — e aí ninguém estaria olhando.
+    `Tema.macro_tema_id` É NULÁVEL: tema sem pilar é estado que o schema permite,
+    e a reconciliação da `0058` deixa um para trás sempre que o nome não casa
+    exato. A menção presa a um tema assim seria CONTADA no "vem em X menções do
+    mês" e EXCLUÍDA das barras pelo join — a ficha mentindo por omissão,
+    exatamente o que ela existe para impedir.
 
     O `count()` SEM COLUNA depois de joins internos já é "quantas menções a aba
-    alcança": o join é o filtro. E `distintas` conta o nível certo — macro tema
-    no N2, tema no N3 —, não `tema_id` nos dois.
+    alcança": o join é o filtro. E `distintas` conta o nível certo — macro tema no
+    N2, tema no N3 —, não `tema_id` nos dois.
 
-    OS JOINS SÃO OS MESMOS DE `_por_taxonomia`, E TÊM DE SER: esta função existe
-    para dizer quanto AQUELA aba alcança. Depois da `0098` o N2 entra também por
-    `Mencao.macro_tema_id`, então aqui entra igual — senão a ficha diria "vem em
-    29.701 menções" sobre barras que somam 30.932, e seria ela mentindo, que é
-    exatamente o que este docstring diz que ela existe para impedir.
+    OS JOINS SÃO OS MESMOS DE `_por_taxonomia`, E TÊM DE SER, porque esta função
+    existe para dizer quanto AQUELA aba alcança: o N2 entra também por
+    `Mencao.macro_tema_id`, então aqui entra igual.
     """
     alvo = MacroTema.id if nivel == "tema_n2" else Tema.id
     consulta = (
@@ -1028,35 +1001,31 @@ def grupos_de_veiculos(
     regua: str,
     filtro: FiltroDeMencoes | None = None,
 ) -> list[dict]:
-    """As menções do mês agrupadas por tier e veículo — o que os três painéis
-    do Explorador de veículos somam na tela.
+    """As menções do mês agrupadas por tier e veículo — o que os três painéis do
+    Explorador de veículos somam na tela.
 
     O MESMO MECANISMO DE `grupos_do_explorador`, com uma chave menor: agregado
-    pronto para ser somado no navegador, e é isso que faz o clique ser
-    instantâneo sem mover o dossiê. Cada linha traz a contagem (o que a barra
-    desenha) e o peso por sentimento (o que a nota e o impacto usam) — peso se
-    soma, e o denominador do mês é um só.
+    pronto para ser somado no navegador, e é isso que faz o clique ser instantâneo
+    sem mover o dossiê. Cada linha traz a contagem (o que a barra desenha) e o
+    peso por sentimento (o que a nota e o impacto usam) — peso se soma, e o
+    denominador do mês é um só.
 
-    UMA LINHA POR PAR `(tier, veiculo)`, E NÃO POR VEÍCULO: o mesmo veículo
-    pode ter matéria em mais de um tier, e somar aqui tiraria da tela a
-    possibilidade de estreitar por tier. A soma por veículo é trabalho de quem
-    desenha.
+    UMA LINHA POR PAR `(tier, veiculo)`, E NÃO POR VEÍCULO: o mesmo veículo pode
+    ter matéria em mais de um tier, e somar aqui tiraria da tela a possibilidade
+    de estreitar por tier. A soma por veículo é trabalho de quem desenha.
 
     POR QUE UMA ROTA PRÓPRIA, e não `tier`/`veiculo` dentro de
     `grupos_do_explorador`: acrescentá-los àquela chave multiplicaria a
-    cardinalidade (`n1 × n2 × n3 × uf × tier × veículo`). Uma chave de só
+    cardinalidade (`n1 × n2 × n3 × uf × tier × veículo`), e uma chave de só
     `tier × veículo` é a carga mínima que responde aos três painéis.
 
     `cargo` E `engajamento` ENTRAM NO `group_by` SÓ PORQUE `peso_da_mencao`
-    PRECISA DELES, e não saem na resposta — o mesmo motivo pelo qual estão em
-    `grupos_do_explorador`.
+    precisa deles, e não saem na resposta.
 
     SEM JUNÇÃO DE `Tema`/`MacroTema`, ao contrário do explorador de taxonomia:
     esta consulta não lê taxonomia, e os filtros de taxonomia da tela continuam
     valendo sem o join porque `condicoes_do_filtro` casa por SUBCONSULTA, nunca
-    por junção — decisão registrada lá com a razão ("entra em nove consultas
-    diferentes, e acrescentar uma junção aqui mudaria o `from` delas por
-    baixo"). Esta é a décima.
+    por junção (regra 3, lá).
     """
     consulta = (
         select(
@@ -1195,7 +1164,7 @@ def cortes_da_causa(
     TUDO NO MESMO PEDIDO, e isto foi medido antes de decidir: os seis cortes do
     mês mais cheio (6.932 menções) somam 109 ms. Um endpoint por aba custaria um
     estado de carregamento a cada clique e um segundo caminho de dados para a
-    mesma conta — por um ganho que o relógio não vê.
+    mesma conta.
 
     A MEDIDA VEM PRIMEIRO, de propósito: só se consulta o corte da dimensão que
     passou no critério. Num mês em que a fonte não mandou UF nem subtema, isto é
@@ -1205,8 +1174,6 @@ def cortes_da_causa(
     escolhida, as abas passam a explicar AQUELA UF. Descer um nível é refazer a
     mesma pergunta num pedaço menor, e não olhar o mês inteiro de outro jeito.
     """
-    #: `dimensoes` VEM DE QUEM CHAMA quando o painel de aprofundamento tem abas
-    #: próprias (ver `dimensoes_do_aprofundamento`); sem ela, as do cartão.
     if dimensoes is None:
         dimensoes = dimensoes_do_recorte(codigo_da_lente, ve_diretorio)
     if not dimensoes:
@@ -1242,13 +1209,10 @@ def cortes_da_causa(
             cortes.append(CorteDaCausa(dimensao, [], presenca, total))
             continue
         if dimensao.chave == "tema":
-            #: O TEMA PELA MESMA CONSULTA DO PAINEL, e isto foi achado de revisão:
-            #: o painel "Temas × sentimento" agrupa por
-            #: `coalesce(Tema.nome, Mencao.tema_texto)` — o nome do dicionário do
-            #: CRM vence a grafia do fornecedor —, e a aba agrupava pelo texto cru.
-            #: Os dois ficam lado a lado na mesma tela: rótulos diferentes para o
-            #: mesmo mês, e um clique no rótulo do painel mandando ao servidor uma
-            #: grafia que o dado não tem.
+            #: O TEMA PELA MESMA CONSULTA DO PAINEL: "Temas × sentimento" agrupa
+            #: por `coalesce(Tema.nome, Mencao.tema_texto)` — o nome do dicionário
+            #: do CRM vence a grafia do fornecedor —, e agrupar aqui pelo texto cru
+            #: punha os dois lado a lado com rótulos diferentes para o mesmo mês.
             linhas = [
                 {"rotulo": linha.pop("tema"), **linha}
                 for linha in temas_por_sentimento(
@@ -1459,14 +1423,13 @@ def unidades_da_lente(
     espalhadas por seis meses e 2.515 concentradas em março pedem respostas
     diferentes.
 
-    PELO NOME DO CADASTRO (`CONCESSIONARIA`), como `_concessionarias` e o
-    seletor ao lado. Esta leitura ficou de fora da `0099` e a revisão do Codex a
-    encontrou: a Corsan ocupava DUAS posições do ranking com metade do volume
-    cada, e o "mês de pico" era calculado sobre cada metade — então a tela podia
+    PELO NOME DO CADASTRO (`CONCESSIONARIA`), como `_concessionarias` e o seletor
+    ao lado. Pelo texto cru, a Corsan ocupa DUAS posições do ranking com metade do
+    volume cada, e o "mês de pico" sai calculado sobre cada metade — a tela podia
     apontar março numa linha e maio na outra para a mesma operação.
 
-    `outerjoin` E NÃO `join`, pela razão de sempre: "Águas do Rio" são dois
-    blocos, fica sem chave de propósito, e precisa continuar no ranking.
+    `outerjoin` E NÃO `join`, pela razão de sempre: a operação que o cadastro não
+    resolve fica sem chave de propósito, e precisa continuar no ranking.
     """
     consulta = (
         select(CONCESSIONARIA, Mencao.mes, func.count())
