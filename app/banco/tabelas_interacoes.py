@@ -102,23 +102,18 @@ class InteracaoRegistro(Tabela):
 
     # -- o ciclo da agenda (migration 0011) -----------------------------------
     #
-    # Todas anuláveis, e nulo quer dizer NÃO INFORMADO. Os registros que vieram
-    # da planilha não responderam nada disto, e tratá-los como "não" inventaria
-    # história.
-    #: O que se esperava, escrito ANTES da reunião. Compare com `relato`.
+    # Todas anuláveis, e nulo quer dizer NÃO INFORMADO: o que veio da planilha
+    # não respondeu isto, e tratar como "não" inventaria história.
     expectativa: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: `aegea` ou `outra_parte`. Declinar é decisão, e o lado muda a leitura.
     declinado_por: Mapped[str | None] = mapped_column(Text, nullable=True)
     motivo_declinio: Mapped[str | None] = mapped_column(Text, nullable=True)
-    #: EM QUE CONDICOES A AGENDA FOI ACEITA.
+    #: EM QUE CONDIÇÕES A AGENDA FOI ACEITA. "Aceitaram, mas só para março" e
+    #: "aceitaram com o diretor, não com o presidente" são o que decide o
+    #: preparo da reunião.
     #:
-    #: "Aceitaram, mas so para marco" e "aceitaram com o diretor, nao com o
-    #: presidente" sao o que decide o preparo da reuniao, e nao tinham onde ser
-    #: escritos: o "por que foi negado" existia, o "em que termos foi aceito"
-    #: nao.
-    #:
-    #: Campo PROPRIO, e nao o mesmo de `motivo_declinio`: sao fatos diferentes,
-    #: e um campo so para os dois faria trocar de situacao sobrescrever o texto
+    #: Campo PRÓPRIO, e não o mesmo de `motivo_declinio`: são fatos diferentes,
+    #: e um campo só para os dois faria trocar de situação sobrescrever o texto
     #: do outro caso.
     nota_situacao: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: DE QUAIS agendas esta decorre. Plural: duas reunioes podem levar juntas
@@ -132,30 +127,22 @@ class InteracaoRegistro(Tabela):
         cascade="all, delete-orphan",
         lazy="selectin",
     )
-    #: QUEM DECORRE DESTA. O lado inverso, e so leitura (`viewonly`): quem
-    #: escreve o elo e a agenda que descende, e ter os dois lados gravaveis
-    #: seria a mesma relacao com duas donas.
+    #: QUEM DECORRE DESTA. O lado inverso, e só leitura (`viewonly`): quem
+    #: escreve o elo é a agenda que descende, e ter os dois lados graváveis
+    #: seria a mesma relação com duas donas.
     #:
-    #: `selectin` faz UMA consulta para a pagina inteira. Sem isto, a coluna da
+    #: `selectin` faz UMA consulta para a página inteira. Sem isto, a coluna da
     #: Base que diz "faz parte de uma cadeia" custaria uma consulta por linha.
-    #: MEDIDO: uma pagina de 200 agendas faz DUAS consultas em
-    #: `interacao_origem`, uma por lado.
     #:
-    #: Sem `cascade`: apagar esta agenda nao pode apagar as que decorrem dela.
+    #: Sem `cascade`: apagar esta agenda não pode apagar as que decorrem dela.
     #:
-    #: -- POR QUE NAO PASSA PELA AGENDA DO OUTRO LADO ---------------------
-    #:
-    #: Usar `secondary="interacao_origem"` para ja excluir as ARQUIVADAS no
-    #: proprio join funciona, e traz N+1: duas consultas por registro, ou 400
-    #: numa pagina de 200.
-    #:
-    #: A causa e que `selectin` NAO carrega em lote relacao AUTORREFERENTE — e
-    #: com `secondary` os dois lados sao `InteracaoRegistro`. O SQLAlchemy cai
-    #: para carregamento por objeto sem erro nenhum: a regra fica certa e o
-    #: custo multiplica em silencio.
-    #:
-    #: Quem filtra as arquivadas agora e o repositorio, com UMA consulta por
-    #: pagina — ver `_arquivadas_entre`.
+    #: NÃO PASSA PELA AGENDA DO OUTRO LADO. `secondary="interacao_origem"`
+    #: excluiria as ARQUIVADAS no próprio join, e cai em N+1: `selectin` NÃO
+    #: carrega em lote relação AUTORREFERENTE, e com `secondary` os dois lados
+    #: são `InteracaoRegistro`. O SQLAlchemy passa a carregar por objeto sem
+    #: erro nenhum — a regra fica certa e o custo multiplica em silêncio. Quem
+    #: filtra as arquivadas é o repositório, com UMA consulta por página
+    #: (`_arquivadas_entre`).
     derivadas: Mapped[list[InteracaoOrigem]] = relationship(
         "InteracaoOrigem",
         foreign_keys="InteracaoOrigem.origem_id",
@@ -210,28 +197,17 @@ class InteracaoRegistro(Tabela):
         DateTime(timezone=True), nullable=True
     )
 
-    # extensões: uma por frente, carregadas em lote junto com a página — não
-    # com `lazy="joined"` (como eram até 24/09/2026).
+    # extensões: uma por frente, carregadas em lote (`selectin`) junto com a
+    # página, e NÃO com `lazy="joined"`.
     #
-    # SEIS EXTENSÕES 1-1 EM `LEFT JOIN` NA MESMA CONSULTA fazia o Postgres
-    # encadear seis junções para estimar o custo da consulta principal —
-    # e a estimativa de linhas EXPLODE a cada junção encadeada (chegou a
-    # 216 milhões de linhas estimadas, numa tabela com 60 linhas reais).
-    # Custo estimado tão alto empurra a consulta para cima do limite que
-    # decide compilar o plano em código de máquina (JIT) antes de rodar —
-    # e a COMPILAÇÃO, não a consulta, é o que ficava lento: 437ms
-    # compilando um plano que executa em 0,7ms. MEDIDO via `EXPLAIN
-    # (ANALYZE, BUFFERS)` direto no Postgres.
-    #
-    # `selectin` evita o encadeamento: cada extensão vira sua própria
-    # consulta em lote (`where interacao_id in (...)`), sem entrar na
-    # consulta principal — o mesmo padrão que `temas`/`areas`/
-    # `participacoes`/`outra_parte`/`materiais` já usam logo abaixo, pelo
-    # mesmo motivo (ver o comentário de `derivadas`, mais acima: "MEDIDO").
-    # Six extensões quase sempre vazias (só uma frente vale por vez) a
-    # menos, seis consultas rápidas a mais — a troca certa mesmo com o
-    # volume de dados crescendo: o problema é o FORMATO da consulta, não
-    # o tamanho da tabela.
+    # SEIS EXTENSÕES 1-1 EM `LEFT JOIN` NA MESMA CONSULTA encadeiam seis
+    # junções, e a estimativa de linhas explode a cada uma — custo estimado
+    # alto o bastante para o Postgres compilar o plano em código de máquina
+    # (JIT), e aí é a COMPILAÇÃO, não a consulta, que fica lenta. `selectin`
+    # tira as extensões da consulta principal: cada uma vira sua própria
+    # consulta em lote (`where interacao_id in (...)`). Mesmo padrão de
+    # `temas`, `areas`, `participacoes`, `outra_parte` e `materiais`, abaixo.
+    # O problema é o FORMATO da consulta, não o tamanho da tabela.
     imprensa: Mapped[ImprensaRegistro | None] = relationship(
         back_populates="interacao", cascade="all, delete-orphan", lazy="selectin"
     )
@@ -479,22 +455,17 @@ class InteracaoPessoaAegea(Tabela):
 class Comentario(Tabela):
     """Comentário de uma pessoa numa agenda. **DESENHADO E NÃO CONSTRUÍDO.**
 
-    NADA NO CÓDIGO LÊ OU ESCREVE ESTA TABELA — conferido em 16/10/2026, por
-    ORM e por SQL cru. Ela e este modelo existem desde a `0004`.
+    NADA NO CÓDIGO LÊ OU ESCREVE ESTA TABELA. Ela e este modelo existem desde a
+    `0004`, e não é código morto: o mockup de handoff
+    (`docs/handoff/Painel Reputacional Aegea.dc.html`) traz a interface inteira
+    — lista de comentários por registro, campo de escrita e botão "Comentar".
+    Faltou a rota, o caso de uso e a tela.
 
-    NÃO É CÓDIGO MORTO, e a diferença importa para quem for limpar: o mockup de
-    handoff (`docs/handoff/Painel Reputacional Aegea.dc.html`) traz a interface
-    inteira — lista de comentários por registro, campo "Escreva um comentário" e
-    botão "Comentar". A tabela nasceu do desenho; o que faltou foi a rota, o
-    caso de uso e a tela.
-
-    QUEM FOR IMPLEMENTAR encontra o esquema pronto, com `ondelete="CASCADE"` na
-    agenda e o autor em dois campos — `autor` em texto livre, para quem comentou
-    e não é usuário da plataforma, e `usuario_id` para quem é.
-
-    QUEM FOR REMOVER precisa decidir antes que o produto não quer comentários,
-    porque é isso que estaria sendo jogado fora — e aí a remoção é migration,
-    modelo e a linha correspondente no README.
+    O esquema está pronto, com `ondelete="CASCADE"` na agenda e o autor em dois
+    campos: `autor` em texto livre, para quem comentou e não é usuário da
+    plataforma, e `usuario_id` para quem é. Removê-la é decidir que o produto
+    não quer comentários — e é migration, modelo e a linha que o README tem
+    sobre ela.
     """
 
     __tablename__ = "comentario"
@@ -677,11 +648,11 @@ class Material(Tabela):
 
 # QUEM DECLARA A CHAVE ESTRANGEIRA TRAZ O ALVO JUNTO.
 #
-# `material.referencia_id` aponta para `referencia`, que é declarada em
-# `tabelas_referencias`. Sem este import, qualquer processo que importe só este
+# `material.referencia_id` aponta para `referencia`, declarada em
+# `tabelas_referencias`. Sem este import, um processo que importe só este
 # módulo — um semeador, um script avulso — quebra na PRIMEIRA consulta com
-# `NoReferencedTableError: could not find table 'referencia'`, uma mensagem que
-# não menciona import nenhum. Aconteceu com `semear_enredos` num banco novo.
+# `NoReferencedTableError: could not find table 'referencia'`, mensagem que não
+# menciona import nenhum.
 #
 # NO FIM DO ARQUIVO, e não no topo: `tabelas_referencias` importa `Arquivo`
 # daqui. No topo, os dois módulos se esperariam.

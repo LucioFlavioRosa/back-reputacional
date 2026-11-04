@@ -1,8 +1,9 @@
-"""Tabela de exportações. Espelha `migrations/0007_relatorios.sql` + `0025`.
+"""Tabela de exportações (`exportacao`). Espelha `migrations/0007_relatorios.sql`
++ `0025`, que a renomeou.
 
-Chamava-se `relatorio` e guardava duas coisas: o documento impresso pela tela
-e a trilha de quem exportou a Base. A tela saiu do produto; a trilha ficou,
-porque é controle de segurança e não relatório.
+Guarda a trilha de quem exportou a Base — controle de segurança, e não
+relatório. O documento impresso pela tela, que a `0007` guardava na mesma
+tabela, saiu do produto.
 """
 
 from __future__ import annotations

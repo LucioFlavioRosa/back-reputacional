@@ -38,7 +38,7 @@ def para_json(valor: Any) -> Any:
     célula formatada como hora num campo livre (`Local`, `Observação`) chega
     `time`, e uma célula numérica chega `Decimal`. Sem a conversão, o erro só
     aparece no flush do JSONB — longe de quem montou o dado, com a transação já
-    suja. Foi um achado de revisão, não hipótese.
+    suja.
     """
     if isinstance(valor, Mapping):
         return {str(chave): para_json(item) for chave, item in valor.items()}
@@ -115,10 +115,10 @@ def gravar_proposta(sessao: Session, linha: ImportacaoLinha, proposta) -> None:
                 "coluna": divergencia.coluna,
                 "sugestoes": list(divergencia.sugestoes),
                 "acao": divergencia.acao,
-                #: VIAJA JUNTO, e é a lição do `declarado` logo abaixo: "um campo
-                #: que não viaja por aqui é um campo que a pessoa preencheu e que
-                #: o cadastro nasce sem". Aqui o preço era pior — sem o padrão
-                #: gravado, a confirmação não sabia criar e devolvia 409.
+                #: VIAJA JUNTO, e é a lição do `declarado` logo abaixo: campo
+                #: que não viaja por aqui é campo que a pessoa preencheu e que
+                #: o cadastro nasce sem. Sem o padrão gravado, a confirmação
+                #: não sabe criar.
                 "acao_padrao": divergencia.acao_padrao,
                 "alvo": divergencia.alvo,
                 "declarado": divergencia.declarado,

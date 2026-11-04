@@ -108,13 +108,12 @@ class JornalistaMatriz(Tabela):
     )
     nome: Mapped[str] = mapped_column(Text)
     veiculo: Mapped[str | None] = mapped_column(Text, nullable=True)
-    #: A CHAVE DE UNICIDADE do par (jornalista, veículo), e ela é DERIVADA:
-    #: ninguém a atribui, o gancho abaixo a escreve.
+    #: A CHAVE DE UNICIDADE do par (jornalista, veículo), DERIVADA: ninguém a
+    #: atribui, o gancho abaixo a escreve com `dominio/texto.normalizar`.
     #:
-    #: Até a `0097` o índice único era a expressão da `0049`, que colapsava
-    #: espaço mas NÃO TIRAVA ACENTO — "Taís Hirata" e "Tais Hirata" coexistiam,
-    #: contra o que o comentário daquela migration promete — e não normalizava
-    #: `veiculo` de jeito nenhum.
+    #: SEM ACENTO, e por isso não é a expressão SQL da `0049`: ela colapsava
+    #: espaço mas não tirava acento — "Taís Hirata" e "Tais Hirata" coexistiam
+    #: — e não normalizava `veiculo` de jeito nenhum. Ver `0097`.
     nome_normalizado: Mapped[str] = mapped_column(Text)
     veiculo_normalizado: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -123,8 +122,7 @@ class JornalistaMatriz(Tabela):
         """As duas chaves saem do nome e do veículo SOZINHAS.
 
         POR QUE AQUI: ver o gancho igual em `tabelas_referencias.Referencia` —
-        a suíte provou que havia pontos de escrita que eu não conhecia, e coluna
-        derivada que depende de alguém lembrar dela não é derivada.
+        coluna derivada que depende de alguém lembrar dela não é derivada.
         """
         if campo == "nome":
             self.nome_normalizado = normalizar(valor)

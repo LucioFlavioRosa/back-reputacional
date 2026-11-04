@@ -81,12 +81,9 @@ class Usuario(Tabela):
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    #: `oid` do token do Entra ID — a identidade estável da pessoa no diretório.
-    #: O `oid` do Entra ID, e o ÚNICO caminho de entrada desde a 0096.
-    #:
-    #: Era nulável enquanto existia entrada por senha local. A 0096 tirou a
-    #: senha e tornou esta coluna obrigatória: conta sem `entra_object_id`
-    #: passou a ser conta que não existe, em vez de conta que não entra.
+    #: O `oid` do token do Entra ID — a identidade estável da pessoa no
+    #: diretório, e o ÚNICO caminho de entrada (`0096`). Conta sem
+    #: `entra_object_id` é conta que não existe, não conta que não entra.
     entra_object_id: Mapped[str] = mapped_column(Text, unique=True)
     #: CITEXT: o Entra ID pode devolver a claim com outra caixa, e sem isso a
     #: mesma pessoa ganharia uma segunda conta no provisionamento JIT.
@@ -114,9 +111,7 @@ class Usuario(Tabela):
     #: que o cargo permite, esta coluna é a concessão à pessoa. A conta mora num
     #: lugar só, `UsuarioAtual.ve_campos_sensiveis`.
     #:
-    #: `default=True` espelha a migration 0087 e tem o mesmo motivo: é o
-    #: comportamento que já existia, e aplicar a mudança não devia tirar o relato
-    #: de ninguém em silêncio. Não concede nada por si — sem papel, a conjunção
+    #: `default=True` (`0087`) não concede nada por si: sem papel, a conjunção
     #: já é falsa.
     acesso_sensivel: Mapped[bool] = mapped_column(Boolean, default=True)
     externo: Mapped[bool] = mapped_column(Boolean, default=False)

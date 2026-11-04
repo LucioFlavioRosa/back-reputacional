@@ -1,12 +1,11 @@
 """A biblioteca de referências. Espelha `migrations/0026` + `0028`.
 
 O ARQUIVO MORA NO BLOB, numa árvore própria: `referencias/<assunto>/<tipo>/`.
-Uma referência tem
-VERSÕES: a tela mostra a mais recente, e as anteriores respondem "o que a gente
-levou naquela reunião de março".
+Cada referência tem VERSÕES: a tela mostra a mais recente, e as anteriores
+respondem "o que a gente levou naquela reunião de março".
 
-O ASSUNTO PRINCIPAL define a pasta no blob — ver `caminho_da_referencia`. A
-referência cobre vários assuntos e `ReferenciaTema` guarda todos; o byte mora
+O ASSUNTO PRINCIPAL define a pasta no blob — ver `blob.caminho_da_referencia`.
+A referência cobre vários assuntos e `ReferenciaTema` guarda todos; o byte mora
 num lugar só, porque copiá-lo criaria duas verdades que envelhecem separado.
 """
 
@@ -46,31 +45,26 @@ class Referencia(Tabela):
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     titulo: Mapped[str] = mapped_column(Text)
-    #: A CHAVE DE UNICIDADE do título, e ela é DERIVADA: ninguém a atribui.
+    #: A CHAVE DE UNICIDADE do título, DERIVADA: quem a grava é
+    #: `_derivar_titulo_normalizado`, abaixo, com `dominio/texto.normalizar`.
     #:
-    #: Até a `0097` o índice único era a expressão `lower(btrim(titulo))` dentro
-    #: do SQL da `0026`, e ela NÃO TIRAVA ACENTO: "Relatório Anual" e "Relatorio
-    #: Anual" entravam como duas referências — o começo de duas versões
-    #: circulando, que é o problema que esta tabela existe para acabar.
+    #: SEM ACENTO, e por isso não é um índice sobre `lower(btrim(titulo))`:
+    #: "Relatório Anual" e "Relatorio Anual" entrariam como duas referências —
+    #: duas versões circulando, que é o que esta tabela existe para acabar.
     titulo_normalizado: Mapped[str] = mapped_column(Text)
 
     @validates("titulo")
     def _derivar_titulo_normalizado(self, _campo: str, valor: str) -> str:
         """A chave sai do título SOZINHA, em um lugar só.
 
-        POR QUE AQUI E NÃO EM CADA PONTO DE ESCRITA. A primeira versão desta
-        mudança atribuía `titulo_normalizado` à mão na criação, na edição e no
-        semeador — e a suíte mostrou o problema na hora: havia pontos de escrita
-        que eu não conhecia, e cada um deles era uma chance de esquecer. Uma
-        coluna DERIVADA que depende de alguém lembrar dela não é derivada; é uma
-        segunda fonte de verdade esperando divergir. `instituicao`,
-        `interlocutor` e `pessoa_aegea` ainda atribuem a sua à mão em seis
-        lugares, e vale trazê-las para cá.
+        POR QUE AQUI E NÃO EM CADA PONTO DE ESCRITA. Coluna DERIVADA que
+        depende de alguém lembrar dela não é derivada; é uma segunda fonte de
+        verdade esperando divergir. `instituicao`, `interlocutor` e
+        `pessoa_aegea` ainda atribuem a sua à mão, e vale trazê-las para cá.
 
         O QUE ISTO NÃO ALCANÇA: `insert()` em massa e `update()` por Core não
-        passam pelo ORM, então não disparam este gancho. Hoje ninguém escreve
-        nestas tabelas assim — quem for fazê-lo calcula a chave com
-        `dominio/texto.normalizar`, e não com SQL.
+        passam pelo ORM, então não disparam este gancho. Quem precisar escrever
+        assim calcula a chave com `dominio/texto.normalizar`, e não com SQL.
         """
         self.titulo_normalizado = normalizar(valor)
         return valor
@@ -142,10 +136,9 @@ class ReferenciaVersao(Tabela):
     #: 1, 2, 3… na ordem em que entraram. Ordena o histórico sem depender de
     #: data: duas versões subidas no mesmo dia continuam tendo ordem.
     numero: Mapped[int] = mapped_column(Integer)
-    #: Nulo quando a versão vive só do Conteúdo, abaixo — desde que o arquivo
-    #: virou opcional. Uma versão sempre tem UM dos dois, nunca nenhum; quem
-    #: garante isso é a rota, não esta coluna, para não travar a leitura das
-    #: versões de antes deste campo existir.
+    #: Nulo quando a versão vive só do Conteúdo, abaixo. Uma versão sempre tem
+    #: UM dos dois, nunca nenhum; quem garante isso é a rota, não esta coluna,
+    #: para não travar a leitura das versões anteriores ao campo.
     arquivo_id: Mapped[uuid.UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("arquivo.id"), nullable=True
     )
