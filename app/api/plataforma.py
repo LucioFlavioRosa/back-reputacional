@@ -206,7 +206,10 @@ def _das_agendas(sessao, base: str | None) -> list[CargaSaida]:
             base="agendas",
             fonte=None,
             arquivo=importacao.arquivo_nome,
-            quem=nome_confirmou or nome_enviou,
+            #: `is not None` E NÃO `or`: nome vazio é dado ruim, mas é dado — cair
+            #: no remetente por causa dele trocaria o nome E o verbo, dizendo
+            #: "enviado por" sobre uma importação que tem quem confirmou.
+            quem=nome_confirmou if nome_confirmou is not None else nome_enviou,
             #: O VERBO MUDA quando o nome é do remetente: só nas confirmadas
             #: antes da `0117`, que não têm `confirmado_por`.
             quem_enviou_o_arquivo=nome_confirmou is None and nome_enviou is not None,
