@@ -720,15 +720,29 @@ def _ultima_carga_por_fonte(sessao) -> dict[int, tuple[datetime, str | None]]:
     vale acrescentar a segunda.
 
     `outerjoin` EM `usuario` porque carga por comando de linha não tem autor.
+
+    `id` DESEMPATA, e dá ESTABILIDADE e não cronologia: `id` é uuid4, não serial,
+    então num empate exato de `concluida_em` a escolhida é arbitrária — só não
+    varia entre leituras. Prometer "a mais recente" seria prometer o que a tabela
+    não guarda. Basta: `clock_timestamp()` tem resolução de microssegundo, e o
+    que o desempate evita é a tela trocar de autor entre dois carregamentos do
+    mesmo dado, que parece corrupção e não é.
     """
     return {
         fonte_id: (quando, quem)
         for fonte_id, quando, quem in sessao.execute(
             select(CargaDeBase.fonte_id, CargaDeBase.concluida_em, Usuario.nome)
             .outerjoin(Usuario, Usuario.id == CargaDeBase.usuario_id)
+            #: O `base` é redundante com o `check` da `0116` combinado com o
+            #: `fonte_id is not null`, e fica como defesa: a Calibração não pode
+            #: mostrar carga de bonds como carga de fonte.
             .where(CargaDeBase.base == "score", CargaDeBase.fonte_id.is_not(None))
             .distinct(CargaDeBase.fonte_id)
-            .order_by(CargaDeBase.fonte_id, CargaDeBase.concluida_em.desc())
+            .order_by(
+                CargaDeBase.fonte_id,
+                CargaDeBase.concluida_em.desc(),
+                CargaDeBase.id.desc(),
+            )
         )
     }
 

@@ -2909,6 +2909,10 @@ def confirmar(sessao: Session, importacao_id, usuario) -> Resumo:
 
     importacao.situacao = "confirmada"
     importacao.confirmado_em = datetime.now(UTC)
+    #: E QUEM CONFIRMOU, que não é necessariamente `criado_por` — esta função não
+    #: exige que seja quem subiu. Sem isto a trilha da carga mostrava a hora de
+    #: quem confirmou com o nome de quem enviou. Ver a `0117`.
+    importacao.confirmado_por = usuario.id
     sessao.flush()
     return Resumo(criadas=criadas, cadastros=cadastros)
 

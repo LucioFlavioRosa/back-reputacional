@@ -25,6 +25,7 @@ from uuid import UUID
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 from sqlalchemy import func, select
+from sqlalchemy.orm import aliased
 
 from app.api.dependencias import UsuarioLogado
 from app.banco.sessao import SessaoDoPedido
@@ -56,7 +57,17 @@ class CargaSaida(BaseModel):
     arquivo: str | None
     #: O nome de quem carregou. NULO É INFORMAÇÃO, não dado faltando: significa
     #: carga feita fora da tela — comando de linha, ou SQL direto. Ver `origem`.
+    #:
+    #: NAS AGENDAS É QUEM CONFIRMOU (`importacao.confirmado_por`, da `0117`), que
+    #: é a pessoa cujo ato fez o dado entrar — e é a mesma a quem `quando` se
+    #: refere. Nas confirmadas ANTES da `0117` a coluna é nula e cai em
+    #: `criado_por`, que é quem enviou o arquivo; `quem_enviou_o_arquivo` diz
+    #: quando isso aconteceu, para a tela não afirmar mais do que sabe.
     quem: str | None
+    #: VERDADEIRO quando `quem` é o remetente do arquivo e não quem confirmou —
+    #: só nas agendas confirmadas antes da `0117`. A tela usa isto para dizer
+    #: "enviado por" em vez de "carregado por", em vez de errar o verbo.
+    quem_enviou_o_arquivo: bool = False
     #: A rota ou o comando que carregou. Ver `trilha_da_carga.ORIGENS`.
     origem: str | None
     #: Quantas linhas entraram. ZERO É RESULTADO VÁLIDO: recorte que não achou
@@ -68,6 +79,11 @@ class CargaSaida(BaseModel):
     meses: list[date]
     quando: datetime
     #: Liga as fontes irmãs do mesmo arquivo. Nulo nas agendas, que não têm.
+    #:
+    #: EXPOSTO PORQUE A TELA AGRUPA POR ELE: uma subida da Clipei alimenta
+    #: Imprensa e Mercado e rende duas linhas, e sem o lote a aba mostraria duas
+    #: cargas onde houve uma. Não é identificador de recurso — nenhuma rota o
+    #: aceita de volta.
     lote_id: UUID | None
 
 
@@ -110,7 +126,11 @@ def _da_trilha(sessao, base: str | None) -> list[CargaSaida]:
         #: linhas que mais interessam numa trilha.
         .outerjoin(ScoreFonte, ScoreFonte.id == CargaDeBase.fonte_id)
         .outerjoin(Usuario, Usuario.id == CargaDeBase.usuario_id)
-        .order_by(CargaDeBase.concluida_em.desc())
+        #: `id` DESEMPATA para a ordem ser ESTÁVEL, não cronológica: `id` é uuid4
+        #: e num empate exato a escolha é arbitrária. O que isto evita é a aba
+        #: trocar de ordem entre dois carregamentos do mesmo dado, que parece
+        #: corrupção e não é.
+        .order_by(CargaDeBase.concluida_em.desc(), CargaDeBase.id.desc())
         .limit(TETO)
     )
     if base is not None:
@@ -139,10 +159,11 @@ def _das_agendas(sessao, base: str | None) -> list[CargaSaida]:
     carregou nada nunca — listá-las faria a aba dizer que a base mudou quando
     não mudou.
 
-    `criado_por` E NÃO quem confirmou, porque é o que a tabela guarda: a 0008
-    não tem `confirmado_por`. É quem subiu o arquivo, que no fluxo de agendas é
-    quase sempre a mesma pessoa que confere — mas não é garantido, e o nome do
-    campo aqui não promete mais do que isso.
+    QUEM CONFIRMOU, da `0117`. Antes dela a tabela só guardava quem SUBIU, e
+    `importar_agendas.confirmar` não exige que seja a mesma pessoa — então a
+    linha mostrava a hora de quem confirmou com o nome de quem enviou. Nas
+    confirmadas antes da `0117` a coluna é nula e a leitura cai em `criado_por`,
+    marcando `quem_enviou_o_arquivo` para a tela trocar o verbo.
     """
     if base is not None and base != "agendas":
         return []
@@ -159,12 +180,25 @@ def _das_agendas(sessao, base: str | None) -> list[CargaSaida]:
         .group_by(ImportacaoLinha.importacao_id)
         .subquery()
     )
+    #: QUEM CONFIRMOU, com queda para quem enviou. São dois `outerjoin` na MESMA
+    #: tabela, então o segundo precisa de apelido — sem ele o SQL casaria os dois
+    #: na primeira junção e o nome viria sempre de `confirmado_por`, inclusive
+    #: quando ela é nula.
+    quem_confirmou = aliased(Usuario)
+    quem_enviou = aliased(Usuario)
     consulta = (
-        select(Importacao, Usuario.nome, func.coalesce(entraram.c.quantas, 0))
-        .outerjoin(Usuario, Usuario.id == Importacao.criado_por)
+        select(
+            Importacao,
+            quem_confirmou.nome,
+            quem_enviou.nome,
+            func.coalesce(entraram.c.quantas, 0),
+        )
+        .outerjoin(quem_confirmou, quem_confirmou.id == Importacao.confirmado_por)
+        .outerjoin(quem_enviou, quem_enviou.id == Importacao.criado_por)
         .outerjoin(entraram, entraram.c.importacao_id == Importacao.id)
         .where(Importacao.situacao == "confirmada", Importacao.confirmado_em.is_not(None))
-        .order_by(Importacao.confirmado_em.desc())
+        #: `id` DESEMPATA, pela mesma razão da outra consulta.
+        .order_by(Importacao.confirmado_em.desc(), Importacao.id.desc())
         .limit(TETO)
     )
     return [
@@ -172,7 +206,10 @@ def _das_agendas(sessao, base: str | None) -> list[CargaSaida]:
             base="agendas",
             fonte=None,
             arquivo=importacao.arquivo_nome,
-            quem=nome_de_quem,
+            quem=nome_confirmou or nome_enviou,
+            #: O VERBO MUDA quando o nome é do remetente: só nas confirmadas
+            #: antes da `0117`, que não têm `confirmado_por`.
+            quem_enviou_o_arquivo=nome_confirmou is None and nome_enviou is not None,
             #: A IMPORTAÇÃO DE AGENDAS SÓ ACONTECE PELA TELA, então a origem é
             #: constante — não há um campo equivalente na 0008 para ler.
             origem="api:agendas",
@@ -183,5 +220,5 @@ def _das_agendas(sessao, base: str | None) -> list[CargaSaida]:
             quando=importacao.confirmado_em,
             lote_id=None,
         )
-        for importacao, nome_de_quem, quantas in sessao.execute(consulta)
+        for importacao, nome_confirmou, nome_enviou, quantas in sessao.execute(consulta)
     ]
