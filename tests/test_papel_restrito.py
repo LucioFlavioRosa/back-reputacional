@@ -644,6 +644,27 @@ def test_subir_importacao_funciona_com_o_papel_restrito(sessao_restrita, semente
     assert saida_da_rota.situacao == "aguardando_conferencia"
     assert len(saida_da_rota.linhas) == 1
 
+    #: E A CONFIRMAÇÃO TAMBÉM, que é onde a `0117` escreve `confirmado_por`.
+    #:
+    #: ATÉ AQUI O TESTE PARAVA EM `subir`, e a lacuna é a forma exata do ponto
+    #: cego deste arquivo: a `0009` revoga `update` em `importacao` e a `0068`
+    #: concede de volta, então uma coluna nova herda o privilégio da tabela — mas
+    #: nada provava isso, e "herda" era afirmação minha, não teste. Local roda
+    #: como superusuário e passaria de qualquer jeito.
+    importar_agendas.confirmar(sessao_restrita, saida_da_rota.id, usuario)
+    sessao_restrita.flush()
+
+    confirmada = sessao_restrita.execute(
+        text(
+            "select situacao, confirmado_em is not null, confirmado_por "
+            "  from importacao where id = :id"
+        ),
+        {"id": str(saida_da_rota.id)},
+    ).one()
+    assert confirmada[0] == "confirmada"
+    assert confirmada[1] is True
+    assert confirmada[2] == semente.id
+
 
 def test_planilha_do_score_guarda_e_descarta_com_o_papel_restrito(
     sessao_restrita, semente, monkeypatch
