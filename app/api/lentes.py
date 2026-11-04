@@ -70,10 +70,12 @@ from app.dominio.periodo import mes_de
 from app.dominio.score import FiltroDeMencoes, formula_aplicada
 from app.dominio.sinais_da_lente import Secao
 from app.esquemas.lentes import (
+    CargosDosAutoresSaida,
     DossieSaida,
     ExploradorDeVeiculosSaida,
     ExploradorSaida,
     FatoSaida,
+    GrupoDeCargoSaida,
     GrupoDeVeiculoSaida,
     GrupoDoExploradorSaida,
     OpcoesDeFiltroSaida,
@@ -700,4 +702,77 @@ def obter_explorador_de_veiculos(
         mes=f"{alvo:%Y-%m}",
         denominador=denominador,
         grupos=[GrupoDeVeiculoSaida(**grupo) for grupo in grupos],
+    )
+
+
+@rotas.get("/{codigo}/cargos-dos-autores")
+def obter_cargos_dos_autores(
+    sessao: Sessao,
+    usuario: UsuarioLogado,
+    codigo: str,
+    mes: Annotated[str, Query(description="AAAA-MM")],
+    tier: Annotated[str | None, Query()] = None,
+    veiculo: Annotated[str | None, Query()] = None,
+    atributo: Annotated[str | None, Query()] = None,
+    tema: Annotated[str | None, Query()] = None,
+    perfil_autor: Annotated[str | None, Query()] = None,
+    uf: Annotated[str | None, Query()] = None,
+    subtema: Annotated[str | None, Query()] = None,
+    autor: Annotated[str | None, Query()] = None,
+    empresa: Annotated[str | None, Query()] = None,
+    tema_n1: Annotated[str | None, Query(description="pilar (N1) da taxonomia, pelo nome")] = None,
+    tema_n2: Annotated[str | None, Query(description="tema estratégico (N2), pelo nome")] = None,
+    tema_n3: Annotated[str | None, Query(description="tema (N3) do cadastro, pelo nome")] = None,
+    sentimento: Annotated[str | None, Query(description="pos, neu ou neg")] = None,
+) -> CargosDosAutoresSaida:
+    """O "Tracking dos cargos dos autores" da Sociedade digital: volume e
+    termômetro por cargo, e os autores de cada cargo com o impacto na nota.
+
+    O MOLDE É `obter_explorador_de_veiculos`: um pedido por mês e recorte da
+    tela, e a soma por cargo e a lista de autores acontecem no navegador — ver
+    `grupos_de_cargos`.
+
+    O AUTOR SÓ PARA QUEM VÊ O DIRETÓRIO, a mesma regra da Base das Lentes
+    (`nomeia_o_diretorio` por trás de `ve_diretorio`). Quem não vê recebe os
+    cargos com o autor apagado, e também não filtra por autor — senão a
+    contagem o revelaria.
+
+    A LENTE QUE LÊ O CRM NÃO TEM MENÇÃO, e volta vazia (sem erro).
+    """
+    alvo = mes_de(mes)
+    lente = repositorio_lentes.lente_por_codigo(sessao, codigo)
+    if lente is None:
+        raise NaoEncontrado("Lente não encontrada.")
+    ve_autores = usuario.ve_diretorio or not a_lente_nomeia_o_diretorio(lente.codigo)
+    if repositorio_lentes.lente_e_interna(sessao, lente.id):
+        return CargosDosAutoresSaida(
+            lente=lente.codigo, mes=f"{alvo:%Y-%m}", denominador=0, ve_autores=ve_autores, grupos=[]
+        )
+
+    filtro = FiltroDeMencoes(
+        tier=tier,
+        veiculo=veiculo,
+        atributo=atributo,
+        tema_texto=tema,
+        perfil_autor=perfil_autor,
+        uf=uf,
+        subtema=subtema,
+        autor=autor if ve_autores else None,
+        empresa=empresa,
+        tema_n1=tema_n1,
+        tema_n2=tema_n2,
+        tema_n3=tema_n3,
+        sentimento=sentimento,
+    )
+    calibracao = repositorio_score.calibracao_vigente(sessao)
+    regua, denominador = repositorio_score.denominador_do_mes(sessao, lente.id, alvo, calibracao)
+    grupos = repositorio_lentes.grupos_de_cargos(
+        sessao, lente.id, alvo, calibracao, regua, filtro, com_autor=ve_autores
+    )
+    return CargosDosAutoresSaida(
+        lente=lente.codigo,
+        mes=f"{alvo:%Y-%m}",
+        denominador=denominador,
+        ve_autores=ve_autores,
+        grupos=[GrupoDeCargoSaida(**grupo) for grupo in grupos],
     )

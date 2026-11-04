@@ -1075,6 +1075,86 @@ def grupos_de_veiculos(
     return list(grupos.values())
 
 
+def grupos_de_cargos(
+    sessao: Session,
+    lente_id: int,
+    mes: date,
+    calibracao: Calibracao,
+    regua: str,
+    filtro: FiltroDeMencoes | None = None,
+    com_autor: bool = True,
+) -> list[dict]:
+    """As menções do mês agrupadas por cargo e autor — o que o "Tracking dos
+    cargos dos autores" da Sociedade digital soma na tela.
+
+    O MESMO MECANISMO DE `grupos_de_veiculos`: agregado pronto para ser somado
+    no navegador. A tela soma por cargo para o volume e o termômetro, e abre a
+    lista de autores de um cargo sem voltar ao servidor.
+
+    O CARGO É `perfil_autor`, e não `cargo`: as duas colunas vêm da mesma célula
+    da Bites (`0074`), mas `perfil_autor` é o RÓTULO já dobrado ("Vereador" e
+    "Vereadora" numa barra só), que é o que a tela mostra e o que o filtro da
+    lente recebe. `cargo` é o código da régua, e entra no `group_by` só porque
+    `peso_da_mencao` precisa dele.
+
+    A MENÇÃO SEM CARGO VOLTA COM `cargo` NULO, e não sai da consulta: a tela a
+    deixa fora do gráfico e conta quantas ficaram de fora — é a nota de rodapé
+    do bloco.
+
+    `com_autor=False` APAGA O AUTOR ANTES DE AGRUPAR, para quem não vê o
+    diretório: os grupos de um cargo viram um só, e a resposta não carrega nem o
+    nome nem quantos autores distintos há por trás de cada barra.
+    """
+    consulta = (
+        select(
+            Mencao.perfil_autor,
+            Mencao.autor,
+            Mencao.tier,
+            Mencao.sentimento,
+            Mencao.cargo,
+            Mencao.engajamento,
+            func.count().label("quantas"),
+        )
+        .select_from(Mencao)
+        .join(ScoreFonte, ScoreFonte.id == Mencao.fonte_id)
+        .where(
+            ScoreFonte.lente_id == lente_id,
+            Mencao.mes == primeiro_dia(mes),
+            *so_fontes_ligadas(calibracao),
+            *condicoes_do_filtro(filtro),
+        )
+        .group_by(
+            Mencao.perfil_autor,
+            Mencao.autor,
+            Mencao.tier,
+            Mencao.sentimento,
+            Mencao.cargo,
+            Mencao.engajamento,
+        )
+    )
+    grupos: dict[tuple, dict] = {}
+    for linha in sessao.execute(consulta):
+        chave = (linha.perfil_autor or None, (linha.autor or None) if com_autor else None)
+        grupo = grupos.setdefault(
+            chave,
+            {
+                "cargo": chave[0],
+                "autor": chave[1],
+                "positivo": 0,
+                "neutro": 0,
+                "negativo": 0,
+                "peso_positivo": 0.0,
+                "peso_neutro": 0.0,
+                "peso_negativo": 0.0,
+            },
+        )
+        lado = {"pos": "positivo", "neg": "negativo"}.get(linha.sentimento, "neutro")
+        peso = peso_da_mencao(linha.tier, linha.cargo, linha.engajamento, calibracao, regua)
+        grupo[lado] += int(linha.quantas)
+        grupo[f"peso_{lado}"] += peso * int(linha.quantas)
+    return list(grupos.values())
+
+
 def presenca_das_dimensoes(
     sessao: Session,
     campos: Sequence[str],
