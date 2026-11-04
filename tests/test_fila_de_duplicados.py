@@ -1447,3 +1447,104 @@ def test_a_impressao_muda_SO_com_nome_ou_conjunto(sessao):
     sessao.flush()
 
     assert atores_duplicados.impressao_do_cadastro(sessao) != antes
+
+
+def test_FUNDIR_nao_deixa_a_fila_desatualizada(sessao):
+    """A RESPOSTA DE GENTE NÃO PODE ACUSAR DEFASAGEM.
+
+    O defeito que isto prende, achado ao consumir a rota do estado no front: a
+    fusão APAGA uma linha de `instituicao`, então a impressão do cadastro muda e
+    `esta_desatualizado` virava verdadeiro — por causa do próprio clique de quem
+    está lendo a fila. Com 209 pares a decidir, o aviso "pode haver duplicado
+    novo" ficaria aceso para sempre depois do primeiro, e aviso sempre aceso é
+    aviso que se aprende a ignorar.
+
+    E O CARIMBO NÃO É MENTIRA: semelhança é par a par, tirar um nome não faz dois
+    outros passarem a se parecer, e os pares do removido saíram na cascata. O que
+    sobrou guardado continua correto.
+    """
+    sobrevivente = _cadastrar(sessao, "Valor Econômico zzrev", "veiculo")
+    que_sai = _cadastrar(sessao, "valoreconomico zzrev", "perfil_rede")
+    atores_duplicados.recalcular(sessao)
+    assert not atores_duplicados.esta_desatualizado(sessao)
+
+    atores_duplicados.fundir(
+        sessao,
+        que_sai_id=que_sai.id,
+        sobrevivente_id=sobrevivente.id,
+        contra_a_proposta=False,
+    )
+
+    assert not atores_duplicados.esta_desatualizado(sessao)
+    #: E A CONTAGEM CARIMBADA É A DE VERDADE, e não a de antes da fusão: o par
+    #: respondido saiu, e uma linha dizendo o número velho faria o histórico do
+    #: pareamento mentir sobre o que estava guardado.
+    assert sessao.scalar(
+        select(PareamentoDaFila.pares).order_by(
+            PareamentoDaFila.calculado_em.desc(), PareamentoDaFila.id.desc()
+        )
+    ) == sessao.scalar(select(func.count()).select_from(ParSemelhante))
+
+
+def test_REVALIDAR_nao_inventa_pareamento_que_nunca_houve(sessao):
+    """O carimbo não pode nascer de uma remoção.
+
+    É a mesma mentira que `pareamento_da_fila` existe para impedir, pela porta de
+    trás: apagar cadastro não é calcular fila, e uma linha dizendo "pareado, zero
+    pares" faria a tela afirmar que a fila está em dia num banco em que ela nunca
+    rodou — exatamente o que o comando de backfill da `0118` existe para evitar.
+    """
+    sobrevivente = _cadastrar(sessao, "Fica zzrev2", "veiculo")
+    que_sai = _cadastrar(sessao, "fica zzrev2", "perfil_rede")
+    sessao.execute(delete(PareamentoDaFila))
+    sessao.flush()
+
+    atores_duplicados.fundir(
+        sessao,
+        que_sai_id=que_sai.id,
+        sobrevivente_id=sobrevivente.id,
+        contra_a_proposta=False,
+    )
+
+    assert atores_duplicados.calculado_em(sessao) is None
+    assert atores_duplicados.esta_desatualizado(sessao)
+
+
+def test_APAGAR_cadastro_pela_rota_nao_deixa_a_fila_desatualizada(cliente, sessao):
+    """A OUTRA REMOÇÃO. `DELETE /api/instituicoes/{id}` apaga a linha que entrou
+    por engano, e sem o carimbo ela acenderia o aviso do mesmo jeito que a fusão.
+
+    PELA ROTA, e não por `revalidar` direto: é o caminho que a tela exercita, e é
+    nele que o chamador pode esquecer de carimbar.
+    """
+    _cadastrar(sessao, "Erro de Cadastro zzrev4", "veiculo")
+    sobra = _cadastrar(sessao, "errodecadastro zzrev4", "perfil_rede")
+    atores_duplicados.recalcular(sessao)
+    assert not atores_duplicados.esta_desatualizado(sessao)
+
+    assert cliente.delete(f"/api/instituicoes/{sobra.id}").status_code == 204
+
+    assert not atores_duplicados.esta_desatualizado(sessao)
+
+
+def test_REVALIDAR_nao_esconde_defasagem_de_verdade(sessao):
+    """O contrapeso: o carimbo vale para a remoção, e só para ela.
+
+    Sem este teste, `revalidar` poderia ser chamada de um caminho que CRIA ou
+    RENOMEIA e silenciar o aviso que a tela precisa dar.
+    """
+    sobrevivente = _cadastrar(sessao, "Sobrevive zzrev3", "veiculo")
+    que_sai = _cadastrar(sessao, "sobrevive zzrev3", "perfil_rede")
+    atores_duplicados.recalcular(sessao)
+    atores_duplicados.fundir(
+        sessao,
+        que_sai_id=que_sai.id,
+        sobrevivente_id=sobrevivente.id,
+        contra_a_proposta=False,
+    )
+    assert not atores_duplicados.esta_desatualizado(sessao)
+
+    sobrevivente.nome_normalizado = normalizar("sobrevive renomeado zzrev3")
+    sessao.flush()
+
+    assert atores_duplicados.esta_desatualizado(sessao)

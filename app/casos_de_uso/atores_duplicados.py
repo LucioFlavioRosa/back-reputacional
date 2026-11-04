@@ -322,6 +322,45 @@ def recalcular(sessao: Session) -> int:
 ESPACO_DA_TRAVA_DO_PAREAMENTO = 8118
 
 
+def revalidar(sessao: Session) -> None:
+    """Carimba o pareamento guardado como atual, sem refazê-lo.
+
+    QUANDO ISTO É VERDADE, e é o único caso em que é: o cadastro mudou SÓ por
+    REMOÇÃO. Semelhança é par a par — tirar um nome não faz dois outros passarem
+    a se parecer —, e `par_semelhante` cascateia dos dois lados, então os pares do
+    removido já saíram com ele. O que resta guardado continua correto, e dizer
+    isso é mais verdadeiro que deixar a tela acusar defasagem.
+
+    POR QUE A FUSÃO PRECISA DISTO. Sem o carimbo, responder UM par deixava
+    `esta_desatualizado` verdadeiro até a próxima subida que criasse cadastro — e
+    a tela diria "pode haver duplicado novo" por causa da própria resposta de quem
+    está lendo. Com 209 pares a decidir, o aviso ficaria aceso para sempre depois
+    do primeiro clique, e aviso sempre aceso é aviso que se aprende a ignorar.
+
+    SEM O CADEADO de `recalcular`: isto não lê `instituicao` para decidir o que
+    gravar, só carimba o que já está lá. Um recálculo concorrente grava o seu
+    próprio par e a sua própria impressão, e a linha mais nova vence — que é o
+    desejado, porque ele enxergou mais do que esta remoção.
+    """
+    #: SEM PAREAMENTO ANTERIOR NÃO HÁ O QUE REVALIDAR, e carimbar aqui seria
+    #: justamente a mentira que `pareamento_da_fila` existe para impedir: uma
+    #: linha dizendo "pareado, zero pares" sobre um cadastro que nunca foi
+    #: pareado. Apagar cadastro não é calcular fila.
+    if calculado_em(sessao) is None:
+        return
+
+    #: ANTES DE CONTAR E DE IMPRIMIR: a remoção de quem chama pode estar só na
+    #: sessão, e o `delete` é o que dispara a cascata em `par_semelhante`.
+    sessao.flush()
+    sessao.add(
+        PareamentoDaFila(
+            pares=sessao.scalar(select(func.count()).select_from(ParSemelhante)),
+            impressao=impressao_do_cadastro(sessao),
+        )
+    )
+    sessao.flush()
+
+
 def impressao_do_cadastro(sessao: Session) -> str:
     """A impressão dos nomes ativos do cadastro, para detectar defasagem.
 
@@ -822,6 +861,11 @@ def fundir(
     )
     sessao.delete(perfil)
     sessao.flush()
+    #: A RESPOSTA DE GENTE NÃO PODE ACUSAR DEFASAGEM. A fusão muda o cadastro — e
+    #: só por remoção —, então o pareamento guardado segue correto e `revalidar`
+    #: diz isso. Sem ele, o primeiro par respondido acenderia na tela "pode haver
+    #: duplicado novo" até a próxima subida, por causa do próprio clique.
+    revalidar(sessao)
     return sobrevivente
 
 
