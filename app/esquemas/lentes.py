@@ -357,3 +357,36 @@ class ExploradorDeVeiculosSaida(BaseModel):
     mes: str
     denominador: float
     grupos: list[GrupoDeVeiculoSaida]
+
+
+class GrupoDeCargoSaida(BaseModel):
+    """Um pedaço do mês: cargo e autor, com contagem e peso por sentimento.
+
+    `cargo` nulo é a menção sem cargo informado — a tela a deixa fora do
+    gráfico e a conta no rodapé. `autor` nulo é a menção sem autor, OU quem lê
+    não vê o diretório (aí todo autor vem nulo).
+    """
+
+    cargo: str | None
+    autor: str | None
+    positivo: int
+    neutro: int
+    negativo: int
+    peso_positivo: float
+    peso_neutro: float
+    peso_negativo: float
+
+
+class CargosDosAutoresSaida(BaseModel):
+    """Os grupos do mês e o denominador da nota — a mesma regra de impacto de
+    `ExploradorSaida`.
+
+    `ve_autores` DIZ À TELA SE A LISTA DE AUTORES EXISTE para quem lê: sem ele,
+    o popup não distinguiria "este cargo não tem autor" de "você não pode ver".
+    """
+
+    lente: str
+    mes: str
+    denominador: float
+    ve_autores: bool
+    grupos: list[GrupoDeCargoSaida]
