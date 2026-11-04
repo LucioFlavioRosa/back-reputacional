@@ -39,7 +39,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 
 import pytest
-from sqlalchemy import create_engine, delete, func, select
+from sqlalchemy import create_engine, delete, func, select, text
 from sqlalchemy.orm import Session
 
 from app.banco.sessao import obter_sessao
@@ -1409,3 +1409,41 @@ def test_FUNDIR_de_verdade_apaga_o_par(sessao):
         .where(ParSemelhante.um_id.in_({que_sai.id, sobrevivente.id}))
     )
     assert sobrou == 0, "o par ficou apontando para cadastro que já não existe"
+
+
+def test_a_impressao_NAO_depende_da_ordem_de_leitura(sessao):
+    """`string_agg` sem `ORDER BY` daria hash diferente pela ordem de leitura.
+
+    O defeito seria uma defasagem FALSA na tela — pior que não avisar, porque
+    manda recalcular 102 s à toa e ensina a ignorar o aviso.
+
+    REESCREVER A LINHA MOVE O REGISTRO no heap: `update` no Postgres grava uma
+    versão nova, que passa a ser lida no fim. Se a agregação dependesse da ordem
+    física, a impressão mudaria aqui — e não muda.
+    """
+    primeiro = _cadastrar(sessao, "Alfa zzord", "veiculo")
+    _cadastrar(sessao, "Beta zzord", "veiculo")
+    _cadastrar(sessao, "Gama zzord", "veiculo")
+    sessao.flush()
+    antes = atores_duplicados.impressao_do_cadastro(sessao)
+
+    #: MESMO CONTEÚDO, posição nova: o `update` grava uma versão nova da linha
+    #: sem alterar valor nenhum, que é exatamente o que isola a ORDEM.
+    sessao.execute(
+        text("update instituicao set nome = nome where id = :id"), {"id": primeiro.id}
+    )
+    sessao.flush()
+
+    assert atores_duplicados.impressao_do_cadastro(sessao) == antes
+
+
+def test_a_impressao_muda_SO_com_nome_ou_conjunto(sessao):
+    """O contrapeso: se ela não mudasse com o que importa, não serviria."""
+    um = _cadastrar(sessao, "Delta zzord2", "veiculo")
+    sessao.flush()
+    antes = atores_duplicados.impressao_do_cadastro(sessao)
+
+    um.nome_normalizado = normalizar("delta renomeado zzord2")
+    sessao.flush()
+
+    assert atores_duplicados.impressao_do_cadastro(sessao) != antes

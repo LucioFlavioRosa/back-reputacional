@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import delete, func, insert, select, text
+from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.orm import Session
 
 from app.banco.repositorio_score import so_interacoes_visiveis
@@ -338,6 +339,11 @@ def impressao_do_cadastro(sessao: Session) -> str:
     NO BANCO E NÃO EM PYTHON: trazer alguns milhares de nomes para calcular um
     hash desfaria a economia. `md5` basta porque o uso é detectar mudança, não
     resistir a adversário.
+
+    `ORDER BY id` DENTRO DO `string_agg`, e sem ele a impressão é instável: o
+    Postgres não garante a ordem de agregação, então a mesma base poderia render
+    hashes diferentes só por mudar a ordem de leitura — e a tela acusaria
+    defasagem que não existe, que é pior que não avisar.
     """
     return sessao.scalar(
         select(
@@ -345,7 +351,7 @@ def impressao_do_cadastro(sessao: Session) -> str:
                 func.md5(
                     func.string_agg(
                         func.concat(Instituicao.id, Instituicao.nome_normalizado),
-                        text("','"),
+                        aggregate_order_by(text("','"), Instituicao.id),
                     )
                 ),
                 "cadastro-vazio",
