@@ -1527,6 +1527,111 @@ def test_APAGAR_cadastro_pela_rota_nao_deixa_a_fila_desatualizada(cliente, sessa
     assert not atores_duplicados.esta_desatualizado(sessao)
 
 
+def _carimbar_um_pareamento(sessao) -> None:
+    """Uma linha em `pareamento_da_fila` SEM passar por `recalcular`.
+
+    POR QUE NÃO `recalcular` AQUI: ele pega `pg_advisory_xact_lock`, que vive até o
+    fim da transação — e a transação do teste não acaba durante o teste. Um
+    cadeado de outra conexão então esperaria para sempre. Medido: a suíte travou
+    em `SELECT pg_advisory_lock(8118)` com a sessão do teste `idle in transaction`.
+    """
+    sessao.add(
+        PareamentoDaFila(
+            pares=0, impressao=atores_duplicados.impressao_do_cadastro(sessao)
+        )
+    )
+    sessao.flush()
+
+
+def test_REVALIDAR_dispensa_o_carimbo_com_RECALCULO_em_voo(sessao):
+    """ACHADO DE REVISÃO: contar `par_semelhante` no meio da substituição dela
+    gravaria no histórico um número de pares que nunca foi verdade.
+
+    O CADEADO EXCLUSIVO DE OUTRA CONEXÃO simula o recálculo em voo — de sessão, e
+    não `xact`, para sobreviver fora de transação.
+    """
+    sobrevivente = _cadastrar(sessao, "Em Voo zzrev5", "veiculo")
+    que_sai = _cadastrar(sessao, "emvoo zzrev5", "perfil_rede")
+    _carimbar_um_pareamento(sessao)
+    antes = sessao.scalar(select(func.count()).select_from(PareamentoDaFila))
+
+    outra = _engine.connect()
+    try:
+        outra.execute(
+            select(func.pg_advisory_lock(atores_duplicados.ESPACO_DA_TRAVA_DO_PAREAMENTO))
+        )
+        outra.commit()
+
+        atores_duplicados.fundir(
+            sessao,
+            que_sai_id=que_sai.id,
+            sobrevivente_id=sobrevivente.id,
+            contra_a_proposta=False,
+        )
+
+        #: NENHUMA LINHA NOVA: o carimbo foi dispensado, e não gravou contagem
+        #: tirada de uma tabela que estava sendo substituída.
+        assert sessao.scalar(select(func.count()).select_from(PareamentoDaFila)) == antes
+    finally:
+        outra.execute(
+            select(
+                func.pg_advisory_unlock(atores_duplicados.ESPACO_DA_TRAVA_DO_PAREAMENTO)
+            )
+        )
+        outra.commit()
+        outra.close()
+
+
+def test_REVALIDAR_carimba_mesmo_com_OUTRA_revalidacao_em_voo(sessao):
+    """O CONTRAPESO, e sem ele o conserto viraria o defeito.
+
+    Duas fusões simultâneas não têm conflito nenhum: cada uma conta depois da
+    própria cascata, e a linha mais nova vence. Com cadeado EXCLUSIVO a segunda
+    não carimbaria — e o aviso falso que `revalidar` existe para apagar voltaria
+    pela porta de trás, agora só para quem clica junto com outra pessoa.
+
+    O CADEADO COMPARTILHADO DE OUTRA CONEXÃO é a outra revalidação em voo.
+    """
+    sobrevivente = _cadastrar(sessao, "Junto zzrev6", "veiculo")
+    que_sai = _cadastrar(sessao, "junto zzrev6", "perfil_rede")
+    _carimbar_um_pareamento(sessao)
+    antes = sessao.scalar(select(func.count()).select_from(PareamentoDaFila))
+
+    outra = _engine.connect()
+    try:
+        outra.execute(
+            select(
+                func.pg_advisory_lock_shared(
+                    atores_duplicados.ESPACO_DA_TRAVA_DO_PAREAMENTO
+                )
+            )
+        )
+        outra.commit()
+
+        atores_duplicados.fundir(
+            sessao,
+            que_sai_id=que_sai.id,
+            sobrevivente_id=sobrevivente.id,
+            contra_a_proposta=False,
+        )
+
+        assert (
+            sessao.scalar(select(func.count()).select_from(PareamentoDaFila))
+            == antes + 1
+        )
+        assert not atores_duplicados.esta_desatualizado(sessao)
+    finally:
+        outra.execute(
+            select(
+                func.pg_advisory_unlock_shared(
+                    atores_duplicados.ESPACO_DA_TRAVA_DO_PAREAMENTO
+                )
+            )
+        )
+        outra.commit()
+        outra.close()
+
+
 def test_REVALIDAR_nao_esconde_defasagem_de_verdade(sessao):
     """O contrapeso: o carimbo vale para a remoção, e só para ela.
 

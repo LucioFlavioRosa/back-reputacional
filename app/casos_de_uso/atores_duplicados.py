@@ -337,16 +337,36 @@ def revalidar(sessao: Session) -> None:
     está lendo. Com 209 pares a decidir, o aviso ficaria aceso para sempre depois
     do primeiro clique, e aviso sempre aceso é aviso que se aprende a ignorar.
 
-    SEM O CADEADO de `recalcular`: isto não lê `instituicao` para decidir o que
-    gravar, só carimba o que já está lá. Um recálculo concorrente grava o seu
-    próprio par e a sua própria impressão, e a linha mais nova vence — que é o
-    desejado, porque ele enxergou mais do que esta remoção.
+    O CADEADO É COMPARTILHADO E `try`, e as duas metades importam.
+
+    POR QUE CADEADO, e é achado de revisão: `par_semelhante` está sendo
+    SUBSTITUÍDA por um recálculo em voo, então contá-la daqui gravaria no
+    histórico um número de pares que nunca foi verdade — e histórico que mente é o
+    que esta tabela existe para não ser. A impressão não corre o mesmo risco (é a
+    última leitura antes da inserção, e sob `read committed` ela vem fresca); a
+    contagem corre.
+
+    POR QUE COMPARTILHADO: `recalcular` pega o EXCLUSIVO, então as duas se
+    excluem — que é o que se quer. Mas duas revalidações não têm conflito nenhum
+    (cada uma conta depois da própria cascata, e a linha mais nova vence), e com
+    cadeado exclusivo a segunda fusão simultânea não carimbaria — reintroduzindo,
+    por outra porta, o aviso falso que esta função existe para apagar.
+
+    POR QUE `try`: fazer uma pessoa esperar até 102 s por um clique para carimbar
+    uma linha de histórico seria trocar um defeito pequeno por um grande. Com o
+    recálculo em voo o carimbo é DISPENSADO — ele grava a própria linha, mais nova
+    que esta, com a impressão dele.
     """
     #: SEM PAREAMENTO ANTERIOR NÃO HÁ O QUE REVALIDAR, e carimbar aqui seria
     #: justamente a mentira que `pareamento_da_fila` existe para impedir: uma
     #: linha dizendo "pareado, zero pares" sobre um cadastro que nunca foi
     #: pareado. Apagar cadastro não é calcular fila.
     if calculado_em(sessao) is None:
+        return
+
+    if not sessao.scalar(
+        select(func.pg_try_advisory_xact_lock_shared(ESPACO_DA_TRAVA_DO_PAREAMENTO))
+    ):
         return
 
     #: ANTES DE CONTAR E DE IMPRIMIR: a remoção de quem chama pode estar só na
