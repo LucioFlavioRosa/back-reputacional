@@ -33,12 +33,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.banco.tabelas_score import ScoreFonte
-from app.casos_de_uso.ingerir_mencoes import (
-    ASSINATURA_ZIP,
-    TAMANHO_MAXIMO,
-    Procedencia,
-    regravar,
-)
+from app.casos_de_uso.ingerir_mencoes import ASSINATURA_ZIP, TAMANHO_MAXIMO, regravar
+from app.casos_de_uso.trilha_da_carga import Procedencia
 from app.dominio.erros import RegraViolada
 from app.dominio.ingestao_score import (
     SENTIMENTOS,

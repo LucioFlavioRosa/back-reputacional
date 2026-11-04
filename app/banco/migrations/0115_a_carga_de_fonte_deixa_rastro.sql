@@ -17,7 +17,7 @@
 --: linhas mudando, não "este arquivo, mandado por esta pessoa, alimentou estas
 --: fontes irmãs" — e não distingue carga de reconciliação. Então o nome fica
 --: fora do sufixo e a imutabilidade vem do `revoke` explícito lá embaixo, mais
---: `test_carga_de_fonte_e_append_only_mas_a_aplicacao_insere`.
+--: `test_carga_de_base_e_append_only_mas_a_aplicacao_insere`.
 --:
 --: O QUE ELA NÃO COBRE, e é limite declarado: só a CARGA de fonte. Quem altera
 --: menção por fora da ingestão — a reconciliação da lista de veículos, a edição
@@ -25,7 +25,7 @@
 --: "última carga", e não "última atualização".
 --:
 --: SEM `check` EM `origem` de propósito: origem nova é chamador novo, não
---: migration nova. A lista vivida está em `ingerir_mencoes.ORIGENS`.
+--: migration nova. A lista vivida está em `trilha_da_carga.ORIGENS`.
 --:
 --: Idempotente.
 

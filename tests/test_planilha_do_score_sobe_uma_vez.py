@@ -23,11 +23,11 @@ import pytest
 from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.orm import Session
 
+from app.api.dependencias import oid_do_mock
 from app.armazenamento import blob
 from app.banco.sessao import obter_sessao
-from app.api.dependencias import oid_do_mock
 from app.banco.tabelas_acesso import Papel, Usuario
-from app.banco.tabelas_score import CargaDeFonte, Mencao, PlanilhaRecebida, ScoreFonte
+from app.banco.tabelas_score import CargaDeBase, Mencao, PlanilhaRecebida, ScoreFonte
 from app.banco.tabelas_stakeholders import Instituicao
 from app.casos_de_uso import ingerir_mencoes
 from main import app
@@ -257,7 +257,7 @@ def test_a_trilha_DA_ROTA_guarda_quem_carregou_e_o_nome_do_arquivo(
     #: TODAS AS LINHAS, e não a primeira: `clipei` tem irmã
     #: (`clipei_investidores`), então uma subida deixa uma linha por fonte. Ler
     #: `.first()` sem `order_by` passaria por sorte.
-    cargas = sessao.scalars(select(CargaDeFonte)).all()
+    cargas = sessao.scalars(select(CargaDeBase)).all()
     assert cargas, "a importação pela rota não deixou rastro"
     assert {c.origem for c in cargas} == {"api:planilha"}
     assert {c.arquivo for c in cargas} == {"clipping-agosto.xlsx"}
@@ -279,7 +279,7 @@ def test_a_trilha_pelo_ARQUIVO_pega_o_nome_do_upload(cliente, sessao, armazename
     """O ramo sem conferência não tem `planilha_recebida` de onde ler o nome."""
     assert _importar_pelo_arquivo(cliente, _planilha()).status_code == 201
 
-    cargas = sessao.scalars(select(CargaDeFonte)).all()
+    cargas = sessao.scalars(select(CargaDeBase)).all()
     assert cargas, "a importação pelo arquivo não deixou rastro"
     assert {c.arquivo for c in cargas} == {"export.xlsx"}
     assert {c.origem for c in cargas} == {"api:planilha"}

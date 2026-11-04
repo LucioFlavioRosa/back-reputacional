@@ -30,9 +30,9 @@ from sqlalchemy.orm import Session
 
 from app.banco.tabelas_acesso import Papel, Usuario
 from app.banco.tabelas_catalogo import CategoriaPublico, SubcategoriaPublico
-from app.banco.tabelas_score import CargaDeFonte, Mencao, ScoreFonte, ScoreMesFonte
+from app.banco.tabelas_score import CargaDeBase, Mencao, ScoreFonte, ScoreMesFonte
 from app.banco.tabelas_stakeholders import Instituicao
-from app.casos_de_uso import ingerir_mencoes
+from app.casos_de_uso import ingerir_mencoes, trilha_da_carga
 from app.dominio.ingestao_score import Leitura, MencaoLida
 from app.dominio.texto import normalizar
 from tests.test_e2e_postgres import URL
@@ -142,12 +142,12 @@ def _marcar(sessao, nome: str) -> None:
     sessao.flush()
 
 
-def _trilha(sessao, fonte: ScoreFonte) -> list[CargaDeFonte]:
+def _trilha(sessao, fonte: ScoreFonte) -> list[CargaDeBase]:
     return list(
         sessao.scalars(
-            select(CargaDeFonte)
-            .where(CargaDeFonte.fonte_id == fonte.id)
-            .order_by(CargaDeFonte.concluida_em)
+            select(CargaDeBase)
+            .where(CargaDeBase.fonte_id == fonte.id)
+            .order_by(CargaDeBase.concluida_em)
         )
     )
 
@@ -168,17 +168,17 @@ def test_a_carga_grava_quem_quando_e_quanto(sessao, usuario):
             ]
         ),
         (),
-        ingerir_mencoes.Procedencia(
+        trilha_da_carga.Procedencia(
             origem="api:planilha",
             arquivo="clipping-agosto.xlsx",
             usuario_id=usuario.id,
         ),
     )
 
-    linhas = _trilha(sessao, fonte)
-    assert len(linhas) == 1
-    carga = linhas[0]
-    assert carga.mencoes == 2
+    cargas = _trilha(sessao, fonte)
+    assert len(cargas) == 1
+    carga = cargas[0]
+    assert carga.linhas == 2
     assert carga.meses == [date(2026, 8, 1)]
     assert carga.origem == "api:planilha"
     assert carga.arquivo == "clipping-agosto.xlsx"
@@ -203,7 +203,7 @@ def test_o_carimbo_e_o_FIM_e_nao_o_inicio_da_transacao(sessao):
         fonte,
         _planilha([[date(2026, 8, 3), "Positiva", "Valor Econômico zz8", "Geral"]]),
         (),
-        ingerir_mencoes.Procedencia(origem="api:planilha"),
+        trilha_da_carga.Procedencia(origem="api:planilha"),
     )
 
     assert _trilha(sessao, fonte)[0].concluida_em > comeco_da_transacao
@@ -216,7 +216,7 @@ def test_cada_carga_acrescenta_uma_linha(sessao):
 
     for _ in range(2):
         ingerir_mencoes.ingerir(
-            sessao, fonte, planilha, (), ingerir_mencoes.Procedencia(origem="api:planilha")
+            sessao, fonte, planilha, (), trilha_da_carga.Procedencia(origem="api:planilha")
         )
 
     assert len(_trilha(sessao, fonte)) == 2
@@ -246,13 +246,13 @@ def test_a_carga_de_recorte_VAZIO_tambem_grava(sessao):
             ]
         ),
         (),
-        ingerir_mencoes.Procedencia(origem="api:planilha", arquivo="vazio.xlsx"),
+        trilha_da_carga.Procedencia(origem="api:planilha", arquivo="vazio.xlsx"),
     )
 
-    linhas = _trilha(sessao, fonte)
-    assert len(linhas) == 1, "a carga de zero menção não deixou rastro"
-    assert linhas[0].mencoes == 0
-    assert linhas[0].meses == [date(2026, 8, 1)]
+    cargas = _trilha(sessao, fonte)
+    assert len(cargas) == 1, "a carga de zero menção não deixou rastro"
+    assert cargas[0].linhas == 0
+    assert cargas[0].meses == [date(2026, 8, 1)]
 
     #: E A PROVA DE QUE O CAMINHO ANTIGO SERIA CEGO: o agregado do mês não tem
     #: linha nenhuma, então `max(atualizado_em)` não teria como andar.
@@ -306,11 +306,11 @@ def test_a_irma_SEM_LISTA_que_fica_sem_nada_nao_grava(sessao):
             ]
         ),
         (),
-        ingerir_mencoes.Procedencia(origem="api:planilha"),
+        trilha_da_carga.Procedencia(origem="api:planilha"),
     )
 
     assert len(_trilha(sessao, com_lista)) == 1
-    assert _trilha(sessao, com_lista)[0].mencoes == 2
+    assert _trilha(sessao, com_lista)[0].linhas == 2
     assert _trilha(sessao, sem_lista) == []
     #: E O DADO DELA CONTINUA LÁ: a trilha vazia não é só ausência de linha, é a
     #: afirmação de que nada foi apagado naquela fonte.
@@ -346,7 +346,7 @@ def test_as_fontes_irmas_compartilham_o_lote(sessao):
             ]
         ),
         (),
-        ingerir_mencoes.Procedencia(origem="api:planilha", arquivo="clipping.xlsx"),
+        trilha_da_carga.Procedencia(origem="api:planilha", arquivo="clipping.xlsx"),
     )
 
     da_principal = _trilha(sessao, principal)
@@ -357,9 +357,9 @@ def test_as_fontes_irmas_compartilham_o_lote(sessao):
     #: UMA MENÇÃO CADA, e a soma é o arquivo inteiro: a partição é exclusiva —
     #: a irmã fica com os veículos da lista, a principal com o resto. Se um dia
     #: a soma passar das linhas do arquivo, a matéria voltou a contar duas vezes.
-    assert da_principal[0].mencoes == 1
-    assert da_irma[0].mencoes == 1
-    assert da_principal[0].mencoes + da_irma[0].mencoes == 2
+    assert da_principal[0].linhas == 1
+    assert da_irma[0].linhas == 1
+    assert da_principal[0].linhas + da_irma[0].linhas == 2
 
 
 def test_cargas_diferentes_nao_compartilham_o_lote(sessao):
@@ -368,7 +368,7 @@ def test_cargas_diferentes_nao_compartilham_o_lote(sessao):
 
     for _ in range(2):
         ingerir_mencoes.ingerir(
-            sessao, fonte, planilha, (), ingerir_mencoes.Procedencia(origem="api:planilha")
+            sessao, fonte, planilha, (), trilha_da_carga.Procedencia(origem="api:planilha")
         )
 
     lotes = {carga.lote_id for carga in _trilha(sessao, fonte)}
@@ -403,9 +403,9 @@ def test_quem_nao_se_identifica_grava_desconhecida(sessao):
         ),
     )
 
-    linhas = _trilha(sessao, fonte)
-    assert len(linhas) == 1
-    assert linhas[0].origem == "desconhecida"
-    assert linhas[0].origem in ingerir_mencoes.ORIGENS
-    assert linhas[0].usuario_id is None
-    assert isinstance(linhas[0].lote_id, uuid.UUID)
+    cargas = _trilha(sessao, fonte)
+    assert len(cargas) == 1
+    assert cargas[0].origem == "desconhecida"
+    assert cargas[0].origem in trilha_da_carga.ORIGENS
+    assert cargas[0].usuario_id is None
+    assert isinstance(cargas[0].lote_id, uuid.UUID)

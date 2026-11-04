@@ -42,7 +42,6 @@ from __future__ import annotations
 import io
 import re
 import threading
-import uuid
 import weakref
 import zipfile
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -55,14 +54,20 @@ from sqlalchemy import delete, func, insert, select
 from sqlalchemy.orm import Session
 
 from app.banco.tabelas_lentes import MencaoNaoClassificada
-from app.banco.tabelas_score import CargaDeFonte, Mencao, ScoreFonte, ScoreMesFonte
-from app.casos_de_uso import temas_da_mencao, unidade_da_mencao, veiculos_da_imprensa
+from app.banco.tabelas_score import Mencao, ScoreFonte, ScoreMesFonte
+from app.casos_de_uso import (
+    temas_da_mencao,
+    trilha_da_carga,
+    unidade_da_mencao,
+    veiculos_da_imprensa,
+)
 from app.casos_de_uso.leitor_de_planilha import (
     abrir_pelo_openpyxl,
     celulas_pelo_calamine,
     como_o_openpyxl,
     sem_erro_do_excel,
 )
+from app.casos_de_uso.trilha_da_carga import Procedencia
 from app.casos_de_uso.veiculos_da_imprensa import nomes_da_lista
 from app.configuracao import obter_configuracao
 from app.dominio.erros import RegraViolada
@@ -80,48 +85,6 @@ from app.dominio.ingestao_score import (
 # veículo criado a partir dela — e não `normalizar` ser igual ao `achatar` da
 # ingestão, que ela não é (divergem em caractere não-ASCII; ver `reconhecer`).
 from app.dominio.texto import normalizar
-
-#: As origens que existem hoje, para quem lê a aba da plataforma saber o que
-#: esperar. NÃO É LISTA FECHADA: a `0115` não tem `check`, de propósito —
-#: chamador novo não deve precisar de migration. Ver `Procedencia`.
-ORIGENS = (
-    #: A confirmação da planilha, pela tela.
-    "api:planilha",
-    #: A carga inicial do pacote das lentes.
-    "carga_do_pacote",
-    #: Chamador que não se identificou — ver `Procedencia.origem`.
-    "desconhecida",
-)
-
-
-@dataclass(frozen=True, slots=True)
-class Procedencia:
-    """De onde veio a carga, viajando do topo até a trilha da `0115`.
-
-    UM PARÂMETRO E NÃO TRÊS: `origem`, `arquivo` e `usuario_id` atravessam
-    `ingerir` → `_ingerir_uma` → `regravar` juntos, e `lote_id` nasce aqui — um
-    por objeto, logo um por arquivo, que é exatamente o que liga as linhas das
-    fontes irmãs. Quem constrói uma `Procedencia` por fonte quebra esse laço.
-
-    `origem` TEM PADRÃO, e o padrão não é inofensivo de propósito: um chamador
-    futuro que esqueça de se identificar grava `desconhecida` e aparece assim na
-    aba, em vez de não gravar linha nenhuma. Carga sem rastro é pior que carga
-    com rastro anônimo — a primeira é invisível, a segunda é um defeito que se
-    denuncia.
-
-    `usuario_id` é nulo no comando de linha, e NÃO vem de
-    `current_setting('painel.usuario_id')` como as trilhas de gatilho da `0005`:
-    um `default` de coluna não pode embrulhar o cast numa exceção como aquelas
-    funções fazem, e um valor malformado abortaria a ingestão inteira em vez de
-    só perder o autor.
-    """
-
-    origem: str = "desconhecida"
-    #: Nulo onde o chamador não tem nome a dar: `ingerir` recebe bytes.
-    arquivo: str | None = None
-    usuario_id: uuid.UUID | None = None
-    lote_id: uuid.UUID = field(default_factory=uuid.uuid4)
-
 
 #: Abrir uma planilha de 10 mil linhas é barato; abrir um arquivo de 200 MB
 #: enviado por engano não é. O maior export real medido é de 10,53 MB — o
@@ -1066,17 +1029,13 @@ def regravar(
     #: E O ZERO DA IRMÃ NÃO CHEGA AQUI, de propósito: `_ingerir_uma` retorna
     #: antes, porque recorte vazio numa irmã não apaga o mês dela. Nada mudou
     #: naquela fonte, então a última carga dela não deve andar.
-    procedencia = procedencia or Procedencia()
-    sessao.add(
-        CargaDeFonte(
-            fonte_id=fonte.id,
-            arquivo=procedencia.arquivo,
-            usuario_id=procedencia.usuario_id,
-            origem=procedencia.origem,
-            lote_id=procedencia.lote_id,
-            mencoes=len(leitura.mencoes),
-            meses=meses,
-        )
+    trilha_da_carga.registrar(
+        sessao,
+        base="score",
+        fonte_id=fonte.id,
+        linhas=len(leitura.mencoes),
+        meses=meses,
+        procedencia=procedencia,
     )
     sessao.flush()
 

@@ -25,7 +25,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.engine import make_url
-from sqlalchemy.exc import InternalError, ProgrammingError
+from sqlalchemy.exc import IntegrityError, InternalError, ProgrammingError
 from sqlalchemy.orm import Session
 
 from app.banco.repositorio_interacoes import (
@@ -454,8 +454,8 @@ def test_nao_adultera_a_trilha_de_auditoria(sessao_restrita, semente):
         )
 
 
-def test_carga_de_fonte_e_append_only_mas_a_aplicacao_insere(sessao_restrita, semente):
-    """A trilha da carga (`0115`) é o caso contrário das trilhas de gatilho.
+def test_carga_de_base_e_append_only_mas_a_aplicacao_insere(sessao_restrita, semente):
+    """A trilha da carga (`0115`/`0116`) é o contrário das trilhas de gatilho.
 
     QUEM ESCREVE É A APLICAÇÃO, e tem de ser: um gatilho vê linhas mudando, não
     "este arquivo, mandado por esta pessoa, alimentou estas fontes irmãs" — nem
@@ -467,21 +467,59 @@ def test_carga_de_fonte_e_append_only_mas_a_aplicacao_insere(sessao_restrita, se
     `0115`, e sem este teste nada cobraria esse revoke.
     """
     inserir = text(
-        "insert into carga_de_fonte (fonte_id, origem, lote_id, mencoes, meses) "
-        "select id, 'teste', gen_random_uuid(), 0, array[date '2026-08-01'] "
+        "insert into carga_de_base (base, fonte_id, origem, lote_id, linhas, meses) "
+        "select 'score', id, 'teste', gen_random_uuid(), 0, array[date '2026-08-01'] "
         "  from score_fonte limit 1"
     )
 
     #: O caminho que a aplicação usa de verdade.
     with _isolado(sessao_restrita):
         sessao_restrita.execute(inserir)
-        assert sessao_restrita.execute(text("select count(*) from carga_de_fonte")).scalar() >= 1
+        assert sessao_restrita.execute(text("select count(*) from carga_de_base")).scalar() >= 1
+
+    #: E A BASE SEM FONTE também entra — é o que a `0116` acrescentou.
+    with _isolado(sessao_restrita):
+        sessao_restrita.execute(
+            text(
+                "insert into carga_de_base (base, origem, lote_id, linhas) "
+                "values ('bonds', 'teste', gen_random_uuid(), 0)"
+            )
+        )
+
+    #: O `check` da `0116` recusa os dois enganos simétricos, e recusar é regra
+    #: do banco — não depende de a aplicação lembrar.
+    with pytest.raises(IntegrityError), _isolado(sessao_restrita):
+        sessao_restrita.execute(
+            text(
+                "insert into carga_de_base (base, fonte_id, origem, lote_id, linhas) "
+                "select 'bonds', id, 'teste', gen_random_uuid(), 0 from score_fonte limit 1"
+            )
+        )
+
+    with pytest.raises(IntegrityError), _isolado(sessao_restrita):
+        sessao_restrita.execute(
+            text(
+                "insert into carga_de_base (base, origem, lote_id, linhas) "
+                "values ('score', 'teste', gen_random_uuid(), 0)"
+            )
+        )
+
+    #: BASE DESCONHECIDA É RECUSADA. A aba ramifica nesta coluna; um typo
+    #: gravaria uma carga que a tela nunca mostraria — o oposto do que a trilha
+    #: existe para fazer.
+    with pytest.raises(IntegrityError), _isolado(sessao_restrita):
+        sessao_restrita.execute(
+            text(
+                "insert into carga_de_base (base, origem, lote_id, linhas) "
+                "values ('bonds_typo', 'teste', gen_random_uuid(), 0)"
+            )
+        )
 
     with pytest.raises(ProgrammingError, match="permission denied"), _isolado(sessao_restrita):
-        sessao_restrita.execute(text("update carga_de_fonte set mencoes = 999"))
+        sessao_restrita.execute(text("update carga_de_base set linhas = 999"))
 
     with pytest.raises(ProgrammingError, match="permission denied"), _isolado(sessao_restrita):
-        sessao_restrita.execute(text("delete from carga_de_fonte"))
+        sessao_restrita.execute(text("delete from carga_de_base"))
 
 
 def test_nao_escala_o_proprio_privilegio(sessao_restrita, semente):

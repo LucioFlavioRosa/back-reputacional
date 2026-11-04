@@ -42,10 +42,15 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.dependencias import exigir_administracao_de_cadastros, exigir_portal_crm
+from app.api.dependencias import (
+    UsuarioQueAdministraCadastros,
+    exigir_administracao_de_cadastros,
+    exigir_portal_crm,
+)
 from app.banco.sessao import SessaoDoPedido
 from app.banco.tabelas_catalogo import BlocoTema, MacroTema, Risco, Tema
-from app.casos_de_uso import importar_subtemas, modelo_de_subtemas
+from app.casos_de_uso import importar_subtemas, modelo_de_subtemas, trilha_da_carga
+from app.casos_de_uso.trilha_da_carga import Procedencia
 from app.dominio.erros import RegraViolada
 from app.dominio.importacao_de_subtemas import NAO, SIM, Decisao, Proposta
 from app.dominio.vocabulario_de_temas import CAMADAS_DE_LSO
@@ -250,6 +255,10 @@ def conferir(sessao: Sessao, arquivo: Arquivo) -> ConferenciaSaida:
 @rotas.post("/confirmacao")
 def confirmar(
     sessao: Sessao,
+    #: O MESMO GUARDA DO ROUTER, agora nomeado: a permissão não muda, e o que
+    #: muda é a rota passar a SABER quem agiu — sem isto a trilha da carga
+    #: gravaria autor nulo na única base que sobe só por aqui.
+    usuario: UsuarioQueAdministraCadastros,
     arquivo: Arquivo,
     impressao: Annotated[str, Form(description="A impressão devolvida na conferência")],
 ) -> ConfirmacaoSaida:
@@ -276,6 +285,25 @@ def confirmar(
             "Confira de novo antes de aplicar."
         )
     resumo = importar_subtemas.aplicar(sessao, propostas)
+    #: A TRILHA DA CARGA (`0116`). Aqui e não em `aplicar`, porque é a rota que
+    #: conhece a pessoa e o nome do arquivo — `aplicar` recebe propostas e mais
+    #: nada. O preço é que um chamador novo de `aplicar` não ganharia trilha; é
+    #: aceitável porque aplicar a taxonomia é ato de tela, não de motor.
+    #:
+    #: `linhas` SÃO AS QUE MUDARAM O CADASTRO, criadas mais alteradas. As
+    #: `iguais` não são carga de nada, e contá-las faria uma reconfirmação do
+    #: mesmo arquivo parecer uma atualização inteira. Zero é válido e informativo:
+    #: "subiram a planilha e nada mudou".
+    #:
+    #: SEM MESES: a taxonomia não fala de período.
+    trilha_da_carga.registrar(
+        sessao,
+        base="subtemas",
+        linhas=resumo.criados + resumo.alterados,
+        procedencia=Procedencia(
+            origem="api:subtemas", arquivo=arquivo.filename, usuario_id=usuario.id
+        ),
+    )
     return ConfirmacaoSaida(
         criados=resumo.criados,
         alterados=resumo.alterados,

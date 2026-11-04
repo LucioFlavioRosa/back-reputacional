@@ -10,7 +10,7 @@ O índice mensal tem quatro coisas guardadas e uma calculada:
     score_config        a régua em vigor, versionada
     score_fato          o que explica a curva, escrito por gente
     planilha_recebida   o arquivo esperando entre conferir e confirmar (0092)
-    carga_de_fonte      quem carregou o quê, quando, e quantas menções (0115)
+    carga_de_base       quem carregou o quê, quando, e quantas linhas (0115/0116)
 
 O score em si não mora aqui: é calculado na leitura, por `app/dominio/score.py`,
 porque a régua que o produz é configurável — ver o cabeçalho da 0048.
@@ -337,27 +337,29 @@ class PlanilhaRecebida(Tabela):
         return self.completa_em is None
 
 
-class CargaDeFonte(Tabela):
-    """Uma carga que entrou numa fonte: quando, por quem, quanto. Espelha a `0115`.
+class CargaDeBase(Tabela):
+    """Uma carga que entrou numa base: quando, por quem, quanto. `0115` e `0116`.
 
-    RESPONDE O QUE `score_mes_fonte.atualizado_em` NÃO RESPONDE. Aquele carimbo
-    nasce novo a cada carga porque `regravar` apaga e reinsere o mês — mas uma
-    carga de ZERO menção apaga e não insere nada, e aí o carimbo não anda. Esta
-    linha é gravada mesmo nesse caso, que é a razão de ela existir.
+    A REGRA E O PORQUÊ MORAM EM `casos_de_uso/trilha_da_carga.py`, que é quem
+    escreve aqui. Este módulo só mapeia a forma.
 
-    APPEND-ONLY PELO `revoke` DA `0115`, e não pelo nome: a rede automática de
-    `test_nenhuma_trilha_e_gravavel_pela_aplicacao` pega só tabelas `*_auditoria`,
-    e essa rede proibiria justamente o `insert` que a aplicação precisa fazer
-    aqui. Quem escreve é a aplicação porque um gatilho não sabe de que arquivo a
-    linha veio nem que fontes irmãs o mesmo arquivo alimentou.
+    RESPONDE O QUE OS CARIMBOS DAS TABELAS DE DADO NÃO RESPONDEM: a ingestão
+    apaga o período e reinsere, então uma carga legítima de ZERO linha não move
+    carimbo nenhum. Esta linha é gravada mesmo nesse caso.
     """
 
-    __tablename__ = "carga_de_fonte"
+    __tablename__ = "carga_de_base"
 
     id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    fonte_id: Mapped[int] = mapped_column(SmallInteger, ForeignKey("score_fonte.id"))
+    #: Ver `trilha_da_carga.BASES`.
+    base: Mapped[str] = mapped_column(Text)
+    #: SÓ O SCORE TEM FONTE, e o `check` da `0116` amarra as duas colunas: bonds
+    #: e subtemas são base inteira.
+    fonte_id: Mapped[int | None] = mapped_column(
+        SmallInteger, ForeignKey("score_fonte.id"), nullable=True
+    )
     #: Nulo onde o chamador não tem nome a dar: `ingerir` recebe bytes.
     arquivo: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: Nulo no comando de linha. Nulo com `origem` preenchida é carga feita fora
@@ -365,13 +367,15 @@ class CargaDeFonte(Tabela):
     usuario_id: Mapped[uuid.UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("usuario.id"), nullable=True
     )
-    #: Ver `ingerir_mencoes.ORIGENS`.
+    #: Ver `trilha_da_carga.ORIGENS`.
     origem: Mapped[str] = mapped_column(Text)
     #: O mesmo valor nas fontes irmãs que o mesmo arquivo alimentou.
     lote_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True))
-    mencoes: Mapped[int] = mapped_column(Integer)
-    #: Os meses substituídos, inclusive os que ficaram zerados.
-    meses: Mapped[list[date]] = mapped_column(ARRAY(Date))
+    #: Menções no Score, cotações em bonds, temas em subtemas. ZERO é válido.
+    linhas: Mapped[int] = mapped_column(Integer)
+    #: Os meses substituídos, inclusive os que ficaram zerados. Vazio onde a base
+    #: não é mensal.
+    meses: Mapped[list[date]] = mapped_column(ARRAY(Date), server_default=text("'{}'"))
     #: `clock_timestamp()` e NÃO `func.now()`: `now()` é o início da transação e
     #: fica congelado nela, então numa ingestão de 62 s a coluna registraria o
     #: começo da carga em vez do fim. Ver o comentário na `0115`.
