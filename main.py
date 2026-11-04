@@ -28,6 +28,7 @@ from app.api import (
     mercado,
     metricas,
     mudanca_de_casa,
+    plataforma,
     referencias,
     riscos,
     score,
@@ -154,6 +155,9 @@ def criar_app() -> FastAPI:
     # Primeiro o de acesso: `/api/auth/*` precisa existir para alguém
     # conseguir entrar, e três das suas rotas são públicas.
     app.include_router(acesso.rotas)
+    # Ao lado do de acesso porque é o mesmo portal: `PortalDaPlataforma` tem a
+    # aba de perfis e a de cargas, e as duas pedem `administra_acessos`.
+    app.include_router(plataforma.rotas)
     app.include_router(interacoes.rotas)
     app.include_router(metricas.rotas)
     app.include_router(materiais.rotas)
