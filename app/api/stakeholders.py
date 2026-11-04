@@ -37,6 +37,7 @@ from app.banco.tabelas_stakeholders import (
     PessoaAegea,
     PessoaAegeaTema,
 )
+from app.casos_de_uso import atores_duplicados
 from app.casos_de_uso.derivar_tipo import derivar_tipo
 from app.casos_de_uso.vinculos_de_risco import aplicar_riscos_do_tema
 from app.dominio.erros import NaoEncontrado, RegraViolada
@@ -498,6 +499,11 @@ def remover_instituicao(
     sessao.execute(delete(Interlocutor).where(Interlocutor.instituicao_id == id))
     sessao.delete(registro)
     sessao.flush()
+    #: APAGAR CADASTRO NÃO DESATUALIZA O PAREAMENTO — ver
+    #: `atores_duplicados.revalidar`. Semelhança é par a par, e os pares deste id
+    #: saíram na cascata; sem o carimbo a fila de duplicados acusaria defasagem
+    #: por causa de uma linha que deixou de existir.
+    atores_duplicados.revalidar(sessao)
 
 
 @rotas.post(

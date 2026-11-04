@@ -39,7 +39,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 
 import pytest
-from sqlalchemy import create_engine, delete, func, select, text
+from sqlalchemy import create_engine, delete, event, func, select, text
 from sqlalchemy.orm import Session
 
 from app.banco.sessao import obter_sessao
@@ -118,7 +118,7 @@ def _o_par_esta_na_fila(sessao, um, outro) -> bool:
 
 
 def _fila(sessao) -> list[atores_duplicados.Duplicado]:
-    """A fila como a produção a produz: recalcula o pareamento, depois lê.
+    """A fila com o pareamento já feito, que é a ordem da produção no TEMPO.
 
     O PAREAMENTO É GUARDADO desde a `0118` — era o que tirava 102,7 s da
     requisição e dava 504. `listar` não recalcula de propósito: fazê-lo
@@ -1447,3 +1447,338 @@ def test_a_impressao_muda_SO_com_nome_ou_conjunto(sessao):
     sessao.flush()
 
     assert atores_duplicados.impressao_do_cadastro(sessao) != antes
+
+
+def test_FUNDIR_nao_deixa_a_fila_desatualizada(sessao):
+    """A RESPOSTA DE GENTE NÃO PODE ACUSAR DEFASAGEM.
+
+    O defeito que isto prende, achado ao consumir a rota do estado no front: a
+    fusão APAGA uma linha de `instituicao`, então a impressão do cadastro muda e
+    `esta_desatualizado` virava verdadeiro — por causa do próprio clique de quem
+    está lendo a fila. Com 209 pares a decidir, o aviso "pode haver duplicado
+    novo" ficaria aceso para sempre depois do primeiro, e aviso sempre aceso é
+    aviso que se aprende a ignorar.
+
+    E O CARIMBO NÃO É MENTIRA: semelhança é par a par, tirar um nome não faz dois
+    outros passarem a se parecer, e os pares do removido saíram na cascata. O que
+    sobrou guardado continua correto.
+    """
+    sobrevivente = _cadastrar(sessao, "Valor Econômico zzrev", "veiculo")
+    que_sai = _cadastrar(sessao, "valoreconomico zzrev", "perfil_rede")
+    atores_duplicados.recalcular(sessao)
+    assert not atores_duplicados.esta_desatualizado(sessao)
+
+    atores_duplicados.fundir(
+        sessao,
+        que_sai_id=que_sai.id,
+        sobrevivente_id=sobrevivente.id,
+        contra_a_proposta=False,
+    )
+
+    assert not atores_duplicados.esta_desatualizado(sessao)
+    #: E A CONTAGEM CARIMBADA É A DE VERDADE, e não a de antes da fusão: o par
+    #: respondido saiu, e uma linha dizendo o número velho faria o histórico do
+    #: pareamento mentir sobre o que estava guardado.
+    assert sessao.scalar(
+        select(PareamentoDaFila.pares).order_by(
+            PareamentoDaFila.calculado_em.desc(), PareamentoDaFila.id.desc()
+        )
+    ) == sessao.scalar(select(func.count()).select_from(ParSemelhante))
+
+
+def test_REVALIDAR_nao_inventa_pareamento_que_nunca_houve(sessao):
+    """O carimbo não pode nascer de uma remoção.
+
+    É a mesma mentira que `pareamento_da_fila` existe para impedir, pela porta de
+    trás: apagar cadastro não é calcular fila, e uma linha dizendo "pareado, zero
+    pares" faria a tela afirmar que a fila está em dia num banco em que ela nunca
+    rodou — exatamente o que o comando de backfill da `0118` existe para evitar.
+    """
+    sobrevivente = _cadastrar(sessao, "Fica zzrev2", "veiculo")
+    que_sai = _cadastrar(sessao, "fica zzrev2", "perfil_rede")
+    sessao.execute(delete(PareamentoDaFila))
+    sessao.flush()
+
+    atores_duplicados.fundir(
+        sessao,
+        que_sai_id=que_sai.id,
+        sobrevivente_id=sobrevivente.id,
+        contra_a_proposta=False,
+    )
+
+    assert atores_duplicados.calculado_em(sessao) is None
+    assert atores_duplicados.esta_desatualizado(sessao)
+
+
+def test_APAGAR_cadastro_pela_rota_nao_deixa_a_fila_desatualizada(cliente, sessao):
+    """A OUTRA REMOÇÃO. `DELETE /api/instituicoes/{id}` apaga a linha que entrou
+    por engano, e sem o carimbo ela acenderia o aviso do mesmo jeito que a fusão.
+
+    PELA ROTA, e não por `revalidar` direto: é o caminho que a tela exercita, e é
+    nele que o chamador pode esquecer de carimbar.
+    """
+    _cadastrar(sessao, "Erro de Cadastro zzrev4", "veiculo")
+    sobra = _cadastrar(sessao, "errodecadastro zzrev4", "perfil_rede")
+    atores_duplicados.recalcular(sessao)
+    assert not atores_duplicados.esta_desatualizado(sessao)
+
+    assert cliente.delete(f"/api/instituicoes/{sobra.id}").status_code == 204
+
+    assert not atores_duplicados.esta_desatualizado(sessao)
+
+
+def _carimbar_um_pareamento(sessao) -> None:
+    """Uma linha em `pareamento_da_fila` SEM passar por `recalcular`.
+
+    POR QUE NÃO `recalcular` AQUI: ele pega `pg_advisory_xact_lock`, que vive até o
+    fim da transação — e a transação do teste não acaba durante o teste. Um
+    cadeado de outra conexão então esperaria para sempre. Medido: a suíte travou
+    em `SELECT pg_advisory_lock(8118)` com a sessão do teste `idle in transaction`.
+    """
+    sessao.add(
+        PareamentoDaFila(
+            pares=0, impressao=atores_duplicados.impressao_do_cadastro(sessao)
+        )
+    )
+    sessao.flush()
+
+
+def test_a_impressao_descreve_o_cadastro_DE_QUE_OS_PARES_SAIRAM(sessao, monkeypatch):
+    """O FURO GRAVE que a revisão achou, e o único cuja mentira é silenciosa.
+
+    A impressão era tirada no FIM de `recalcular`, depois dos 102,7 s de cálculo.
+    Um nome editado durante o cálculo entrava na impressão e NÃO nos pares — e aí
+    `esta_desatualizado` respondia "em dia" sobre um pareamento que não conhecia
+    aquele nome. Falso "em dia" é pior que defasagem falsa: não há aviso nenhum
+    para desconfiar.
+
+    O ESCRITOR CONCORRENTE É SIMULADO pelo `_vizinhos`, que é onde os 102 s são
+    gastos: renomear ali é renomear "durante o cálculo". Não é duas transações de
+    verdade — é a ORDEM que está sob teste, e a ordem é a mesma.
+    """
+    um = _cadastrar(sessao, "Durante o Calculo zzimp", "veiculo")
+    _cadastrar(sessao, "Outra Coisa zzimp", "veiculo")
+
+    de_verdade = atores_duplicados._vizinhos
+
+    def renomeando_no_meio(cadastros):
+        resultado = de_verdade(cadastros)
+        um.nome_normalizado = normalizar("renomeado no meio zzimp")
+        sessao.flush()
+        return resultado
+
+    monkeypatch.setattr(atores_duplicados, "_vizinhos", renomeando_no_meio)
+    atores_duplicados.recalcular(sessao)
+
+    #: A IMPRESSÃO GUARDADA É A DE ANTES DO RENOME, porque é dela que os pares
+    #: saíram — então a tela sabe que o pareamento está atrás do cadastro.
+    assert atores_duplicados.esta_desatualizado(sessao)
+
+
+def _instrucoes_de(sessao, fazer) -> list[str]:
+    """O SQL que `fazer` manda ao banco, em ordem."""
+    instrucoes: list[str] = []
+
+    def capturar(conexao, cursor, instrucao, parametros, contexto, varias):
+        instrucoes.append(instrucao)
+
+    event.listen(sessao.bind, "before_cursor_execute", capturar)
+    try:
+        fazer()
+    finally:
+        event.remove(sessao.bind, "before_cursor_execute", capturar)
+    return instrucoes
+
+
+def test_a_impressao_SAI_DA_MESMA_INSTRUCAO_QUE_LE_AS_LINHAS(sessao):
+    """A JANELA RESIDUAL FECHADA, e ela ainda caía do lado perigoso.
+
+    Tirar a impressão logo DEPOIS da leitura encurtou a janela dos 102,7 s para o
+    intervalo entre duas instruções vizinhas, mas não mudou o lado do erro: sob
+    `read committed` cada instrução pega o seu instantâneo, então um escritor que
+    commitasse entre as duas entrava na impressão e não nos pares. A impressão
+    guardada passava a bater com a de agora, `esta_desatualizado` respondia "em
+    dia", e os pares não conheciam aquele nome — o falso "em dia" outra vez, só
+    mais estreito.
+
+    UMA INSTRUÇÃO NÃO TEM "ENTRE": linhas e impressão saem do mesmo instantâneo, e
+    não há intervalo onde caber um commit. Por isso o teste conta INSTRUÇÕES, e não
+    efeito: o efeito dependeria de acertar a janela no relógio.
+    """
+    _cadastrar(sessao, "Mesmo Instantaneo zzimp2", "veiculo")
+    _cadastrar(sessao, "mesmoinstantaneo zzimp2", "perfil_rede")
+
+    instrucoes = _instrucoes_de(sessao, lambda: atores_duplicados.recalcular(sessao))
+
+    leituras = [
+        i for i in instrucoes if "instituicao" in i.lower() and "select" in i.lower()
+    ]
+    assert len(leituras) == 1, (
+        "a impressão voltou a sair numa instrução própria, e com ela a janela:\n"
+        + "\n---\n".join(leituras)
+    )
+    assert "md5" in leituras[0].lower(), (
+        "a única leitura de `instituicao` não traz a impressão: "
+        "ela deve ser coluna da MESMA instrução"
+    )
+
+
+def test_a_impressao_GUARDADA_e_a_QUE_A_FUNCAO_PUBLICA_CALCULA(sessao):
+    """A IMPRESSÃO EMBUTIDA CONTINUA SENDO A MESMA, e o erro aqui seria silencioso.
+
+    Virar coluna de outra consulta é a chance de a impressão passar a descrever
+    outra coisa — a linha da vez em vez do cadastro, se a subconsulta algum dia
+    correlacionar. Não levantaria erro: gravaria hash diferente do que
+    `esta_desatualizado` compara, e a tela acusaria defasagem a cada leitura.
+
+    O QUE ESTE TESTE NÃO FAZ, e eu afirmei que fazia: ele não discrimina o
+    `correlate(None)`. MEDIDO — o SQL sai igual com e sem, porque o SQLAlchemy só
+    correlaciona se sobrar algum `from` na subconsulta. O teste prende a
+    IGUALDADE, que é a invariante que importa, e é ela que pegaria a correlação se
+    uma segunda tabela a destravasse.
+    """
+    _cadastrar(sessao, "Correlacao zzimp3", "veiculo")
+    _cadastrar(sessao, "correlacao zzimp3", "perfil_rede")
+    _cadastrar(sessao, "Terceiro Nome zzimp3", "veiculo")
+
+    atores_duplicados.recalcular(sessao)
+
+    guardada = sessao.scalar(
+        select(PareamentoDaFila.impressao).order_by(PareamentoDaFila.id.desc())
+    )
+    assert guardada == atores_duplicados.impressao_do_cadastro(sessao)
+    assert not atores_duplicados.esta_desatualizado(sessao)
+
+
+def test_o_cadastro_VAZIO_tambem_fica_com_impressao(sessao):
+    """SEM LINHA NENHUMA A INSTRUÇÃO NÃO DEVOLVE LINHA, e a impressão viria vazia.
+
+    O cadastro vazio é o caso em que a impressão não pode sair da leitura das
+    linhas — não há linha de onde tirá-la. Ela é a constante que
+    `_consulta_da_impressao` já usa no `coalesce`, e usar a MESMA constante é o que
+    impede o cadastro vazio de parecer defasado para sempre.
+    """
+    sessao.execute(delete(Mencao))
+    sessao.execute(delete(Interlocutor))
+    sessao.execute(delete(Instituicao))
+    sessao.flush()
+
+    assert atores_duplicados.recalcular(sessao) == 0
+    assert not atores_duplicados.esta_desatualizado(sessao)
+
+
+def test_REVALIDAR_dispensa_o_carimbo_com_RECALCULO_em_voo(sessao):
+    """ACHADO DE REVISÃO: contar `par_semelhante` no meio da substituição dela
+    gravaria no histórico um número de pares que nunca foi verdade.
+
+    O CADEADO EXCLUSIVO DE OUTRA CONEXÃO simula o recálculo em voo — de sessão, e
+    não `xact`, para sobreviver fora de transação.
+    """
+    sobrevivente = _cadastrar(sessao, "Em Voo zzrev5", "veiculo")
+    que_sai = _cadastrar(sessao, "emvoo zzrev5", "perfil_rede")
+    _carimbar_um_pareamento(sessao)
+    antes = sessao.scalar(select(func.count()).select_from(PareamentoDaFila))
+
+    outra = _engine.connect()
+    try:
+        outra.execute(
+            select(func.pg_advisory_lock(atores_duplicados.ESPACO_DA_TRAVA_DO_PAREAMENTO))
+        )
+        outra.commit()
+
+        atores_duplicados.fundir(
+            sessao,
+            que_sai_id=que_sai.id,
+            sobrevivente_id=sobrevivente.id,
+            contra_a_proposta=False,
+        )
+
+        #: NENHUMA LINHA NOVA: o carimbo foi dispensado, e não gravou contagem
+        #: tirada de uma tabela que estava sendo substituída.
+        assert sessao.scalar(select(func.count()).select_from(PareamentoDaFila)) == antes
+    finally:
+        outra.execute(
+            select(
+                func.pg_advisory_unlock(atores_duplicados.ESPACO_DA_TRAVA_DO_PAREAMENTO)
+            )
+        )
+        outra.commit()
+        outra.close()
+
+
+def test_REVALIDAR_carimba_mesmo_com_OUTRA_revalidacao_em_voo(sessao):
+    """O CONTRAPESO, e sem ele o conserto viraria o defeito.
+
+    Com cadeado EXCLUSIVO a segunda fusão simultânea não carimbaria — e o aviso
+    falso que `revalidar` existe para apagar voltaria pela porta de trás, agora só
+    para quem clica junto com outra pessoa. O CADEADO COMPARTILHADO DE OUTRA
+    CONEXÃO é a outra revalidação em voo.
+
+    O QUE ESTE TESTE PROVA, E SÓ ISSO: que o cadeado compartilhado não barra o
+    carimbo. Ele NÃO exercita duas transações escrevendo — a ordem de
+    `calculado_em` contra a ordem de commit, e qual linha vence na inversão,
+    seguem afirmadas no docstring de `revalidar` e não prendidas aqui. Provar
+    aquilo pede duas sessões que COMMITAM, e o resíduo delas cairia nos outros
+    testes desta execução.
+    """
+    sobrevivente = _cadastrar(sessao, "Junto zzrev6", "veiculo")
+    que_sai = _cadastrar(sessao, "junto zzrev6", "perfil_rede")
+    _carimbar_um_pareamento(sessao)
+    antes = sessao.scalar(select(func.count()).select_from(PareamentoDaFila))
+
+    outra = _engine.connect()
+    try:
+        outra.execute(
+            select(
+                func.pg_advisory_lock_shared(
+                    atores_duplicados.ESPACO_DA_TRAVA_DO_PAREAMENTO
+                )
+            )
+        )
+        outra.commit()
+
+        atores_duplicados.fundir(
+            sessao,
+            que_sai_id=que_sai.id,
+            sobrevivente_id=sobrevivente.id,
+            contra_a_proposta=False,
+        )
+
+        assert (
+            sessao.scalar(select(func.count()).select_from(PareamentoDaFila))
+            == antes + 1
+        )
+        assert not atores_duplicados.esta_desatualizado(sessao)
+    finally:
+        outra.execute(
+            select(
+                func.pg_advisory_unlock_shared(
+                    atores_duplicados.ESPACO_DA_TRAVA_DO_PAREAMENTO
+                )
+            )
+        )
+        outra.commit()
+        outra.close()
+
+
+def test_REVALIDAR_nao_esconde_defasagem_de_verdade(sessao):
+    """O contrapeso: o carimbo vale para a remoção, e só para ela.
+
+    Sem este teste, `revalidar` poderia ser chamada de um caminho que CRIA ou
+    RENOMEIA e silenciar o aviso que a tela precisa dar.
+    """
+    sobrevivente = _cadastrar(sessao, "Sobrevive zzrev3", "veiculo")
+    que_sai = _cadastrar(sessao, "sobrevive zzrev3", "perfil_rede")
+    atores_duplicados.recalcular(sessao)
+    atores_duplicados.fundir(
+        sessao,
+        que_sai_id=que_sai.id,
+        sobrevivente_id=sobrevivente.id,
+        contra_a_proposta=False,
+    )
+    assert not atores_duplicados.esta_desatualizado(sessao)
+
+    sobrevivente.nome_normalizado = normalizar("sobrevive renomeado zzrev3")
+    sessao.flush()
+
+    assert atores_duplicados.esta_desatualizado(sessao)

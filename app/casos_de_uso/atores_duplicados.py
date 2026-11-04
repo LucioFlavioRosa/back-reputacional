@@ -284,9 +284,38 @@ def recalcular(sessao: Session) -> int:
     #: em sequência é só lento — enquanto recusar deixaria a fila velha.
     sessao.execute(select(func.pg_advisory_xact_lock(ESPACO_DA_TRAVA_DO_PAREAMENTO)))
 
-    cadastros = list(
-        sessao.scalars(select(Instituicao).where(Instituicao.ativo.is_(True)))
-    )
+    #: A IMPRESSÃO SAI NA MESMA INSTRUÇÃO QUE AS LINHAS — achado de revisão, e era
+    #: o furo grave desta função.
+    #:
+    #: A impressão descreve o cadastro de que os PARES saíram. Tirá-la no fim fazia
+    #: dela o cadastro de 102 s DEPOIS: um nome editado durante o cálculo entrava na
+    #: impressão e não nos pares, e `esta_desatualizado` respondia "em dia" sobre um
+    #: pareamento que não conhecia aquele nome. Falso "em dia" é a mentira silenciosa
+    #: que esta tabela existe para impedir — pior que a defasagem falsa, porque não
+    #: há aviso nenhum para desconfiar.
+    #:
+    #: DUAS INSTRUÇÕES VIZINHAS NÃO BASTAVAM, e isto é a segunda volta do mesmo
+    #: achado: sob `read committed` cada instrução pega o seu instantâneo, então
+    #: encurtar a janela não trocava o lado do erro — quem commitasse entre as duas
+    #: entrava na impressão e não nos pares, exatamente como antes. Como COLUNA da
+    #: leitura não existe "entre" onde caber um commit.
+    #:
+    #: `correlate(None)` DIZ O QUE SE QUER, e hoje não muda nada: MEDIDO, o SQL sai
+    #: igual com e sem ele, porque o SQLAlchemy só correlaciona quando sobra algum
+    #: `from` na subconsulta — e aqui `instituicao` é o único. Fica porque a
+    #: subconsulta ganhar uma segunda tabela algum dia passaria a correlacionar, e
+    #: aí o `string_agg` agregaria a linha da vez: hash por linha, sem erro nenhum,
+    #: discordando de `esta_desatualizado` para sempre.
+    linhas = sessao.execute(
+        select(
+            Instituicao,
+            _consulta_da_impressao().correlate(None).scalar_subquery(),
+        ).where(Instituicao.ativo.is_(True))
+    ).all()
+    cadastros = [linha[0] for linha in linhas]
+    #: SEM LINHA NÃO HÁ DE ONDE TIRAR A IMPRESSÃO, e a constante é a mesma que o
+    #: `coalesce` usa — duas iguais divergiriam, que é o defeito deste arquivo.
+    impressao = linhas[0][1] if linhas else IMPRESSAO_DO_CADASTRO_VAZIO
     perto = _vizinhos(cadastros)
 
     #: ORDENADO E SEM REPETIÇÃO: `_vizinhos` devolve as duas direções, e a chave
@@ -308,11 +337,7 @@ def recalcular(sessao: Session) -> int:
     #: "calculou e não achou nada" de "nunca calculou". Deduzir isso das linhas de
     #: `par_semelhante` seria repetir, aqui, o furo que a `0115` existe para
     #: fechar: num cadastro limpo a tabela fica vazia e o `max` não anda.
-    sessao.add(
-        PareamentoDaFila(
-            pares=len(pares), impressao=impressao_do_cadastro(sessao)
-        )
-    )
+    sessao.add(PareamentoDaFila(pares=len(pares), impressao=impressao))
     sessao.flush()
     return len(pares)
 
@@ -320,6 +345,81 @@ def recalcular(sessao: Session) -> int:
 #: O ESPAÇO DA TRAVA DO PAREAMENTO. Número próprio para não colidir com a trava
 #: do arquivo da ingestão, que roda na MESMA transação quando a subida recalcula.
 ESPACO_DA_TRAVA_DO_PAREAMENTO = 8118
+
+#: A IMPRESSÃO DO CADASTRO SEM NENHUM ATIVO. Tem nome porque `recalcular` precisa
+#: dela quando a leitura não devolve linha, e o `coalesce` da consulta precisa dela
+#: dentro do banco: o mesmo valor nos dois lugares, de uma definição só.
+IMPRESSAO_DO_CADASTRO_VAZIO = "cadastro-vazio"
+
+
+def revalidar(sessao: Session) -> None:
+    """Carimba o pareamento guardado como atual, sem refazê-lo.
+
+    QUANDO ISTO É VERDADE, e é o único caso em que é: o cadastro mudou SÓ por
+    REMOÇÃO. Semelhança é par a par — tirar um nome não faz dois outros passarem
+    a se parecer —, e `par_semelhante` cascateia dos dois lados, então os pares do
+    removido já saíram com ele. O que resta guardado continua correto, e dizer
+    isso é mais verdadeiro que deixar a tela acusar defasagem.
+
+    POR QUE A FUSÃO PRECISA DISTO. Sem o carimbo, responder UM par deixava
+    `esta_desatualizado` verdadeiro até a próxima subida que criasse cadastro — e
+    a tela diria "pode haver duplicado novo" por causa da própria resposta de quem
+    está lendo. Com 209 pares a decidir, o aviso ficaria aceso para sempre depois
+    do primeiro clique, e aviso sempre aceso é aviso que se aprende a ignorar.
+
+    O CADEADO É COMPARTILHADO E `try`, e as duas metades importam.
+
+    POR QUE CADEADO, e é achado de revisão: `par_semelhante` está sendo
+    SUBSTITUÍDA por um recálculo em voo, então contá-la daqui gravaria no
+    histórico um número de pares que nunca foi verdade — e histórico que mente é o
+    que esta tabela existe para não ser.
+
+    POR QUE COMPARTILHADO: `recalcular` pega o EXCLUSIVO, então as duas se
+    excluem — que é o que se quer. Mas duas revalidações não disputam ESTE cadeado,
+    e com ele exclusivo a segunda fusão simultânea não carimbaria — reintroduzindo,
+    por outra porta, o aviso falso que esta função existe para apagar. O que elas
+    disputam é o que as próprias fusões escrevem, e isso o cadeado não governa.
+
+    POR QUE `try`: fazer uma pessoa esperar até 102 s por um clique para carimbar
+    uma linha de histórico seria trocar um defeito pequeno por um grande. Com o
+    recálculo em voo o carimbo é DISPENSADO — ele grava a própria linha, com a
+    impressão dele.
+
+    NUMA INSTRUÇÃO SÓ, e isto é conserto de achado: contagem e impressão eram duas
+    leituras, e um escritor que commitasse entre elas deixaria a linha afirmando
+    uma impressão que a contagem não conhecia. `insert ... select` dá às duas o
+    MESMO instantâneo, e aí a linha descreve um instante que existiu.
+
+    QUAL LINHA VALE: a de maior `calculado_em`, que é ordem de INSERÇÃO e não de
+    commit. A inversão é inofensiva nos dois sentidos — a linha escolhida carrega a
+    impressão do instantâneo dela, e o que tiver mudado depois aparece na
+    comparação com a impressão de agora. O erro possível é acusar defasagem que
+    outra transação já tinha revalidado, e esse é o lado seguro.
+    """
+    #: SEM PAREAMENTO ANTERIOR NÃO HÁ O QUE REVALIDAR, e carimbar aqui seria
+    #: justamente a mentira que `pareamento_da_fila` existe para impedir: uma
+    #: linha dizendo "pareado, zero pares" sobre um cadastro que nunca foi
+    #: pareado. Apagar cadastro não é calcular fila.
+    if calculado_em(sessao) is None:
+        return
+
+    if not sessao.scalar(
+        select(func.pg_try_advisory_xact_lock_shared(ESPACO_DA_TRAVA_DO_PAREAMENTO))
+    ):
+        return
+
+    #: ANTES DE CONTAR E DE IMPRIMIR: a remoção de quem chama pode estar só na
+    #: sessão, e o `delete` é o que dispara a cascata em `par_semelhante`.
+    sessao.flush()
+    sessao.execute(
+        insert(PareamentoDaFila).from_select(
+            ["pares", "impressao"],
+            select(
+                select(func.count()).select_from(ParSemelhante).scalar_subquery(),
+                _consulta_da_impressao().scalar_subquery(),
+            ),
+        )
+    )
 
 
 def impressao_do_cadastro(sessao: Session) -> str:
@@ -345,7 +445,20 @@ def impressao_do_cadastro(sessao: Session) -> str:
     hashes diferentes só por mudar a ordem de leitura — e a tela acusaria
     defasagem que não existe, que é pior que não avisar.
     """
-    return sessao.scalar(
+    return sessao.scalar(_consulta_da_impressao())
+
+
+def _consulta_da_impressao():
+    """A impressão como CONSULTA, para `revalidar` poder embuti-la na inserção.
+
+    UMA IMPLEMENTAÇÃO SÓ, e isto não é economia de linha: duas versões da mesma
+    impressão divergiriam em silêncio e a tela acusaria defasagem que não existe.
+    A `0097` encarou a mesma escolha com o `normalizar` e escreveu por que recusou
+    a cópia: `unaccent()` não é o NFKD + ascii do Python, e o backfill dela — a
+    única vez que a regra aparece em SQL — é guardado por um teste que recalcula
+    toda linha pela função de verdade.
+    """
+    return (
         select(
             func.coalesce(
                 func.md5(
@@ -354,7 +467,7 @@ def impressao_do_cadastro(sessao: Session) -> str:
                         aggregate_order_by(text("','"), Instituicao.id),
                     )
                 ),
-                "cadastro-vazio",
+                IMPRESSAO_DO_CADASTRO_VAZIO,
             )
         )
         .select_from(Instituicao)
@@ -457,7 +570,7 @@ def listar(sessao: Session) -> list[Duplicado]:
     A CHAVE DE SEMELHANÇA É A MESMA FUNÇÃO QUE A INGESTÃO USA, e por isso o
     pareamento é calculado em Python e não em `regexp_replace`: reescrevê-la em
     SQL seria a terceira cópia da mesma regra — o jeito conhecido de divergir em
-    silêncio, e a `0097` já divergiu em 67 de 87 valores exatamente assim.
+    silêncio, e é a cópia que a `0097` recusou pelo mesmo motivo.
     """
     #: O CADASTRO ATIVO INTEIRO. Quem fica de fora da fila fica de fora no
     #: laço abaixo, onde a razão de cada exclusão está escrita.
@@ -822,6 +935,11 @@ def fundir(
     )
     sessao.delete(perfil)
     sessao.flush()
+    #: A RESPOSTA DE GENTE NÃO PODE ACUSAR DEFASAGEM. A fusão muda o cadastro — e
+    #: só por remoção —, então o pareamento guardado segue correto e `revalidar`
+    #: diz isso. Sem ele, o primeiro par respondido acenderia na tela "pode haver
+    #: duplicado novo" até a próxima subida, por causa do próprio clique.
+    revalidar(sessao)
     return sobrevivente
 
 
