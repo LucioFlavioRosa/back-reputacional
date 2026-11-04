@@ -53,13 +53,19 @@ from sqlalchemy.orm import Session
 
 from app.banco.tabelas_lentes import MencaoNaoClassificada
 from app.banco.tabelas_score import Mencao, ScoreFonte, ScoreMesFonte
-from app.casos_de_uso import temas_da_mencao, unidade_da_mencao, veiculos_da_imprensa
+from app.casos_de_uso import (
+    temas_da_mencao,
+    trilha_da_carga,
+    unidade_da_mencao,
+    veiculos_da_imprensa,
+)
 from app.casos_de_uso.leitor_de_planilha import (
     abrir_pelo_openpyxl,
     celulas_pelo_calamine,
     como_o_openpyxl,
     sem_erro_do_excel,
 )
+from app.casos_de_uso.trilha_da_carga import Procedencia
 from app.casos_de_uso.veiculos_da_imprensa import nomes_da_lista
 from app.configuracao import obter_configuracao
 from app.dominio.erros import RegraViolada
@@ -724,6 +730,7 @@ def regravar(
     fonte: ScoreFonte,
     leitura: Leitura,
     veiculos: Mapping[str, str] | None = None,
+    procedencia: Procedencia | None = None,
 ) -> None:
     """Troca os meses que o arquivo traz — menções, agregado e não classificadas.
 
@@ -911,6 +918,27 @@ def regravar(
         for mes, total in leitura.nao_classificadas.items()
         if total and mes in meses
     )
+    #: A TRILHA DA CARGA MORA AQUI, e é por isso que esta função é o lugar: ela é
+    #: o ponto único por onde passa toda escrita de menção — o importador mensal
+    #: e a carga do pacote —, e passa EXATAMENTE quando a base de fato muda.
+    #:
+    #: O ZERO LEGÍTIMO É O CASO QUE IMPORTA. Quem recorta por lista e não acha
+    #: veículo nenhum chega aqui com `leitura.mencoes` vazia: os meses são
+    #: apagados e nada é inserido, então nem `mencao.criado_em` nem
+    #: `score_mes_fonte.atualizado_em` andam. Esta linha anda, e é a única coisa
+    #: que separa "carregado hoje, deu zero" de "ninguém carregou".
+    #:
+    #: E O ZERO DA IRMÃ NÃO CHEGA AQUI, de propósito: `_ingerir_uma` retorna
+    #: antes, porque recorte vazio numa irmã não apaga o mês dela. Nada mudou
+    #: naquela fonte, então a última carga dela não deve andar.
+    trilha_da_carga.registrar(
+        sessao,
+        base="score",
+        fonte_id=fonte.id,
+        linhas=len(leitura.mencoes),
+        meses=meses,
+        procedencia=procedencia,
+    )
     sessao.flush()
 
 
@@ -1002,6 +1030,7 @@ def _ingerir_uma(
     veiculos: Mapping[str, str] | None = None,
     criados: int = 0,
     e_recorte: bool = False,
+    procedencia: Procedencia | None = None,
 ) -> Resumo:
     """Lê a planilha pelo mapeamento desta fonte e substitui os meses dela.
 
@@ -1052,7 +1081,7 @@ def _ingerir_uma(
         antes_do_vazio = _quanto_havia(
             sessao, fonte, list(leitura.meses_a_substituir(mapeamento))
         )
-        regravar(sessao, fonte, leitura, veiculos)
+        regravar(sessao, fonte, leitura, veiculos, procedencia)
         return Resumo(
             fonte=fonte.codigo,
             nome=fonte.nome,
@@ -1095,7 +1124,7 @@ def _ingerir_uma(
     #: mês tinha 300 e vai encolher".
     meses_substituidos = list(leitura.meses_a_substituir(mapeamento))
     antes = _quanto_havia(sessao, fonte, meses_substituidos)
-    regravar(sessao, fonte, leitura, veiculos)
+    regravar(sessao, fonte, leitura, veiculos, procedencia)
     #: UMA VEZ, e nao por mencao: a contagem abaixo percorre 25 mil linhas, e
     #: uma consulta dentro do laco faria 25 mil idas ao banco.
     temas = temas_da_mencao.por_nome(sessao)
@@ -1182,6 +1211,7 @@ def ingerir(
     fonte: ScoreFonte,
     conteudo: bytes,
     veiculos_a_criar: Sequence[str] = (),
+    procedencia: Procedencia | None = None,
 ) -> list[Resumo]:
     """Lê o export e substitui os meses dele em TODAS as fontes que o leem.
 
@@ -1223,6 +1253,11 @@ def ingerir(
     criados = veiculos_da_imprensa.criar(sessao, a_criar, quem_fala)
     de_cadastro = {**reconhecimento.cadastrados, **criados}
 
+    #: UMA `Procedencia` PARA TODAS AS IRMÃS, e é o que dá o `lote_id` comum: um
+    #: export da Clipei alimenta Imprensa e Mercado, e as duas linhas da trilha
+    #: têm de dizer que vieram do mesmo arquivo. Construir uma por irmã daria
+    #: dois lotes para uma subida só.
+    procedencia = procedencia or Procedencia()
     return [
         _ingerir_uma(
             sessao,
@@ -1231,6 +1266,7 @@ def ingerir(
             de_cadastro,
             len(criados),
             e_recorte=irma.id != fonte.id,
+            procedencia=procedencia,
         )
         for irma in fontes_do_mesmo_arquivo(sessao, fonte)
     ]

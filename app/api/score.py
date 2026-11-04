@@ -53,6 +53,7 @@ from app.casos_de_uso import (
     veiculos_da_imprensa,
 )
 from app.casos_de_uso.ler_sinais_da_lente import regua_dos_sinais
+from app.casos_de_uso.trilha_da_carga import Procedencia
 from app.dominio.erros import Conflito, NaoEncontrado, RegraViolada
 from app.dominio.fontes_do_score import alimenta_os_kpis
 from app.dominio.ingestao_score import rotulo_do_cargo
@@ -1957,8 +1958,12 @@ def importar_planilha(
             sessao, planilha_id=planilha_id, fonte=fonte, usuario_id=usuario.id
         )
         a_descartar = planilha_id
+        #: LIDO AQUI, antes de `descartar` apagar a linha lá embaixo: é a última
+        #: janela em que o nome do arquivo existe.
+        nome_do_arquivo = planilha_do_score.nome_de(sessao, planilha_id=planilha_id)
     else:
         conteudo = arquivo.file.read()
+        nome_do_arquivo = arquivo.filename
         #: QUAL PENDÊNCIA EXISTE AGORA, antes de ingerir — e não depois. A
         #: ingestão leva 62 s medidos, e nesse tempo outra conferência da mesma
         #: pessoa nesta fonte pode gravar uma planilha NOVA. Perguntar depois e
@@ -1970,7 +1975,18 @@ def importar_planilha(
     resumos = [
         _saida_da_importacao(resumo)
         for resumo in ingerir_mencoes.ingerir(
-            sessao, fonte, conteudo, _nomes_autorizados(veiculos_a_criar)
+            sessao,
+            fonte,
+            conteudo,
+            _nomes_autorizados(veiculos_a_criar),
+            #: QUEM CARREGOU E DE QUE ARQUIVO, para a trilha da `0115`. Sem isto
+            #: a carga entra como `desconhecida`, que é visível na aba da
+            #: plataforma — a trilha denuncia o esquecimento em vez de sumir.
+            Procedencia(
+                origem="api:planilha",
+                arquivo=nome_do_arquivo,
+                usuario_id=usuario.id,
+            ),
         )
     ]
     #: A LINHA SAI NA TRANSAÇÃO, o byte depois dela: gravou, a planilha

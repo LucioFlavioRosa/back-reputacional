@@ -50,6 +50,7 @@ from app.casos_de_uso import (
     serie_de_mercado,
     subida_em_partes,
 )
+from app.casos_de_uso.trilha_da_carga import Procedencia
 
 rotas = APIRouter(
     prefix="/api/mercado",
@@ -554,7 +555,15 @@ def importar_bonds(
     linhas com os mesmos valores. É o que torna a rotina semanal segura mesmo
     quando alguém não lembra se já subiu.
     """
-    resultado = ingerir_bonds.gravar(sessao, arquivo.file.read())
+    resultado = ingerir_bonds.gravar(
+        sessao,
+        arquivo.file.read(),
+        #: QUEM CARREGOU E DE QUE ARQUIVO, para a trilha da `0116`: `bond_cotacao`
+        #: não tem carimbo nenhum, e a subida é apagada depois de gravar.
+        Procedencia(
+            origem="api:bonds", arquivo=arquivo.filename, usuario_id=usuario.id
+        ),
+    )
     sessao.commit()
     return ImportacaoDeBondsSaida(**vars(resultado))
 
@@ -608,7 +617,15 @@ def importar_bonds_em_partes(
     subida, bytes_da_planilha = planilha_de_bonds.recuperar(
         sessao, subida_id=subida_id, usuario_id=usuario.id
     )
-    resultado = ingerir_bonds.gravar(sessao, bytes_da_planilha)
+    resultado = ingerir_bonds.gravar(
+        sessao,
+        bytes_da_planilha,
+        #: O NOME SAI DA SUBIDA, lido antes de `descartar` apagar a linha logo
+        #: abaixo — é a última janela em que ele existe.
+        Procedencia(
+            origem="api:bonds", arquivo=subida.nome, usuario_id=usuario.id
+        ),
+    )
     caminho = planilha_de_bonds.descartar(
         sessao, subida_id=subida_id, usuario_id=usuario.id
     )

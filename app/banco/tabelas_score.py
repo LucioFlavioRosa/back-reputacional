@@ -10,6 +10,7 @@ O índice mensal tem quatro coisas guardadas e uma calculada:
     score_config        a régua em vigor, versionada
     score_fato          o que explica a curva, escrito por gente
     planilha_recebida   o arquivo esperando entre conferir e confirmar (0092)
+    carga_de_base       quem carregou o quê, quando, e quantas linhas (0115/0116)
 
 O score em si não mora aqui: é calculado na leitura, por `app/dominio/score.py`,
 porque a régua que o produz é configurável — ver o cabeçalho da 0048.
@@ -24,6 +25,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     Date,
+    DateTime,
     ForeignKey,
     Identity,
     Integer,
@@ -31,8 +33,9 @@ from sqlalchemy import (
     SmallInteger,
     Text,
     func,
+    text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -327,3 +330,50 @@ class PlanilhaRecebida(Tabela):
         um arquivo que não existe, ou pior, um pela metade.
         """
         return self.completa_em is None
+
+
+class CargaDeBase(Tabela):
+    """Uma carga que entrou numa base: quando, por quem, quanto. `0115` e `0116`.
+
+    A REGRA E O PORQUÊ MORAM EM `casos_de_uso/trilha_da_carga.py`, que é quem
+    escreve aqui. Este módulo só mapeia a forma.
+
+    RESPONDE O QUE OS CARIMBOS DAS TABELAS DE DADO NÃO RESPONDEM: a ingestão
+    apaga o período e reinsere, então uma carga legítima de ZERO linha não move
+    carimbo nenhum. Esta linha é gravada mesmo nesse caso.
+    """
+
+    __tablename__ = "carga_de_base"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    #: Ver `trilha_da_carga.BASES`.
+    base: Mapped[str] = mapped_column(Text)
+    #: SÓ O SCORE TEM FONTE, e o `check` da `0116` amarra as duas colunas: bonds
+    #: e subtemas são base inteira.
+    fonte_id: Mapped[int | None] = mapped_column(
+        SmallInteger, ForeignKey("score_fonte.id"), nullable=True
+    )
+    #: Nulo onde o chamador não tem nome a dar: `ingerir` recebe bytes.
+    arquivo: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Nulo no comando de linha. Nulo com `origem` preenchida é carga feita fora
+    #: da aplicação — a mesma convenção que a `0005` usa nas trilhas dela.
+    usuario_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("usuario.id"), nullable=True
+    )
+    #: Ver `trilha_da_carga.ORIGENS`.
+    origem: Mapped[str] = mapped_column(Text)
+    #: O mesmo valor nas fontes irmãs que o mesmo arquivo alimentou.
+    lote_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True))
+    #: Menções no Score, cotações em bonds, temas em subtemas. ZERO é válido.
+    linhas: Mapped[int] = mapped_column(Integer)
+    #: Os meses substituídos, inclusive os que ficaram zerados. Vazio onde a base
+    #: não é mensal.
+    meses: Mapped[list[date]] = mapped_column(ARRAY(Date), server_default=text("'{}'"))
+    #: `clock_timestamp()` e NÃO `func.now()`: `now()` é o início da transação e
+    #: fica congelado nela, então numa ingestão de 62 s a coluna registraria o
+    #: começo da carga em vez do fim. Ver o comentário na `0115`.
+    concluida_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("clock_timestamp()")
+    )

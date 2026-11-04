@@ -44,6 +44,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.banco.tabelas_mercado import Bond, BondCotacao
+from app.casos_de_uso import trilha_da_carga
 from app.casos_de_uso.ingerir_mencoes import (
     ASSINATURA_ZIP,
     TAMANHO_MAXIMO,
@@ -51,6 +52,7 @@ from app.casos_de_uso.ingerir_mencoes import (
     orcamento_de_leitura,
 )
 from app.casos_de_uso.leitor_de_planilha import celulas_pelo_calamine, sem_erro_do_excel
+from app.casos_de_uso.trilha_da_carga import Procedencia
 from app.dominio.erros import RegraViolada
 from app.dominio.leitura_de_bonds import Leitura, ler
 
@@ -224,7 +226,9 @@ def conferir(sessao: Session, conteudo: bytes) -> Conferencia:
     )
 
 
-def gravar(sessao: Session, conteudo: bytes) -> Resultado:
+def gravar(
+    sessao: Session, conteudo: bytes, procedencia: Procedencia | None = None
+) -> Resultado:
     """Grava as cotações dos papéis cadastrados, por `upsert`.
 
     DEVOLVE INSERIDAS E ATUALIZADAS SEPARADAS, e isso custa uma leitura a mais
@@ -269,6 +273,24 @@ def gravar(sessao: Session, conteudo: bytes) -> Resultado:
         )
 
     completados = _completar_catalogo(sessao, leitura, cadastrados)
+    #: A TRILHA DA CARGA (`0115`/`0116`). Aqui, e não na rota, pelo mesmo motivo
+    #: do Score: é o ponto único de escrita, e os dois ramos da rota — o arquivo
+    #: e a subida em partes — passam por ele.
+    #:
+    #: `linhas` CONTA O QUE ENTROU, inserido ou atualizado: a carga da semana
+    #: reenviada é carga, e `bond_cotacao` não tem carimbo nenhum que a delate.
+    #: Zero é válido — arquivo só com papel fora do cadastro grava nada.
+    #:
+    #: OS MESES SAEM DAS DATAS porque a cotação é diária: a aba lista por mês
+    #: como nas outras bases, e uma carga que cobre duas semanas de virada de mês
+    #: aparece nos dois.
+    trilha_da_carga.registrar(
+        sessao,
+        base="bonds",
+        linhas=len(conhecidas),
+        meses={c.data.replace(day=1) for c in conhecidas},
+        procedencia=procedencia,
+    )
     return Resultado(
         inseridas=len(conhecidas) - atualizadas,
         atualizadas=atualizadas,
