@@ -23,6 +23,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
+from app.api import plataforma
 from app.banco.sessao import obter_sessao
 from app.banco.tabelas_acesso import Papel, Usuario
 from app.banco.tabelas_importacao import Importacao, ImportacaoLinha
@@ -120,6 +121,12 @@ def _cargas(cliente, **parametros):
     resposta = cliente.get("/api/plataforma/cargas", params=parametros)
     assert resposta.status_code == 200, resposta.text
     return resposta.json()
+
+
+def _resumo(cliente):
+    resposta = cliente.get("/api/plataforma/cargas/resumo")
+    assert resposta.status_code == 200, resposta.text
+    return {linha["base"]: linha for linha in resposta.json()}
 
 
 # -- a permissão ----------------------------------------------------------------
@@ -222,6 +229,119 @@ def test_carga_sem_usuario_e_informacao_e_nao_dado_faltando(sessao, cliente_admi
 
     assert carga["quem"] is None
     assert carga["origem"] == "carga_do_pacote"
+
+
+# -- o lote não pode ser cortado pela metade ------------------------------------
+
+
+def test_o_corte_nao_separa_as_irmas_do_mesmo_lote(sessao, cliente_admin, monkeypatch):
+    """O defeito que isto cobre: soma parcial apresentada como total.
+
+    A tela agrupa por `lote_id` para mostrar uma subida da Clipei como UMA carga.
+    Se as irmãs caírem em lados opostos do teto, o grupo chegaria com uma fonte
+    só e uma soma menor — e a tela não teria como saber. Com o teto em 1 aqui, a
+    fronteira é garantida em vez de depender de volume.
+    """
+    monkeypatch.setattr(plataforma, "TETO", 1)
+    fonte = _uma_fonte(sessao)
+    outra = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == "bites"))
+    lote = uuid.uuid4()
+    agora = datetime.now(UTC)
+    _carga(sessao, fonte_id=fonte.id, lote_id=lote, linhas=25000, concluida_em=agora)
+    _carga(
+        sessao,
+        fonte_id=outra.id,
+        lote_id=lote,
+        linhas=320,
+        concluida_em=agora - timedelta(microseconds=5),
+    )
+
+    devolvidas = _cargas(cliente_admin)
+
+    #: AS DUAS VÊM, mesmo com o teto em 1: lote incompleto é pior que exceder o
+    #: teto, porque a soma mentiria.
+    assert len(devolvidas) == 2
+    assert {c["linhas"] for c in devolvidas} == {25000, 320}
+    assert {c["lote_id"] for c in devolvidas} == {str(lote)}
+
+
+def test_o_remendo_do_lote_nao_duplica_quem_ja_veio(sessao, cliente_admin):
+    """Sem teto apertado, a lista não pode ganhar linha repetida."""
+    fonte = _uma_fonte(sessao)
+    lote = uuid.uuid4()
+    _carga(sessao, fonte_id=fonte.id, lote_id=lote)
+
+    assert len(_cargas(cliente_admin)) == 1
+
+
+# -- o resumo, que é o que permite dizer "sem registro" -------------------------
+
+
+def test_o_resumo_traz_as_quatro_bases_mesmo_com_zero(sessao, cliente_admin):
+    """A tela precisa saber que `bonds` existe e nunca carregou.
+
+    A LISTAGEM NÃO SERVE PARA ISSO: ela é histórico com teto, e "não apareceu nas
+    últimas 200" não é "nunca carregou".
+    """
+    resumo = _resumo(cliente_admin)
+
+    assert set(resumo) == {"score", "bonds", "subtemas", "agendas"}
+    assert all(linha["cargas"] == 0 for linha in resumo.values())
+    assert all(linha["ultima_em"] is None for linha in resumo.values())
+
+
+def test_o_resumo_conta_e_data_a_ultima_de_cada_base(sessao, cliente_admin):
+    fonte = _uma_fonte(sessao)
+    agora = datetime.now(UTC)
+    _carga(sessao, fonte_id=fonte.id, concluida_em=agora - timedelta(days=3))
+    _carga(sessao, fonte_id=fonte.id, concluida_em=agora)
+    _carga(sessao, base="bonds", origem="api:bonds", meses=[], concluida_em=agora)
+
+    resumo = _resumo(cliente_admin)
+
+    assert resumo["score"]["cargas"] == 2
+    assert resumo["bonds"]["cargas"] == 1
+    assert resumo["subtemas"]["cargas"] == 0
+    assert resumo["score"]["ultima_em"] is not None
+
+
+def test_o_resumo_NAO_tem_teto(sessao, cliente_admin, monkeypatch):
+    """É agregado: o teto da listagem não pode encolher a contagem.
+
+    Com o teto em 1, a listagem devolve uma carga e o resumo tem de continuar
+    dizendo três — é exatamente a divergência que tornava "sem registro" falso.
+    """
+    monkeypatch.setattr(plataforma, "TETO", 1)
+    fonte = _uma_fonte(sessao)
+    for dias in (3, 2, 1):
+        _carga(
+            sessao,
+            fonte_id=fonte.id,
+            lote_id=uuid.uuid4(),
+            concluida_em=datetime.now(UTC) - timedelta(days=dias),
+        )
+
+    assert len(_cargas(cliente_admin)) == 1
+    assert _resumo(cliente_admin)["score"]["cargas"] == 3
+
+
+def test_o_resumo_conta_so_as_agendas_confirmadas(sessao, cliente_admin):
+    quem = _pessoa(sessao, "Quem Importou")
+    _agenda_confirmada(sessao, quem, quantas_linhas=1)
+    sessao.add(
+        Importacao(
+            arquivo_nome="pendente.xlsx",
+            situacao="aguardando_conferencia",
+            criado_por=quem.id,
+        )
+    )
+    sessao.flush()
+
+    assert _resumo(cliente_admin)["agendas"]["cargas"] == 1
+
+
+def test_o_resumo_tambem_exige_administrar_acessos(cliente_sem_admin):
+    assert cliente_sem_admin.get("/api/plataforma/cargas/resumo").status_code == 403
 
 
 # -- as agendas, da trilha que elas já tinham -----------------------------------
