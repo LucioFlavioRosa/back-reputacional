@@ -2,24 +2,22 @@
 
 POR QUE ISTO EXISTE. A menção guardava o veículo como texto do fornecedor
 (`mencao.veiculo`) e nada mais. O cadastro compartilhado já modela veículo —
-`instituicao` com `tipo='veiculo'`, categoria de público, subcategoria editorial
-e esfera —, e as duas metades não se falavam: 39 veículos cadastrados, 2.648
-distintos no export de dois meses da Clipei.
+`instituicao` com `tipo='veiculo'`, categoria de público, subcategoria
+editorial e esfera —, e as duas metades não se falavam: o export traz milhares
+de veículos distintos e o cadastro começou com algumas dezenas.
 
-O EFEITO DISSO NA LENTE MERCADO. Ela se separa hoje por
-`Público-alvo = Investidores`, o que captura 80 linhas quando a lista de
-veículos do mercado financeiro que a Aegea mantém captura 323 — e as duas listas
-discordam em 267 das 335 linhas envolvidas. Com o vínculo, o critério passa a
-ser a subcategoria "Econômica e de negócios" do cadastro, e a lista se mantém
-pela tela de Cadastro de Instituições em vez de por SQL.
+O EFEITO DISSO NA LENTE MERCADO. Separada por `Público-alvo = Investidores`,
+ela captura um conjunto muito menor e DIFERENTE da lista de veículos do mercado
+financeiro que a Aegea mantém. Com o vínculo, o critério passa a ser a
+subcategoria "Econômica e de negócios" do cadastro, e a lista se mantém pela
+tela de Cadastro de Instituições em vez de por SQL.
 
-CRIAR NO UPLOAD, MAS NÃO EM SILÊNCIO. O dono do produto pediu que o veículo sem
-cadastro nasça junto com a subida. Pediu também — e isto é o que torna a coisa
-segura — que a conta apareça ANTES de confirmar. É a mesma lição que a
-importação de agendas aprendeu e escreveu no próprio código: "importação de
-planilha sem conferência humana cria duplicata de instituição em massa, e
-desfazer isso depois é pior que digitar de novo". Aqui são ~2.600 criações numa
-subida; ver o número antes é a diferença entre decidir e descobrir.
+CRIAR NO UPLOAD, MAS NÃO EM SILÊNCIO. O veículo sem cadastro nasce junto com a
+subida, por pedido do dono do produto, e a conta aparece ANTES de confirmar —
+é isso que torna a coisa segura, porque uma subida faz nascer milhares de
+cadastros. A importação de agendas tem a razão escrita no próprio código:
+"importação de planilha sem conferência humana cria duplicata de instituição em
+massa, e desfazer isso depois é pior que digitar de novo".
 
 O QUE O FORNECEDOR SABE, E O QUE ELE NÃO SABE. Do export vêm o nome, a praça
 (`Estado do Veículo`) e o alcance (`Abrangência`, que casa com `esfera`). O que
@@ -65,10 +63,8 @@ CATEGORIA_DA_IMPRENSA = "Imprensa"
 #: aparece em três), então a chave real é sempre (categoria, subcategoria).
 LISTAS_DE_VEICULOS: dict[str, tuple[str, str]] = {
     "imprensa_economica": (CATEGORIA_DA_IMPRENSA, "Econômica e de negócios"),
-    #: A LENTE INSTITUCIONAL RECORTA PELO MESMO MECANISMO (pedido de 20/10/2026:
-    #: "na lente Institucional, o filtro que deve ser utilizado será Imprensa >
-    #: Institucional, assim como fizemos para a lente mercado"). A subcategoria
-    #: nasceu na `0106`; a fonte que a recorta, na `0107`.
+    #: A LENTE INSTITUCIONAL RECORTA PELO MESMO MECANISMO: o filtro dela é
+    #: Imprensa > Institucional, como o do Mercado.
     "imprensa_institucional": (CATEGORIA_DA_IMPRENSA, "Institucional"),
 }
 
@@ -90,22 +86,20 @@ CATEGORIA_DE_QUEM_FALA: dict[str, str] = {
 
 #: O PÚBLICO DE QUEM FALA, PELO CARGO QUE A PLANILHA INFORMA.
 #:
-#: POR QUE ISTO EXISTE. A primeira carga criou os 1.108 perfis todos como
-#: "Formadores de Opinião", e quem abriu o cadastro viu o vereador Iriel Sachet
-#: classificado como formador de opinião — errado, e o cadastro TEM o
-#: vocabulário certo: a taxonomia de públicos prevê Poder Legislativo com
-#: Federal, Estadual e Municipal desde a `0036`.
+#: SEM ISTO O CARGO É JOGADO FORA no cadastro: a coluna `Cargo` alimenta a régua
+#: de peso e o gráfico de quem fala, mas o perfil nasce sem ela — e é ela que
+#: diz se o ator é poder público, imprensa ou sociedade. Sem o mapa, todo perfil
+#: nasce como "Formador de Opinião", e um vereador aparece classificado como
+#: formador de opinião quando o cadastro TEM o vocabulário certo (a taxonomia de
+#: públicos prevê Poder Legislativo com Federal, Estadual e Municipal desde a
+#: `0036`).
 #:
-#: O CARGO VINHA SENDO JOGADO FORA no cadastro. A coluna `Cargo` da Bites
-#: alimentava a régua de peso e o gráfico de quem fala, mas o perfil nascia sem
-#: ela — e é ela que diz se o ator é poder público, imprensa ou sociedade.
-#:
-#: SÓ O QUE SE PODE DEFENDER ESTÁ AQUI. `político` (19 menções) pode ser
-#: executivo ou legislativo; `partido`, `empresa` e `órgão público` não têm par
-#: óbvio na taxonomia; `outros`, `alemao` e `perfil de twitter` não são cargo.
-#: Esses ficam SEM categoria — que é a verdade ("ainda não classificado"), e é
-#: um estado que o cadastro já conhece. Chutar classificaria 2.249 perfis
-#: anônimos como formadores de opinião, que é o defeito que isto conserta.
+#: SÓ O QUE SE PODE DEFENDER ESTÁ AQUI. `político` pode ser executivo ou
+#: legislativo; `partido`, `empresa` e `órgão público` não têm par óbvio na
+#: taxonomia; `outros`, `alemao` e `perfil de twitter` não são cargo. Esses ficam
+#: SEM categoria — que é a verdade ("ainda não classificado") e um estado que o
+#: cadastro já conhece. Chutar classificaria milhares de perfis anônimos como
+#: formadores de opinião.
 #:
 #: A chave é o cargo JÁ CANONIZADO (`normalizar_cargo`), então `Vereadora` e
 #: `Verador` caem no mesmo lugar.
@@ -236,22 +230,17 @@ def reconhecer(
     if not nomes:
         return Reconhecimento()
 
-    #: UMA CONSULTA, e não uma por veículo: são 2.648 nomes no export de dois
-    #: meses da Clipei, e 2.648 idas ao banco levariam minutos.
+    #: UMA CONSULTA, e não uma por veículo: são milhares de nomes por export, e
+    #: milhares de idas ao banco levariam minutos.
     #:
-    #: EM QUALQUER TIPO, e é decisão do dono do produto: UM CADASTRO SÓ, vindo
-    #: do Cadastro compartilhado.
+    #: EM QUALQUER TIPO, por decisão do dono do produto: UM CADASTRO SÓ, vindo do
+    #: Cadastro compartilhado. Filtrando por tipo, o mesmo ator existe duas e três
+    #: vezes — como veículo na lista do Mercado e como perfil de rede sem
+    #: classificação —, as menções não somam, e nenhuma tela junta.
     #:
-    #: O QUE ISTO CONSERTA, medido nesta base: "Valor Econômico" existia TRÊS
-    #: vezes — como veículo (86 menções, na lista do Mercado) e como dois
-    #: perfis de rede (2 e 11 menções, sem classificação nenhuma). Treze
-    #: menções do Valor não somavam com as 86, e nenhuma tela juntava. São 94
-    #: atores com cadastro duplicado entre imprensa e rede.
-    #:
-    #: O CANAL NÃO SE PERDE AO UNIFICAR, e era essa a minha objeção: quem diz
-    #: "foi em rede social" é a FONTE da menção — `bites` alimenta a lente
-    #: Sociedade digital, `clipei` a Imprensa. A instituição responde QUEM
-    #: falou; a fonte responde ONDE.
+    #: O CANAL NÃO SE PERDE AO UNIFICAR: quem diz "foi em rede social" é a FONTE
+    #: da menção — `bites` alimenta a Sociedade digital, `clipei` a Imprensa. A
+    #: instituição responde QUEM falou; a fonte responde ONDE.
     achados: dict[str, tuple[str, bool]] = {}
     for normalizado, ident, de_outro_tipo in sessao.execute(
         select(
@@ -260,38 +249,26 @@ def reconhecer(
             (Instituicao.tipo != tipo).label("de_outro_tipo"),
         ).where(
             Instituicao.nome_normalizado.in_(list(nomes)),
-            #: EM QUALQUER TIPO, PARA QUALQUER FONTE — e esta é a regra que o
-            #: dono do produto deu em 11/10/2026: "qualquer fonte de dados tem
-            #: acesso à mesma base de instituições e interlocutores, não interessa
-            #: se é no CRM, redes sociais ou imprensa. O BTG podemos ter acesso em
-            #: rede social, em reunião de investimento ou imprensa, mas ele
-            #: continua sendo um só, se comunicando e relacionando em diferentes
-            #: níveis".
+            #: EM QUALQUER TIPO, PARA QUALQUER FONTE — regra do dono do produto:
+            #: "qualquer fonte de dados tem acesso à mesma base de instituições e
+            #: interlocutores, não interessa se é no CRM, redes sociais ou
+            #: imprensa. O BTG podemos ter acesso em rede social, em reunião de
+            #: investimento ou imprensa, mas ele continua sendo um só".
             #:
-            #: ANTES SE FILTRAVA PELO TIPO DA FONTE, e o custo está medido: 24
-            #: atores ficaram partidos em dois cadastros. "BTG Pactual" e "Fitch
-            #: Ratings" existiam como `investidor` — invisíveis para a Clipei —, e
-            #: a ingestão criou um `veiculo` de cada: 23 agendas num registro, 6
-            #: menções no outro, e nenhuma tela juntando. Os outros 22 são
-            #: `perfil_rede` + `veiculo`, com 310 menções de um lado e 37 do
-            #: outro.
+            #: FILTRANDO PELO TIPO DA FONTE, o mesmo ator fica partido em dois
+            #: cadastros: um `investidor` invisível para a Clipei e um `veiculo`
+            #: criado pela ingestão, com as agendas num registro e as menções no
+            #: outro, e nenhuma tela juntando. Uma fonte que busca em qualquer
+            #: tipo e outra que não busca recriam o par a cada subida.
             #:
-            #: E A `0077` TINHA ESCRITO QUE ISSO ESTAVA RESOLVIDO: "a ingestão já
-            #: foi corrigida, então a próxima subida não cria o par de novo". Era
-            #: verdade para a Bites, que sempre buscou em qualquer tipo. Falso
-            #: para a Clipei, que não buscava — e foi ela que recriou os 22.
-            #:
-            #: QUEM ENQUADRA É O TIME, não esta busca: "quem decide como enquadrar
-            #: é o time que está registrando a primeira vez ou editando
-            #: posteriormente". A busca acha o ator; o tipo, a categoria e a
+            #: QUEM ENQUADRA É O TIME, não esta busca: o tipo, a categoria e a
             #: subcategoria são de quem cadastra, e esta função nunca os muda num
             #: cadastro que já existe.
             #:
-            #: O HOMÔNIMO NÃO DESAPARECEU, MUDOU DE DONO. A regra antiga decidia
-            #: sozinha que nome igual com tipo diferente é outro ator, e essa
-            #: decisão produziu os 24. O que falta, e está registrado como
-            #: próximo passo, é a conferência MOSTRAR "este nome já existe como
-            #: perfil de rede; é o mesmo ator?" — a regra do dono do produto para
+            #: O HOMÔNIMO MUDOU DE DONO, não desapareceu: decidir aqui que nome
+            #: igual com tipo diferente é outro ator é o que produzia os pares. O
+            #: que falta é a conferência MOSTRAR "este nome já existe como perfil
+            #: de rede; é o mesmo ator?" — a regra do dono do produto para
             #: suspeita de duplicação é mostrar para a pessoa decidir.
         )
     ).all():
@@ -315,12 +292,12 @@ def reconhecer(
     #: existe como entidade e como órgão), e um apelido que respondesse primeiro
     #: trocaria o ator de um cadastro VIVO pelo de uma fusão antiga. O apelido só
     #: fala sobre nome que não existe mais.
+
     #: E SÓ O APELIDO DE UMA LINHA RESOLVE. A chave da tabela é o par (nome,
     #: instituição), e o mesmo nome pode ter sido de dois cadastros fundidos em
-    #: sobreviventes diferentes. Escolher um deles seria mandar as menções de um
-    #: ator para o dossiê do outro — a mesma regra da concessionária: nunca
-    #: adivinhar quando há mais de uma candidata. O nome ambíguo segue para a
-    #: CONFERÊNCIA, que é onde gente decide.
+    #: sobreviventes diferentes: escolher um deles mandaria as menções de um ator
+    #: para o dossiê do outro. Mesma regra da concessionária — nunca adivinhar
+    #: quando há mais de uma candidata. O nome ambíguo segue para a CONFERÊNCIA.
     sem_cadastro = [chave for chave in nomes if chave not in existentes]
     if sem_cadastro:
         for chave, ident, quantos in sessao.execute(
@@ -472,23 +449,22 @@ def criar(
             #: dizer "Stela Farias — Deputado estadual" em vez de só o público.
             #: Nulo em veículo, onde a coluna não existe.
             cargo=rotulo_do_cargo(veiculo.cargo) if tipo == "perfil_rede" else None,
-            #: A RELEVÂNCIA QUE A PLANILHA DISSE. Era o campo que o dono do
-            #: produto apontou como faltando no cadastro automático — e ele
-            #: faltava mesmo: 39 dos 2.670 veículos tinham relevância.
+            #: A RELEVÂNCIA QUE A PLANILHA DISSE. Sem isto o cadastro automático
+            #: nasce sem relevância, jogando fora uma coluna que o arquivo traz.
             tier=veiculo.tier,
             #: NASCE PENDENTE DE REVISÃO, como todo cadastro que vem de planilha.
             #:
-            #: MESMO TENDO PASSADO PELA CONFERÊNCIA DA INGESTÃO, e a diferença é o
-            #: que cada uma pergunta: ali a pessoa autoriza a CRIAÇÃO olhando nome,
-            #: praça, alcance e cargo — ela diz "este veículo existe e deve
+            #: MESMO TENDO PASSADO PELA CONFERÊNCIA DA INGESTÃO, e a diferença é
+            #: o que cada uma pergunta: ali a pessoa autoriza a CRIAÇÃO olhando
+            #: nome, praça, alcance e cargo — ela diz "este veículo existe e deve
             #: entrar". O ENQUADRAMENTO é outra pergunta: a subcategoria é lógica
-            #: editorial que nenhuma coluna da Clipei informa, e é dela que a lente
-            #: Mercado depende. Quem autoriza 2.631 criações numa tela não decide
-            #: 2.631 enquadramentos na mesma tela.
+            #: editorial que nenhuma coluna da Clipei informa, e é dela que a
+            #: lente Mercado depende. Quem autoriza milhares de criações numa
+            #: tela não decide milhares de enquadramentos na mesma tela.
+            #:
             pendente_de_revisao=True,
-            #: E A MARCA DIZ QUAL ENQUADRAMENTO FALTA. Achado de revisão com
-            #: severidade MÉDIA: este é o produtor de MAIOR VOLUME da fila — 2.631
-            #: veículos de uma subida só —, e era o que a deixava genérica.
+            #: E A MARCA DIZ QUAL ENQUADRAMENTO FALTA: este é o produtor de maior
+            #: volume da fila, e a frase genérica a deixaria inútil.
             motivo_da_revisao=_motivo_da_revisao(tipo, cargo_reconhecido),
         )
         sessao.add(registro)
@@ -500,41 +476,35 @@ def criar(
 #: POR QUE O CADASTRO DA INGESTÃO ESPERA REVISÃO — e são três perguntas
 #: diferentes, não uma.
 #:
-#: ACHADO DE REVISÃO, severidade MÉDIA: o registro nascia pendente SEM motivo, e
-#: o comentário ao lado já explicava por quê em prosa. A fila mostrava a frase
-#: genérica "entrou por planilha e ninguém conferiu" em 2.631 linhas.
-#:
-#: E NÃO É O MESMO MOTIVO DA IMPORTAÇÃO DE AGENDAS. Lá falta a CATEGORIA, e o tipo
-#: cai em `entidade`. Aqui a categoria vem sempre: `CATEGORIA_DE_QUEM_FALA` dá
-#: "Imprensa" ao veículo, e o cargo dá a do perfil. O que falta é outra coisa em
-#: cada caso — usar a mesma frase mandaria a pessoa procurar um campo que já está
-#: preenchido.
+#: NÃO É O MESMO MOTIVO DA IMPORTAÇÃO DE AGENDAS. Lá falta a CATEGORIA, e o tipo
+#: cai em `entidade`. Aqui ela é derivada: `CATEGORIA_DE_QUEM_FALA` dá "Imprensa"
+#: ao veículo, e o cargo dá a do perfil quando a taxonomia o reconhece. O que
+#: falta é outra coisa em cada caso — usar a mesma frase mandaria a pessoa
+#: procurar um campo que já está preenchido.
 
 
 def _motivo_da_revisao(tipo: str, cargo_reconhecido: bool) -> str:
     """Três casos, três frases.
 
     VEÍCULO: a categoria é Imprensa e a SUBCATEGORIA falta. Ela é lógica
-    editorial que nenhuma coluna da Clipei informa — e é dela que a lente Mercado
-    depende: a lista do Mercado é `tipo='veiculo'` com categoria Imprensa e
-    subcategoria "Econômica e de negócios". Sem a subcategoria o veículo fica
-    fora da lente, e são 81 de 2.712 que estão dentro.
+    editorial que nenhuma coluna da Clipei informa — e é dela que a lente
+    Mercado depende: a lista do Mercado é `tipo='veiculo'` com categoria
+    Imprensa e subcategoria "Econômica e de negócios". Sem a subcategoria, o
+    veículo fica fora da lente.
 
     PERFIL COM CARGO RECONHECIDO: o enquadramento saiu do cargo que o fornecedor
-    mandou, e o fornecedor erra — medido: `stelafariasrs` veio sem cargo e com UF
-    TO, sendo a mesma deputada do RS. O cadastro está completo e ainda assim
-    merece um olhar.
+    mandou, e o fornecedor erra — cargo ausente, UF de outro estado. O
+    enquadramento existe e ainda assim merece um olhar.
 
     PERFIL SEM CARGO RECONHECIDO: não há categoria nenhuma, porque o cargo não
-    estava em `CATEGORIA_POR_CARGO`. É o estado dos 1.108 perfis que a primeira
-    carga da Bites criou, e é o caso em que a fila tem mais a ganhar.
+    estava em `CATEGORIA_POR_CARGO`. É o caso em que a fila tem mais a ganhar.
 
-    `cargo_reconhecido` E NÃO O `id` DA CATEGORIA, e a diferença é um achado de
-    revisão. Decidir por `publico is None` decide pelo EFEITO no banco, e o fato
-    que gera a frase é outro: "a fonte mandou um cargo que sabemos traduzir". Os
-    dois coincidem hoje e podem descolar — uma categoria da taxonomia desativada,
-    ou um cargo reconhecido apontando para categoria ausente, fariam um perfil COM
-    cargo receber "sem cargo reconhecido".
+    `cargo_reconhecido` E NÃO O `id` DA CATEGORIA. Decidir por `publico is None`
+    decide pelo EFEITO no banco, e o fato que gera a frase é outro: "a fonte
+    mandou um cargo que sabemos traduzir". Os dois coincidem hoje e podem
+    descolar — uma categoria da taxonomia desativada, ou um cargo reconhecido
+    apontando para categoria ausente, fariam um perfil COM cargo receber "sem
+    cargo reconhecido".
 
     E O ESTRAGO SERIA PERMANENTE: esta frase é GRAVADA na linha. Um `id` nulo
     passageiro vira uma instrução errada que fica no banco pedindo à pessoa um
@@ -563,22 +533,21 @@ def nomes_da_lista(sessao: Session, lista: str) -> frozenset[str]:
 
     NORMALIZADOS porque é assim que nome de veículo se compara em todo o
     sistema: `instituicao` tem índice único em `(nome_normalizado, tipo)`, e o
-    texto que o fornecedor manda vem com acento, caixa e espaço variando. A
-    comparação por `nome` cru marcaria "Valor Econômico" e "VALOR ECONOMICO"
-    como veículos diferentes — foi exatamente o que aconteceu na primeira
-    versão da `0066`, que casou 78 de 81 por usar `lower()`.
+    texto que o fornecedor manda vem com acento, caixa e espaço variando.
+    Comparar por `nome` cru marca "Valor Econômico" e "VALOR ECONOMICO" como
+    veículos diferentes.
 
     LISTA VAZIA É RESPOSTA LEGÍTIMA, e não erro: numa base onde ninguém
-    classificou veículo nenhum, a lente Mercado recorta para zero. É o estado
-    da primeira subida, e `_ingerir_uma` já sabe que recorte vazio numa fonte
-    irmã é fato, não falha.
+    classificou veículo nenhum, a lente Mercado recorta para zero. É o estado da
+    primeira subida, e `_ingerir_uma` já sabe que recorte vazio numa fonte irmã é
+    fato, não falha.
 
     VEÍCULO DESATIVADO NÃO ESTÁ NA LISTA. `ativo=false` é o gesto de quem
     administra o cadastro dizendo "este não é um veículo corrente", e manter as
     menções dele contando numa lente faria a desativação significar duas coisas
     diferentes em dois lugares. `fontes_do_mesmo_arquivo` já filtra `ativo` pelo
-    mesmo motivo. A aba o mostra com a marca "inativo — não conta na lente",
-    para a consequência não ser silenciosa.
+    mesmo motivo. A aba o mostra com a marca "inativo — não conta na lente", para
+    a consequência não ser silenciosa.
     """
     par = LISTAS_DE_VEICULOS.get(lista)
     if par is None:
@@ -613,15 +582,14 @@ def nomes_da_lista(sessao: Session, lista: str) -> frozenset[str]:
     )
     da_lista = {nome for nome in nomes if nome}
 
-    #: E OS APELIDOS DELES, que é conserto de um defeito ALTO achado na revisão
-    #: do apelido (`0102`).
+    #: E OS APELIDOS DELES (`0102`).
     #:
     #: A LISTA É UM CONJUNTO DE NOMES, e o recorte casa o TEXTO da linha do
     #: fornecedor contra ele. Quando dois cadastros se fundem, o nome de quem sai
-    #: deixa de existir em `instituicao` — então, sem esta união, TODA fusão que
+    #: deixa de existir em `instituicao` — então, sem esta união, toda fusão que
     #: levasse o nome de um veículo listado tirava as menções dele da lente
-    #: Mercado, em silêncio e para trás. O apelido já guarda esse nome apontando
-    #: para o cadastro que ficou; aqui ele volta a contar.
+    #: Mercado, em silêncio e para trás. O apelido guarda esse nome apontando
+    #: para o cadastro que ficou.
     #:
     #: E NÃO É SÓ A FUSÃO QUE TROCA DE TIPO: mesmo fundindo veículo em veículo, o
     #: texto que o clipping manda todo mês é o de quem SAIU.

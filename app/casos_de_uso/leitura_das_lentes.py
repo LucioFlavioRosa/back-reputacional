@@ -1,21 +1,15 @@
 """A leitura das lentes: o Dossiê, o Recorte e os blocos que os compõem.
 
-SAÍRAM DE `api/lentes.py` EM 17/10/2026. Eram 30 funções auxiliares e 1.344
-linhas DENTRO do módulo de rota — mais da metade das 3.183 linhas que
-`docs/ESTRUTURA_E_EXPANSAO.md` §7.1 mediu em auxiliares de rota no projeto
-inteiro.
+FORA DO MÓDULO DE ROTA, de propósito. Nenhuma destas funções toca o pedido
+HTTP: todas recebem `(sessao, lente, mes, calibracao, filtro)` e devolvem
+modelo de saída. Morando em `api/`, e privadas, a única forma de perguntar
+"como está a Imprensa este mês?" seria fazer um pedido HTTP com sessão de
+navegador — e as automações de leitura, a geração de texto por IA e uma segunda
+interface querem exatamente esta leitura.
 
-POR QUE ISSO IMPORTAVA. Nenhuma delas tocava o pedido HTTP: todas recebiam
-`(sessao, lente, mes, calibracao, filtro)` e devolviam modelo de saída. Mas
-morando em `api/`, e privadas, a única forma de perguntar "como está a Imprensa
-este mês?" era fazer um pedido HTTP com sessão de navegador. O painel vai
-ganhar mais automações de leitura, geração de texto por IA e uma segunda
-interface — e as três querem exatamente esta leitura.
-
-AS 14 QUE A ROTA CHAMA SÃO PÚBLICAS; as 16 que só servem a elas continuam
-privadas. A diferença não é estilo: `tests/test_as_camadas_sao_respeitadas.py`
-recusa que um módulo importe nome privado de outro, e com razão — `_nome` diz
-"não me use de fora", e a rota agora é de fora.
+AS QUE A ROTA CHAMA SÃO PÚBLICAS; as que só servem a elas continuam privadas. A
+diferença não é estilo: `tests/test_as_camadas_sao_respeitadas.py` recusa que um
+módulo importe nome privado de outro, e a rota agora é de fora.
 """
 
 from __future__ import annotations
@@ -107,11 +101,10 @@ COLUNAS_DAS_MATERIAS = [
 
 #: As colunas da MENÇÃO DE REDE, que não são as da matéria de jornal.
 #:
-#: O MOTIVO DA RESTRIÇÃO DO JONES (02/10/2026) ERA ESTE: a tabela de matérias
-#: existia só na Imprensa porque "Veículo" e "Aegea Tier" não dizem nada de um
-#: post — e mostrar colunas vazias é pior que não mostrar tabela. A Sociedade
-#: passa a ter a lista porque a carga do padrão trouxe o que ela precisa (o
-#: texto, o link, quem escreveu e o engajamento), com as colunas dela.
+#: "Veículo" e "Aegea Tier" não dizem nada de um post, e coluna vazia é pior que
+#: tabela ausente — por isso cada lente tem as suas. A Sociedade tem lista
+#: porque a carga do padrão trouxe o que ela precisa: o texto, o link, quem
+#: escreveu e o engajamento.
 #:
 #: O TEXTO VEM PRIMEIRO porque é o que se lê; o resto é o que localiza a menção.
 COLUNAS_DAS_MENCOES = [
@@ -145,11 +138,10 @@ def saida_da_ficha(ficha: Ficha) -> FichaSaida:
     )
 
 
-#: PEDIDO DO CLIENTE (21/10/2026): só o sentimento de NOTÍCIA volta a dizer
-#: Positivo/Negativo — o termômetro de REUNIÃO (tabela `clima`, CRM) continua
-#: Propositivo/Reativo, decisão da 0106. São perguntas diferentes por fontes
-#: diferentes (ver o comentário de `CORES_DO_SENTIMENTO` logo abaixo), e agora
-#: também rótulos diferentes — a app deixa de ter uma palavra só para as duas.
+#: Só o sentimento de NOTÍCIA diz Positivo/Negativo; o termômetro de REUNIÃO
+#: (tabela `clima`, CRM) diz Propositivo/Reativo. São perguntas diferentes por
+#: fontes diferentes — ver o comentário de `CORES_DO_SENTIMENTO` abaixo —, e por
+#: isso rótulos diferentes: uma palavra só para as duas confunde.
 SENTIMENTO = ["Positivo", "Neutro", "Negativo"]
 
 
@@ -177,28 +169,25 @@ def _legenda_e_cores_do_clima(sessao) -> tuple[list[str], list[str]]:
 
 #: Painel → a dimensão do recorte que um clique nele aplica.
 #:
-#: O DONO DO PRODUTO FOI À TELA E NÃO ACHOU COMO DESCER OS NÍVEIS, e a causa era
-#: esta: o recorte funcionava pela barra de filtros, mas a barra é um SELETOR.
-#: Quem olha um painel e vê um tema com 60% de negativas tenta clicar NELE.
+#: SEM ISTO O CLIQUE NÃO EXISTE: o recorte funciona pela barra de filtros, mas a
+#: barra é um SELETOR, e quem olha um painel e vê um tema com 60% de negativas
+#: tenta clicar NELE.
 #:
-#: POR QUE VEM DO SERVIDOR: a tela recebe barras com rótulos, e ligar o clique ao
-#: filtro exigiria adivinhar a dimensão pelo TÍTULO do painel — que é a frase de um
-#: detector e muda com o dado. Era assim que a tabela escolhia o schema antes, e o
-#: comentário de `ColunaSaida` conta como isso quebrou.
+#: POR QUE VEM DO SERVIDOR: a tela recebe barras com rótulos, e ligar o clique
+#: ao filtro exigiria adivinhar a dimensão pelo TÍTULO do painel — que é a frase
+#: de um detector e muda com o dado.
 #:
 #: A CHAVE É A DO PARÂMETRO da rota (`?tema=`, `?empresa=`), e não o nome da
-#: coluna: é o que a tela põe na URL, e é o que faz um link reproduzir o ponto do
-#: caminho.
+#: coluna: é o que a tela põe na URL, e é o que faz um link reproduzir o ponto
+#: do caminho.
 RECORTE_DO_PAINEL: dict[str, str] = {
     "Temas × sentimento": "tema",
     "Temas × termômetro": "tema",
-    #: O BLOCO AMPLO DOS TEMAS, logo abaixo dos painéis. Ele mostra os seis temas
-    #: mais falados do mês com o sentimento de cada um, e era o único gráfico da
-    #: tela em que a barra não levava a lugar nenhum — pedido do dono do produto,
-    #: e o pedido seguinte dele já estava atendido: DENTRO de um tema a primeira
-    #: aba é o Subtema, porque quem classifica o tema classifica o subtema (as
-    #: duas colunas vêm da mesma fonte, e a medida de presença é feita já dentro
-    #: do recorte).
+    #: O BLOCO AMPLO DOS TEMAS, logo abaixo dos painéis: os seis temas mais
+    #: falados do mês com o sentimento de cada um, e a barra leva ao recorte.
+    #: DENTRO de um tema a primeira aba é o Subtema, porque quem classifica o
+    #: tema classifica o subtema — as duas colunas vêm da mesma fonte, e a
+    #: medida de presença é feita já dentro do recorte.
     "Temas mais falados": "tema",
     "Concessionárias com maior repercussão": "empresa",
     "Tier do veículo × sentimento": "tier",
@@ -293,9 +282,8 @@ def _nomes_das_fontes(sessao, lente_id: int) -> str:
     assimetria de `lente_e_interna`, pela mesma razão: o histórico de uma fonte
     de planilha aposentada continua gravado em `score_mes_fonte` e continua
     dentro do número, então nomeá-la é dizer a verdade; a interna é recontada a
-    cada leitura, e aposentada ela não contribui com nada. Depois da `0108`, a
-    ficha da Institucional dizia "CRM dos Stakeholders · Clipei · imprensa
-    institucional" sobre um dado em que o CRM não tem parte nenhuma.
+    cada leitura, e aposentada não contribui com nada — nomeá-la seria creditar
+    uma procedência que não tem parte no dado.
     """
     fontes = [
         fonte
@@ -334,19 +322,14 @@ def evolucao(
 ) -> BlocoSaida:
     """A série mensal de matérias, por sentimento.
 
-    O MERCADO CAI AQUI, e antes ele saía por cima com o eventograma. Era a mesma
-    premissa que o barrava nos blocos de veículo: tratá-lo como lente sem menção
-    ingerida. Ele tem — 216 menções em agosto e 111 em setembro, e a Imprensa
-    cobre exatamente os mesmos dois meses.
+    AS LENTES DE CLIPPING CAEM AQUI, inclusive o Mercado: tratá-lo como lente sem
+    menção ingerida era a mesma premissa falsa que o barrava nos blocos de
+    veículo.
 
-    O EVENTOGRAMA SAIU DA TELA, por decisão do dono do produto (11/10/2026).
-    Ele era a Evolução desta lente; virou um bloco à parte quando a série
-    entrou, e depois foi retirado.
-
-    O QUE SAIU COM ELE, porque alguém vai perguntar: dos 15 eventos, os 5 de
+    O EVENTOGRAMA SAIU DA TELA por decisão do dono do produto, e com ele a
+    cobertura dos meses anteriores ao início desta série. Dos eventos, os de
     rating seguem no painel "Trajetória de rating" (mesma tabela, filtrada por
-    tipo); os outros 10 não aparecem mais em lugar nenhum, e com eles sai a
-    cobertura de fevereiro a julho — esta série começa em agosto. A tabela
+    tipo); os demais não aparecem mais em lugar nenhum. A tabela
     `evento_mercado` continua no banco, intacta.
     """
     serie = repositorio_lentes.serie_da_lente(sessao, lente.id, meses, calibracao, filtro)
@@ -379,24 +362,19 @@ def evolucao(
             conclusao,
         )
 
-    #: PELO CADASTRO, E NÃO PELO CÓDIGO DA LENTE — achado de revisão. "Clima em
-    #: vez de sentimento" é consequência de a lente se ler do CRM, e quem sabe
-    #: disso é `lente_e_interna`. Com o código escrito aqui, a Institucional
-    #: continuaria com a legenda de clima depois da `0108`, que a fez ler
-    #: menções: a legenda diria "Proativo/Reativo" sobre barras de matérias.
+    #: PELO CADASTRO, E NÃO PELO CÓDIGO DA LENTE: "clima em vez de sentimento" é
+    #: consequência de a lente se ler do CRM, e quem sabe disso é
+    #: `lente_e_interna`. Se a escolha fosse pelo código, uma lente que trocasse
+    #: de fonte ficaria com a legenda de clima sobre barras de matéria.
     interna = repositorio_lentes.lente_e_interna(sessao, lente.id)
     legenda, cores = (
         _legenda_e_cores_do_clima(sessao) if interna else (SENTIMENTO, CORES_DO_SENTIMENTO)
     )
-    # A CONCLUSÃO DESTE GRÁFICO FALA DE MATÉRIA, E NÃO DE NOTA. Antes, este
-    # bloco herdava `leitura.titulo_da_evolucao` — o mesmo sinal que já é a
-    # manchete do Destaque E a primeira linha de `sinais_da_evolucao` logo
-    # abaixo (a frase chegava a aparecer três vezes na tela). Era sempre sobre
-    # a NOTA ("a nota subiu 21 pontos... o negativo foi de 38% para 24%"), em
-    # cima de um gráfico que desenha CONTAGEM de matéria — duas unidades
-    # diferentes sem nada dizendo que são diferentes. Aqui embaixo a frase
-    # nova descreve só o que o gráfico desenha; o sinal mais rico continua
-    # visível no Destaque e no quadro de sinais, sem repetição a mais.
+    # A CONCLUSÃO DESTE GRÁFICO FALA DE MATÉRIA, E NÃO DE NOTA. Herdando
+    # `leitura.titulo_da_evolucao`, a frase fala da NOTA em cima de um gráfico
+    # que desenha CONTAGEM de matéria — duas unidades diferentes sem nada
+    # dizendo que são diferentes. E é o mesmo sinal que já é a manchete do
+    # Destaque e a primeira linha de `sinais_da_evolucao`.
     if not interna:
         do_mes = next((linha for linha in serie if linha["mes"] == alvo), None)
         conclusao = (
@@ -612,25 +590,20 @@ def paineis(
     # Sociedade e as demais: temas e onde a conversa se concentra.
     #
     # A LENTE INTERNA LÊ DE OUTRO LUGAR. A fonte dela são agendas registradas, e
-    # não menções ingeridas. Rodar aqui as consultas de `mencao` devolveria zero,
-    # e zero numa tela se lê como "não houve", nunca como "está noutro lugar".
+    # não menções ingeridas. Rodar aqui as consultas de `mencao` devolveria
+    # zero, e zero numa tela se lê como "não houve", nunca como "está noutro
+    # lugar".
     #
-    # PELO CADASTRO, E NÃO PELO CÓDIGO: a Institucional deixou de ser interna na
-    # `0111`/`0112`, e esta linha a nomeava. Com o código escrito aqui, ela
-    # ficaria com os painéis do CRM sobre uma nota que passou a vir de matérias.
+    # PELO CADASTRO, E NÃO PELO CÓDIGO: pelo código, uma lente que trocasse de
+    # fonte ficaria com os painéis do CRM sobre uma nota que vem de matérias.
     interna = repositorio_lentes.lente_e_interna(sessao, lente.id)
 
-    # OS DOIS PAINÉIS DESTA LENTE FICAM COMO ESTÃO, e isto é uma decisão que eu
-    # TOMEI E DESFIZ no meio do caminho.
-    #
-    # Eu havia trocado o segundo — "Concessionárias com maior repercussão" — por
-    # perfil do autor × sentimento, com o argumento de que o perfil é a dimensão
-    # mais informativa que a tela não tinha. Desfiz ao conferir a ordem de
-    # prioridade que o próprio pacote declara para esta lente: tema, subtema,
-    # EMPRESA CITADA, rede, perfil do autor. A concessionária é a terceira e o
-    # perfil a quinta — a troca entregava uma dimensão do pacote pagando com
-    # outra, mais alta, e ainda tirava da tela a pergunta de negócio que a Aegea
-    # faz primeiro: qual operação está apanhando.
+    # OS DOIS PAINÉIS DESTA LENTE SEGUEM A ORDEM DE PRIORIDADE QUE O PACOTE
+    # DECLARA: tema, subtema, EMPRESA CITADA, rede, perfil do autor. A
+    # concessionária é a terceira e o perfil do autor a quinta — trocar uma pela
+    # outra entregaria uma dimensão do pacote pagando com outra, mais alta, e
+    # tiraria da tela a pergunta de negócio que a Aegea faz primeiro: qual
+    # operação está apanhando.
     #
     # O PERFIL ENTROU ONDE HAVIA ESPAÇO DE VERDADE: nos indicadores da lente
     # (`Figuras públicas` e `Autor mais negativo`) e no filtro, que é o mecanismo
@@ -840,10 +813,10 @@ def trilha_do_recorte(codigo_da_lente: str, filtro: FiltroDeMencoes) -> list[Pas
     #: PRIMEIRO AS DA LENTE, NA ORDEM DELA; depois TODAS as outras que o filtro
     #: aceita, na ordem do dicionário de rótulos.
     #:
-    #: ACHADO DE REVISÃO: eu apensava tier e atributo à mão — as duas que me
-    #: vieram à cabeça. `subtema` na Imprensa, `empresa` em qualquer lente cuja
-    #: lista não a traga: aplicados pelo servidor e invisíveis na trilha. Um
-    #: degrau invisível não dá para remover.
+    #: TODAS, e não as que vierem à cabeça: `subtema` na Imprensa e `empresa` em
+    #: qualquer lente cuja lista não a traga são aplicados pelo servidor, e
+    #: ficariam invisíveis na trilha. Um degrau invisível não dá para remover.
+
     #: A TAXONOMIA PRIMEIRO, quando a lente desce por ela (N1 › N2 › N3): é a
     #: sequência que o painel de aprofundamento oferece, e a trilha se lê igual.
     proprias = DIMENSOES_DO_APROFUNDAMENTO.get(codigo_da_lente, ())
@@ -899,80 +872,41 @@ def nomeia_o_diretorio(lente_e_interna: bool, bloco: BlocoSaida) -> bool:
     """Este painel publica NOME de gente ou de instituição de fora?
 
     É a pergunta que separa o que `ve_diretorio` guarda do que ele não guarda, e
-    ela não se responde pelo tipo do bloco: `barras_horizontais` serve tanto
+    ela NÃO se responde pelo tipo do bloco: `barras_horizontais` serve tanto
     "Órgãos com mais interações" — os mesmos nomes que `GET /api/instituicoes`
     recusa a este papel — quanto "Concessionárias com maior repercussão", que é
-    unidade de negócio da própria Aegea e não é cadastro de terceiro. Gatilhar
-    pelo tipo esconderia da lente errada um dado que é da casa.
+    unidade de negócio da própria Aegea. Gatilhar pelo tipo esconderia da lente
+    errada um dado que é da casa.
 
-    E NÃO SE RESPONDE PELO CÓDIGO DA LENTE — achado de revisão. A pergunta era
-    "é a Institucional?", porque ali o bloco horizontal era o de órgãos. Depois
-    da `0108` o bloco horizontal DELA é "Concessionárias com maior
-    repercussão", que é dado da casa: quem não vê o diretório perdia um painel
-    por uma regra de privacidade que não tinha mais o que proteger. Quem
-    responde é a procedência — o painel de órgãos só existe na lente interna.
+    E NÃO SE RESPONDE PELO CÓDIGO DA LENTE: quem responde é a PROCEDÊNCIA — o
+    painel de órgãos só existe na lente interna. Perguntando pelo código, uma
+    lente que trocou de fonte perde um painel por uma regra de privacidade que
+    não tem mais o que proteger.
     """
     if bloco.tipo == "matriz_prioridade":
         return True
     return lente_e_interna and bloco.tipo == "barras_horizontais"
 
 
-#: AS LENTES QUE TÊM VEÍCULO E TIER DE VERDADE — hoje isto governa UM lugar só:
-#: a lista de últimas matérias (`materias_recentes`, logo abaixo).
+#: AS LENTES QUE TÊM VEÍCULO E TIER DE VERDADE — e hoje isto governa UM lugar
+#: só: a lista de últimas matérias (`materias_recentes`, logo abaixo).
 #:
-#: As abas do cartão "Onde está a causa" NÃO saem daqui: saem de
-#: `DIMENSOES_POR_LENTE`, em `causa_da_lente.py`.
+#: NÃO GOVERNA as abas do cartão "Onde está a causa" (saem de
+#: `DIMENSOES_POR_LENTE`, em `causa_da_lente.py`) nem os blocos de veículo do
+#: dossiê, que a tela monta no navegador a partir de
+#: `GET /{codigo}/explorador-de-veiculos` — essa rota responde para qualquer
+#: lente que não seja interna, e quem decide onde o bloco aparece é a tela.
 #:
-#: GOVERNAVA TAMBÉM os três blocos de veículo do dossiê (a rosca de volume por
-#: tier e o par top/termômetro), que saíram em 23/10/2026: a tela passou a
-#: montá-los no navegador, a partir de `GET /{codigo}/explorador-de-veiculos`.
-#: Quem decide onde o bloco NOVO aparece é a tela, por
-#: `LENTES_COM_BLOCOS_DE_VEICULO` — a rota responde para qualquer lente que não
-#: seja interna.
+#: AS TRÊS LENTES DE CLIPPING ENTRAM, e cada uma tem o seu conjunto de
+#: veículos: a Imprensa é o espelho do arquivo, e Mercado e Institucional
+#: recortam subcategorias do cadastro. Não são os mesmos veículos repetidos em
+#: duas telas. O volume dos recortes ainda é baixo porque a classificação das
+#: instituições não está completa — é cadastro por fazer, não lente sem dado.
 #:
-#: ERA SÓ A IMPRENSA, e a restrição era de TELA: o Jones (2026-10-02) não quis
-#: ver "os mesmos veículos e tiers repetidos em Imprensa e Mercado". A decisão
-#: ficou escrita com a condição de revisão junto — "se um dia o recorte por
-#: público-alvo virar outro veículo/tier na prática (ex.: fontes econômicas
-#: específicas), vale revisitar".
-#:
-#: A CONDIÇÃO SE CUMPRIU, e é medida, não impressão. Na base de hoje:
-#:
-#:   ZERO dos 10 maiores veículos do Mercado estão no top 10 da Imprensa
-#:   Valor Econômico  — 1º no Mercado,   95º na Imprensa
-#:   Expert XP        — 3º no Mercado,  333º na Imprensa
-#:   InfoMoney        — 5º no Mercado,  419º na Imprensa
-#:   Acionista        — 10º no Mercado, 634º na Imprensa
-#:
-#:   o top da Imprensa é rádio local (Rádio Betel 87.9 FM, 1.451 menções);
-#:   o do Mercado é imprensa econômica, inteiro
-#:
-#:   e o tier quase se inverte: 46,2% muito_relevante no Mercado contra 10,7%
-#:   na Imprensa, que tem 72,7% em menos_relevante
-#:
-#: Ou seja: os dois gráficos lado a lado não repetem nada. Era o recorte por
-#: público-alvo Investidores (migration 0048) virando fonte econômica de fato.
-#:
-#: SOCIEDADE E CLIENTES FICAM FORA, e por razões DIFERENTES — vale dizer qual,
-#: porque eu já errei essa frase duas vezes:
-#:
-#:   Clientes não tem menção nenhuma. Nada a mostrar.
-#:
-#:   Sociedade TEM `veiculo` (2.582 menções, 1.103 valores) e ZERO tier. Mas o
-#:   que ela guarda ali é perfil e rede — "deolhoemesteio", "Stela Farias" —,
-#:   não veículo de imprensa. Ranquear isso como "Top veículos", ao lado de
-#:   tier, diria algo errado sobre o dado.
-#:
-#:   A FRASE QUE EXPLICAVA ISSO NA TELA (`_lacuna_do_veiculo`) saiu em
-#:   23/10/2026 com os blocos de veículo: ela vivia na ficha de um bloco vazio,
-#:   e sem o bloco não há onde mostrá-la. A constante continua porque outras
-#:   leituras a usam.
-#:
-#: A Institucional entra pelo mesmo critério: ela recorta outra subcategoria
-#: do cadastro, então é outro conjunto de veículos, e não os mesmos
-#: repetidos. O volume dela e o do Mercado ainda são baixos porque a
-#: classificação das instituições não está completa — é cadastro por fazer,
-#: não lente sem dado.
+#: SOCIEDADE E CLIENTES FICAM FORA, por razões DIFERENTES: Clientes não tem
+#: menção nenhuma, e a Sociedade tem `veiculo` e zero tier — mas o que ela
+#: guarda ali é perfil e rede, não veículo de imprensa. Ranquear isso como "Top
+#: veículos", ao lado de tier, diria algo errado sobre o dado.
 LENTES_COM_VEICULO_E_TIER = ("imprensa", "mercado", "institucional")
 
 
@@ -1080,13 +1014,8 @@ TETO_DE_MATERIAS = 5
 
 TETO_DE_MATERIAS_FILTRADO = 30
 #: QUINZE QUANDO NÃO HÁ RECORTE, por pedido: a lista rola, e cada linha abre o
-#: detalhe da matéria num popup.
-#:
-#: O NOME GUARDA O CARD QUE SAIU. Era o teto do bloco "Últimas matérias" do
-#: dossiê, que acabou em 23/10/2026; hoje a mesma montagem alimenta
-#: `itens_do_recorte`, e este número rege o caso em que o modal abre sem filtro
-#: nenhum — o clique num mês da Evolução com a barra de filtros limpa. O nome
-#: fica porque é o mesmo pedido e o mesmo número; trocá-lo só mudaria a palavra.
+#: detalhe da matéria num popup. Rege o caso em que o modal abre sem filtro
+#: nenhum — o clique num mês da Evolução com a barra de filtros limpa.
 TETO_DAS_ULTIMAS_MATERIAS = 15
 #: O TETO DE VEÍCULOS SAIU DAQUI em 23/10/2026, com os blocos que ele cortava.
 #: Quantos veículos aparecem passou a ser decisão da TELA: a rota nova manda o
@@ -1099,23 +1028,16 @@ def _mencoes_da_sociedade(
     """As menções de rede do mês — o nível do item, nesta lente.
 
     TODAS ENTRAM NA LISTA, inclusive as sem texto e as sem link. Decisão do dono
-    do produto, 13/10/2026, com estas palavras: *"embora não tenha link, só não
-    vamos conseguir acessar a página, mas a informação deve estar lá"*.
-
-    ANTES ERAM SÓ AS QUE TINHAM TEXTO, e o motivo de então era real: 86% dos
-    itens chegavam sem texto, e cinco linhas de metadado seriam uma lista sem
-    nada a ler. A PREMISSA MUDOU — na consolidada da Bites de jan-set/2026,
-    2.833 das 2.842 linhas têm texto (99,7%) —, e o que antes era uma lista
-    vazia de conteúdo virou a lista vazia de tudo: filtrar por texto escondia a
-    menção inteira, com data, autor, perfil, sentimento e engajamento.
+    do produto: *"embora não tenha link, só não vamos conseguir acessar a
+    página, mas a informação deve estar lá"*. Filtrar por texto esconde a menção
+    inteira — data, autor, perfil, sentimento e engajamento.
 
     O QUE SEGURA A LEITURA NO TOPO é a ordenação, não a exclusão:
-    `repositorio_lentes.materias_recentes` já põe quem tem texto primeiro e, entre
+    `repositorio_lentes.materias_recentes` põe quem tem texto primeiro e, entre
     eles, o maior engajamento. As de metadado ficam abaixo.
 
-    E A LINHA SEM LINK FICA INERTE, não quebrada: o front só dá `onClick` e cursor
-    quando o endereço é `http`/`https` (`PecasDoDossie.tsx`) — a mesma conferência
-    de esquema que o conserto do `urlSegura` fixou.
+    E A LINHA SEM LINK FICA INERTE, não quebrada: o front só dá `onClick` e
+    cursor quando o endereço é `http`/`https` (`PecasDoDossie.tsx`).
     """
     quantas = TETO_DE_MATERIAS_FILTRADO if filtro and filtro.ativo else TETO_DE_MATERIAS
     linhas = [
@@ -1152,19 +1074,14 @@ def _mencoes_da_sociedade(
             colunas=("Texto", "Link", "Autor", "Perfil do autor", "Engajamento"),
             lacunas=(
                 # O NÚMERO É DO PACOTE, e dizer quanto falta é o que separa
-                # "não houve menção" de "o texto ainda não chegou": o
-                # fornecedor manda o conteúdo de uma amostra — as negativas,
-                # as de tier alto e as mais engajadas — e o resto vem na
-                # primeira carga mensal completa.
+                # "não houve menção" de "o texto ainda não chegou": o fornecedor
+                # manda o conteúdo de uma amostra — as negativas, as de tier alto
+                # e as mais engajadas — e o resto vem na primeira carga mensal
+                # completa.
                 #
-                # A FRASE MUDOU COM A REGRA: dizia que as demais "não têm o que
-                # mostrar aqui", e isso deixou de ser verdade quando elas
-                # passaram a entrar na lista.
-                #
-                # E NÃO PROMETE CAMPO, achado de revisão contra a primeira
-                # versão desta frase: ela dizia "com data, autor e engajamento",
-                # e os três são nulos possíveis no modelo. Prometer o que o dado
-                # pode não ter é o mesmo erro, do outro lado.
+                # E A FRASE NÃO PROMETE CAMPO: data, autor e engajamento são
+                # nulos possíveis no modelo, e prometer o que o dado pode não ter
+                # é o mesmo erro, do outro lado.
                 "O texto e o link vêm numa amostra das menções (as negativas, "
                 "as de maior alcance e as mais engajadas). As demais aparecem "
                 "nesta lista com os metadados que vieram — classificação, "
@@ -1200,10 +1117,10 @@ def materias_recentes(
     if lente.codigo == "sociedade":
         return _mencoes_da_sociedade(sessao, lente, mes, calibracao, filtro)
 
-    #: A fonte manda, e não o código da lente: por isso esta verificação vem
-    #: antes da constante. Com a Institucional DENTRO de
+    #: A FONTE MANDA, e não o código da lente: por isso esta verificação vem
+    #: antes da constante. Com uma lente de clipping DENTRO de
     #: `LENTES_COM_VEICULO_E_TIER`, a ordem passou a importar — religar a fonte
-    #: `crm` deixaria a lente interna, com série e painéis lendo o CRM,
+    #: interna deixaria a lente interna, com série e painéis lendo o CRM,
     #: enquanto esta lista seguiria trazendo matéria da Clipei: dois universos
     #: lado a lado, cada número certo no seu, e a tela sem dizer que são
     #: diferentes.
@@ -1260,10 +1177,6 @@ def materias_recentes(
             #: destino, e `link` não está em `COLUNAS_DAS_MATERIAS`, então não
             #: aparece como coluna. Pedido do dono do produto: "não precisa
             #: trazer o link na página, apenas que o registro seja clicável".
-            #:
-            #: A CONSULTA JÁ TRAZIA O CAMPO para todas as lentes (é a mesma
-            #: `materias_recentes` que serve a Sociedade); só esta montagem o
-            #: descartava.
             "link": linha["link"],
             #: O DETALHE DO POPUP, por pedido — fora da grade (não estão em
             #: `COLUNAS_DAS_MATERIAS`), só no `dados` que a tela abre ao clicar.
@@ -1322,11 +1235,11 @@ def kpis(
     total = sum(linha["pos"] + linha["neu"] + linha["neg"] for linha in serie)
     com_base = [linha for linha in serie if not linha["sem_base"]]
 
-    #: OS KPIs DO CRM SÃO ESCOLHIDOS PELO CADASTRO — achado de revisão. Eles
-    #: dizem "Agendas no período" e "Termômetro propositivo/tenso", que é a
-    #: semântica da fonte interna; depois da `0108` a Institucional mede
-    #: matérias, e manter a escolha pelo código da lente poria rótulo de agenda
-    #: sobre contagem de clipping. A pergunta certa é de onde o número vem.
+    #: OS KPIs DO CRM SÃO ESCOLHIDOS PELO CADASTRO, e não pelo código da lente:
+    #: eles dizem "Agendas no período" e "Termômetro propositivo/tenso", que é a
+    #: semântica da fonte interna. Pelo código, uma lente que passou a medir
+    #: matérias ficaria com rótulo de agenda sobre contagem de clipping. A
+    #: pergunta certa é de onde o número vem.
     if repositorio_lentes.lente_e_interna(sessao, lente.id):
         return _kpis_do_institucional(serie, do_mes, total)
     if lente.codigo in ("imprensa", "institucional"):
@@ -1526,22 +1439,17 @@ def _kpis_da_sociedade(
         # -- OS TRÊS QUE O PACOTE DE PRODUÇÃO NOMEIA PARA ESTA LENTE ---------
         #
         # ELES SUBSTITUEM TRÊS, e não se somam aos quatro: o dossiê tem quatro
-        # indicadores por lente, de propósito — "é o que faz as cinco lentes se
-        # lerem igual", e o Pydantic recusa o quinto. Acrescentar os do pacote
-        # daria sete nesta lente e quatro nas outras.
+        # indicadores por lente, de propósito — é o que faz as cinco lentes se
+        # lerem igual —, e o Pydantic recusa o quinto.
         #
         # SAÍRAM "POSITIVO NO MÊS" E "NEGATIVO NO MÊS" porque a manchete do
-        # dossiê já diz isso em palavras ("o negativo foi de 45% para 53%") e o
-        # gráfico de evolução o desenha mês a mês — três lugares para o mesmo
-        # número, e o cartão era o que menos acrescentava.
-        #
-        # SAIU TAMBÉM "UNIDADE COM MAIS MENÇÕES", que continua na tela como
-        # painel inteiro ("Concessionárias com maior repercussão"), com o
-        # sentimento de cada uma — mais do que o cartão dizia.
+        # dossiê já diz isso em palavras e o gráfico de evolução o desenha mês a
+        # mês. Saiu também "unidade com mais menções", que continua na tela como
+        # painel inteiro, com o sentimento de cada uma.
         #
         # O QUE ENTROU responde "de quem" e "onde", que é a pergunta seguinte de
         # quem lê uma nota que caiu: `autor_mais_negativo`, `figuras_publicas` e
-        # `uf_mais_negativa` no vocabulário do pacote.
+        # `uf_mais_negativa`.
         KpiSaida(
             rotulo="Autor mais negativo",
             valor=autores[0]["autor"] if autores else "—",
