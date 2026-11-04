@@ -1543,6 +1543,38 @@ def _carimbar_um_pareamento(sessao) -> None:
     sessao.flush()
 
 
+def test_a_impressao_descreve_o_cadastro_DE_QUE_OS_PARES_SAIRAM(sessao, monkeypatch):
+    """O FURO GRAVE que a revisão achou, e o único cuja mentira é silenciosa.
+
+    A impressão era tirada no FIM de `recalcular`, depois dos 102,7 s de cálculo.
+    Um nome editado durante o cálculo entrava na impressão e NÃO nos pares — e aí
+    `esta_desatualizado` respondia "em dia" sobre um pareamento que não conhecia
+    aquele nome. Falso "em dia" é pior que defasagem falsa: não há aviso nenhum
+    para desconfiar.
+
+    O ESCRITOR CONCORRENTE É SIMULADO pelo `_vizinhos`, que é onde os 102 s são
+    gastos: renomear ali é renomear "durante o cálculo". Não é duas transações de
+    verdade — é a ORDEM que está sob teste, e a ordem é a mesma.
+    """
+    um = _cadastrar(sessao, "Durante o Calculo zzimp", "veiculo")
+    _cadastrar(sessao, "Outra Coisa zzimp", "veiculo")
+
+    de_verdade = atores_duplicados._vizinhos
+
+    def renomeando_no_meio(cadastros):
+        resultado = de_verdade(cadastros)
+        um.nome_normalizado = normalizar("renomeado no meio zzimp")
+        sessao.flush()
+        return resultado
+
+    monkeypatch.setattr(atores_duplicados, "_vizinhos", renomeando_no_meio)
+    atores_duplicados.recalcular(sessao)
+
+    #: A IMPRESSÃO GUARDADA É A DE ANTES DO RENOME, porque é dela que os pares
+    #: saíram — então a tela sabe que o pareamento está atrás do cadastro.
+    assert atores_duplicados.esta_desatualizado(sessao)
+
+
 def test_REVALIDAR_dispensa_o_carimbo_com_RECALCULO_em_voo(sessao):
     """ACHADO DE REVISÃO: contar `par_semelhante` no meio da substituição dela
     gravaria no histórico um número de pares que nunca foi verdade.
@@ -1585,10 +1617,13 @@ def test_REVALIDAR_dispensa_o_carimbo_com_RECALCULO_em_voo(sessao):
 def test_REVALIDAR_carimba_mesmo_com_OUTRA_revalidacao_em_voo(sessao):
     """O CONTRAPESO, e sem ele o conserto viraria o defeito.
 
-    Duas fusões simultâneas não têm conflito nenhum: cada uma conta depois da
-    própria cascata, e a linha mais nova vence. Com cadeado EXCLUSIVO a segunda
-    não carimbaria — e o aviso falso que `revalidar` existe para apagar voltaria
-    pela porta de trás, agora só para quem clica junto com outra pessoa.
+    Duas fusões simultâneas não têm conflito nenhum: cada linha descreve o
+    instantâneo DELA (contagem e impressão saem da mesma instrução), e a escolhida
+    é a de maior `calculado_em` — ordem de inserção, não de commit. A inversão é
+    inofensiva: o erro possível é acusar defasagem que a outra transação já tinha
+    revalidado, que é o lado seguro. Com cadeado EXCLUSIVO a segunda não
+    carimbaria — e o aviso falso que `revalidar` existe para apagar voltaria pela
+    porta de trás, agora só para quem clica junto com outra pessoa.
 
     O CADEADO COMPARTILHADO DE OUTRA CONEXÃO é a outra revalidação em voo.
     """

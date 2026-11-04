@@ -287,6 +287,24 @@ def recalcular(sessao: Session) -> int:
     cadastros = list(
         sessao.scalars(select(Instituicao).where(Instituicao.ativo.is_(True)))
     )
+    #: A IMPRESSÃO É TIRADA AQUI, E NÃO NO FIM — achado de revisão, e era o furo
+    #: grave desta função.
+    #:
+    #: A impressão descreve o cadastro de que os PARES saíram, e os pares saem da
+    #: leitura logo acima. Tirando-a no fim, ela descrevia o cadastro de 102 s
+    #: DEPOIS: um nome editado durante o cálculo entrava na impressão e não nos
+    #: pares, e `esta_desatualizado` respondia "em dia" sobre um pareamento que
+    #: não conhecia aquele nome. Falso "em dia" é a mentira silenciosa que esta
+    #: tabela existe para impedir — pior que a defasagem falsa, porque não há
+    #: aviso nenhum para desconfiar.
+    #:
+    #: DUAS INSTRUÇÕES SEGUIDAS, E NÃO UMA: sob `read committed` um escritor ainda
+    #: pode commitar entre a leitura e a impressão, e o que ele mudar seria
+    #: absorvido do mesmo jeito. A janela deixa de ser os 102 s do cálculo e passa
+    #: a ser o intervalo entre duas instruções vizinhas; fechá-la de todo exigiria
+    #: travar `instituicao` para escrita durante o cálculo, o que trancaria a tela
+    #: de cadastro por 102 s. Fica declarado em vez de escondido.
+    impressao = impressao_do_cadastro(sessao)
     perto = _vizinhos(cadastros)
 
     #: ORDENADO E SEM REPETIÇÃO: `_vizinhos` devolve as duas direções, e a chave
@@ -308,11 +326,7 @@ def recalcular(sessao: Session) -> int:
     #: "calculou e não achou nada" de "nunca calculou". Deduzir isso das linhas de
     #: `par_semelhante` seria repetir, aqui, o furo que a `0115` existe para
     #: fechar: num cadastro limpo a tabela fica vazia e o `max` não anda.
-    sessao.add(
-        PareamentoDaFila(
-            pares=len(pares), impressao=impressao_do_cadastro(sessao)
-        )
-    )
+    sessao.add(PareamentoDaFila(pares=len(pares), impressao=impressao))
     sessao.flush()
     return len(pares)
 
@@ -342,20 +356,29 @@ def revalidar(sessao: Session) -> None:
     POR QUE CADEADO, e é achado de revisão: `par_semelhante` está sendo
     SUBSTITUÍDA por um recálculo em voo, então contá-la daqui gravaria no
     histórico um número de pares que nunca foi verdade — e histórico que mente é o
-    que esta tabela existe para não ser. A impressão não corre o mesmo risco (é a
-    última leitura antes da inserção, e sob `read committed` ela vem fresca); a
-    contagem corre.
+    que esta tabela existe para não ser.
 
     POR QUE COMPARTILHADO: `recalcular` pega o EXCLUSIVO, então as duas se
-    excluem — que é o que se quer. Mas duas revalidações não têm conflito nenhum
-    (cada uma conta depois da própria cascata, e a linha mais nova vence), e com
-    cadeado exclusivo a segunda fusão simultânea não carimbaria — reintroduzindo,
-    por outra porta, o aviso falso que esta função existe para apagar.
+    excluem — que é o que se quer. Mas duas revalidações não têm conflito nenhum,
+    e com cadeado exclusivo a segunda fusão simultânea não carimbaria —
+    reintroduzindo, por outra porta, o aviso falso que esta função existe para
+    apagar.
 
     POR QUE `try`: fazer uma pessoa esperar até 102 s por um clique para carimbar
     uma linha de histórico seria trocar um defeito pequeno por um grande. Com o
-    recálculo em voo o carimbo é DISPENSADO — ele grava a própria linha, mais nova
-    que esta, com a impressão dele.
+    recálculo em voo o carimbo é DISPENSADO — ele grava a própria linha, com a
+    impressão dele.
+
+    NUMA INSTRUÇÃO SÓ, e isto é conserto de achado: contagem e impressão eram duas
+    leituras, e um escritor que commitasse entre elas deixaria a linha afirmando
+    uma impressão que a contagem não conhecia. `insert ... select` dá às duas o
+    MESMO instantâneo, e aí a linha descreve um instante que existiu.
+
+    QUAL LINHA VALE: a de maior `calculado_em`, que é ordem de INSERÇÃO e não de
+    commit. A inversão é inofensiva nos dois sentidos — a linha escolhida carrega a
+    impressão do instantâneo dela, e o que tiver mudado depois aparece na
+    comparação com a impressão de agora. O erro possível é acusar defasagem que
+    outra transação já tinha revalidado, e esse é o lado seguro.
     """
     #: SEM PAREAMENTO ANTERIOR NÃO HÁ O QUE REVALIDAR, e carimbar aqui seria
     #: justamente a mentira que `pareamento_da_fila` existe para impedir: uma
@@ -372,13 +395,15 @@ def revalidar(sessao: Session) -> None:
     #: ANTES DE CONTAR E DE IMPRIMIR: a remoção de quem chama pode estar só na
     #: sessão, e o `delete` é o que dispara a cascata em `par_semelhante`.
     sessao.flush()
-    sessao.add(
-        PareamentoDaFila(
-            pares=sessao.scalar(select(func.count()).select_from(ParSemelhante)),
-            impressao=impressao_do_cadastro(sessao),
+    sessao.execute(
+        insert(PareamentoDaFila).from_select(
+            ["pares", "impressao"],
+            select(
+                select(func.count()).select_from(ParSemelhante).scalar_subquery(),
+                _consulta_da_impressao().scalar_subquery(),
+            ),
         )
     )
-    sessao.flush()
 
 
 def impressao_do_cadastro(sessao: Session) -> str:
@@ -404,7 +429,18 @@ def impressao_do_cadastro(sessao: Session) -> str:
     hashes diferentes só por mudar a ordem de leitura — e a tela acusaria
     defasagem que não existe, que é pior que não avisar.
     """
-    return sessao.scalar(
+    return sessao.scalar(_consulta_da_impressao())
+
+
+def _consulta_da_impressao():
+    """A impressão como CONSULTA, para `revalidar` poder embuti-la na inserção.
+
+    UMA IMPLEMENTAÇÃO SÓ, e isto não é economia de linha: duas versões da mesma
+    impressão divergiriam em silêncio e a tela acusaria defasagem que não existe.
+    É o que a `0097` fez ao reimplementar `normalizar` em SQL — 67 valores
+    diferentes de 87.
+    """
+    return (
         select(
             func.coalesce(
                 func.md5(
