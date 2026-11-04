@@ -308,6 +308,81 @@ def test_a_agenda_conta_as_linhas_que_viraram_interacao(sessao, cliente_admin):
     assert carga["meses"] == []
 
 
+def test_a_agenda_confirmada_SEM_LINHA_ACEITA_aparece_com_zero(sessao, cliente_admin):
+    """Zero é resultado válido aqui também, e a importação não pode desaparecer.
+
+    O `group_by` da subconsulta só gera linha para importação COM interação; é o
+    `outerjoin` com `coalesce` que mantém esta visível. Sem eles a aba diria que
+    a carga não aconteceu.
+    """
+    quem = _pessoa(sessao, "Quem Recusou Tudo")
+    importacao = _agenda_confirmada(sessao, quem, quantas_linhas=0)
+    sessao.add(
+        ImportacaoLinha(
+            importacao_id=importacao.id,
+            aba="Agendas",
+            linha_origem=2,
+            dados_brutos={},
+            decisao="descartada",
+        )
+    )
+    sessao.flush()
+
+    (carga,) = _cargas(cliente_admin, base="agendas")
+
+    assert carga["linhas"] == 0
+
+
+def test_a_agenda_diz_quem_CONFIRMOU_e_nao_quem_subiu(sessao, cliente_admin):
+    """`quando` é a confirmação, então `quem` tem de ser quem confirmou.
+
+    `importar_agendas.confirmar` não exige que seja quem subiu: A envia, B
+    confirma. Antes da `0117` a tabela só guardava A, e a linha mostrava a hora
+    de B com o nome de A.
+    """
+    enviou = _pessoa(sessao, "Quem Enviou")
+    confirmou = _pessoa(sessao, "Quem Confirmou")
+    importacao = _agenda_confirmada(sessao, enviou, quantas_linhas=1)
+    importacao.confirmado_por = confirmou.id
+    sessao.flush()
+
+    (carga,) = _cargas(cliente_admin, base="agendas")
+
+    assert carga["quem"] == "Quem Confirmou"
+    assert carga["quem_enviou_o_arquivo"] is False
+
+
+def test_a_agenda_antiga_cai_em_quem_enviou_e_avisa(sessao, cliente_admin):
+    """Confirmada antes da `0117`: `confirmado_por` é nulo e a tela troca o verbo.
+
+    Cair em `criado_por` em silêncio faria a aba afirmar que aquela pessoa
+    confirmou. A bandeira é o que permite dizer "enviado por" em vez de errar.
+    """
+    enviou = _pessoa(sessao, "Quem Enviou Antigamente")
+    _agenda_confirmada(sessao, enviou, quantas_linhas=1)
+
+    (carga,) = _cargas(cliente_admin, base="agendas")
+
+    assert carga["quem"] == "Quem Enviou Antigamente"
+    assert carga["quem_enviou_o_arquivo"] is True
+
+
+def test_a_confirmada_sem_carimbo_de_hora_nao_aparece(sessao, cliente_admin):
+    """A `0008` não amarra `situacao` a `confirmado_em`: SQL direto pode deixar
+    uma confirmada sem hora, e uma linha sem `quando` não é evento nenhum."""
+    quem = _pessoa(sessao, "Quem Confirmou Sem Hora")
+    sessao.add(
+        Importacao(
+            arquivo_nome="sem-hora.xlsx",
+            situacao="confirmada",
+            criado_por=quem.id,
+        )
+    )
+    sessao.flush()
+
+    assert _cargas(cliente_admin, base="agendas") == []
+
+
 @pytest.mark.parametrize("situacao", ["processando", "aguardando_conferencia", "cancelada"])
 def test_a_importacao_que_nao_confirmou_nao_aparece(sessao, cliente_admin, situacao):
     """Conferência em curso não carregou nada; cancelada não carregou nunca."""
@@ -335,11 +410,54 @@ def _fontes(cliente, mes: str = "2026-08"):
 
 def test_a_fonte_sem_carga_registrada_diz_nulo(sessao, cliente_admin):
     """A trilha começa na `0115` e não se reconstrói: o autor histórico foi
-    apagado junto com `planilha_recebida`. Inventar seria pior que admitir."""
+    apagado junto com `planilha_recebida`. Inventar seria pior que admitir.
+
+    CARREGA OUTRA FONTE DE PROPÓSITO. Sem isso o teste seria vácuo: passaria
+    também se `_ultima_carga_por_fonte` fosse apagada inteira. O que ele afirma é
+    que a carga de UMA fonte não vaza para as outras.
+    """
+    outra = sessao.scalar(select(ScoreFonte).where(ScoreFonte.codigo == "bites"))
+    assert outra is not None
+    _carga(sessao, fonte_id=outra.id, usuario_id=_pessoa(sessao, "Quem Subiu Bites").id)
+
     fontes = _fontes(cliente_admin)
 
+    assert fontes["bites"]["ultima_carga_por"] == "Quem Subiu Bites"
     assert fontes["clipei"]["ultima_carga_em"] is None
     assert fontes["clipei"]["ultima_carga_por"] is None
+
+
+def test_o_empate_de_carimbo_da_resposta_ESTAVEL(sessao, cliente_admin):
+    """Duas cargas no mesmo instante: a resposta não muda entre leituras.
+
+    O QUE O DESEMPATE DÁ, E O QUE NÃO DÁ. `carga_de_base.id` é uuid4, não serial,
+    então ordenar por ele é ESTÁVEL mas não cronológico: num empate exato a
+    escolhida é arbitrária, só não varia. Prometer "a mais recente" seria prometer
+    o que a tabela não guarda — não há coluna monotônica.
+
+    ISSO BASTA porque o empate é praticamente inalcançável: `clock_timestamp()`
+    tem resolução de microssegundo e dois `insert` em sequência diferem. O que o
+    desempate evita é o sintoma ruim — a aba trocando de ordem entre dois
+    carregamentos do mesmo dado, que parece corrupção e não é.
+    """
+    fonte = _uma_fonte(sessao)
+    mesmo_instante = datetime.now(UTC)
+    for nome in ("Uma Pessoa", "Outra Pessoa"):
+        _carga(
+            sessao,
+            fonte_id=fonte.id,
+            usuario_id=_pessoa(sessao, nome).id,
+            concluida_em=mesmo_instante,
+        )
+
+    #: DEZ LEITURAS: desempate ausente não falha sempre — falha às vezes, que é o
+    #: pior jeito de falhar. Repetir transforma instabilidade em falha.
+    respostas = {
+        _fontes(cliente_admin)["clipei"]["ultima_carga_por"] for _ in range(10)
+    }
+
+    assert len(respostas) == 1, f"a resposta variou entre leituras: {respostas}"
+    assert respostas.pop() in {"Uma Pessoa", "Outra Pessoa"}
 
 
 def test_a_fonte_mostra_a_ultima_carga_e_quem_fez(sessao, cliente_admin):

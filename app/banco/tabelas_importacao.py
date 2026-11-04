@@ -68,6 +68,14 @@ class Importacao(Tabela):
     confirmado_em: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    #: QUEM APERTOU CONFIRMAR, e não é necessariamente `criado_por`: `confirmar`
+    #: não exige que seja quem subiu. Sem esta coluna a trilha da carga mostrava
+    #: a hora de quem confirmou com o nome de quem enviou. Ver a `0117`.
+    #:
+    #: Nulo em importação não confirmada, e nas confirmadas antes da `0117`.
+    confirmado_por: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("usuario.id"), nullable=True
+    )
 
 
 class ImportacaoLinha(Tabela):
