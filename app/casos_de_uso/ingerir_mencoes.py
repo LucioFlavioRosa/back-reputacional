@@ -8,33 +8,31 @@ UM ARQUIVO PODE ALIMENTAR VÁRIAS FONTES, e o upload trata todas de uma vez. O
 export da Clipei vira a lente Imprensa inteira e, recortado por público
 investidor, a lente Mercado; o da Approach traz Social Listening e Community
 Management em abas diferentes do mesmo `.xlsx`. Importar por uma fonte só
-deixaria a irmã com o mês anterior, e duas lentes passariam a ler versões
-diferentes do mesmo arquivo — uma divergência que ninguém veria na tela, porque
-cada lente mostraria um número plausível. Quem diz quais fontes andam juntas é
-o campo `arquivo` do mapeamento, que é cadastro.
+deixaria a irmã com o mês anterior, e duas lentes leriam versões diferentes do
+mesmo arquivo — divergência que ninguém vê na tela, porque cada lente mostra um
+número plausível. Quem diz quais fontes andam juntas é o campo `arquivo` do
+mapeamento, que é cadastro.
 
-SUBSTITUIÇÃO POR MÊS, e não acréscimo. O fornecedor reenvia o arquivo quando
-corrige uma classificação — e o mesmo post reenviado, somado, contaria duas
-vezes. Cada mês presente no arquivo é apagado e regravado; um mês que o arquivo
-não traz fica intacto, porque o export de junho não é uma afirmação sobre maio.
+SUBSTITUIÇÃO POR MÊS, e não acréscimo: o fornecedor reenvia o arquivo quando
+corrige uma classificação, e o mesmo post somado contaria duas vezes. Cada mês
+presente no arquivo é apagado e regravado; um mês que o arquivo não traz fica
+intacto, porque o export de junho não é uma afirmação sobre maio.
 
-O PREÇO DISSO É UM ARQUIVO PARCIAL PODER ENCOLHER UM MÊS: um export baixado
-antes do fechamento substitui o mês cheio pelo pedaço. Não dá para o servidor
-distinguir "o fornecedor reclassificou e sobraram menos" de "baixaram cedo
-demais" — os dois chegam como um arquivo com menos linhas. O que dá é NÃO
-DEIXAR ISSO PASSAR CALADO: o resumo diz quantas menções o mês tinha antes de a
-troca acontecer, ao lado de quantas entraram.
+O PREÇO É QUE UM ARQUIVO PARCIAL PODE ENCOLHER UM MÊS: um export baixado antes
+fechamento substitui o mês cheio pelo pedaço, e o servidor não tem como
+distinguir isso de uma reclassificação com menos linhas. O que dá é não deixar
+passar calado — o resumo diz quantas menções o mês tinha antes da troca, ao lado
+de quantas entraram.
 
-POR QUE O AGREGADO SE REFAZ AQUI. `score_mes_fonte` guarda as quatro somas de
-que toda régua precisa. Como a substituição deixa o banco com exatamente as
-menções do arquivo para aqueles meses, as somas do arquivo JÁ SÃO as somas do
-mês — não há por que relê-las do banco para conferir a própria escrita.
+O AGREGADO SE REFAZ AQUI porque a substituição deixa o banco com exatamente as
+menções do arquivo para aqueles meses: as somas do arquivo JÁ SÃO as somas do
+mês, e relê-las do banco seria conferir a própria escrita.
 
 UMA CONSEQUÊNCIA A CARREGAR: `soma_log` e `soma_cargo` congelam, no instante da
 ingestão, as fórmulas de `dominio/score.py` (`peso_do_engajamento` e
 `peso_do_cargo`). Mudar uma delas NÃO reescreve o passado. É de propósito — o
-número que a diretoria citou em julho continua sendo o que ela citou —, e o
-grão para reprocessar, se um dia for preciso, está inteiro em `mencao`.
+número que a diretoria citou em julho continua sendo o que ela citou —, e o grão
+para reprocessar está inteiro em `mencao`.
 """
 
 from __future__ import annotations
@@ -81,21 +79,18 @@ from app.dominio.ingestao_score import (
 from app.dominio.texto import normalizar
 
 #: Abrir uma planilha de 10 mil linhas é barato; abrir um arquivo de 200 MB
-#: enviado por engano não é. O maior export real medido é de 10,53 MB — o
-#: clipping de janeiro a julho da Clipei, 75.369 linhas (16/10/2026; a nota
-#: anterior aqui dizia 3,8 MB, de um recorte menor) —, e o teto é pedido do dono
-#: do produto: planilhas de até 80 MB.
+#: enviado por engano não é. O teto é pedido do dono do produto: planilhas de
+#: até 80 MB.
 #:
 #: O `client_max_body_size` DO NGINX DO FRONT FICA ACIMA DISTO (81m), e a ordem
-#: é o que importa: o nginx vem primeiro, então cortar lá primeiro troca esta
-#: mensagem — que diz o tamanho aceito — por um 413 seco do proxy. Já esteve
-#: desalinhado: 26m de nginx contra 40 MB aqui deixava um vão de 14 MB em que o
-#: arquivo era recusado sem explicação. Quem mudar um muda o outro.
+#: é o que importa: o nginx vem primeiro, então cortar lá troca esta mensagem —
+#: que diz o tamanho aceito — por um 413 seco do proxy. Quem mudar um muda o
+#: outro.
 #:
 #: E O TETO DE BYTES NÃO É O LIMITE REAL destas planilhas: o tempo é. O ingress
-#: do Container Apps corta a requisição por volta de 240 s, e o clipping de
-#: 3,8 MB já levou 22,9 s de processamento. 80 MB passam por aqui e podem não
-#: terminar lá. Arquivo dessa ordem pede importação em segundo plano.
+#: do Container Apps corta a requisição por volta de 240 s, e um clipping de
+#: poucos MB já leva dezenas de segundos de processamento. Arquivo de 80 MB
+#: passa por aqui e pode não terminar lá — ele pede importação em segundo plano.
 TAMANHO_MAXIMO = 80 * 1024 * 1024
 
 #: A assinatura de um ZIP — e um `.xlsx` é um ZIP. Conferir os quatro primeiros
@@ -123,26 +118,23 @@ class Resumo:
     avisos: Mapping[str, int] = field(default_factory=dict)
     #: QUANTOS VEÍCULOS NASCERAM NESTA SUBIDA — e é da SUBIDA, não desta fonte.
     #:
-    #: Os veículos são criados UMA vez, antes das fontes irmãs, porque as duas
-    #: leem o mesmo arquivo e veriam os mesmos veículos. Então este número vem
-    #: REPETIDO em cada resumo da lista, com o mesmo valor.
-    #:
-    #: NÃO SOME A LISTA: duas fontes irmãs com 2.628 criações cada dariam 5.256,
-    #: e nasceram 2.628. A tela mostra uma vez — é o número que a pessoa acabou
-    #: de autorizar na conferência, e ele tem de bater com o que ela marcou.
+    #: Os veículos são criados UMA vez, antes das fontes irmãs, porque todas leem
+    #: o mesmo arquivo. Então este número vem REPETIDO em cada resumo da lista,
+    #: com o mesmo valor, e NÃO SE SOMA: a tela mostra uma vez, porque é o número
+    #: que a pessoa acabou de autorizar na conferência.
     veiculos_criados: int = 0
     #: Quantas menções DESTA fonte acharam veículo no cadastro. Esta é por
     #: fonte, e somar não faz sentido por outro motivo: as irmãs recortam o
     #: mesmo arquivo, então a menção da lente Mercado também está na Imprensa.
     #:
     #: É o número que diz o quanto a ponte cobre, e o que cresce a cada subida
-    #: com criação: medido depois da primeira carga, 76,7%.
+    #: com criação.
     mencoes_ligadas: int = 0
     #: Quantas menções DESTA fonte acharam assunto no cadastro de temas.
     #:
     #: É O NÚMERO QUE DIZ SE O FILTRO DA TAXONOMIA TEM DADO: o dossiê recorta
     #: por N1/N2/N3 pelo `tema_id`, então menção sem vínculo não aparece em
-    #: recorte nenhum. Medido antes desta etapa: zero em 29.898.
+    #: recorte nenhum.
     mencoes_com_tema: int = 0
 
 
@@ -152,17 +144,16 @@ def _linhas_da_aba(
     """As linhas da planilha como dicionários cabeçalho → célula.
 
     ABRE O ARQUIVO A CADA CHAMADA quando recebe bytes, e é por isso que quem faz
-    mais de uma passada passa um `ArquivoLido`: a conferência fazia quatro
-    leituras do mesmo arquivo e gastava 14,3s onde hoje gasta 2,7s. Ver
-    `ArquivoLido`.
+    mais de uma passada passa um `ArquivoLido`: a conferência faz quatro
+    passadas, e decodificar o arquivo quatro vezes é o custo que `ArquivoLido`
+    existe para eliminar.
     """
     return _lido(conteudo).linhas(mapeamento)
 
 
-#: A NORMALIZAÇÃO DE CÉLULA MUDOU DE CASA em 22/10/2026, para
-#: `leitor_de_planilha`, quando a ingestão de bonds passou a ler pelo mesmo
-#: mecanismo. O nome continua aqui porque é por ele que os testes deste módulo
-#: a alcançam — mover um nome de teste não é o conserto, é ruído no diff.
+#: A NORMALIZAÇÃO DE CÉLULA MORA EM `leitor_de_planilha`, porque a ingestão de
+#: bonds lê pelo mesmo mecanismo. O nome fica reexportado aqui porque é por ele
+#: que os testes deste módulo a alcançam.
 _como_o_openpyxl = como_o_openpyxl
 
 
@@ -174,127 +165,71 @@ _como_o_openpyxl = como_o_openpyxl
 # `ArquivoLido.linhas`, porque `_pelo_calamine` só é alcançável pelo ramo que
 # guarda. Dizer "não" perde os dois de uma vez.
 #
-# O QUE HAVIA ANTES, E POR QUE SAIU. A pergunta era respondida por
-# `len(conteudo) <= 8 MB`: o byte COMPRIMIDO do `.xlsx`. Medido em 16/10/2026
-# nos dois arquivos reais, esse proxy erra por 3,2×:
-#
-#     Clipei     10,53 MB comprimido  ->  66,19 MB de XML da aba   (6,3x)
-#     Approach    3,27 MB comprimido  ->   6,48 MB de XML da aba   (2,0x)
-#
-# Com um número só para os dois, ou se recusa o cache a quem cabe, ou se
-# concede a quem não cabe. Era o primeiro caso: o clipping da Clipei caía no
-# caminho lento e a conferência gastava 47,5 s só decodificando — quatro
-# passadas de 11,88 s —, contra 1,40 s pelo caminho rápido. É daí que vinham os
-# 113 s que estouraram o gateway do cliente em 15/10/2026.
+# NÃO SE RESPONDE PELO BYTE COMPRIMIDO do `.xlsx`, que é o proxy óbvio e erra
+# por mais de 3x entre os dois arquivos reais: a razão entre comprimido e XML da
+# aba varia de 2x a 6x. Com um número só para os dois, ou se recusa o cache a
+# quem cabe — e aí a conferência decodifica o arquivo quatro vezes — ou se
+# concede a quem não cabe, e o processo morre.
 #
 # E O BYTE COMPRIMIDO NÃO SABE DE ABAS. O arquivo da Approach tem SETE, e cada
 # fonte lê uma: julgar pelo arquivo inteiro cobra de uma aba o tamanho das
 # outras seis.
 # =============================================================================
 
-#: TRÊS TERMOS, PORQUE O CUSTO TEM TRÊS FONTES — e a primeira versão tinha um
-#: só, o que subestimava por até 141×.
+#: TRÊS TERMOS, PORQUE O CUSTO TEM TRÊS FONTES, e um termo só subestima por
+#: duas ordens de grandeza.
 #:
-#: O QUE A PRIMEIRA VERSÃO ERRAVA. Ela cobrava 200 B por célula e pronto. Mas o
-#: TEXTO de um `.xlsx` não mora na aba: mora em `xl/sharedStrings.xml`, e a aba
-#: guarda referências de ~30 B. Uma planilha de poucas células com textos
-#: enormes tinha aba pequena, estimativa pequena, e pico gigante. Medido em
-#: 16/10/2026 com arquivos montados à mão para isolar a forma (10.000 células):
+#: O TEXTO DE UM `.xlsx` NÃO MORA NA ABA: mora em `xl/sharedStrings.xml`, e a
+#: aba guarda referências curtas. Uma planilha de poucas células com textos
+#: enormes tem aba pequena, estimativa pequena e pico gigante.
 #:
-#:     texto/célula    aba      sharedStrings   estimava   custava    erro
-#:           10 B     0,36 MB      0,29 MB        2,0 MB    2,1 MB    1,0x
-#:          100 B     0,36 MB      1,15 MB        2,0 MB    3,6 MB    1,8x
-#:            1 KB    0,36 MB      9,74 MB        2,0 MB   29,8 MB   14,7x
-#:           10 KB    0,36 MB     95,57 MB        2,0 MB  287,7 MB  141,8x
+#: E SOMAR `sharedStrings.file_size` NÃO BASTA, que é a correção óbvia: com
+#: texto REPETIDO o arquivo guarda uma cópia muito menor, mas o leitor
+#: materializa uma string Python POR CÉLULA, e o custo continua.
 #:
-#: E SOMAR `sharedStrings.file_size` NÃO BASTA, que era a correção óbvia: com
-#: texto REPETIDO o arquivo deduplica e aquele número vai a zero, enquanto o
-#: custo continua — o calamine materializa uma string Python POR CÉLULA. No caso
-#: medido: sharedStrings de 0,00 MB e pico de 19,1 MB.
+#: O QUE FECHA A CONTA É A RAZÃO `count/uniqueCount`, que o `<sst>` declara no
+#: próprio cabeçalho: quantas células referenciam texto contra quantos textos
+#: distintos existem. `sharedStrings × razão` é o texto como ele é
+#: MATERIALIZADO.
 #:
-#: O QUE FALTAVA É A RAZÃO `count/uniqueCount`, que o `<sst>` declara no próprio
-#: cabeçalho: quantas células referenciam texto contra quantos textos distintos
-#: existem. `sharedStrings × razão` é o texto como ele é MATERIALIZADO. Na Clipei
-#: a razão é 13,2 (11,36 MB de arquivo, 150 MB materializados); na Approach, 4,8.
-#:
-#: OS TRÊS COEFICIENTES, ajustados contra nove casos — os dois arquivos reais e
-#: sete montados. Nenhum caso subestima; a folga vai de 1,08x a 1,45x:
-#:
-#:     Clipei          294 MB reais -> 357 estimados   1,21x
-#:     Approach         40,5        ->  58,7           1,45x
-#:     10 B              2,1        ->   2,4           1,13x
-#:      1 KB            29,8        ->  34,0           1,14x
-#:     10 KB           287,7       -> 321             1,12x
-#:      1 KB repetido   19,1       ->  23,4           1,23x
-#:    100 B x 100k      49,0       ->  52,9           1,08x
-#:
-#: SUBESTIMAR MATA O PROCESSO; superestimar só custa tempo, porque o caminho
-#: lento continua correto. Por isso os coeficientes ficam acima do ajuste.
+#: OS COEFICIENTES FICAM ACIMA DO AJUSTE, de propósito e com folga medida sobre
+#: os arquivos reais e casos montados: SUBESTIMAR MATA O PROCESSO, e
+#: superestimar só custa tempo, porque o caminho lento continua correto.
 
-#: A célula em si: o `tuple`, o objeto Python do valor, o overhead do dicionário
-#: rio abaixo. Sai de 123 B/célula ajustados, arredondado para cima.
+#: A célula em si: o `tuple`, o objeto Python do valor e o overhead do
+#: dicionário rio abaixo, arredondado para cima.
 MEMORIA_POR_CELULA = 140
 
-#: A CÉLULA DE PREENCHIMENTO, que não traz valor nenhum — e que até 22/10/2026
-#: era cobrada pelos mesmos 140 B da que traz.
+#: A CÉLULA DE PREENCHIMENTO, que não traz valor nenhum.
 #:
-#: POR QUE ELA EXISTE. `iter_rows` devolve a linha INTEIRA até a última coluna
-#: que a aba declara, e as colunas sem valor vêm como `None`. Numa aba larga e
-#: vazia isso é a maioria das células — mas é sempre o MESMO `None`: o que
-#: custa é o ponteiro na tupla, não um objeto por célula.
+#: `iter_rows` devolve a linha INTEIRA até a última coluna que a aba declara, e
+#: as colunas sem valor vêm como `None` — numa aba larga e vazia, a maioria das
+#: células. Mas é sempre o MESMO `None`: o que custa é o ponteiro na tupla, não
+#: um objeto por célula, e por isso o coeficiente é uma ordem de grandeza menor
+#: que o da célula com valor.
 #:
-#: MEDIDO em 22/10/2026 no export de bonds que o Q&A recusou (649 KB,
-#: `ref="A1:BR54254"`), com `tracemalloc` sobre o que `ingerir_bonds` faz:
-#:
-#:     células materializadas  3.797.780      pico real      36,6 MB
-#:     dessas, com valor          12.598      estimado então  507,1 MB   13,9x
-#:
-#: 36,6 MB / 3,8 M células são 9,7 B/célula pelo openpyxl. Mas esta conta é
-#: COMPARTILHADA, e o outro leitor é mais caro — foi achado de revisão, e a
-#: primeira versão deste coeficiente (12) subestimava por causa dele.
-#:
-#: O QUE EU HAVIA ESCRITO AQUI E ESTÁ ERRADO: que o calamine "nunca produz
-#: preenchimento". Ele ignora a dimensão DECLARADA, mas materializa o retângulo
-#: da área REALMENTE usada — e basta uma célula no canto para que esse retângulo
-#: seja enorme. Construí o caso e medi:
-#:
-#:     o que o arquivo tem        leitor     células      pico
-#:     o export do Q&A            openpyxl   3.797.780   36,6 MB   ( 9,7 B)
-#:     o export do Q&A            calamine     121.095    2,3 MB
-#:     só `A1=1` e `BR54254=2`    calamine   3.797.780   63,8 MB   (16,8 B)
-#:     só `A1=1` e `A1000000=2`   openpyxl   1.000.000    8,2 MB   ( 8,6 B)
-#:
-#: A ÚLTIMA LINHA DERRUBA A OUTRA METADE DO ACHADO, e por isso ficou aqui: a
-#: revisão supôs 56 B pela tupla de uma célula e ~64 B/célula em linha estreita,
-#: o que tornaria este modelo por célula insustentável. Medido, são 8,6 — o
-#: openpyxl REAPROVEITA a tupla da linha vazia em vez de criar uma por linha.
-#: Linha estreita não é o caso caro; o caro é o calamine, a 16,8, porque a lista
-#: de listas do `to_python()` coexiste com a lista de tuplas.
-#:
-#: 24 É O DOBRO DO QUE A PIOR MEDIÇÃO PEDE, na régua dos outros coeficientes
-#: deste bloco (folga de 1,08x a 1,45x). Com ele o caso do canto estima 91 MB
-#: contra 63,8 reais, e o arquivo do Q&A estima 109 MB contra 204 de orçamento —
-#: continua passando, que é o ponto de tudo isto.
-#:
-#: A ASSIMETRIA ERA O ESTRAGO: superestimar nas lentes só derruba para o caminho
-#: lento, que continua correto; em `ingerir_bonds` não há caminho lento, e a
-#: mesma conta recusava o arquivo na cara de quem subia.
+#: O NÚMERO TEM MARGEM DELIBERADA sobre a pior medição, na mesma régua dos
+#: outros coeficientes deste bloco. E a margem é assimétrica de propósito:
+#: superestimar nas lentes só derruba para o caminho lento, que continua
+#: correto, mas `ingerir_bonds` NÃO TEM caminho lento, e a mesma conta recusaria
+#: o arquivo na cara de quem subiu. Quem for ajustar isto para baixo precisa
+#: medir os DOIS leitores: o calamine custa mais por célula que o openpyxl,
+#: porque a lista de listas do `to_python()` coexiste com a lista de tuplas.
 MEMORIA_POR_CELULA_VAZIA = 24
 
 #: O TEXTO COMO CADA CÉLULA O MATERIALIZA (`sharedStrings × count/uniqueCount`).
-#: 0,55 porque o byte de XML vira caractere Python com overhead, e a
-#: deduplicação do arquivo não se repete na memória.
+#: O byte de XML vira caractere Python com overhead, e a deduplicação do arquivo
+#: não se repete na memória.
 MEMORIA_POR_TEXTO_MATERIALIZADO = 0.55
 
-#: O TEXTO ÚNICO que o leitor guarda uma vez (o lado Rust do calamine). 2,8
-#: sobre o tamanho de `sharedStrings.xml` — é o termo que domina quando o texto
-#: é longo e distinto, que é justamente o caso que a versão anterior não via.
+#: O TEXTO ÚNICO que o leitor guarda uma vez (o lado Rust do calamine). É o
+#: termo que domina quando o texto é longo e distinto, que é justamente o caso
+#: que um termo só não vê.
 MEMORIA_POR_TEXTO_UNICO = 2.8
 
 #: BYTES DE XML QUE UMA CÉLULA OCUPA, para quando a planilha não declara as
-#: dimensões dela. Medido: 38 B/célula na Clipei e 31 na Approach. 35 fica no
-#: meio, e a estimativa só é usada quando é a MAIOR das duas — ver
-#: `celulas_da_maior_aba`.
+#: dimensões dela. Fica entre o que os dois arquivos reais medem, e a estimativa
+#: só é usada quando é a MAIOR das duas — ver `celulas_da_maior_aba`.
 XML_POR_CELULA = 35
 
 #: QUANTO DO CONTÊINER A LEITURA DE UMA PLANILHA PODE TOMAR.
@@ -313,21 +248,12 @@ ORCAMENTO_SEM_CONTEINER = 192 * 1024 * 1024
 #: Onde o cgroup publica o limite de memória. OS DOIS, e a ordem é só
 #: preferência.
 #:
-#: MEDIDO, e desmente o que esta nota dizia antes. Ela afirmava que "v2 é o que
-#: AKS e Container Apps usam hoje". Em 16/10/2026 eu li dentro da réplica
-#: implantada no **Container Apps**:
-#:
-#:     /sys/fs/cgroup/memory.max                    -> No such file or directory
-#:     /sys/fs/cgroup/memory/memory.limit_in_bytes  -> 4294967296
-#:
-#: Ou seja: o Container Apps usa **v1**. Se este módulo lesse só o v2 — o
-#: "moderno", que é o que a nota errada sugeria —, o orçamento cairia no padrão
-#: conservador e o ganho desta leitura desapareceria EM SILÊNCIO exatamente no
-#: ambiente para o qual ele foi medido.
-#:
-#: O AKS documenta v2 como padrão desde o Kubernetes 1.25, e é por isso que o
-#: v2 continua primeiro. Ler os dois é o que faz a decisão viajar entre os dois
-#: ambientes sem ninguém reparar.
+#: OS DOIS AMBIENTES DIVERGEM: o Container Apps publica em **v1**
+#: (`/sys/fs/cgroup/memory/memory.limit_in_bytes`), e o AKS documenta **v2**
+#: como padrão desde o Kubernetes 1.25. Lendo só o v2 — o "moderno" —, o
+#: orçamento cairia no padrão conservador e o ganho desta leitura desapareceria
+#: EM SILÊNCIO. Ler os dois é o que faz a decisão viajar entre os ambientes sem
+#: ninguém reparar.
 _LIMITES_DO_CGROUP = (
     Path("/sys/fs/cgroup/memory.max"),
     Path("/sys/fs/cgroup/memory/memory.limit_in_bytes"),
@@ -423,40 +349,30 @@ class CelulasDaAba:
 def celulas_da_maior_aba(conteudo: bytes) -> CelulasDaAba | None:
     """Quantas células a maior aba traz, SEM descomprimir a planilha.
 
-    CUSTA 6,7 ms no clipping de 10,53 MB, porque lê o diretório central do ZIP —
-    que já traz o tamanho descomprimido de cada arquivo — e descomprime só os
-    primeiros 4 KB da aba maior, à caça do `<dimension>`.
+    Lê o diretório central do ZIP — que já traz o tamanho descomprimido de cada
+    arquivo — e descomprime só os primeiros 4 KB da aba maior, à caça do
+    `<dimension>`. São milissegundos num clipping de dezenas de MB.
 
     A MAIOR ABA, e não a aba que se vai ler: resolver nome de aba até o arquivo
-    exigiria `xl/workbook.xml` mais `xl/_rels/workbook.xml.rels`, e o ganho seria
-    estimar o que já está limitado. A maior aba é um teto para qualquer aba do
-    arquivo — erra para o lado de recusar o cache, que custa tempo, nunca o
-    processo.
+    exigiria `xl/workbook.xml` mais os `.rels`, e o ganho seria estimar o que já
+    está limitado. A maior aba é um teto para qualquer aba do arquivo — erra para
+    o lado de recusar o cache, que custa tempo, nunca o processo.
 
-    AS DUAS ESTIMATIVAS, E A MAIOR DELAS VENCE. A dimensão declarada é exata
-    quando existe, mas `<dimension>` é opcional no formato e há quem escreva
+    AS DUAS ESTIMATIVAS, E A MAIOR VENCE. A dimensão declarada é exata quando
+    existe, mas `<dimension>` é opcional no formato e há quem escreva
     `ref="A1:A1"` numa aba de 60 MB — confiar nela sozinha concederia o cache a
-    um arquivo enorme. O tamanho do XML é grosseiro mas nunca mente sobre ordem
-    de grandeza. Pegar o máximo deixa o erro sempre do lado seguro:
+    um arquivo enorme. O tamanho do XML é grosseiro, mas nunca mente sobre ordem
+    de grandeza.
 
-        Clipei    dimensão 1.733.510   XML 1.983.000   ->  1.983.000  (+14%)
-        Approach  dimensão   219.140   XML   194.000   ->    219.140  (exato)
+    A DIFERENÇA ENTRE AS DUAS É O PREENCHIMENTO: quando a dimensão declara MAIS
+    do que o XML comporta, o excesso não é célula com valor, são as vagas que
+    `iter_rows` devolve como `None` — e elas custam uma fração do que uma célula
+    de verdade custa (ver `MEMORIA_POR_CELULA_VAZIA`).
 
-    E A DIFERENÇA ENTRE AS DUAS É O PREENCHIMENTO, que é o conserto de
-    22/10/2026. Quando a dimensão declara MAIS do que o XML comporta, o excesso
-    não é célula com valor: são as vagas que `iter_rows` devolve como `None`
-    para completar a linha. Elas existem (medi: o openpyxl preenche mesmo) e
-    custam ~9 B, não os 140 de uma célula de verdade — ver
-    `MEMORIA_POR_CELULA_VAZIA`.
-
-        bonds Q&A  dimensão 3.797.780   XML   152.890
-                   -> materializadas 3.797.780, ocupadas 152.890
-
-    O MÁXIMO CONTINUA EM `materializadas`, e é de propósito: é ele que impede a
-    dimensão que mente PARA BAIXO (`ref="A1:A1"` numa aba de 60 MB) de conceder
-    o cache a um arquivo enorme. Quando o XML vence, `ocupadas` iguala
-    `materializadas`, o termo do preenchimento zera e a conta é a de sempre —
-    por isso esta mudança não mexe em nenhum arquivo que já funcionava.
+    O MÁXIMO CONTINUA EM `materializadas`, de propósito: é ele que impede a
+    dimensão que mente PARA BAIXO de conceder o cache a um arquivo enorme.
+    Quando o XML vence, `ocupadas` iguala `materializadas`, o termo do
+    preenchimento zera e a conta é a de sempre.
 
     DEVOLVE `None` quando não consegue dizer — ZIP ilegível, nenhuma aba, uma
     exceção qualquer. Quem chama trata `None` como "não cabe", porque a
@@ -506,9 +422,9 @@ def bytes_de_texto(conteudo: bytes) -> tuple[int, int] | None:
     cabeçalho `<sst>`. Descomprime 2 KB.
 
     `count` SÃO AS CÉLULAS, `uniqueCount` OS TEXTOS, e a razão entre eles é o
-    que a estimativa anterior não tinha. Com texto repetido o arquivo guarda uma
-    cópia e o leitor materializa uma string Python por célula — medido: 0,00 MB
-    de `sharedStrings` contra 19,1 MB de pico.
+    que um termo só não tem. Com texto repetido o arquivo guarda uma cópia e o
+    leitor materializa uma string Python por célula: `sharedStrings` pequeno
+    conviver com pico grande é o caso normal, não a exceção.
 
     SEM `sharedStrings` o arquivo guarda o texto INLINE na aba, e aí o tamanho
     da aba já o contou: devolve (0, 0) e o termo de célula faz o trabalho. É o
@@ -545,9 +461,8 @@ def bytes_de_texto(conteudo: bytes) -> tuple[int, int] | None:
 def custo_da_leitura(conteudo: bytes) -> int | None:
     """Quantos bytes de memória a leitura guardada desta planilha vai pedir.
 
-    TRÊS TERMOS, um por fonte de custo — ver os coeficientes no topo. Custa
-    ~9 ms no clipping de 10,53 MB: o diretório central do ZIP mais 6 KB
-    descomprimidos.
+    TRÊS TERMOS, um por fonte de custo — ver os coeficientes no topo. Lê o
+    diretório central do ZIP mais alguns KB descomprimidos.
 
     `None` quando qualquer parte não se deixa estimar.
     """
@@ -556,7 +471,7 @@ def custo_da_leitura(conteudo: bytes) -> int | None:
     if celulas is None or texto is None:
         return None
     materializado, unico = texto
-    #: QUATRO TERMOS DESDE 22/10/2026: a célula com valor e a vaga de
+    #: QUATRO TERMOS: a célula com valor e a vaga de preenchimento custam
     #: preenchimento custam coisas diferentes, e cobrá-las igual inflava uma aba
     #: larga e vazia em 14×. A subtração não fica negativa por construção
     #: (`materializadas` é o máximo das duas estimativas, e `ocupadas` é uma
@@ -591,21 +506,19 @@ def _devolver(quanto: int) -> None:
 def vale_guardar(conteudo: bytes) -> int | None:
     """O custo reservado, se a leitura guardada couber; `None` se não couber.
 
-    O ORÇAMENTO É DO PROCESSO, NÃO DO ARQUIVO — e esta é a correção de um
-    defeito meu que a revisão do Codex achou em 16/10/2026. A versão anterior
-    comparava cada arquivo com o orçamento inteiro, então DUAS leituras
-    simultâneas na mesma réplica podiam tomar duas vezes aquilo: `0,8 L` mais os
-    ~88 MB que o processo já carrega. Num contêiner de 512 MiB isso são ~498 de
-    537 MB; três leituras passam claramente.
+    O ORÇAMENTO É DO PROCESSO, NÃO DO ARQUIVO. Comparando cada arquivo com o
+    orçamento inteiro, duas leituras simultâneas na mesma réplica tomariam duas
+    vezes aquilo, mais o que o processo já carrega — e num contêiner pequeno
+    duas passam raspando e três passam claramente.
 
     AS DUAS RÉPLICAS NÃO COMPARTILHAM MEMÓRIA, mas uma delas atende pedidos
     concorrentes, e o Uvicorn com um worker não serializa nada disto.
 
     A SEGUNDA LEITURA DEGRADA, NÃO FALHA: quem não cabe na folga que sobrou vai
     pelo caminho lento, de memória constante. É a mesma degradação de quem é
-    grande demais — e é por isso que isto é controle de admissão e não uma trava
-    que faz esperar: esperar transformaria duas importações simultâneas em uma
-    fila de dois minutos, e o resultado é o mesmo arquivo lido.
+    grande demais — e é por isso que isto é controle de admissão, e não uma
+    trava que faz esperar: esperar transformaria duas importações simultâneas
+    numa fila de minutos, para ler o mesmo arquivo.
     """
     custo = custo_da_leitura(conteudo)
     if custo is None:
@@ -621,32 +534,27 @@ def vale_guardar(conteudo: bytes) -> int | None:
 class ArquivoLido:
     """A planilha aberta UMA VEZ, servindo todas as etapas da subida.
 
-    POR QUE EXISTE, com os números que a motivaram. Medido com 25.000 linhas (o
-    tamanho do export real da Clipei), abrir e percorrer o `.xlsx` custa 5,1s —
-    e a conferência fazia isso QUATRO vezes: duas na previsão (uma por fonte
-    irmã), uma nos veículos e uma nos assuntos. Davam 14,3s, dos quais 0,02s
-    eram banco. Reusando as células, as quatro passadas custam 0,10s.
+    POR QUE EXISTE: a conferência percorria o `.xlsx` QUATRO vezes — duas na
+    previsão (uma por fonte irmã), uma nos veículos e uma nos assuntos —, e cada
+    passada custa segundos num export real. Reusando as células, as três
+    passadas seguintes saem quase de graça.
 
     O CUSTO É A DECODIFICAÇÃO DO XML, não o dicionário por linha: guardar as
     células de uma passada não pesa por linha, e é o que elimina as outras três
     leituras.
 
-    GUARDA A ABA INTEIRA, linhas do topo inclusive, e a BUSCA DO CABEÇALHO
-    continua sendo de cada fonte. Não é detalhe: `_achar_o_cabecalho` procura a
+    GUARDA A ABA INTEIRA, linhas do topo inclusive, e A BUSCA DO CABEÇALHO
+    CONTINUA SENDO DE CADA FONTE. Não é detalhe: `_achar_o_cabecalho` procura a
     primeira linha que traz as `colunas_necessarias` DAQUELA fonte, e duas irmãs
-    podem exigir conjuntos diferentes. Guardar o cabeçalho da primeira faria a
-    segunda recusar uma coluna que existe numa linha mais abaixo — hoje as duas
-    da Clipei exigem o mesmo, mas era armadilha montada. Achado de revisão.
+    podem exigir conjuntos diferentes — guardar o cabeçalho da primeira faria a
+    segunda recusar uma coluna que existe numa linha mais abaixo. A validação de
+    coluna é por fonte pelo mesmo motivo: o que se reusa é a leitura; o que cada
+    cadastro exige, cada uma confere.
 
-    A VALIDAÇÃO DE COLUNA também é por fonte, pelo mesmo motivo: o que se reusa
-    é a leitura; o que cada cadastro exige, cada uma confere.
-
-    UMA ABA POR ARQUIVO, e o cache é por nome de aba: fonte que peça outra aba
-    do mesmo arquivo abre a dela, e não recebe as linhas da vizinha. É o caso
-    das duas fontes da Approach, que leem as abas `CM` e `SL` do mesmo arquivo:
-    duas decodificações, cada uma da sua aba. As duas da Clipei leem `Clipping`,
-    e aí a segunda sai de graça — que é onde está o ganho, porque é esse o
-    arquivo de 25.000 linhas.
+    UMA ABA POR ARQUIVO, e o cache é por nome de aba: fonte que peça outra aba do
+    mesmo arquivo abre a dela, e não recebe as linhas da vizinha. É o caso das
+    duas fontes da Approach, que leem `CM` e `SL`; as duas da Clipei leem
+    `Clipping`, e aí a segunda sai de graça — que é onde está o ganho.
 
     O QUE NÃO CABE NA MEMÓRIA NÃO É GUARDADO, e aí também não é lido rápido —
     os dois andam juntos. Ver `vale_guardar`.
@@ -676,10 +584,9 @@ class ArquivoLido:
         #: SEM GUARDAR: a planilha é grande, e cada etapa decodifica a sua.
         planilha, aba = self._abrir(mapeamento)
         try:
-            #: A MESMA NORMALIZAÇÃO DO CAMINHO RÁPIDO, célula a célula. Este
-            #: caminho é o de arquivo grande, e era o único em que a célula de
-            #: erro chegava como texto — o que fazia a MESMA planilha produzir
-            #: dados diferentes conforme coubesse ou não na memória.
+            #: A MESMA NORMALIZAÇÃO DO CAMINHO RÁPIDO, célula a célula. Os dois
+            #: caminhos precisam normalizar igual, senão a MESMA planilha produz
+            #: dados diferentes conforme caiba ou não na memória.
             cru = aba.iter_rows(values_only=True)
             limpas = (sem_erro_do_excel(linha) for linha in cru)
             yield from self._dicionarios(limpas, mapeamento)
@@ -760,15 +667,14 @@ def _lido(conteudo: bytes | ArquivoLido) -> ArquivoLido:
 #: Quantas linhas do topo o leitor examina procurando o cabeçalho.
 #:
 #: O EXPORT DA CLIPEI TEM UMA LINHA ACIMA DO CABEÇALHO: três marcadores de nível
-#: (`N1`, `N2`, `N3`) sobre as colunas Atributo, Categoria e Subcategoria. O
-#: leitor assumia a linha 1 e recusava o arquivo inteiro com "a planilha não tem
-#: as colunas que o cadastro desta fonte espera" — a mensagem certa para um
-#: arquivo errado, e a errada para um arquivo CERTO com uma linha de título.
+#: (`N1`, `N2`, `N3`) sobre as colunas Atributo, Categoria e Subcategoria.
+#: Assumir a linha 1 recusa o arquivo inteiro com "a planilha não tem as colunas
+#: que o cadastro desta fonte espera" — a mensagem certa para um arquivo errado,
+#: e a errada para um arquivo CERTO com uma linha de título.
 #:
-#: VINTE É FOLGA, e é o mesmo número da importação de subtemas: fornecedor que
-#: põe logotipo e data antes do cabeçalho cabe, e um arquivo que realmente não
-#: tem as colunas ainda é recusado — com a mesma mensagem, que volta a ser
-#: verdade.
+#: VINTE É FOLGA, o mesmo número da importação de subtemas: fornecedor que põe
+#: logotipo e data antes do cabeçalho cabe, e um arquivo que realmente não tem
+#: as colunas ainda é recusado.
 LINHAS_ATE_O_CABECALHO = 20
 
 
@@ -830,16 +736,14 @@ def regravar(
     PÚBLICA PORQUE SÃO DOIS CHAMADORES: o importador mensal (aqui) e a carga
     inicial do pacote (`carga_do_pacote_das_lentes`). As duas leem planilhas de
     formatos diferentes e precisam da MESMA gravação — menções, as quatro somas
-    do agregado e a contagem do que ninguém classificou, tudo substituindo o mês.
-    Uma segunda cópia desta função seria a segunda definição de "o que é um mês
-    no banco".
+    do agregado e a contagem do que ninguém classificou, tudo substituindo o
+    mês. Uma segunda cópia desta função seria a segunda definição de "o que é um
+    mês no banco".
     """
-    #: A TRAVA DO ARQUIVO, E A INGESTÃO TAMBÉM A TOMA — correção de achado ALTO
-    #: de revisão. A reconciliação já se serializava por ela, mas a subida não
-    #: participava: a reconciliação copiava uma linha para o espelho e uma
-    #: subida cuja exclusão começara antes do commit dela não via essa linha e
-    #: inseria outra cópia. O resultado era duplicação no espelho e no
-    #: agregado — justamente o defeito que esta mudança existe para acabar.
+    #: A TRAVA DO ARQUIVO, E A INGESTÃO TAMBÉM A TOMA. Com a reconciliação
+    #: sozinha na trava, ela copiava uma linha para o espelho e uma subida cuja
+    #: exclusão começara antes do commit dela não via essa linha e inseria outra
+    #: cópia — duplicação no espelho e no agregado.
     #:
     #: A MESMA CHAVE das duas: o id do espelho do arquivo. Fonte sem irmã que
     #: recorte trava por si mesma, e arquivos diferentes não se esperam.
@@ -864,15 +768,15 @@ def regravar(
     #: A diferença é que ele não depende de autorização: veículo que falta NASCE
     #: na subida, e por isso quem decide é a tela; assunto não nasce — o cadastro
     #: é a autoridade. Montar o mapa dentro da gravação faz o vínculo valer para
-    #: os DOIS caminhos de escrita, inclusive a `carga_do_pacote_das_lentes`,
-    #: que monta a `Leitura` à mão e chama esta função direto.
+    #: os DOIS caminhos de escrita, inclusive a `carga_do_pacote_das_lentes`, que
+    #: monta a `Leitura` à mão e chama esta função direto.
     #:
-    #: UMA CONSULTA POR NÍVEL por gravação, e são 7 N1 + 41 N2 + 104 N3: o
-    #: conjunto cabe na memória e a comparação é O(1). Perguntar ao banco por
-    #: linha faria da subida de 25.597 linhas um problema de rede.
+    #: UMA CONSULTA POR NÍVEL por gravação: a taxonomia inteira cabe na memória e
+    #: a comparação é O(1). Perguntar ao banco por linha faria de uma subida de
+    #: dezenas de milhares de linhas um problema de rede.
     #:
-    #: A ÁRVORE INTEIRA, e não só o mapa do N3 (`por_nome`), desde a `0098`: o
-    #: fornecedor traz um nível e os de cima são derivados daqui. Ver
+    #: A ÁRVORE INTEIRA, e não só o mapa do N3 (`por_nome`): o fornecedor traz um
+    #: nível e os de cima são derivados daqui. Ver
     #: `dominio/niveis_de_taxonomia.py`.
     arvore_de_temas = temas_da_mencao.arvore(sessao)
     #: E A CONCESSIONÁRIA, pelo mesmo motivo e no mesmo momento: 29 unidades e
@@ -899,21 +803,15 @@ def regravar(
         )
     )
 
-    #: `insert()` EM LOTE, e nao `add_all` com objetos do ORM. Medido com 25.000
-    #: linhas: 4,34s instanciando e dando flush, contra 2,11s mandando os
-    #: dicionários — dos quais 1,13s eram só para criar objetos que ninguém lê
-    #: de volta (esta função não devolve nada, e quem conta usa a `leitura`).
-    #: O `id` continua vindo do default da coluna, aplicado pelo próprio
-    #: `insert()`.
     #: ONDE O CADASTRO PÕE CADA MENÇÃO, resolvido ANTES de montar os valores.
     #:
     #: Um passo à parte porque `resolver` devolve os TRÊS níveis de uma vez, e
     #: chamá-lo três vezes dentro do dicionário resolveria a árvore três vezes
-    #: por linha — 75 mil buscas a mais numa subida de 25 mil linhas, com a
-    #: chance de as três discordarem se alguém mexer numa só.
-    #: OS MESMOS QUATRO CAMPOS QUE A LEITURA USA (`consulta_profundidade`), e
-    #: na mesma ordem de precedência — é o que torna a coluna gravada igual ao
-    #: que a tela calcula ao vivo. `tema_id` não entra porque é o que estamos
+    #: por linha — com a chance de as três discordarem se alguém mexer numa só.
+
+    #: OS MESMOS QUATRO CAMPOS QUE A LEITURA USA (`consulta_profundidade`), e na
+    #: mesma ordem de precedência — é o que torna a coluna gravada igual ao que a
+    #: tela calcula ao vivo. `tema_id` não entra porque é o que estamos
     #: resolvendo: na subida mensal ninguém conferiu nível nenhum ainda.
     niveis_por_linha = [
         arvore_de_temas.resolver(
@@ -936,18 +834,16 @@ def regravar(
             "veiculo": mencao.veiculo,
             "publico_alvo": mencao.publico_alvo,
             # O VEÍCULO DO CADASTRO, quando ele existe. Nulo é o normal por um
-            # bom tempo: a Clipei traz 2.648 veículos distintos e o cadastro
-            # começou com 39. A cada subida com criação a cobertura sobe.
+            # bom tempo: o fornecedor traz milhares de veículos distintos, e a
+            # cobertura sobe a cada subida com criação.
             "instituicao_id": de_cadastro.get(normalizar(mencao.veiculo or "")),
             # O ASSUNTO DO CADASTRO, quando o nome casa. Nulo é o normal
             # enquanto o fornecedor não fala o vocabulário do nível — e é o que
-            # a conferência mostra antes de gravar. Com o vínculo, o dossiê
-            # filtra por Pilar (N1), Tema estratégico (N2) e Subtema (N3).
+            # a conferência mostra antes de gravar.
             #
-            # OS TRÊS GRAVADOS, e não só o N3 com o resto por `join`: o
-            # fornecedor que descreve a menção só no topo (a Clipei, em 71% do
-            # volume) tem N1 e não tem N3, e um `join` a partir de `tema_id`
-            # nunca o alcançaria. Ver a `0098`.
+            # OS TRÊS NÍVEIS GRAVADOS, e não só o N3 com o resto por `join`: o
+            # fornecedor que descreve a menção só no topo tem N1 e não tem N3, e
+            # um `join` a partir de `tema_id` nunca o alcançaria. Ver a `0098`.
             "bloco_tema_id": niveis.n1_id,
             "macro_tema_id": niveis.n2_id,
             "tema_id": niveis.n3_id,
@@ -983,7 +879,13 @@ def regravar(
         #: gravar 25 mil menções com o pilar da vizinha.
         for mencao, niveis in zip(leitura.mencoes, niveis_por_linha, strict=True)
     ]
-    #: PLANILHA VAZIA NÃO VIRA `insert` VAZIO: o SQLAlchemy recusaria a lista
+    #: `insert()` EM LOTE, e não `add_all` com objetos do ORM: instanciar
+    #: dezenas de milhares de objetos que ninguém lê de volta custa o dobro do
+    #: tempo de mandar os dicionários. Esta função não devolve nada, e quem conta
+    #: usa a `leitura`. O `id` continua vindo do default da coluna, aplicado pelo
+    #: próprio `insert()`.
+    #:
+    #: E PLANILHA VAZIA NÃO VIRA `insert` VAZIO: o SQLAlchemy recusaria a lista
     #: sem linhas, e mês sem menção é caso legítimo — é o que acontece quando o
     #: recorte por lista não acha veículo nenhum.
     if valores:
@@ -1029,33 +931,30 @@ def _recorte_por_lista(
 ) -> Callable[[str | None], bool] | None:
     """O predicado que diz se a linha pertence a ESTA fonte.
 
-    SÃO DOIS LADOS DA MESMA PARTIÇÃO, desde que o recorte passou a ser
-    EXCLUSIVO (pedido de 20/10/2026: "se o Valor Econômico é um veículo de
-    imprensa de mercado, absolutamente todas as matérias dele vão para a lente
-    de mercado"):
+    SÃO DOIS LADOS DA MESMA PARTIÇÃO, porque o recorte é EXCLUSIVO — se o Valor
+    Econômico é veículo de imprensa de mercado, todas as matérias dele vão para a
+    lente de mercado:
 
         a fonte que DECLARA uma lista  fica com os veículos dela
         a fonte irmã que não declara   fica com todo o RESTO do arquivo
 
-    ANTES O ESPELHO FICAVA COM TUDO, e a recortada era uma cópia do subconjunto
-    — a mesma matéria contava nas duas lentes. Foi o que a medição mostrou:
-    uma subida com duas matérias deixava `clipei` com 2 e `clipei_investidores`
-    com 1, e a do Valor Econômico estava nas duas.
+    Sem exclusividade, o espelho fica com tudo e a recortada é uma cópia do
+    subconjunto: a mesma matéria conta nas duas lentes.
 
     A EXCLUSÃO É DERIVADA DAS IRMÃS, e não declarada no cadastro da fonte. É a
     decisão que importa aqui: declarada, ela sairia de sincronia no dia em que
-    alguém criasse um recorte novo e esquecesse de atualizar o espelho — e o
-    sintoma seria a matéria voltando a contar duas vezes, em silêncio.
-    Derivada, a partição é exata por construção: o que uma inclui, a outra
-    exclui, pela MESMA função (`nomes_da_lista`, com os apelidos).
+    alguém criasse um recorte novo e esquecesse de atualizar o espelho, e o
+    sintoma seria a matéria voltando a contar duas vezes, em silêncio. Derivada,
+    a partição é exata por construção: o que uma inclui, a outra exclui, pela
+    MESMA função (`nomes_da_lista`, com os apelidos).
 
     `None` quando a fonte não recorta nem tem irmã que recorte — e aí
-    `ler_planilha` lê tudo, como sempre leu.
+    `ler_planilha` lê tudo.
 
-    LÊ O CADASTRO UMA VEZ, e não uma consulta por linha: o export da Clipei tem
-    25.597 linhas, e perguntar ao banco por cada uma faria da subida um
-    problema de rede. São 2.670 veículos cadastrados; o conjunto cabe na
-    memória com folga.
+    LÊ O CADASTRO UMA VEZ, e não uma consulta por linha: com dezenas de milhares
+    de linhas no export, perguntar ao banco por cada uma faria da subida um
+    problema de rede. O conjunto de veículos cadastrados cabe na memória com
+    folga.
     """
     if mapeamento.lista_de_veiculos:
         permitidos = nomes_da_lista(sessao, mapeamento.lista_de_veiculos)
@@ -1167,22 +1066,18 @@ def _ingerir_uma(
         )
 
     if not leitura.mencoes:
-        #: ZERO NUMA IRMÃ QUE RECORTA É FATO, e não erro — e isto é conserto de
-        #: um defeito que vem do commit original da ingestão.
+        #: ZERO NUMA IRMÃ QUE RECORTA É FATO, e não erro.
         #:
-        #: A lente Mercado é a Clipei recortada por público investidor. Um mês
-        #: sem nenhuma menção de investidor é perfeitamente normal, e o erro
-        #: derrubava A SUBIDA INTEIRA: as 25.457 menções de Imprensa não
-        #: entravam porque o recorte ficou vazio.
-        #:
-        #: E o problema ia piorar: quando o critério do Mercado virar a
-        #: subcategoria do veículo cadastrado, a primeira subida terá zero
-        #: veículos classificados — o recorte nasce vazio por construção, e
-        #: nenhuma carga da Clipei passaria.
+        #: A lente Mercado é a Clipei recortada por público investidor, e um mês
+        #: sem nenhuma menção de investidor é normal. Tratar como erro derruba A
+        #: SUBIDA INTEIRA: as menções de Imprensa não entram porque o recorte da
+        #: irmã ficou vazio. Com o critério do Mercado vindo da subcategoria do
+        #: veículo cadastrado, a primeira subida tem zero veículos classificados
+        #: — o recorte nasce vazio por construção.
         #:
         #: O MÊS DA IRMÃ NÃO É APAGADO quando o recorte vem vazio: sem meses na
         #: leitura, `regravar` não tem o que substituir, e o que já estava lá
-        #: fica. Um recorte vazio num mês não é instrução de esquecer o mês.
+        #: fica. Recorte vazio num mês não é instrução de esquecer o mês.
         return Resumo(
             fonte=fonte.codigo,
             nome=fonte.nome,
@@ -1293,11 +1188,11 @@ def ingerir(
     `veiculos_a_criar` são os nomes que a pessoa AUTORIZOU na conferência, e o
     padrão é vazio — nenhuma criação.
 
-    O PADRÃO TEM DE SER VAZIO, e isto não é timidez. A tela de Calibração já tem
-    um botão "Importar planilha" por fonte, que chama esta função direto. Se o
-    padrão fosse "criar tudo", quem clicasse ali criaria 2.631 instituições sem
-    ter visto nada — a duplicata em massa que a importação de agendas documenta,
-    por uma mudança de assinatura. Quem quer criação pede, nomeando.
+    O PADRÃO TEM DE SER VAZIO, e isto não é timidez: a tela de Calibração tem um
+    botão "Importar planilha" por fonte, que chama esta função direto. Com o
+    padrão em "criar tudo", quem clicasse ali criaria milhares de instituições
+    sem ter visto nada — a duplicata em massa que a importação de agendas
+    documenta, por uma mudança de assinatura. Quem quer criação pede, nomeando.
 
     OS NOMES SÃO CONFERIDOS CONTRA A PLANILHA antes de virar cadastro: um nome
     que a pessoa manda e o arquivo não tem é ignorado, não criado. Sem isso, a
@@ -1378,9 +1273,8 @@ def veiculos_da_planilha(
     #: nascia sem ele.
     coluna_do_cargo = mapeamento.colunas.get("cargo")
     #: O TIER VEM JUNTO, porque é a relevância com que o veículo nasce no
-    #: cadastro — e a planilha a traz. Sem isto, dos 2.670 veículos cadastrados
-    #: só 39 tinham relevância: a ingestão criava os outros jogando fora uma
-    #: coluna que estava no arquivo.
+    #: cadastro — e a planilha a traz. Sem isto a ingestão cria o veículo jogando
+    #: fora uma coluna que estava no arquivo.
     #:
     #: PELO MAPEAMENTO, como o resto: na Clipei a coluna se chama "Aegea Tier", e
     #: as fontes de rede social não mapeiam `tier` nenhum — o perfil nasce sem
@@ -1397,26 +1291,21 @@ def veiculos_da_planilha(
         registro = achados.setdefault(
             nome, {"uf": "", "abrangencia": "", "cargo": "", "tier": "", "mencoes": 0}
         )
-        #: O PRIMEIRO NÃO VAZIO, DE VERDADE — e era aqui o defeito (achado MÉDIA
-        #: de revisão, 11/10/2026). O comentário antigo prometia "o primeiro não
-        #: vazio" e o código fazia outra coisa: `setdefault` só age quando a CHAVE
-        #: falta, ou seja na PRIMEIRA LINHA daquele veículo. O que ele guardava
-        #: era o valor daquela linha, VAZIO INCLUÍDO, e um valor preenchido numa
-        #: linha seguinte ia para o lixo.
+        #: O PRIMEIRO NÃO VAZIO, DE VERDADE. `setdefault` não serve aqui: ele só
+        #: age quando a CHAVE falta, ou seja na primeira linha daquele veículo, e
+        #: guarda o valor daquela linha — vazio incluído —, mandando para o lixo
+        #: um valor preenchido numa linha seguinte.
         #:
         #: O CARGO É O MAIS CARO DOS QUATRO, porque é ele que decide o PÚBLICO do
-        #: perfil (`CATEGORIA_POR_CARGO`): primeira linha sem cargo fazia o
-        #: vereador nascer sem público — o mesmo defeito que
-        #: `CATEGORIA_DE_QUEM_FALA` registra como já consertado uma vez.
+        #: perfil (`CATEGORIA_POR_CARGO`): primeira linha sem cargo faz o
+        #: vereador nascer sem público. E o risco não é teórico — cerca de 10%
+        #: das menções têm tier nulo, então a primeira linha de um veículo ser
+        #: uma dessas não é remoto.
         #:
-        #: E O RISCO É MEDIDO, não teórico: 2.851 das 28.626 menções têm tier
-        #: nulo, 10% — a chance de a primeira linha de um veículo ser uma dessas
-        #: não é remota.
-        #:
-        #: O CONFLITO ENTRE DOIS VALORES PREENCHIDOS continua resolvido pelo
-        #: primeiro, como antes. Um perfil com dois cargos na mesma planilha é
-        #: dado a corrigir; o que falta é a conferência MOSTRAR o que vai ser
-        #: usado, e para o tier ela ainda não mostra.
+        #: O CONFLITO ENTRE DOIS VALORES PREENCHIDOS fica com o primeiro. Um
+        #: perfil com dois cargos na mesma planilha é dado a corrigir; o que
+        #: falta é a conferência MOSTRAR o que vai ser usado, e para o tier ela
+        #: ainda não mostra.
         for chave, valor in (
             ("uf", linha.get(coluna_do_estado) if coluna_do_estado else None),
             ("abrangencia", linha.get(COLUNA_DA_ABRANGENCIA)),
@@ -1434,34 +1323,26 @@ def assuntos_da_planilha(
 ) -> dict[str, int]:
     """Assunto → quantas linhas o citam, CONTADO COMO A SUBIDA CONTA.
 
-    PELA LEITURA, e não pela célula crua. A primeira versão desta função
-    percorria as linhas da aba direto, e isso errava duas coisas de uma vez —
-    as duas contra a razão de existir da conferência, que é prometer o que vai
-    acontecer:
+    PELA LEITURA, e não pela célula crua, porque percorrer a aba direto erra
+    duas coisas — as duas contra a razão de existir da conferência, que é
+    prometer o que vai acontecer:
 
-    1. NENHUM FILTRO OU DESCARTE era aplicado. A Bites traz 2.886 linhas e
-       1.426 caíam por sentimento ilegível NO ARQUIVO DE 01–09/2026: a tela
-       dizia "N acham o assunto" sobre 2.886, e o resumo depois de gravar
-       contava sobre ~1.460. (A planilha consolidada já vem com sentimento em
-       todas as linhas; o furo era de CAMINHO, não daquele arquivo.) O mesmo
-       rótulo, dois números, quase o dobro de diferença. Pior em
-       `clipei_investidores`, que recorta o arquivo: contava as 25.597 linhas
-       do clipping inteiro.
-
-    2. O TEXTO NÃO PASSAVA POR `_rotulo`, que tira o prefixo de taxonomia do
-       fornecedor e aplica os apelidos. Nas duas fontes da Approach, cuja
-       célula vem como `2 - Aegea - Falta de Água`, a conferência listaria
-       TODOS os assuntos como desconhecidos e a subida ligaria todos — mandando
-       a pessoa cobrar do fornecedor um problema que não existe.
+    1. NENHUM FILTRO OU DESCARTE seria aplicado. Linha que cai por sentimento
+       ilegível entraria na conta, e a tela diria "N acham o assunto" sobre um
+       total que o resumo depois de gravar não reproduz. Pior na fonte que
+       RECORTA o arquivo, que contaria o clipping inteiro.
+    2. O TEXTO NÃO PASSARIA POR `_rotulo`, que tira o prefixo de taxonomia do
+       fornecedor e aplica os apelidos. Nas duas fontes da Approach, cuja célula
+       vem como `2 - Aegea - Falta de Água`, a conferência listaria todos os
+       assuntos como desconhecidos e mandaria a pessoa cobrar do fornecedor um
+       problema que não existe.
 
     LÊ O ARQUIVO DE NOVO, como `veiculos_da_planilha`: é o preço de não ter
     tabela de rascunho, e o mesmo desenho do resto da conferência.
 
-    E NÃO LÊ NADA quando a fonte não mapeia assunto: a fonte sem a coluna
-    confere sem estourar, e é o que `test_fonte_sem_coluna_de_assunto_nao_reclama`
-    exige. Foi este teste que pegou a primeira versão de `contagens_da_planilha`,
-    onde a saída antecipada passou a depender das DUAS colunas — e aí a fonte
-    sem assunto, mas com concessionária, lia o arquivo e recusava um `b""`.
+    E NÃO LÊ NADA quando a fonte não mapeia assunto — a saída antecipada depende
+    da coluna DESTA pergunta, e não de um conjunto delas: a fonte sem assunto,
+    mas com concessionária, leria o arquivo e recusaria um `b""`.
     """
     if not _mapeamento_de(fonte).colunas.get("tema"):
         return {}
@@ -1535,10 +1416,9 @@ def recusar_a_fonte(fonte: ScoreFonte) -> None:
     ainda — e descobrir "esta fonte é interna" na décima primeira parte é fazer
     a pessoa pagar o upload inteiro para ouvir não.
 
-    ISTO JÁ ME PEGOU: chamar `recusar_o_que_nao_entra(fonte, b"")` na abertura
-    recusava TUDO, porque aquela função também confere a assinatura de ZIP — e
-    `b""` nunca a tem. Catorze testes caíram de uma vez, o que foi a sorte: a
-    alternativa era a abertura recusando toda planilha em produção.
+    E NÃO DÁ PARA CHAMAR `recusar_o_que_nao_entra(fonte, b"")` na abertura:
+    aquela função também confere a assinatura de ZIP, que `b""` nunca tem, e
+    recusaria toda planilha.
     """
     if fonte.interna:
         raise RegraViolada(
@@ -1551,28 +1431,23 @@ def recusar_a_fonte(fonte: ScoreFonte) -> None:
 def recusar_o_que_nao_entra(fonte: ScoreFonte, conteudo: bytes) -> None:
     """As recusas que valem ANTES de abrir a planilha, para os dois caminhos.
 
-    POR QUE ISTO VIROU FUNÇÃO. Estas quatro moravam só em `ingerir`, e a
-    conferência não fazia nenhuma delas: dava para conferir uma fonte interna,
-    uma fonte inativa, um `.pdf` renomeado e um arquivo de 200 MB — e só
-    descobrir na hora de gravar, depois de a pessoa ter escolhido os veículos.
+    SÃO AS MESMAS QUATRO, NA MESMA ORDEM, nos dois caminhos, e é esse o ponto:
+    conferir com um conjunto de recusas e gravar com outro faz a conferência
+    mentir sobre o que a subida faria, que é a única coisa que ela existe para
+    dizer.
 
-    Ficou caro quando a conferência passou a GUARDAR o arquivo
-    (`casos_de_uso/planilha_do_score`): uma planilha acima do teto era
-    armazenada, ganhava `planilha_id`, e só era recusada na confirmação — e se
-    a pessoa desistisse ali, o byte ficava. Achado da revisão do Codex em
-    16/10/2026.
-
-    SÃO AS MESMAS QUATRO, na mesma ordem, e é esse o ponto: conferir com um
-    conjunto de recusas e gravar com outro faz a conferência mentir sobre o que
-    a subida faria, que é a única coisa que ela existe para dizer.
+    Só em `ingerir`, dava para conferir uma fonte interna, uma fonte inativa, um
+    `.pdf` renomeado e um arquivo acima do teto, e descobrir na hora de gravar —
+    depois de a pessoa ter escolhido os veículos. E ficou caro quando a
+    conferência passou a GUARDAR o arquivo
+    (`casos_de_uso/planilha_do_score`): a planilha acima do teto era armazenada,
+    ganhava `planilha_id`, e se a pessoa desistisse o byte ficava.
     """
     recusar_a_fonte(fonte)
     if len(conteudo) > TAMANHO_MAXIMO:
-        #: O NÚMERO SAI DA CONSTANTE, e não do texto: a mensagem dizia
-        #: "40 MB" enquanto `TAMANHO_MAXIMO` já era 80 — quem recebesse a
-        #: recusa cortaria a planilha pela metade por nada. Derivar é o que
-        #: impede a mensagem de envelhecer de novo (mesmo jeito de
-        #: `app/armazenamento/blob.py`).
+        #: O NÚMERO SAI DA CONSTANTE, e não do texto: a mensagem escrita à mão
+        #: envelhece em silêncio e manda a pessoa cortar a planilha por nada
+        #: (mesmo jeito de `app/armazenamento/blob.py`).
         raise RegraViolada(
             f"A planilha passa de {TAMANHO_MAXIMO // (1024 * 1024)} MB."
         )
@@ -1593,13 +1468,12 @@ def conferir(
 ]:
     """O que a subida FARIA, sem gravar nada.
 
-    POR QUE ELA EXISTE. O dono do produto pediu que o veículo sem cadastro nasça
-    junto com a subida, e pediu que a conta apareça ANTES — o que é o que torna
-    a coisa segura. Medido contra o export de 08–09/2026: 2.631 veículos
-    nasceriam numa subida só. A importação de agendas tem escrito no próprio
-    código por que isso precisa de conferência: "importação de planilha sem
-    conferência humana cria duplicata de instituição em massa, e desfazer isso
-    depois é pior que digitar de novo".
+    POR QUE ELA EXISTE. O veículo sem cadastro nasce junto com a subida, por
+    pedido do dono do produto, e a conta aparece ANTES — é isso que torna a
+    coisa segura, porque uma subida só pode fazer nascer milhares de veículos. A
+    importação de agendas tem a razão escrita no próprio código: "importação de
+    planilha sem conferência humana cria duplicata de instituição em massa, e
+    desfazer isso depois é pior que digitar de novo".
 
     A LEITURA É A MESMA DA SUBIDA, de propósito: as recusas estruturais (arquivo
     que não abre, aba que falta, coluna que o cadastro espera e não existe)
@@ -1611,10 +1485,9 @@ def conferir(
     #: AS MESMAS RECUSAS DA SUBIDA, e aqui elas chegam antes de o arquivo ser
     #: guardado. Ver `recusar_o_que_nao_entra`.
     recusar_o_que_nao_entra(fonte, conteudo)
-    #: ABERTA UMA VEZ, e as quatro etapas abaixo reusam a leitura. Medido com
-    #: 25.000 linhas: eram 14,3s em quatro decodificações do mesmo arquivo —
-    #: duas na previsão (uma por irmã), uma nos veículos, uma nos assuntos —
-    #: contra 0,02s de banco. Ver `ArquivoLido`.
+    #: ABERTA UMA VEZ, e as quatro etapas abaixo reusam a leitura: duas na
+    #: previsão (uma por irmã), uma nos veículos e uma nos assuntos. Ver
+    #: `ArquivoLido`.
     arquivo = _lido(conteudo)
     previsao = [
         _prever_uma(sessao, irma, arquivo)
