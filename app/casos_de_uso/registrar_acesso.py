@@ -60,18 +60,17 @@ def registrar_e_confirmar(
     E a recusa é a linha que mais importa: login bem-sucedido é rotina;
     sequência de negados é sinal.
     """
-    # Sessão PRÓPRIA, e não a da requisição.
+    # Sessão PRÓPRIA, e não a da requisição: confirmar a sessão do caso de uso
+    # levaria junto qualquer mutação pendente que estivesse ali, e a auditoria
+    # passaria a decidir o destino de dados que não são dela. Uma transação
+    # separada grava só isto, e grava mesmo que a principal seja desfeita logo em
+    # seguida — que é o caso, porque quem chama vai levantar.
     #
-    # Confirmar a sessão do caso de uso levaria junto qualquer mutação pendente
-    # que estivesse ali — a auditoria passaria a decidir o destino de dados que
-    # não são dela. Uma transação separada grava só isto, e grava mesmo que a
-    # transação principal seja desfeita logo em seguida (que é o caso: quem
-    # chama vai levantar).
-    # O bind vem de QUEM CHAMA, e não da configuração global. São o mesmo banco,
-    # mas por caminhos diferentes: derivar daqui mantém a auditoria na base em
-    # que a requisição está trabalhando — inclusive nos testes, que usam uma
-    # base descartável própria. Ler a configuração faria a linha ir parar no
-    # banco de desenvolvimento durante o teste, e ninguém notaria.
+    # O BIND VEM DE QUEM CHAMA, e não da configuração global: é o mesmo banco por
+    # caminhos diferentes, e derivar daqui mantém a auditoria na base em que a
+    # requisição está trabalhando — nos testes, a base descartável deles. Ler a
+    # configuração faria a linha ir parar no banco de desenvolvimento durante o
+    # teste, e ninguém notaria.
     from sqlalchemy.orm import Session as SessaoNova
 
     with SessaoNova(bind=sessao.get_bind().engine) as propria:
@@ -108,14 +107,8 @@ def registrar(
         )
     )
 
-    # A MESMA informação também vai para a telemetria, e a duplicação é
-    # deliberada.
-    #
-    # `acesso_log` é a trilha oficial: fica no banco, junto do resto, e responde
-    # "quem entrou?" com precisão. Mas alerta não se escreve em SQL — o
-    # Application Insights é onde a regra "cinco negativas da mesma conta em dez
-    # minutos" roda sozinha e avisa alguém. Uma consulta no banco só encontra
-    # quem for procurar.
+    # A telemetria recebe a MESMA informação, e a duplicação é deliberada: ver o
+    # cabeçalho do módulo — alerta não se escreve em SQL.
     negado = resultado != CONCEDIDO
     logger.log(
         # Negativa é `warning` para separá-la do ruído de login bem-sucedido,

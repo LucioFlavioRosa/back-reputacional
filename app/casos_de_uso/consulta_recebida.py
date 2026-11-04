@@ -46,14 +46,13 @@ def validar_consulta(sessao: Session, interacao: Interacao) -> None:
         )
 
     # ALEGAÇÃO SEM CONSULTA NÃO EXISTE: ela é o que uma pergunta recebida deu
-    # como fato. Pendurá-la numa reunião faria a aba contar, como premissa em
-    # circulação, algo que ninguém perguntou.
+    # como fato, e pendurá-la numa reunião faria a aba contar como premissa em
+    # circulação algo que ninguém perguntou.
     #
-    # E EXIGE O BLOCO, não só o tipo: o BLOCO é o marcador de consulta para
-    # quem lê (`consultasDe`, no front, filtra por ele). Uma interação do tipo
-    # certo mas sem bloco, carregando alegações, ficaria fora da aba levando
-    # consigo a premissa — registrada, e nunca contada. É o pior dos estados:
-    # o dado existe e a leitura não o vê.
+    # E EXIGE O BLOCO, não só o tipo: o BLOCO é o marcador de consulta para quem
+    # lê (`consultasDe`, no front, filtra por ele). Uma interação do tipo certo,
+    # sem bloco e com alegações ficaria fora da aba levando a premissa consigo —
+    # registrada, e nunca contada.
     if interacao.alegacoes and (not e_consulta or interacao.consulta is None):
         raise RegraViolada(
             "As alegações pertencem a uma consulta recebida — registre o que "

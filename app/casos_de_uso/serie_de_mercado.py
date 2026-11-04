@@ -1,27 +1,21 @@
 """As duas séries que o gráfico cruza: cotação de bond e índice reputacional.
 
-POR QUE AS DUAS SAEM DA MESMA ROTA, e esta é a decisão central deste módulo.
+POR QUE AS DUAS SAEM DA MESMA ROTA. `GET /api/score/serie` já devolve o índice
+mensal, mas está atrás de `exigir_portal_score`: quem tiver só
+`acessa_inteligencia_de_mercado` recebe 403 dela, e a linha do eixo direito
+sairia VAZIA por permissão, não por falta de dado — o pior formato de erro de
+autorização é o que parece dado. O que NÃO se faz é conceder o portal do Score a
+quem precisa do gráfico, porque isso abriria o painel inteiro de KPIs para quem
+pediu uma linha.
 
-`GET /api/score/serie` já devolve o índice mensal — e está atrás de
-`exigir_portal_score`. Quem tiver só `acessa_inteligencia_de_mercado` recebe 403
-dela: a linha do eixo direito sairia VAZIA por permissão, não por falta de dado,
-e isso se lê na tela como "o score não tem número neste período". O pior formato
-de erro de autorização é o que parece dado.
+E NÃO SE RECALCULA O ÍNDICE AQUI: `calibracao_vigente`, `catalogo_das_lentes`,
+`meses_com_dado` e `indice_do_mes` são as mesmas funções que a rota do Score
+usa, e é isso que garante o MESMO número para o mesmo mês nos dois painéis.
 
-Então o portal de mercado serve as duas séries, com o guarda dele. O que NÃO se
-faz é conceder o portal do Score a quem precisa do gráfico: isso abriria o painel
-inteiro de KPIs para quem pediu uma linha.
-
-E NÃO SE RECALCULA O ÍNDICE AQUI. `calibracao_vigente`, `catalogo_das_lentes`,
-`meses_com_dado` e `indice_do_mes` são as mesmas funções que a rota do Score usa.
-É isso que garante que os dois painéis mostrem o MESMO número para o mesmo mês —
-uma segunda implementação divergiria no dia em que a régua mudasse, e a
-divergência apareceria como "o Painel de Mercado discorda do de KPIs".
-
-A GRANULARIDADE FICA EXPLÍCITA NO PAYLOAD. O bond tem data e o índice tem mês;
+A GRANULARIDADE FICA EXPLÍCITA NO PAYLOAD: o bond tem data e o índice tem mês, e
 devolver os dois como "pontos" obrigaria a tela a adivinhar qual é qual. O índice
 sai com `mes`, e é a tela que o desenha em degraus — um valor por mês repetido
-nos dias, que é o desenho que mostra na própria forma que a medida é outra.
+nos dias, desenho que mostra na própria forma que a medida é outra.
 """
 
 from __future__ import annotations
@@ -73,21 +67,18 @@ class PontoDoIndice:
     mes: date
     isr: int | None
     #: O SCORE DE CADA LENTE no mesmo mês, por código ("imprensa", "mercado",
-    #: "institucional", ...). Pedido de 20/10/2026: o gráfico de bonds passa a
-    #: poder mostrar a nota de uma lente ao lado do índice.
+    #: "institucional", ...), para o gráfico de bonds poder mostrar a nota de uma
+    #: lente ao lado do índice.
     #:
     #: VEM DE GRAÇA, e é a razão de estar aqui e não numa rota nova:
-    #: `indice_do_mes` já mede as cinco lentes para somar o ISR, e este campo é
-    #: o que antes era descartado. Uma rota separada para as lentes refaria a
-    #: mesma conta e abriria a chance de as duas discordarem.
+    #: `indice_do_mes` já mede as cinco lentes para somar o ISR, e este campo é o
+    #: que antes era descartado. Uma rota separada refaria a mesma conta e abriria
+    #: a chance de as duas discordarem. Saem TODAS as medidas, e não só as três
+    #: que a tela liga hoje: incluir mais uma lente passa a ser mudança de tela.
     #:
-    #: TODAS AS MEDIDAS, e não só as três que a tela liga hoje: o dado já está
-    #: na mão, e incluir mais uma lente passa a ser mudança de tela.
-    #:
-    #: `None` É "NÃO MEDIDA NESTE MÊS", e é diferente de zero — a mesma
-    #: distinção que o `isr` faz. A lente sem dado sai do índice (e do
-    #: denominador dos pesos); desenhar zero afirmaria que a reputação dela
-    #: foi péssima naquele mês.
+    #: `None` É "NÃO MEDIDA NESTE MÊS", e é diferente de zero — a mesma distinção
+    #: que o `isr` faz. A lente sem dado sai do índice e do denominador dos pesos;
+    #: desenhar zero afirmaria que a reputação dela foi péssima naquele mês.
     lentes: dict[str, int | None] = field(default_factory=dict)
 
 

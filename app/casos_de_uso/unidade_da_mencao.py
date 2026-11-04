@@ -1,59 +1,41 @@
 """Ligar a menção à concessionária do cadastro central.
 
 POR QUE ISTO EXISTE. A menção guarda a concessionária como texto do fornecedor
-(`mencao.unidade_texto`) e nada mais — `mencao.unidade_negocio_id` estava
-preenchido em ZERO das 104.670 menções, e a coluna existe desde a `0048`. Do
-outro lado, a agenda do CRM (`interacao.unidade_negocio_id`) usa o cadastro em
-todas as linhas, e o alcance de cada pessoa é concedido POR NOME DE UNIDADE
+(`mencao.unidade_texto`) e nada mais, enquanto a agenda do CRM
+(`interacao.unidade_negocio_id`) usa o cadastro em todas as linhas — e o alcance
+de cada pessoa é concedido POR NOME DE UNIDADE
 (`filtros_sql.condicoes_de_escopo`). São as duas metades da mesma companhia sem
 uma chave em comum.
 
 E O TEXTO CRU JÁ CUSTA NA TELA DE HOJE. A dimensão "Concessionária" das lentes
-agrupa por `unidade_texto`, e a Corsan chega em duas grafias: "Corsan" (1.111) e
-"Companhia Riograndense de Saneamento (Corsan)" (15.019). Hoje são DUAS barras
-no gráfico e dois valores no filtro, e recortar por uma perde a outra. A holding
-chega em três.
-
-A MEDIÇÃO, feita em 18/10/2026 sobre as 104.670 menções da base:
-
-    104.633 trazem `unidade_texto` (99,96%), em 65 grafias, contra 29 unidades
-    no cadastro.
-
-        bate exato com o cadastro ....  12 grafias   51.490   49,2%
-        apelido inequívoco ..........   5 grafias   24.594   23,5%
-        família com mais de um membro   3 grafias   14.703   14,1%
-        não existe no cadastro ......  45 grafias   13.846   13,2%
+agrupa por `unidade_texto`, e a mesma empresa chega em grafias diferentes
+("Corsan" e "Companhia Riograndense de Saneamento (Corsan)"): duas barras no
+gráfico e dois valores no filtro, e recortar por uma perde a outra.
 
 O CADASTRO É A AUTORIDADE: aqui não se cria unidade. É a mesma regra de
-`temas_da_mencao`, e pelo mesmo motivo — concessionária é a estrutura
-societária da companhia, não fato do mundo que o fornecedor possa inventar. A
-diferença para o veículo (`veiculos_da_imprensa`), onde o que falta nasce no
-upload, é deliberada.
+`temas_da_mencao`, e pelo mesmo motivo — concessionária é a estrutura societária
+da companhia, não fato do mundo que o fornecedor possa inventar. A diferença
+para o veículo (`veiculos_da_imprensa`), onde o que falta nasce no upload, é
+deliberada.
 
-NUNCA SE ADIVINHA, E É ISSO QUE DEFINE O DESENHO. Três nomes que o fornecedor
-manda correspondem a mais de uma linha do cadastro:
+NUNCA SE ADIVINHA, E É ISSO QUE DEFINE O DESENHO. Há nome que o fornecedor manda
+e corresponde a mais de uma linha do cadastro — "Águas do Rio" vale por duas
+unidades, "Águas do Pará" por quatro blocos. Nenhum deles liga. Escolher um
+bloco por ordem, por volume ou por qualquer outro critério seria inventar um
+dado que a planilha não tem, e ele sairia depois num relatório por
+concessionária como se fosse informação. A conferência mostra esses casos com as
+opções do cadastro ao lado, e quem decide é gente: ou o fornecedor passa a
+mandar o bloco, ou alguém declara o apelido.
 
-    "Águas do Rio"    (9.411)  ->  Águas do Rio 1 | Águas do Rio 4
-    "Águas do Pará"   (4.267)  ->  Bloco A | Bloco B | Bloco C | Bloco D
-    "Ambiental Ceará" (1.025)  ->  Ambiental Ceará 1 | Ambiental Ceará 2
-
-Nenhum deles liga. Escolher um bloco por ordem, por volume ou por qualquer
-outro critério seria inventar um dado que a planilha não tem — e ele sairia
-depois num relatório por concessionária como se fosse informação. A conferência
-mostra os três com as opções do cadastro ao lado, e quem decide é gente: ou o
-fornecedor passa a mandar o bloco, ou alguém declara o apelido.
-
-O APELIDO É DADO, E NÃO CÓDIGO (`unidade_negocio_apelido`, migration `0099`).
-"Companhia Riograndense de Saneamento (Corsan)" não cabe como 30ª unidade — ela
-duplicaria a Corsan no cadastro que o CRM usa —, e também não cabe no
-`apelidos` do `mapeamento_colunas`, que é POR FONTE (o mesmo nome chega pela
-`clipei` e pela `clipei_investidores`) e que REESCREVE `unidade_texto`,
+O APELIDO É DADO, E NÃO CÓDIGO (`unidade_negocio_apelido`, migration `0099`). A
+grafia longa não cabe como unidade nova — duplicaria a empresa no cadastro que o
+CRM usa — e também não cabe no `apelidos` do `mapeamento_colunas`, que é POR
+FONTE (o mesmo nome chega por duas fontes) e que REESCREVE `unidade_texto`,
 apagando a palavra do fornecedor. Aqui o texto do fornecedor continua do lado e
 o apelido só resolve a chave — o mesmo par que `instituicao_id`/`veiculo` e que
 os três níveis da taxonomia já formam.
 
-CASA POR `normalizar`, a chave de gravação do cadastro. Medido: os 29 nomes do
-cadastro dão 29 chaves distintas, e nenhuma colide com as 5 chaves de apelido.
+CASA POR `normalizar`, a chave de gravação do cadastro.
 """
 
 from __future__ import annotations

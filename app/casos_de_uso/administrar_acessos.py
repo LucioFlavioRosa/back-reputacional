@@ -1,29 +1,24 @@
 """Conceder e revogar acesso.
 
-A escrita não acontece aqui: acontece na função `conceder_acesso` do banco —
-criada em 0006, com o cadeado do último administrador em 0010 e a camada
-sensível em 0087, que é a definição vigente. A aplicação não tem `grant` para
-alterar `papel_id`, `acesso_irrestrito`, `acesso_sensivel` ou `usuario_escopo`
-— tem `execute` na função.
+A ESCRITA NÃO ACONTECE AQUI: acontece na função `conceder_acesso` do banco. A
+aplicação não tem `grant` para alterar `papel_id`, `acesso_irrestrito`,
+`acesso_sensivel` ou `usuario_escopo` — tem `execute` na função.
 
-O QUE ISSO PROTEGE, E O QUE NÃO PROTEGE
+O QUE ISSO PROTEGE, E O QUE NÃO PROTEGE. A função NÃO é fronteira de
+autorização: quem tem a connection string a chama direto, escolhendo
+`quem_concede`, e concede o que quiser a quem quiser — o banco não distingue "a
+aplicação agindo por um administrador" de "alguém com a credencial da
+aplicação".
 
-A função NÃO é fronteira de autorização. Quem tem a connection string a chama
-diretamente, escolhendo `quem_concede`, e concede o que quiser a quem quiser: o
-banco não distingue "a aplicação agindo por um administrador" de "alguém com a
-credencial da aplicação" — as duas chegam pela mesma conta. Logo:
-
-    PROTEGE     estado inválido (a função valida papel, prazo, frente, unidade),
-                caminho futuro na aplicação que esqueça as regras, e a existência
-                da trilha em `usuario_auditoria`
+    PROTEGE     estado inválido (a função valida papel, prazo, frente,
+                unidade), caminho futuro na aplicação que esqueça as regras, e
+                a existência da trilha em `usuario_auditoria`
     NÃO PROTEGE contra quem detém a credencial do banco
 
 **A fronteira de autorização é esta camada, em Python.** `exigir_administrador`
-abaixo é o controle real; a função é integridade e trilha.
-
-O que seria fronteira de verdade: concessão por um serviço separado, com
-credencial que o processo do painel não possui. É mudança de arquitetura, está
-registrada em `seguranca/ARQUITETURA.md`, e não entrou nesta onda.
+abaixo é o controle real; a função é integridade e trilha. Concessão por um
+serviço separado, com credencial que o processo do painel não possui, é mudança
+de arquitetura e está registrada em `seguranca/ARQUITETURA.md`.
 """
 
 from __future__ import annotations
@@ -56,15 +51,11 @@ class Concessao:
     acesso_irrestrito: bool = False
     #: A terceira camada: se esta pessoa alcança os campos sensíveis do CRM.
     #:
-    #: FECHA POR PADRÃO, como as bandeiras de `Papel` — "papel novo que não
-    #: decida nada não abre porta nenhuma". Uma concessão montada por dentro
-    #: (rotina de importação, comando de manutenção, caso de uso novo) que não
-    #: tome essa decisão não deve conceder o relato por omissão.
-    #:
-    #: Não é obrigatório como `versao_vista`, e a diferença importa: aquele é
-    #: token de concorrência, onde NÃO existe padrão seguro — qualquer valor
-    #: afirma algo sobre o estado do banco. Este é bandeira de permissão, e para
-    #: bandeira de permissão o padrão seguro existe e é `False`.
+    #: FECHA POR PADRÃO, como as bandeiras de `Papel`: uma concessão montada por
+    #: dentro (rotina de importação, comando de manutenção, caso de uso novo) que
+    #: não tome essa decisão não deve conceder o relato por omissão. Diferente de
+    #: `versao_vista`, que é obrigatório por ser token de concorrência, onde não
+    #: existe padrão seguro; para bandeira de permissão existe, e é `False`.
     sensivel: bool = False
     externo: bool = False
     expira_em: date | None = None
@@ -72,20 +63,15 @@ class Concessao:
     unidades: tuple[str, ...] = ()
     #: O `concedido_em` que a tela viu ao abrir o formulário.
     #:
-    #: Nulo NÃO é curinga: afirma "vi esta pessoa sem concessão nenhuma", e só
-    #: passa se o banco também estiver sem. É o caso da primeira concessão — e
-    #: nada além dele. A lista traz `concedido_em` nulo para quem ainda não tem
-    #: papel, e é isso que a tela devolve.
+    #: NULO NÃO É CURINGA: afirma "vi esta pessoa sem concessão nenhuma", e só
+    #: passa se o banco também estiver sem — é o caso da primeira concessão, e
+    #: nada além dele. Sem a versão, dois administradores editando a mesma pessoa
+    #: fazem o segundo apagar o primeiro, sem conflito e sem aviso.
     #:
-    #: Sem a versão, dois administradores editando a mesma pessoa fazem o
-    #: segundo apagar o primeiro, sem conflito e sem aviso.
-    #:
-    #: OBRIGATÓRIO, e `kw_only` só para poder sê-lo depois de campos com padrão.
-    #: Omitir o campo seria AFIRMAR "vi esta pessoa sem concessão nenhuma" sem
-    #: ter olhado, e é por dentro que passam as chamadas que ninguém revisa como
-    #: se fossem entrada: uma rotina de importação, um comando de manutenção, um
-    #: caso de uso novo. Com o campo obrigatório, esquecer é `TypeError` na
-    #: hora, e não uma sobrescrita silenciosa meses depois.
+    #: OBRIGATÓRIO (e `kw_only` só para poder sê-lo depois de campos com padrão):
+    #: omitir o campo afirmaria "vi sem concessão" sem ter olhado, e é por dentro
+    #: que passam as chamadas que ninguém revisa como entrada. Assim, esquecer é
+    #: `TypeError` na hora, e não sobrescrita silenciosa meses depois.
     versao_vista: datetime | None = field(kw_only=True)
 
 
@@ -204,26 +190,21 @@ def conceder(
         # `RegraViolada` faz o front mostrar o texto certo em vez de 500.
         raise RegraViolada(_mensagem_do_banco(erro)) from erro
 
-    # A função escreveu por SQL, por fora do ORM. O mapa de identidade da sessão
-    # continua com os valores antigos, então qualquer leitura seguinte NESTA
-    # mesma sessão devolveria o acesso anterior — inclusive uma que decidisse
-    # permissão.
-    #
-    # Expira só o alvo, e não a sessão inteira: `expire_all()` descartaria o
-    # estado de objetos sem relação nenhuma com a concessão, e o efeito
-    # apareceria longe daqui.
+    # A função escreveu por SQL, por fora do ORM, então o mapa de identidade da
+    # sessão continua com os valores antigos: qualquer leitura seguinte NESTA
+    # sessão devolveria o acesso anterior, inclusive uma que decidisse permissão.
+    # Expira só o alvo — `expire_all()` descartaria o estado de objetos sem
+    # relação com a concessão, e o efeito apareceria longe daqui.
     alterado = sessao.get(Usuario, alvo)
     if alterado is not None:
         sessao.expire(alterado)
 
-    # Pelo mesmo motivo do `expire` acima, uma camada adiante: papel e escopo
-    # ficam em memória por `autorizacao_cache_segundos` (ver
+    # Mesmo motivo do `expire` acima, uma camada adiante: papel e escopo ficam em
+    # memória por `autorizacao_cache_segundos` (ver
     # `app/seguranca/cache_de_autorizacao.py`), e sem esta linha a concessão que
-    # acabou de ser gravada só valeria quando a entrada vencesse.
-    #
-    # É o que faz a revogação pela TELA valer no ato — que é justamente quando
-    # alguém confere se ela pegou. Revogação feita por SQL direto no banco não
-    # passa por aqui e continua limitada pelo TTL; está documentado.
+    # acabou de ser gravada só valeria quando a entrada vencesse. É o que faz a
+    # revogação pela TELA valer no ato. Revogação por SQL direto no banco não
+    # passa por aqui e segue limitada ao TTL.
     esquecer_em_todos(alvo)
 
 
@@ -236,16 +217,15 @@ def definir_situacao(
 ) -> None:
     """Liga e desliga uma conta. É a REMOÇÃO do produto.
 
-    Não existe apagar pessoa, e não é omissão: dez chaves estrangeiras apontam
-    para `usuario`, e `interacao.criado_por` é `not null`. O banco recusa
+    NÃO EXISTE APAGAR PESSOA, e não é omissão: dez chaves estrangeiras apontam
+    para `usuario` e `interacao.criado_por` é `not null`, então o banco recusa
     apagar quem já registrou qualquer coisa — e deve, porque apagar o autor
     apagaria a autoria. Desligar preserva o histórico e tira o acesso.
 
-    A escrita é `update` direto, e não pela função `conceder_acesso`: `ativo`
-    não é concessão. A trilha não se perde — o gatilho
-    `auditar_acesso_do_usuario` (migration 0005) vigia `ativo` junto com
-    `papel_id`, e o autor vem do `SET LOCAL` que toda requisição autenticada já
-    carimba.
+    A ESCRITA É `update` DIRETO, e não pela função `conceder_acesso`: `ativo` não
+    é concessão. A trilha não se perde — o gatilho `auditar_acesso_do_usuario`
+    vigia `ativo` junto com `papel_id`, e o autor vem do `SET LOCAL` que toda
+    requisição autenticada carimba.
     """
     exigir_administrador(solicitante)
 
@@ -265,23 +245,18 @@ def definir_situacao(
         # segunda dizendo que `ativo` mudou de `false` para `false`.
         return
 
-    # O CADEADO. Ver `0010_ultimo_administrador.sql` para o porquê.
+    # O CADEADO, e só quando o alvo administra: ver
+    # `0010_ultimo_administrador.sql`. Desativar um leitor não pode deixar a
+    # plataforma sem administrador, e serializar essas operações com as outras
+    # criaria recusas sem motivo.
     #
     # O ARGUMENTO SEQUENCIAL NÃO BASTA: "para desativar é preciso ser
     # administrador ativo, e ninguém desativa a própria conta, logo quem pede
     # sempre permanece" está certo em série e é inútil com duas transações ao
     # mesmo tempo — cada uma olha antes de a outra escrever, e as duas escrevem
-    # em linhas diferentes, então nada as serializa.
-    #
-    # Sem o cadeado, dois administradores desativando um ao outro em paralelo
-    # terminam com ZERO ativos.
-    #
-    # Daqui em diante esta transação é a única mexendo no conjunto de
-    # administradores, e por isso contar volta a valer.
-    # SÓ QUEM ADMINISTRA MEXE NA INVARIANTE, e portanto só aí vale pagar o
-    # cadeado. Desativar um leitor não pode deixar a plataforma sem
-    # administrador, e serializar essas operações com as outras só criaria
-    # recusas sem motivo.
+    # em linhas diferentes, então nada as serializa. Sem o cadeado, dois
+    # administradores desativando um ao outro em paralelo terminam com ZERO
+    # ativos.
     alvo_administra = bool(
         registro.papel_id
         and sessao.scalar(
@@ -339,15 +314,14 @@ ERRO_LEVANTADO_PELA_FUNCAO = "P0001"
 def _mensagem_do_banco(erro: DBAPIError) -> str:
     """Só repassa mensagem que a NOSSA função escreveu.
 
-    O filtro é por SQLSTATE, e não pela primeira linha do erro. Devolver a
+    O FILTRO É POR SQLSTATE, e não pela primeira linha do erro. Devolver a
     primeira linha de qualquer erro entregaria a forma do schema na tela:
 
         insert or update on table "usuario" violates foreign key constraint
         "usuario_papel_concedido_por_fkey"
 
-    Nome de tabela e nome de constraint são informação para quem está
-    procurando por onde entrar. Filtrar por SQLSTATE é a diferença entre
-    "mensagem que escrevi para o usuário" e "o que o Postgres achou de dizer".
+    Nome de tabela e nome de constraint são informação para quem está procurando
+    por onde entrar.
     """
     original = getattr(erro, "orig", None)
     codigo = getattr(original, "pgcode", None)

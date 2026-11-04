@@ -1,23 +1,20 @@
 """O `.xlsx` que a pessoa baixa para revisar a taxonomia de subtemas.
 
 ELE NASCE PREENCHIDO, e essa é a decisão central deste módulo. O modelo de
-agendas sai vazio porque uma agenda nova não existe em lugar nenhum; a
-taxonomia existe inteira no banco, e o trabalho real não é cadastrar 150
-subtemas — é mexer em três. Um modelo vazio obrigaria a pessoa a redigitar 147
-linhas certas para corrigir as três, e cada redigitação é uma chance de errar
-num subtema que estava bom.
+agendas sai vazio porque uma agenda nova não existe em lugar nenhum; a taxonomia
+existe inteira no banco, e o trabalho real não é cadastrar 150 subtemas — é mexer
+em três. Um modelo vazio obrigaria a pessoa a redigitar as outras 147 linhas
+certas, e cada redigitação é uma chance de errar num subtema que estava bom.
 
 O efeito colateral é a ida e volta: baixar o modelo e subi-lo sem tocar em nada
-tem de dar "tudo igual, nada a fazer". Isso é teste e é garantia — se a volta
-não for idêntica, o formato está perdendo informação em algum lugar.
+tem de dar "tudo igual, nada a fazer". Se a volta não for idêntica, o formato
+está perdendo informação em algum lugar.
 
 O FORMATO MORA EM `app/dominio/importacao_de_subtemas.py`, e este módulo apenas
-PERCORRE `FORMATO`. Mesmo raciocínio de `modelo_de_importacao.py`: uma coluna
-nova entra na descrição e aparece aqui e no leitor, em vez de entrar numa cópia
-e não na outra.
+PERCORRE `FORMATO` — mesmo raciocínio de `modelo_de_importacao.py`.
 
-`vocabularios` E `linhas` CHEGAM PRONTOS, sem sessão de banco aqui — quem
-consulta é a rota. É o que mantém `gerar` testável com dicionários comuns.
+`vocabularios` E `linhas` CHEGAM PRONTOS, sem sessão de banco aqui: quem
+consulta é a rota, e é o que mantém `gerar` testável com dicionários comuns.
 """
 
 from __future__ import annotations

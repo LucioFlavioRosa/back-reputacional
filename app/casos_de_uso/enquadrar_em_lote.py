@@ -1,33 +1,26 @@
 """Dar categoria de público a várias instituições de uma vez.
 
 POR QUE ISTO EXISTE, e o número é o argumento: subir a planilha real de Relações
-com Investidores encheu a aba "Instituições e Contatos" com 499 pendências, e
-178 delas são INSTITUIÇÕES — todas como "Entidade", porque a planilha não traz
-categoria de público. (As outras 321 são os contatos, que não têm esse campo.) A
-aba de revisão as lista e sabe dizer "Está certo" sobre UMA linha por vez.
-
-O NÚMERO ESTAVA ERRADO AQUI e eu o corrigi: eu havia escrito "499 instituições",
-e 499 era o total da ABA, que junta duas tabelas. Medido na pilha depois de
-subir o arquivo real: 178 instituições, e o lote enquadrou as 178 numa chamada,
-sem nenhuma recusa, derivando o tipo `investidor`.
+com Investidores encheu a aba de revisão com centenas de pendências, e as
+instituições entraram todas como "Entidade", porque a planilha não traz
+categoria de público. A aba as lista e sabe dizer "Está certo" sobre UMA linha
+por vez.
 
 Mas a resposta para quase todas é a MESMA — são gestoras e bancos, e a categoria
-é uma só. Cento e setenta e oito idas à lista de cadastro para digitar a mesma
-coisa não é revisão: é a pessoa desistindo na décima e a base ficando meio
-classificada, que é pior do que não classificada, porque ninguém sabe onde
-parou.
+é uma só. Centenas de idas à lista de cadastro para digitar a mesma coisa não é
+revisão: é a pessoa desistindo na décima e a base ficando meio classificada, que
+é pior do que não classificada, porque ninguém sabe onde parou.
 
 O TIPO SAI DA CATEGORIA, e é o que torna este gesto mais do que preencher um
 campo: `derivar_tipo` traduz categoria em tipo, e o tipo da instituição é o que
-`derivar_frente` usa para dizer de que frente é cada agenda dela. Enquadrar as
-178 reclassifica as agendas de todas elas — e no caso real a mudança é de
-"Entidade" para "Investidor", numa planilha de Relações com Investidores.
+`derivar_frente` usa para dizer de que frente é cada agenda dela. Enquadrar o
+lote reclassifica as agendas de todas elas.
 
 SÓ O QUE ESTÁ NA FILA, e é a trava que mantém isto seguro. Um lote que pudesse
 reescrever o tipo de qualquer instituição permitiria a um clique na aba de
-revisão varrer a curadoria de 3.785 cadastros feitos à mão. O que está pendente
-nasceu de planilha e ninguém conferiu — é exatamente o que este gesto serve. O
-resto se edita um a um, onde a tela mostra o cadastro inteiro.
+revisão varrer a curadoria de milhares de cadastros feitos à mão. O que está
+pendente nasceu de planilha e ninguém conferiu — é exatamente o que este gesto
+serve. O resto se edita um a um, onde a tela mostra o cadastro inteiro.
 """
 
 from __future__ import annotations
@@ -196,30 +189,21 @@ def enquadrar(
 
     #: `with_for_update`: AS LINHAS DO LOTE FICAM TRAVADAS ATÉ O COMMIT.
     #:
-    #: ACHADO DE REVISÃO COM SEVERIDADE ALTA, e era um lost update de verdade: o
-    #: lote lia as linhas, testava `pendente_de_revisao` EM MEMÓRIA e só gravava
-    #: no flush. Dois lotes sobre ids que se cruzam passavam os dois pelo teste
-    #: antes de qualquer commit, e o segundo reescrevia categoria, subcategoria e
-    #: TIPO de uma linha que o primeiro já havia consolidado.
+    #: SEM A TRAVA É LOST UPDATE: o lote lê as linhas, testa
+    #: `pendente_de_revisao` EM MEMÓRIA e só grava no flush. Dois lotes sobre ids
+    #: que se cruzam passam os dois pelo teste antes de qualquer commit, e o
+    #: segundo reescreve categoria, subcategoria e TIPO de uma linha que o
+    #: primeiro já consolidou — quebrando a regra "só o que está na fila", e em
+    #: SILÊNCIO, porque as duas requisições respondem 200.
     #:
-    #: ISSO QUEBRAVA A TRAVA "só o que está na fila", que é a razão de a rota
-    #: viver sob a fila de revisão — e quebrava em SILÊNCIO, porque as duas
-    #: requisições respondiam 200.
+    #: E A FILA É TRABALHO DE EQUIPE POR DESENHO, então dois lotes ao mesmo tempo
+    #: é o caso normal. O lock serializa: o segundo espera, lê a linha já
+    #: consolidada, e recusa.
     #:
-    #: E A FILA É TRABALHO DE EQUIPE POR DESENHO ("inclusive pode ser trabalho de
-    #: outra pessoa"), então dois lotes ao mesmo tempo é o caso normal, não a
-    #: exceção. O lock serializa os dois: o segundo espera, lê a linha já
-    #: consolidada, e recusa — que é o que ele deve fazer.
-    #:
-    #: `order_by(Instituicao.id)` ANTES DO LOCK, e isso é o conserto de um segundo
-    #: achado de revisão: travar várias linhas sem ordem definida deixa o Postgres
-    #: escolher, e dois lotes com conjuntos CRUZADOS podem travar subconjuntos em
-    #: ordens diferentes — deadlock, que chega como 500 para quem clicou.
-    #:
-    #: E A DISCIPLINA JÁ EXISTIA NO REPOSITÓRIO, com o comentário dizendo o
-    #: porquê: `api/score.py` trava "em ordem de id — a mesma disciplina da
-    #: reconferência da taxonomia". Eu escrevi um `with_for_update` novo sem
-    #: olhar o que já estava ali.
+    #: `order_by(Instituicao.id)` ANTES DO LOCK: travar várias linhas sem ordem
+    #: definida deixa o Postgres escolher, e dois lotes com conjuntos CRUZADOS
+    #: podem travar subconjuntos em ordens diferentes — deadlock, que chega como
+    #: 500 para quem clicou. É a mesma disciplina de `api/score.py`.
     #:
     #: A ORDEM DO LOCK NÃO É A ORDEM DAS RECUSAS: o laço continua percorrendo
     #: `ids`, que é a ordem do pedido, e é essa que a tela lê de cima para baixo.

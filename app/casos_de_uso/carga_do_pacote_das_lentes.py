@@ -1,24 +1,20 @@
 """A carga inicial das Lentes, a partir da planilha do pacote de produção.
 
-O QUE ESTE MÓDULO É. O pacote de produção das Lentes (handoff de out/2026) veio
-com 29.414 itens reais numa planilha de uma aba por lente, nas 40 colunas do
-padrão Aegea. Isto lê uma dessas abas e põe as menções no banco, no vocabulário
-que o índice já usa.
+O PACOTE veio com uma aba por lente, nas 40 colunas do padrão Aegea e com as
+fontes misturadas na coluna `fonte`. Isto lê uma dessas abas e põe as menções no
+banco, no vocabulário que o índice já usa.
 
-O QUE ELE NÃO É: o importador mensal. Aquele é `casos_de_uso/ingerir_mencoes`,
-lê UMA aba por fonte pelo mapeamento gravado em `score_fonte`, e é o caminho que
-a coordenação usa todo mês — com o checklist de bloqueios que o padrão pede.
-Aqui a planilha tem uma aba por LENTE, com as fontes misturadas na coluna
-`fonte`, e é carga de uma vez. Forçar as duas pelo mesmo caminho faria o fluxo
-mensal carregar um parâmetro que só a carga inicial usa.
+NÃO É O IMPORTADOR MENSAL. Aquele é `casos_de_uso/ingerir_mencoes`, lê UMA aba
+por fonte pelo mapeamento gravado em `score_fonte`, e é o caminho que a
+coordenação usa todo mês. Forçar os dois pelo mesmo caminho faria o fluxo mensal
+carregar um parâmetro que só a carga inicial usa.
 
 O QUE OS DOIS DIVIDEM é o que importa: `MencaoLida` (o vocabulário do índice),
 `somar` (as quatro somas do agregado) e `regravar` (a substituição por mês). A
 régua de o que vira menção é uma só, e é a do domínio.
 
-UMA LENTE POR VEZ. `PACOTE` tem uma linha por lente implementada, e o dono do
-produto pediu a Sociedade digital primeiro. As outras entram quando a etapa
-delas chegar — acrescentar a linha aqui é o que a carga precisa saber.
+UMA LENTE POR VEZ: `PACOTE` tem uma linha por lente implementada, e acrescentar
+a linha aqui é o que a carga precisa saber para atender a próxima.
 """
 
 from __future__ import annotations
@@ -217,13 +213,11 @@ def ler_aba_da_lente(conteudo: bytes, lente: str) -> LeituraDoPacote:
                 continue
             valores[campo] = _texto(celula(coluna))
 
-        # A UF PASSA PELA MESMA CANONIZAÇÃO DA INGESTÃO MENSAL, e isto é conserto
-        # de um achado de revisão: este é o SEGUNDO caminho de carga, e ele
-        # gravava o texto cru. O pacote traz `RJ`; a ingestão mensal da Clipei
-        # traz "Rio de Janeiro". Com os dois na base, `_distintos(Mencao.uf)`
-        # passaria a oferecer DUAS opções de filtro para o mesmo estado, e
-        # `uf_mais_negativa` mostraria sigla ou nome dependendo de quem carregou
-        # — que é exatamente a fragmentação que `para_uf` existe para evitar.
+        # A UF PASSA PELA MESMA CANONIZAÇÃO DA INGESTÃO MENSAL. O pacote traz
+        # `RJ` e a ingestão da Clipei traz "Rio de Janeiro"; com os dois crus na
+        # base, `_distintos(Mencao.uf)` ofereceria DUAS opções de filtro para o
+        # mesmo estado, e `uf_mais_negativa` mostraria sigla ou nome dependendo
+        # de quem carregou. É a fragmentação que `para_uf` existe para evitar.
         if "uf" in valores:
             valores["uf"] = para_uf(valores["uf"])
 
@@ -258,21 +252,18 @@ def carregar(sessao: Session, conteudo: bytes, lente: str) -> ResumoDaCarga:
     """
     leitura = ler_aba_da_lente(conteudo, lente)
 
-    # A CARGA NÃO GRAVA PELA METADE, e este era um achado de revisão com um
-    # cenário bem concreto: a planilha vem com "Approach" em vez de "Approach SL",
-    # ou a coluna `fonte`/`mes` chega vazia porque o arquivo foi gerado por
+    # A CARGA NÃO GRAVA PELA METADE. Se a planilha vem com "Approach" em vez de
+    # "Approach SL", ou com `fonte`/`mes` vazios porque o arquivo foi gerado por
     # pipeline e a fórmula não tinha cache calculado (`data_only` lê o cache, não
-    # avalia a fórmula).
-    #
-    # O QUE ACONTECIA: as linhas iam para `descartes`, o resto era gravado, o
-    # comando imprimia o resumo e saía com sucesso. A lente ficava com metade das
-    # menções do mês e uma nota plausível — o pior tipo de erro, porque ninguém
-    # relê o stdout de uma carga que "passou".
+    # avalia a fórmula), as linhas iriam para `descartes`, o resto seria gravado e
+    # o comando sairia com sucesso: a lente ficaria com metade das menções do mês
+    # e uma nota plausível, que ninguém confere relendo o stdout de uma carga que
+    # "passou".
     #
     # SÓ OS DESCARTES ESTRUTURAIS RECUSAM. Falta de classificação é estado
     # previsto — a fonte mandou volume e não classificou, a tela desenha isso em
     # cinza e a contagem vai para `mencao_nao_classificada`. Recusar por isso
-    # jogaria fora um mês inteiro por causa de algo que o produto já representa.
+    # jogaria fora um mês inteiro por algo que o produto já representa.
     estruturais = {
         motivo: quantas
         for motivo, quantas in leitura.descartes.items()

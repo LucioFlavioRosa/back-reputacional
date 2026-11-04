@@ -2,19 +2,14 @@
 
 ESTE É O ÚNICO LUGAR QUE SABE AS DUAS COISAS: de onde o dado vem (o
 repositório) e o que se lê dele (os detectores). Os detectores não conhecem
-banco e não sabem o que é uma lente; o repositório não sabe o que é um sinal. A
-tradução entre os dois mora aqui, e é por isso que ela cabe numa função por
-lente.
+banco nem lente; o repositório não sabe o que é um sinal.
 
-POR QUE NÃO ESTÁ NO ENDPOINT. Porque o endpoint já tem trabalho: montar quinze
-campos de payload, decidir fichas, escolher legendas. Enfiar aqui dentro o
-mapeamento faria as duas responsabilidades crescerem juntas — e a primeira
-pergunta de quem for calibrar um limite ("de onde sai o pico da imprensa?")
-exigiria ler o endpoint inteiro para achar a resposta.
+NÃO ESTÁ NO ENDPOINT porque o endpoint já monta quinze campos de payload,
+decide fichas e escolhe legendas — e a primeira pergunta de quem vai calibrar
+um limite ("de onde sai o pico da imprensa?") exigiria ler o endpoint inteiro.
 
 TODA LENTE DEVOLVE UMA `Leitura`, mesmo sem nenhum sinal: a tela sempre tem uma
-manchete, um título de evolução e um quadro lateral para preencher, e devolver
-nada obrigaria cada um desses lugares a inventar o próprio texto de vazio.
+manchete, um título de evolução e um quadro lateral para preencher.
 """
 
 from __future__ import annotations
@@ -59,13 +54,11 @@ def regua_dos_sinais(calibracao: Calibracao) -> Limites:
 
     O ENDPOINT DA CALIBRAÇÃO JÁ RECUSA valor inválido antes de gravar, e é lá
     que a pessoa precisa ver o erro. Mas `score_config` é uma tabela como outra
-    qualquer: um `insert` na mão, um script de migração de ambiente ou um job
-    podem pôr lá dentro uma chave em camelCase ou um zero.
-
-    SE A LEITURA TAMBÉM ESTOURASSE, esse engano derrubaria a Calibração e as
-    cinco lentes para todo mundo, com 500 — e ninguém conseguiria abrir a tela
-    onde se conserta a régua. Cair no padrão de fábrica mantém o painel de pé; o
-    log é o que impede a degradação de passar despercebida.
+    qualquer: um `insert` na mão, um script de ambiente ou um job podem pôr lá
+    uma chave em camelCase ou um zero. Se a LEITURA também estourasse, isso
+    derrubaria a Calibração e as cinco lentes com 500, e ninguém conseguiria
+    abrir a tela onde se conserta a régua. O log é o que impede a degradação de
+    passar despercebida.
     """
     try:
         return Limites.a_partir_de(calibracao.limites)
@@ -89,30 +82,24 @@ def ler_sinais(
 ) -> Leitura:
     """O que está acontecendo nesta lente, já escolhido para cada lugar da tela.
 
-    `secoes_a_omitir` DESCARTA O SINAL ANTES DE ELE SER ESCOLHIDO, e a ordem é
-    a correção inteira. Quem chama pode esconder um painel do payload e filtrar
-    a lista de sinais depois — e ainda assim publicar o conteúdo dele, porque a
-    MANCHETE não é um campo à parte: `escolher` a tira desta mesma lista, e o
-    sinal mais forte da Imprensa costuma ser o da matriz, que nomeia a pessoa e
-    o veículo. Filtrar depois é escolher primeiro entre o que não podia ser
-    lido, e então esconder tudo menos a primeira frase da tela.
+    `secoes_a_omitir` DESCARTA O SINAL ANTES DE ELE SER ESCOLHIDO, e a ordem é o
+    ponto: a MANCHETE não é campo à parte, `escolher` a tira desta mesma lista.
+    Filtrar depois de escolher deixaria a primeira frase da tela descrevendo um
+    painel que o payload esconde — na Imprensa, o sinal mais forte costuma ser o
+    da matriz, que nomeia a pessoa e o veículo.
 
-    `filtro` VIAJA ATÉ AQUI pelo mesmo motivo do payload inteiro: os
-    detectores leem os mesmos `repositorio_lentes.serie_da_lente`/
-    `composicao_por_tier`/`matriz_de_jornalistas` que montam os painéis — sem
-    passar o filtro adiante, a manchete descreveria o mês inteiro enquanto o
-    gráfico ao lado mostra um recorte, e ninguém perceberia o desencontro.
+    `filtro` VIAJA ATÉ AQUI porque os detectores leem os mesmos
+    `repositorio_lentes.serie_da_lente` / `composicao_por_tier` /
+    `matriz_de_jornalistas` que montam os painéis: sem ele, a manchete
+    descreveria o mês inteiro enquanto o gráfico ao lado mostra um recorte.
     """
-    #: O DETECTOR DO CRM É ESCOLHIDO PELO CADASTRO, e não pelo código da lente —
-    #: achado de revisão. `_do_institucional` lê temas e órgãos das INTERAÇÕES;
-    #: desde a `0108` a lente Institucional é clipping recortado, e mandá-la
-    #: para lá daria manchete de agenda sobre uma nota de matéria. Quando o CRM
-    #: voltar ao índice — é um `update` de uma coluna —, a escolha volta
-    #: sozinha, em vez de depender de alguém se lembrar deste dicionário.
-    #: E A INSTITUCIONAL USA OS DETECTORES DA IMPRENSA, que é o que ela passou a
-    #: ser: série em MATÉRIAS e composição por tier. Cair no padrão
-    #: (`_da_sociedade`) diria "menções" e procuraria sinal de rede numa lente
-    #: de clipping.
+    #: O DETECTOR DO CRM É ESCOLHIDO PELO CADASTRO, e não pelo código da lente:
+    #: `_do_institucional` lê temas e órgãos das INTERAÇÕES, e a Institucional
+    #: hoje é clipping recortado. Quando o CRM voltar ao índice — um `update` de
+    #: uma coluna — a escolha volta sozinha, sem depender de alguém se lembrar
+    #: deste dicionário. Por isso a Institucional usa os detectores da IMPRENSA:
+    #: série em matérias e composição por tier; o padrão (`_da_sociedade`) diria
+    #: "menções" e procuraria sinal de rede numa lente de clipping.
     detectores = {
         "imprensa": _da_imprensa,
         "mercado": _do_mercado,
@@ -173,24 +160,10 @@ def _da_imprensa(sessao, lente, mes, meses, calibracao, limites, filtro=None) ->
 def _do_mercado(sessao, lente, mes, meses, calibracao, limites, filtro=None) -> list[Sinal]:
     """Os sinais da lente de investidores.
 
-    A EVOLUÇÃO PASSOU A SER SÉRIE, e os sinais dela também. Até 11/10/2026 esta
-    função rodava `detectar_nos_eventos` marcado como `Secao.EVOLUCAO`, porque o
-    eventograma ocupava o lugar do gráfico — e a docstring daqui dizia que esta
-    era "a única lente sem série de sentimento".
-
-    ERA PREMISSA FALSA, a mesma que barrava a lente nos blocos de veículo: ela
-    tem série medida (216 menções em agosto, 111 em setembro), o gráfico passou a
-    desenhá-la, e o eventograma foi retirado da tela pelo dono do produto.
-
-    O DEFEITO QUE ISSO DEIXOU, e é por isto que a correção veio junto: os sinais
-    da seção EVOLUÇÃO viram o quadro ao lado do gráfico (`sinais_da_evolucao`).
-    Eles continuavam narrando os eventos — em texto, embaixo de um gráfico de
-    barras de matérias, sobre fatos que a tela não desenha mais em lugar nenhum.
-    Achado de revisão.
-
-    Agora a seção EVOLUÇÃO lê a série, com a mesma unidade do gráfico
-    ("matérias"), exatamente como a Imprensa. O rating continua no PAINEL B,
-    porque aquele painel existe; o estudo continua no PAINEL A.
+    A SEÇÃO EVOLUÇÃO LÊ A SÉRIE, com a mesma unidade do gráfico ("matérias") e
+    como a Imprensa faz: os sinais dessa seção viram o quadro ao lado do gráfico
+    (`sinais_da_evolucao`), e narrar eventos ali seria texto sobre fatos que a
+    tela não desenha mais. O rating fica no PAINEL B e o estudo no PAINEL A.
     """
     eventos = repositorio_lentes.eventos_de_mercado(sessao, meses)
     _, atributos = repositorio_lentes.estudo_vigente(sessao, mes)
@@ -296,11 +269,9 @@ def _da_sociedade(sessao, lente, mes, meses, calibracao, limites, filtro=None) -
         ),
         # CONTAGEM, E NÃO PERCENTUAL — e isto diverge da §5.6 de propósito. A
         # especificação diz "5.2 sobre temas (%)" porque no protótipo os temas
-        # da Approach vêm já normalizados, linha a linha. A NOSSA base guarda
-        # menção a menção, e `temas_por_sentimento` devolve contagens: com elas
-        # existe um "geral" com que comparar, e some-lo é a leitura que a frase
-        # promete. Passar `percentual=True` aqui jogaria fora esse número por
-        # fidelidade a uma forma de dado que não é a nossa.
+        # vêm normalizados linha a linha; a nossa base guarda menção a menção, e
+        # `temas_por_sentimento` devolve contagens. Com elas existe um "geral"
+        # com que comparar, que é a leitura que a frase promete.
         *detectar_nos_itens(
             _itens(
                 repositorio_lentes.temas_por_sentimento(sessao, lente.id, mes, calibracao),

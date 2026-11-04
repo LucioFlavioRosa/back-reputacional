@@ -10,25 +10,16 @@ de corrigir um e-mail, uma afirmação de outra natureza — "esta pessoa é a m
 que eu tinha registrado em outra casa". O modal da fila de revisão
 deliberadamente NÃO oferece o campo, e aponta para cá.
 
-O QUE O DONO DO PRODUTO PEDIU: "siga com mover contato". E o caso real existe —
-Nikolau Muller apareceu em JGP Gestão e Leto Capital na mesma planilha de RI, e a
-leitura mais provável é que ele mudou de casa.
-
-== O HISTÓRICO NÃO SE MEXE, e foi o que eu fui conferir antes de escrever ==
-
-`interacao.instituicao_id` é coluna PRÓPRIA da agenda, separada de
-`interacao.interlocutor_id` e de `interacao_interlocutor`. Mover o contato NÃO
-reescreve a casa de nenhuma agenda passada: a reunião continua registrada como
-tendo sido com a JGP, porque era.
-
-E ISSO É O CERTO. Uma pessoa que trocou de emprego participou daquelas reuniões
-pela casa antiga; reescrever isso apagaria o fato. O que a mudança diz é "de hoje
-em diante, ela fala pela Leto" — e as agendas antigas são a prova de que a
-mudança aconteceu.
+O HISTÓRICO NÃO SE MEXE. `interacao.instituicao_id` é coluna PRÓPRIA da agenda,
+separada de `interacao.interlocutor_id` e de `interacao_interlocutor`: mover o
+contato não reescreve a casa de nenhuma agenda passada, e a reunião continua
+registrada como tendo sido com a casa antiga, porque era. Uma pessoa que trocou
+de emprego participou daquelas reuniões pela casa antiga; reescrever isso
+apagaria o fato. O que a mudança diz é "de hoje em diante, ela fala pela outra".
 
 A CONTAGEM VOLTA NA RESPOSTA por isso: quem confirma a mudança precisa saber
-quantas agendas ficam na casa antiga, porque é essa frase que distingue "mudou de
-casa" de "eu errei a instituição no cadastro".
+quantas agendas ficam na casa antiga, porque é essa frase que distingue "mudou
+de casa" de "eu errei a instituição no cadastro".
 """
 
 from __future__ import annotations
@@ -194,21 +185,17 @@ def mudar(
 
     #: A MUTAÇÃO FICA DENTRO DO SAVEPOINT, e não antes dele.
     #:
-    #: ACHADO DE REVISÃO COM SEVERIDADE MÉDIA, e é sobre o meu conserto anterior:
-    #: eu havia posto as três atribuições ANTES de chamar `gravar`, e
     #: `Session.begin_nested()` FAZ FLUSH DO QUE ESTÁ PENDENTE AO ENTRAR no
-    #: bloco. O `UPDATE` saía, portanto, antes de o SAVEPOINT existir.
+    #: bloco, então atribuir antes faz o `UPDATE` sair antes de o SAVEPOINT
+    #: existir. A colisão continua virando `RegraViolada`, porque o `try` envolve
+    #: a entrada no bloco — mas a sessão fica marcada para rollback e qualquer
+    #: leitura depois dali estoura `PendingRollbackError`. O savepoint não isola
+    #: nada; só parece.
     #:
-    #: O QUE ISSO CUSTAVA: a colisão continuava virando `RegraViolada`, porque o
-    #: `try` do `gravar` envolve a entrada no bloco — mas a sessão ficava marcada
-    #: para rollback, e qualquer leitura depois dali estouraria
-    #: `PendingRollbackError`. O savepoint não estava isolando nada; só parecia.
-    #:
-    #: É EXATAMENTE A LIÇÃO QUE `app/banco/gravar.py` REGISTRA em voz alta — "o
-    #: `add` precisa ficar DENTRO do savepoint" — e eu a li, citei no comentário,
-    #: e não a apliquei: `gravar` só consegue cumprir a promessa para quem lhe
-    #: entrega um objeto NOVO, porque aí o `add` é dele. Num `UPDATE` de objeto já
-    #: sujo, ele não tem como pegar a mutação.
+    #: `app/banco/gravar.py` registra a lição em voz alta — "o `add` precisa ficar
+    #: DENTRO do savepoint" —, e ela só vale para quem lhe entrega um objeto
+    #: NOVO, porque aí o `add` é dele. Num `UPDATE` de objeto já sujo, ele não tem
+    #: como pegar a mutação.
     #:
     #: ENTÃO É O SAVEPOINT EXPLÍCITO, a mesma forma de `enquadrar_em_lote`.
     try:

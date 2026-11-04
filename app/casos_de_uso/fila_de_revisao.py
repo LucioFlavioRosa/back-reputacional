@@ -1,28 +1,20 @@
 """A fila de revisão das três abas de Cadastro compartilhado.
 
-PEDIDO DO DONO DO PRODUTO (11/10/2026), e ele o cobrou duas vezes:
+O PEDIDO: subir a planilha sem travar e revisar depois, possivelmente por outra
+pessoa. "Queremos dar padronização, mas com menor impacto."
 
-  "Dentro de cada uma das 3 abas de Cadastro compartilhado, uma aba específica
-  para cadastros que precisam de serem revisados para serem consolidados na base
-  de instituições, contatos, temas e representantes da Aegea. Assim o
-  profissional consegue subir a planilha sem problemas e pode revisar depois, e
-  inclusive pode ser trabalho de outra pessoa. Queremos dar padronização, mas com
-  menor impacto."
+A COLUNA JÁ EXISTIA E NINGUÉM A LIA. A importação de agendas e a ingestão de
+menções marcam `pendente_de_revisao` nos cinco nascimentos, e nenhuma tela
+mostrava o alerta — com a importação já tendo PARADO de travar contando com uma
+revisão que não acontecia.
 
-A COLUNA EXISTIA E NINGUÉM A LIA. `pendente_de_revisao` nasceu na `0085` e
-`motivo_da_revisao` na `0086`; a importação de agendas e a ingestão de menções já
-marcam os cinco nascimentos. Sem este módulo o alerta existia no banco e nenhuma
-tela o mostrava — que é o pior estado possível, porque a importação PAROU de
-travar contando com uma revisão que não acontecia.
-
-QUATRO TABELAS PARA TRÊS ABAS, e o mapa é exato: "Instituições e Contatos" é
-`instituicao` + `interlocutor`, "Temas" é `tema`, "Representantes Aegea" é
-`pessoa_aegea`. É o mesmo mapa que `tests/test_fila_de_revisao.py` já afirma.
+QUATRO TABELAS PARA TRÊS ABAS: "Instituições e Contatos" é `instituicao` +
+`interlocutor`, "Temas" é `tema`, "Representantes Aegea" é `pessoa_aegea`.
 
 UMA FORMA SÓ DE PENDÊNCIA para os quatro, e não quatro payloads: a aba mostra
 uma lista, e o que ela precisa saber é quem, por quê, e o bastante para
-distinguir dois registros parecidos. O resto já está na tela de cadastro ao
-lado, que é onde a correção se faz.
+distinguir dois registros parecidos. O resto está na tela de cadastro ao lado,
+que é onde a correção se faz.
 """
 
 from __future__ import annotations
@@ -55,15 +47,11 @@ class Pendente:
     #: POR QUE ESTE REGISTRO ESPERA REVISÃO. Nulo é "nasceu de planilha", sem
     #: mais nada a dizer — o caso comum, e o front escreve a frase genérica.
     motivo: str | None
-    #: O QUE DISTINGUE ESTE DE UM REGISTRO DE NOME PARECIDO, e esta linha é a
-    #: razão de a fila ser legível.
-    #:
-    #: O motivo mais frequente hoje é "apareceu em 2 instituições na mesma
-    #: planilha" — que CRIA DOIS CADASTROS COM O MESMO NOME, de propósito. Sem a
-    #: instituição ao lado, a aba mostraria "Artur Santa" duas vezes, com o
-    #: mesmo motivo, e quem revisa não teria como saber qual é o do Banco XP e
-    #: qual é o da XP Asset. A fila ficaria ilegível justamente no caso que a
-    #: fez existir.
+    #: O QUE DISTINGUE ESTE DE UM REGISTRO DE NOME PARECIDO, e é a razão de a
+    #: fila ser legível. O motivo mais frequente é "apareceu em 2 instituições
+    #: na mesma planilha", que CRIA DOIS CADASTROS COM O MESMO NOME de propósito:
+    #: sem a instituição ao lado, a aba mostraria o mesmo nome duas vezes com o
+    #: mesmo motivo, e a fila ficaria ilegível no caso que a fez existir.
     contexto: str | None
     criado_em: datetime
 
@@ -83,8 +71,7 @@ class AbaDaFila:
 def _contexto_da_instituicao(linha: Instituicao, _nomes: dict[Any, str]) -> str | None:
     """O tipo e a praça: é o que separa um veículo de um investidor homônimo.
 
-    É o caso que o dono do produto nomeou — "se o 'valor' for classificado como
-    financeiro e em outro momento 'o valor' for registrado como veículo". Os dois
+    "O Valor" classificado como financeiro e "o valor" registrado como veículo
     podem estar na fila ao mesmo tempo, e o tipo é o que os distingue.
     """
     partes = [ROTULO_DO_TIPO_DE_INSTITUICAO.get(linha.tipo, linha.tipo)]
@@ -128,10 +115,9 @@ def _contexto_da_pessoa(linha: PessoaAegea, _nomes: dict[Any, str]) -> str | Non
 #: As quatro tabelas, cada uma com a aba a que pertence e como se descreve.
 #:
 #: A ORDEM DENTRO DA ABA É A DESTA TUPLA: instituição antes de interlocutor,
-#: porque o interlocutor APONTA para a instituição. Quem revisa "Nikolau Muller
-#: — Leto Capital" precisa que "Leto Capital" já esteja decidida; a ordem
-#: inversa obriga a voltar. É o mesmo argumento que ordena as abas em
-#: `PortalDoCadastroCompartilhado.tsx`.
+#: porque o interlocutor APONTA para a instituição — quem revisa um contato
+#: precisa que a instituição dele já esteja decidida, e a ordem inversa obriga a
+#: voltar. É a mesma ordem das abas em `PortalDoCadastroCompartilhado.tsx`.
 _TABELAS: tuple[tuple[str, str, type, Any], ...] = (
     ("instituicoes", "Instituições e Contatos", Instituicao, _contexto_da_instituicao),
     ("instituicoes", "Instituições e Contatos", Interlocutor, _contexto_do_interlocutor),
@@ -150,12 +136,10 @@ POR_TIPO: dict[str, type] = {tabela.__tablename__: tabela for _, _, tabela, _ in
 def listar(sessao: Session) -> list[AbaDaFila]:
     """O que cada aba tem para revisar, na ordem em que se revisa.
 
-    `criado_em desc` E DEPOIS O NOME. Mais novo primeiro porque o pedido é
-    explícito sobre a sequência — "o profissional consegue subir a planilha sem
-    problemas e pode revisar depois" —, e o que ele revisa é o que ACABOU de
-    subir. O nome desempata: uma importação cria tudo no mesmo instante, e sem o
-    segundo critério a ordem de 304 linhas ficaria a cargo do Postgres, mudando
-    entre dois carregamentos da mesma tela.
+    `criado_em desc` E DEPOIS O NOME. Mais novo primeiro porque o que se revisa
+    é o que ACABOU de subir. O nome desempata: uma importação cria tudo no mesmo
+    instante, e sem o segundo critério a ordem ficaria a cargo do Postgres,
+    mudando entre dois carregamentos da mesma tela.
     """
     abas: dict[str, AbaDaFila] = {}
     for id_da_aba, rotulo, tabela, contexto in _TABELAS:
@@ -205,16 +189,14 @@ def _nomes_das_casas(sessao: Session, linhas: list) -> dict[Any, str]:
 def consolidar(sessao: Session, *, tipo: str, id: str) -> tuple[Pendente, bool]:
     """"Conferi este, está certo" — tira o registro da fila.
 
-    DEVOLVE SE JÁ ESTAVA FORA, e não um erro. A fila é trabalho de equipe pelo
-    próprio pedido — "inclusive pode ser trabalho de outra pessoa" —, então duas
-    pessoas na mesma aba é o caso NORMAL, não a exceção. O estado final é o que
-    as duas queriam; recusar a segunda seria inventar um conflito onde não há
+    DEVOLVE SE JÁ ESTAVA FORA, e não um erro: a fila é trabalho de equipe, então
+    duas pessoas na mesma aba é o caso NORMAL. O estado final é o que as duas
+    queriam, e recusar a segunda seria inventar um conflito onde não há
     desacordo. O front usa o booleano para dizer "outra pessoa já consolidou
     este" em vez de piscar uma confirmação falsa.
 
     NÃO MEXE NO CADASTRO. Consolidar é afirmar que o registro está certo como
-    está; corrigi-lo é a tela de cadastro ao lado, que já existe e já sabe
-    validar. Juntar as duas coisas aqui duplicaria essa validação.
+    está; corrigi-lo é a tela de cadastro ao lado, que já sabe validar.
     """
     tabela = POR_TIPO.get(tipo)
     if tabela is None:
@@ -251,15 +233,12 @@ def consolidar(sessao: Session, *, tipo: str, id: str) -> tuple[Pendente, bool]:
 def _buscar(sessao: Session, tabela: type, id: str):
     """`tema` tem chave inteira e as outras três têm UUID.
 
-    A CHAVE É CONVERTIDA AQUI, ANTES DE IR AO BANCO, e isto não é zelo: o
-    Postgres recusa `'nao-sou-uuid'::UUID` com `DataError` e ABORTA A TRANSAÇÃO
-    DO PEDIDO INTEIRO — 500 onde o certo é 404, e qualquer coisa que viesse
-    depois na mesma sessão falharia também.
-
-    EU TINHA ESCRITO SÓ O `int(id)`, achando que cobria os dois, e
-    `test_o_id_que_nao_e_do_tipo_da_404_e_nao_500` mostrou a diferença: o inteiro
-    falha em Python, na conversão; o UUID passava por `sessao.get` intacto e só
-    falhava no servidor. Dois erros parecidos, dois lugares diferentes.
+    A CHAVE É CONVERTIDA AQUI, ANTES DE IR AO BANCO: o Postgres recusa
+    `'nao-sou-uuid'::UUID` com `DataError` e ABORTA A TRANSAÇÃO DO PEDIDO
+    INTEIRO — 500 onde o certo é 404, e o que viesse depois na mesma sessão
+    falharia também. Um `int()` sozinho não cobre os dois casos: o inteiro falha
+    em Python, na conversão, e o UUID passava por `sessao.get` intacto, só
+    falhando no servidor.
     """
     try:
         chave: Any = int(id) if tabela is Tema else UUID(id)

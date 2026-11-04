@@ -3,44 +3,37 @@
 POR QUE ISTO EXISTE. A menção guardava o assunto como texto do fornecedor
 (`mencao.tema_texto`) e nada mais. O cadastro de assuntos já modela a árvore
 inteira — `bloco_tema` (N1) → `macro_tema` (N2) → `tema` (N3, o "subtema") — e
-pendura o risco no N3. As duas metades não se falavam: medido neste banco,
-`mencao.tema_id` estava preenchido em ZERO das 29.898 menções.
+pendura o risco no N3. As duas metades não se falavam, e `mencao.tema_id` ficava
+vazio.
 
 E ISSO DEIXAVA UMA FEATURE INTEIRA INERTE. O filtro do dossiê por Pilar (N1),
-Tema estratégico (N2) e Subtema (N3) já existe (`repositorio_score`,
-`condicoes_do_filtro`) e casa justamente por `Mencao.tema_id`: sem o vínculo,
-as opções voltavam vazias e o recorte nunca batia em nada.
+Tema estratégico (N2) e Subtema (N3) casa justamente por `Mencao.tema_id`: sem o
+vínculo, as opções voltam vazias e o recorte nunca bate em nada.
 
-A DECISÃO DE NEGÓCIO QUE ISTO SERVE. O fornecedor informa UM nível — o N1, o N2
-ou o N3 —, e os de cima são consequência: 104 temas ativos, nenhum sem N2; 41
-N2, nenhum sem N1; 100 das 104 ligações para risco. Dado o N3, o N2, o N1 e os
-riscos não são escolha de quem preenche a planilha — são leitura do cadastro.
+A DECISÃO DE NEGÓCIO QUE ISTO SERVE: o fornecedor informa UM nível — o N1, o N2
+ou o N3 — e os de cima são consequência. Dado o N3, o N2 e o N1 não são escolha
+de quem preenche a planilha: são leitura do cadastro.
 
-UM NÍVEL, E NÃO "SÓ O N3": esta frase dizia "a planilha passa a informar só o
-N3", e era estreita demais. O dono do produto decidiu em 18/10/2026 que o
-fornecedor traz o nível que ele TEM, e o cadastro deriva o resto para cima. A
-Bites fala N3 (92 de 92 assuntos casam no cadastro); a Clipei fala N1 e só
-casa 71 dos 326 assuntos que chama de N3 — descartar o N1 dela, como a `0069`
-fez com a Bites, deixaria 73.928 menções (71% da base) fora de todo recorte por
-pilar. `dominio/niveis_de_taxonomia.py` tem a medição inteira e o porquê de
-isto NÃO reintroduzir a divergência que a `0079` mediu.
+UM NÍVEL, E NÃO "SÓ O N3". O fornecedor traz o nível que ele TEM, e o cadastro
+deriva o resto para cima: a Bites fala N3, a Clipei fala N1 e chama de N3 um
+vocabulário que o cadastro quase não reconhece. Descartar o N1 dela deixaria a
+maior parte da base fora de todo recorte por pilar.
+`dominio/niveis_de_taxonomia.py` tem a medição e o porquê de isto NÃO
+reintroduzir a divergência que a `0079` mediu.
 
-CASA POR NOME NORMALIZADO, e é seguro por uma razão medida: `tema(nome)` tem
-índice único, e os 149 nomes (104 ativos + 45 desativados pela taxonomia v4)
-normalizam para 149 chaves distintas — nenhuma colisão, nenhum nome que
-normalize para vazio. Então um nome identifica uma linha só.
+CASA POR NOME NORMALIZADO, e é seguro porque `tema(nome)` tem índice único e os
+nomes do cadastro normalizam para chaves distintas — nenhuma colisão, nenhum
+nome que normalize para vazio. Um nome identifica uma linha só.
 
-NÃO SE PARTE A CÉLULA EM VÍRGULAS, por mais que a planilha de hoje traga
-"Fatura, Serviços". Cinco temas do cadastro têm vírgula no próprio nome —
-"Perdas, fraudes e furtos", "Dívida, captação e solidez financeira" — e partir
-destruiria justamente os nomes certos. Célula com mais de um assunto é conteúdo
-a corrigir na planilha, e a conferência a mostra como desconhecida.
+NÃO SE PARTE A CÉLULA EM VÍRGULAS, por mais que a planilha traga "Fatura,
+Serviços": há temas do cadastro com vírgula no próprio nome — "Perdas, fraudes e
+furtos" —, e partir destruiria justamente os nomes certos. Célula com mais de um
+assunto é conteúdo a corrigir na planilha, e a conferência a mostra como
+desconhecida.
 
 O CADASTRO É A AUTORIDADE: aqui não se cria tema. É a diferença em relação ao
 vínculo do veículo (`veiculos_da_imprensa`), onde o que falta nasce no upload —
-veículo é fato do mundo, assunto é taxonomia da companhia, e deixar o
-fornecedor inventar assunto desfaria a árvore que a revisão da taxonomia
-construiu.
+veículo é fato do mundo, assunto é taxonomia da companhia.
 """
 
 from __future__ import annotations
@@ -151,33 +144,33 @@ class Arvore:
     ) -> Niveis:
         """Os três níveis da menção, a partir do que o fornecedor falou.
 
-        A REGRA, decisão de produto (dono do produto, 18/10/2026): o nível mais
-        fundo que o cadastro RECONHECER manda, e os de cima são derivados dele.
-        Nunca se desce. Ver `dominio/niveis_de_taxonomia.py` para a medição.
+        A REGRA, decisão de produto: o nível mais fundo que o cadastro
+        RECONHECER manda, e os de cima são derivados dele. Nunca se desce. Ver
+        `dominio/niveis_de_taxonomia.py`.
 
-        ESTA PRECEDÊNCIA NÃO É NOVA, E É DE PROPÓSITO QUE NÃO É. Ela é a mesma
-        de `consulta_profundidade.Taxonomia.resolver`, que resolve o pilar de
-        cada menção na LEITURA desde que a tela de aprofundamento existe. O que
-        a `0098` faz é GRAVAR o resultado, para que a menção tenha chave e possa
-        ser filtrada e juntada entre fornecedores — não decidir de novo.
+        ESTA PRECEDÊNCIA NÃO É NOVA, e é de propósito que não seja: é a mesma de
+        `consulta_profundidade.Taxonomia.resolver`, que resolve o pilar de cada
+        menção na LEITURA. O que a `0098` faz é GRAVAR o resultado, para a menção
+        ter chave e poder ser filtrada e juntada entre fornecedores — não decidir
+        de novo.
 
         `tests/test_niveis_da_mencao.py::test_a_gravacao_e_a_leitura_concordam`
         roda as duas sobre o mesmo corpus e exige o mesmo pilar. É o teste que
-        importa aqui: enquanto houver duas implementações da precedência, o
-        risco não é nenhuma delas estar errada — é elas DIVERGIREM, e aí a
-        coluna gravada contradiz a tela que lê ao vivo, nos dois sentidos.
+        importa aqui: enquanto houver duas implementações da precedência, o risco
+        não é nenhuma delas estar errada — é elas DIVERGIREM, e aí a coluna
+        gravada contradiz a tela que lê ao vivo.
 
         O MAIS FUNDO QUE O CADASTRO RECONHECER, e não o mais fundo que o
-        fornecedor MANDAR — a diferença é a Clipei: ela manda `Subcategoria`
-        (o N3 dela) em quase toda linha, e o cadastro reconhece 27% delas. Nas
-        outras 73% aquele N3 não existe para o cadastro, e aí o N1 que ela
-        também manda é o que sobra. Se o "mais fundo mandado" mandasse, 73.928
-        menções ficariam sem nível nenhum com um N1 bom na mão.
+        fornecedor MANDAR: a Clipei manda `Subcategoria` em quase toda linha e o
+        cadastro reconhece uma fração delas. Nas outras, aquele N3 não existe
+        para o cadastro, e o N1 que ela também manda é o que sobra — pelo "mais
+        fundo mandado", a maior parte das menções ficaria sem nível nenhum com um
+        N1 bom na mão.
 
         E QUANDO O DERIVADO E O DECLARADO DISCORDAM, o derivado ganha, porque a
-        árvore do cadastro é a autoridade sobre quem é pai de quem. Medido: 2
-        linhas em 27.317. O declarado não se perde — fica em `mencao.atributo`,
-        texto cru do fornecedor, e é de lá que a leitura marca `divergente`.
+        árvore do cadastro é a autoridade sobre quem é pai de quem. O declarado
+        não se perde — fica em `mencao.atributo`, texto cru do fornecedor, e é de
+        lá que a leitura marca `divergente`.
         """
         #: 1. O N3 QUE O CADASTRO JÁ RESOLVEU. Vem da conferência, não do texto.
         if tema_id is not None and tema_id in self.n2_do_n3:

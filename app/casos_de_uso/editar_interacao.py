@@ -50,16 +50,13 @@ def editar(
     a transação precisa ser a mesma — é nela que a variável `painel.usuario_id`
     está definida, e é dela que o gatilho lê o autor.
     """
-    # O escopo do usuário entra também na escrita: não se edita o que não se
-    # enxerga. Sem isso, quem não pode ler um registro poderia alterá-lo às
-    # cegas conhecendo só o id.
-    # `para_edicao=True` trava a linha: duas edições simultâneas da mesma
-    # agenda liam o estado antigo e as duas gravavam, e a segunda estourava no
-    # índice do participante principal. Agora a segunda espera e lê o novo.
-    # `alcanca_sensivel` do usuário: só se edita o que se alcança. Quem não tem
-    # a camada recebe "não encontrada" para uma agenda sensível — a mesma
+    # OS TRÊS ARGUMENTOS SÃO GUARDAS. `escopo` e `alcanca_sensivel`: não se edita
+    # o que não se enxerga — sem eles, conhecer o id bastaria para alterar às
+    # cegas, e quem não tem a camada sensível recebe "não encontrada", a mesma
     # resposta da listagem e da ficha, porque confirmar a existência já seria
-    # contar o que a marca existe para esconder.
+    # contar o que a marca existe para esconder. `para_edicao=True` trava a
+    # linha: duas edições simultâneas liam o estado antigo e as duas gravavam, e
+    # a segunda estourava no índice do participante principal.
     interacao = repositorio.obter(
         id,
         escopo=usuario.escopo,
@@ -81,23 +78,18 @@ def _reconciliar_o_principal(
     """Decide se manda a LISTA ou a COLUNA, pelo que o PATCH enviou.
 
     Quem representa a outra parte está escrito em dois lugares — a marca
-    `principal` na lista de participantes e `interacao.interlocutor_id` — e os
-    dois existem porque 67 usos dependem da coluna. Só que "qual dos dois
-    manda" não é uma propriedade do agregado: depende do que a requisição
-    QUIS mudar, e esse é um fato que só existe aqui.
+    `principal` na lista de participantes e `interacao.interlocutor_id` —, e os
+    dois existem porque 67 usos dependem da coluna. "Qual dos dois manda" não é
+    propriedade do agregado: depende do que a requisição QUIS mudar, e esse fato
+    só existe aqui.
 
-    O repositório não pode decidir, e tentar fez o bug aparecer duas vezes:
-
-      - a lista sempre mandando fez `PATCH {"interlocutor_id": X}` virar um
-        no-op silencioso, com 200 na resposta e nada alterado — quebrando a
-        edição de interlocutor da tela que já existe;
-      - a coluna mandando quando a lista chegava vazia fez
-        `PATCH {"outra_parte": []}` RESSUSCITAR o principal que a pessoa
-        acabara de tirar.
-
-    Os dois casos são indistinguíveis no agregado pronto: lista vazia é lista
-    vazia, tenha ela sido enviada ou omitida. `exclude_unset` distingue, e o
-    resultado disso chega aqui — e para aqui.
+    O REPOSITÓRIO NÃO PODE DECIDIR, e tentar deu dois defeitos: com a lista
+    sempre mandando, `PATCH {"interlocutor_id": X}` virava no-op silencioso, com
+    200 na resposta e nada alterado; com a coluna mandando quando a lista chegava
+    vazia, `PATCH {"outra_parte": []}` RESSUSCITAVA o principal que a pessoa
+    acabara de tirar. Os dois casos são indistinguíveis no agregado pronto,
+    porque lista vazia é lista vazia tenha ela sido enviada ou omitida.
+    `exclude_unset` distingue, e o resultado disso chega aqui — e para aqui.
     """
     mandou_lista = "outra_parte" in alteracoes
     mandou_coluna = "interlocutor_id" in alteracoes

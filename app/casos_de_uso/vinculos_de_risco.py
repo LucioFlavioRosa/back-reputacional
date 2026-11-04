@@ -1,16 +1,15 @@
 """Escrever os vínculos de risco de um tema, num lugar só.
 
-POR QUE ESTE MÓDULO NASCEU. A função morava em `app/api/stakeholders.py`, e
-tinha dois chamadores — criar tema e editar tema. A importação de subtemas é o
-terceiro, e um caso de uso não pode importar da camada de API sem inverter a
-dependência: o `app/__init__.py` deste projeto diz que `api/` são as rotas e
-`casos_de_uso/` o que elas orquestram, e a flecha aponta num sentido só.
+A FUNÇÃO MORAVA EM `app/api/stakeholders.py`, com dois chamadores. A importação
+de subtemas é o terceiro, e um caso de uso não pode importar da camada de API
+sem inverter a dependência: o `app/__init__.py` deste projeto diz que `api/` são
+as rotas e `casos_de_uso/` o que elas orquestram, e a flecha aponta num sentido
+só.
 
-A alternativa era copiar as dez linhas para cá. O Bloco 3 acabou de mostrar o
-preço disso: `TabelaDeInteracoes` tinha uma CÓPIA do resolvedor de nome de
-formato, e quando o original aprendeu a enxergar formato aposentado a cópia
-seguiu devolvendo travessão — na tela que mais gente abre. Terceira cópia de
-uma regra de escrita é como se perde a quarta.
+A alternativa era copiar as dez linhas para cá, e o preço disso já apareceu:
+`TabelaDeInteracoes` tinha uma CÓPIA do resolvedor de nome de formato, e quando
+o original aprendeu a enxergar formato aposentado a cópia seguiu devolvendo
+travessão — na tela que mais gente abre.
 """
 
 from __future__ import annotations
