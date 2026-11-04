@@ -46,17 +46,13 @@ from app.dominio.vocabulario_de_temas import CAMADAS_DE_LSO, NIVEIS_DE_TEMA
 rotas = APIRouter(
     prefix="/api",
     tags=["stakeholders"],
-    # `exigir_diretorio`, e não só autenticação: estas três rotas devolvem o
-    # mapa de relacionamento inteiro da Aegea — todo jornalista, gestor público
-    # e entidade com quem a companhia fala. Para um terceiro isso pode valer
-    # mais do que os registros. Não passam por `condicoes()`, então a barreira
-    # é o papel.
-    # DUAS dependências, e as duas importam.
+    # DUAS DEPENDÊNCIAS, e as duas importam. O portal diz em qual módulo se
+    # entra; `ve_diretorio` diz se, dentro dele, a pessoa alcança o mapa de
+    # relacionamento — todo jornalista, gestor público e entidade com quem a
+    # Aegea fala. Para um terceiro isso pode valer mais do que os registros.
     #
-    # O portal diz em qual módulo se entra; `ve_diretorio` diz se, dentro dele,
-    # a pessoa alcança o mapa de relacionamento — que é todo jornalista, gestor
-    # e entidade com quem a Aegea fala. Um perfil do CRM sem `ve_diretorio`
-    # continua barrado, como antes.
+    # Estas rotas não passam por `condicoes()`, então a barreira é o papel: um
+    # perfil do CRM sem `ve_diretorio` fica barrado.
     dependencies=[Depends(exigir_portal_crm), Depends(exigir_diretorio)],
 )
 
@@ -74,8 +70,8 @@ class InstituicaoSaida(BaseModel):
     uf: str | None
     #: Tier 1 a 4. Nulo nas cadastradas antes de a coluna existir.
     tier: int | None
-    #: A taxonomia de publicos (10 categorias) e sua subdivisao. Nulos em quem
-    #: ainda nao foi reclassificado — ver `0036_categoria_de_publico.sql`.
+    #: A taxonomia de públicos e sua subdivisão. Nulos em quem ainda não foi
+    #: reclassificado — ver `0036_categoria_de_publico.sql`.
     categoria_publico_id: int | None
     subcategoria_publico_id: int | None
     #: O CARGO QUE O FORNECEDOR INFORMOU, pelo rótulo. Só em perfil de rede.
@@ -83,8 +79,7 @@ class InstituicaoSaida(BaseModel):
     #: de só "Poder Legislativo".
     cargo: str | None = None
     #: A PESSOA DE QUEM ESTE PERFIL É. Só em perfil de rede; nulo no resto, e
-    #: nulo também no perfil que ninguém ligou ainda — que é o estado dos 1.108
-    #: que a primeira carga da Bites criou.
+    #: nulo também no perfil que ninguém ligou ainda.
     interlocutor_id: UUID | None = None
     ativo: bool
 
@@ -190,16 +185,15 @@ def listar_pessoas_aegea(
 
 
 def _conferir_campos_de_perfil(tipo: str | None, entrada: InstituicaoEntrada) -> None:
-    """So perfil de rede tem cargo e pessoa — e a recusa fala de cadastro.
+    """Só perfil de rede tem cargo e pessoa — e a recusa fala de cadastro.
 
-    UMA FUNCAO SO, usada na criacao E na edicao. Estavam so na edicao, e a
-    criacao caia no CHECK do banco: `gravar` captura qualquer `IntegrityError`
-    e responde "Ja existe uma instituicao chamada X do tipo Y" — uma mensagem
-    falsa, sobre um campo diferente.
+    UMA FUNÇÃO SÓ, usada na criação E na edição. Sem ela a criação cai no CHECK
+    do banco, e `gravar` captura qualquer `IntegrityError` e responde "Já existe
+    uma instituição chamada X do tipo Y" — mensagem falsa, sobre outro campo.
 
-    `is not None`, E NAO TRUTHINESS, nos dois campos: `cargo=""` nao e nulo, e
-    com `if entrada.cargo` ele passava pela guarda, era atribuido e estourava
-    o CHECK — com a mesma mensagem errada. Achado de revisao.
+    `is not None`, E NÃO TRUTHINESS, nos dois campos: `cargo=""` não é nulo, e
+    com `if entrada.cargo` ele passa pela guarda, é atribuído e estoura o CHECK
+    — com a mesma mensagem errada.
     """
     if tipo == "perfil_rede":
         return
@@ -230,32 +224,29 @@ class InstituicaoEntrada(BaseModel):
     #: O nome POR EXTENSO. Quem escolhe "ABCON" no formulario de agenda
     #: precisa saber que instituicao e essa, e a sigla nao diz.
     nome_completo: str | None = None
-    #: A PESSOA DE QUEM ESTE PERFIL E — so em perfil de rede.
+    #: A PESSOA DE QUEM ESTE PERFIL É — só em perfil de rede.
     #:
-    #: E O QUE CRUZA AS FONTES: com ela, o que `stelafariasrs` postou na Bites
-    #: e o que a deputada Stela Farias fez nas agendas do CRM passam a ser da
-    #: mesma pessoa. Nulo e o estado normal: sao 1.108 perfis, e dizer de quem
-    #: e cada um e juizo humano — `@casadevovodede` pode ser pessoa fisica,
-    #: pagina de bairro ou comercio.
+    #: É O QUE CRUZA AS FONTES: com ela, o que `stelafariasrs` postou na Bites e
+    #: o que a deputada Stela Farias fez nas agendas do CRM passam a ser da
+    #: mesma pessoa. Nulo é o estado normal, porque dizer de quem é cada perfil
+    #: é juízo humano — `@casadevovodede` pode ser pessoa física, página de
+    #: bairro ou comércio.
     #:
-    #: NAO CONFUNDIR COM `interlocutor.instituicao_id`, que diz DE QUEM a
-    #: pessoa fala. Aqui e o contrario: de quem o PERFIL e.
+    #: NÃO CONFUNDIR COM `interlocutor.instituicao_id`, que diz DE QUEM a pessoa
+    #: fala. Aqui é o contrário: de quem o PERFIL é.
     interlocutor_id: UUID | None = None
-    #: O CARGO DO PERFIL, pelo rotulo — "Deputado estadual". So em perfil de
-    #: rede. Editavel porque o fornecedor erra: `stelafariasrs` veio com UF TO
-    #: e sem cargo, e quem conhece o ator conserta na tela.
+    #: O CARGO DO PERFIL, pelo rótulo — "Deputado estadual". Só em perfil de
+    #: rede. Editável porque o fornecedor erra — vem perfil com UF trocada e sem
+    #: cargo —, e quem conhece o ator conserta na tela.
     cargo: str | None = None
     esfera_id: int | None = None
     uf: str | None = None
-    #: A RELEVANCIA da instituicao: 1 a 4. Opcional AQUI e obrigatoria na tela,
-    #: e a diferenca e proposital — as 98 instituicoes que existiam antes da
-    #: coluna nao tem tier, e um PUT que exigisse o campo impediria de corrigir
-    #: o nome de qualquer uma delas sem antes classifica-la.
+    #: A RELEVÂNCIA da instituição: 1 a 4. Opcional AQUI e obrigatória na tela,
+    #: e a diferença é proposital — a instituição cadastrada antes da coluna não
+    #: tem tier, e um PUT que exigisse o campo impediria de corrigir o nome dela
+    #: sem antes classificá-la.
     tier: int | None = None
-    #: A NOVA TAXONOMIA DE PUBLICOS. Opcional pelo mesmo motivo do `tier`: as
-    #: instituicoes que existiam antes desta coluna nao tem categoria, e um PUT
-    #: que a exigisse impediria de corrigir qualquer uma delas sem antes
-    #: classifica-la.
+    #: A NOVA TAXONOMIA DE PÚBLICOS. Opcional pelo mesmo motivo do `tier`.
     categoria_publico_id: int | None = None
     #: So faz sentido junto de `categoria_publico_id`, e so quando a categoria
     #: tem `padrao_de_quebra != sem_quebra` — ver `_conferir_categoria_publico`.
@@ -283,13 +274,11 @@ class InterlocutorEntrada(BaseModel):
     ativo: bool = True
 
 
-#: A NORMALIZACAO E A DO DOMINIO, e nao uma propria.
-#:
-#: HAVIA UMA PROPRIA AQUI, e ela NAO colapsava espaco interno: a mesma
-#: instituicao criada pelo FORMULARIO com espaco duplo gerava
-#: `nome_normalizado` diferente do que a PLANILHA geraria, e entrava como
-#: segunda instituicao -- exatamente a duplicata que o comentario daquela
-#: funcao dizia existir para impedir. Ver `dominio/texto.py`.
+#: A NORMALIZAÇÃO É A DO DOMÍNIO, e não uma própria. Uma que não colapse espaço
+#: interno faz a mesma instituição criada pelo FORMULÁRIO com espaço duplo gerar
+#: `nome_normalizado` diferente do que a PLANILHA geraria, e entrar como segunda
+#: instituição — que é exatamente a duplicata que ela existe para impedir. Ver
+#: `dominio/texto.py`.
 
 
 @rotas.post(
@@ -305,11 +294,11 @@ def criar_instituicao(
     tipo = derivar_tipo(
         sessao, tipo=entrada.tipo, categoria_publico_id=entrada.categoria_publico_id, atual=None
     )
-    #: AS MESMAS TRAVAS DA EDICAO, e por um motivo concreto: `gravar` captura
-    #: QUALQUER `IntegrityError` e responde "Ja existe uma instituicao chamada
-    #: X do tipo Y". Sem conferir aqui, um `POST` com cargo num veiculo
-    #: estourava o CHECK do banco e a pessoa lia uma mensagem sobre NOME
-    #: DUPLICADO — falsa, e sobre outro campo. Achado de revisao.
+    #: AS MESMAS TRAVAS DA EDIÇÃO, e por um motivo concreto: `gravar` captura
+    #: QUALQUER `IntegrityError` e responde "Já existe uma instituição chamada X
+    #: do tipo Y". Sem conferir aqui, um `POST` com cargo num veículo estoura o
+    #: CHECK do banco e a pessoa lê uma mensagem sobre NOME DUPLICADO — falsa, e
+    #: sobre outro campo.
     _conferir_campos_de_perfil(tipo, entrada)
 
     registro = Instituicao(
@@ -599,13 +588,13 @@ def remover_interlocutor(
 
     # AS DUAS FORMAS DE ESTAR NUMA AGENDA, contadas UMA vez.
     #
-    # A pessoa aparece na lista (`interacao_interlocutor`) e, quando e a
-    # principal, tambem na coluna (`interacao.interlocutor_id`). Sao duas
-    # representacoes do MESMO fato — e somar as duas contagens dizia "participa
-    # de 2 agendas" para uma reuniao so. A mensagem existe para orientar; um
-    # numero inflado a torna suspeita.
+    # A pessoa aparece na lista (`interacao_interlocutor`) e, quando é a
+    # principal, também na coluna (`interacao.interlocutor_id`). São duas
+    # representações do MESMO fato: somar as duas contagens diria "participa de
+    # 2 agendas" para uma reunião só, e um número inflado torna suspeita uma
+    # mensagem que existe para orientar.
     #
-    # `union` (e nao `union all`) sobre os IDs resolve: a mesma agenda vinda
+    # `union` (e não `union all`) sobre os IDs resolve: a mesma agenda vinda
     # pelos dois caminhos vira uma linha.
     agendas = select(InteracaoInterlocutor.interacao_id).where(
         InteracaoInterlocutor.interlocutor_id == id
@@ -634,10 +623,9 @@ def remover_interlocutor(
 
 # -- porta-vozes da Aegea ------------------------------------------------------
 #
-# `pessoa_aegea` ja existia, e o docstring de `PessoaAegeaTema` ja dizia para
-# que serve: sustentar a regra de "fora do escopo" — registro cujo tema nao esta
-# na lista do porta-voz que o conduziu. O conceito estava modelado e nao havia
-# como edita-lo: os temas de cada porta-voz vinham da planilha e ficavam.
+# Estas rotas editam o porta-voz e os temas dele, que é o que sustenta a regra
+# de "fora do escopo": registro cujo tema não está na lista do porta-voz que o
+# conduziu. Ver o docstring de `PessoaAegeaTema`.
 
 
 class PessoaAegeaEntrada(BaseModel):
@@ -785,17 +773,12 @@ class TemaEntrada(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     nome: str = Field(min_length=1)
-    #: `sensivel`, `estrategico` ou `gerais` — e quem manda e a constraint
-    #: `tema_nivel_check`, que `NIVEIS_DE_TEMA` espelha.
+    #: `sensivel`, `estrategico` ou `gerais` — e quem manda é a constraint
+    #: `tema_nivel_check`, que `NIVEIS_DE_TEMA` espelha. NÃO existe nível
+    #: `livre`: gravá-lo estoura CheckViolation.
     #:
-    #: ESTA LINHA DIZIA "`estrategico` ou `livre`", E `livre` NAO E UM NIVEL. Aqui
-    #: a frase nao quebrava nada, porque o codigo valida contra `NIVEIS_DE_TEMA` —
-    #: mas e a MESMA frase que, repetida no modelo do banco, me fez escrever
-    #: `Tema(nivel="livre")` na importacao de agendas e estourar o banco com
-    #: CheckViolation. Terceira copia da crenca errada, corrigida junto.
-    #:
-    #: `estrategico` e agenda da companhia; `gerais` e o neutro, e e o padrao aqui;
-    #: `sensivel` e uma afirmacao sobre o tema que so gente faz.
+    #: `estrategico` é agenda da companhia; `gerais` é o neutro, e é o padrão
+    #: aqui; `sensivel` é uma afirmação sobre o tema que só gente faz.
     nivel: str = "gerais"
     ativo: bool = True
     #: A hierarquia da taxonomia v1.3 (Peers/Comms), ainda em validacao por

@@ -1,31 +1,27 @@
 """O rastreio de risco: a aba que lê a plataforma pela matriz de risco da Aegea.
 
-O QUE ESTA ABA RESPONDE, e por que ela pôde existir agora: `tema_risco` liga o
-tema (N3) do cadastro aos 32 riscos da matriz corporativa, e o vínculo de
-`mencao.tema_id` — que até semanas atrás era nulo em 100% da base — fez TUDO o
-que entra na plataforma por assunto chegar a risco. Medido em 10/10/2026: 25.248
-menções da Clipei, 2.322 da Bites, 319 do recorte de investidores e 401 agendas
-do CRM chegam a um risco.
+O QUE LIGA UM REGISTRO A UM RISCO: `tema_risco` liga o tema (N3) do cadastro
+aos 32 riscos da matriz corporativa. São DOIS caminhos até lá, e não um — a
+menção chega pelo `mencao.tema_id`, a agenda do CRM chega pelo
+`interacao_tema.tema_id` —, e é isso que faz tudo o que entra na plataforma por
+assunto chegar a risco.
 
-DUAS ROTAS, e a divisão é a da tela: uma devolve o painel inteiro (a série do
-índice, os KPIs e a matriz de 32 riscos, que a pessoa clica para filtrar), e a
-outra, o "Relatório de incidentes" — paginado, porque são milhares de linhas.
+AS ROTAS SEGUEM A TELA: o painel inteiro (a série do índice, os KPIs e a matriz
+de 32 riscos, que a pessoa clica para filtrar), o "Relatório de incidentes"
+— paginado, porque são milhares de linhas — e as opções que a barra de filtros
+pode oferecer.
 
 O PORTAL É O DO SCORE, como nas outras rotas daqui. O índice do Score já lê o
 clima das interações institucionais (ver `exigir_portal_score`), então contar
 agenda de clima negativo como incidente não abre nada novo.
 
-E A PAUTA DA REUNIÃO NÃO ENTRA NA RESPOSTA, por decisão do dono do produto, e a
-razão de fundo é a que sustenta a aba inteira: ESTA TELA EXISTE PARA CRUZAR
-FONTES, e só cruza o que é padronizado. Assunto e clima vêm do cadastro — mesmo
-vocabulário no CRM, na Clipei, na Bites e na Approach. A pauta é texto livre que
-só o CRM tem: ela não cruza com nada, e uma coluna que só uma das cinco fontes
-preenche faz o relatório parecer quebrado nas outras quatro.
-
-Somam-se as outras duas razões que ele deu: a informação "já deveria estar em
-tema da reunião e clima", e a pauta é texto descritivo mais longo — num relatório
-de sete colunas, um parágrafo por linha arrebenta a grade. Ela também já aparece
-em todo lugar que trata da agenda, então repeti-la aqui é ruído.
+A PAUTA DA REUNIÃO NÃO ENTRA NA RESPOSTA, e a razão sustenta a aba inteira:
+ESTA TELA EXISTE PARA CRUZAR FONTES, e só cruza o que é padronizado. Assunto e
+clima vêm do cadastro, com o mesmo vocabulário em toda fonte, então a pauta não
+acrescenta o que já está em tema e clima. Ela é texto livre que só o CRM tem:
+não cruza com nada, e uma coluna que uma fonte só preenche faz o relatório
+parecer quebrado em todas as outras. Além disso é texto longo, e num relatório
+de sete colunas um parágrafo por linha arrebenta a grade.
 
 A LINHA DA AGENDA DIZ data, assunto, severidade, recorrência e riscos: o
 bastante para ler "houve reunião tensa sobre Tarifa social, que toca o R23". O
@@ -177,9 +173,8 @@ class DimensaoDoFiltro(BaseModel):
     valores: list[str]
     quantos: int
     #: EM QUAIS FONTES ela tem valor. É o que permite a tela dizer "só na
-    #: imprensa" em vez de deixar o filtro mudo nas outras — e é a resposta à
-    #: pergunta que o dono do produto fez: padronização, com espaço para a
-    #: particularidade de cada base.
+    #: imprensa" em vez de deixar o filtro mudo nas outras: padronização, com
+    #: espaço para a particularidade de cada base.
     fontes: list[str]
     #: QUANTAS MENÇÕES DO RECORTE têm valor aqui. Zero com `fontes` preenchido é
     #: "a fonte classifica isto, e neste corte não há nenhum" — que a tela
@@ -214,15 +209,14 @@ class OpcoesDoRisco(BaseModel):
 
     O CADASTRO É FIXO (8 clusters, 32 riscos) e as DIMENSÕES VARIAM com o
     recorte — praça e concessionária cruzam as fontes, tier e público-alvo só a
-    imprensa tem, cargo e autor só as redes. Medido na base: oferecer tier a
-    quem está olhando a Bites seria prometer um filtro que volta vazio.
+    imprensa tem, cargo e autor só as redes. Oferecer tier a quem está olhando
+    a Bites seria prometer um filtro que volta vazio.
     """
 
     clusters: list[ClusterDeRisco]
-    #: AS LENTES COM INCIDENTE no recorte — a dimensão padronizada, e o filtro
-    #: que o dono do produto pediu. Vêm ao lado das fontes porque as duas
-    #: perguntas são diferentes: "como está a imprensa" é lente, "esta planilha
-    #: está certa" é fonte.
+    #: AS LENTES COM INCIDENTE no recorte — a dimensão padronizada. Vêm ao lado
+    #: das fontes porque as duas perguntas são diferentes: "como está a
+    #: imprensa" é lente, "esta planilha está certa" é fonte.
     lentes: list[dict[str, str]]
     #: A TAXONOMIA EM TRÊS NÍVEIS, só dos temas que tocam risco. A árvore inteira
     #: do cadastro, e não só o que tem incidente: é a régua da matriz dos 32
@@ -273,8 +267,8 @@ def _filtro(
         O REGEX DA ROTA NÃO BASTA: `2026-99` casa com `^\d{4}-\d{2}$` e estoura
         dentro de `date()`, o que a aplicação devolve como 500 — "erro interno"
         para um endereço que a pessoa digitou errado, e um registro de falha na
-        telemetria que ninguém causou. Achado de revisão. Aqui ele volta como
-        `RegraViolada`, que é 422 com o valor recusado no texto.
+        telemetria que ninguém causou. Aqui ele volta como `RegraViolada`, que
+        é 422 com o valor recusado no texto.
         """
         if not mes:
             return None
@@ -358,8 +352,7 @@ def painel_de_risco(
 
     #: O TOTAL VEM DA CONTAGEM POR INCIDENTE, e não da soma da matriz: o
     #: incidente de um tema que toca um crítico e um alto entraria nos dois
-    #: baldes, e os três números do topo somariam mais que o total. Achado de
-    #: revisão.
+    #: baldes, e os três números do topo somariam mais que o total.
     por_severidade = total_por_severidade(sessao, filtro, usuario.escopo)
 
     return PainelDeRisco(
