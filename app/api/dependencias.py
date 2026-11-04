@@ -384,27 +384,18 @@ def exigir_portal_de_inteligencia_de_mercado(
     #: A CONFIGURAÇÃO POR `Depends`, e não `obter_configuracao()` dentro do
     #: corpo — é o padrão que `exigir_sso_configurado` já usa neste arquivo. A
     #: chamada direta não passa por `app.dependency_overrides`, então o teste
-    #: não conseguia ligar a bandeira e a recusa de "não lançado" vencia todas
-    #: as asserções. Um guarda que não se consegue testar com a porta ABERTA é
-    #: um guarda cuja metade permissiva nunca foi exercitada.
+    #: não consegue ligar a bandeira: a recusa de "não lançado" vence todas as
+    #: asserções, e a metade permissiva do guarda nunca é exercitada.
     configuracao: Annotated[Configuracao, Depends(obter_configuracao)],
 ) -> UsuarioAtual:
     """As rotas do Painel de Inteligência de Mercado: o ALCANCE e a PORTA.
 
-    ESTE GUARDA NÃO EXISTIA, e o comentário que morava aqui explicava por quê:
-    "o painel está EM CONSTRUÇÃO, não existe rota dele para proteger". A primeira
-    rota chegou (a cotação de bonds), então a ausência deixou de ser deliberada.
-
-    DUAS CONDIÇÕES, E NÃO UMA — é o que `configuracao.mercado_lancado` existe
-    para permitir, nas palavras do próprio campo: "fechar o painel por uma tarde
-    exigiria revogar o acesso de dezenas de pessoas, e na tela de acessos isso é
-    indistinguível de alguém ter perdido o acesso. Com a bandeira, o alcance
-    fica intacto e a porta fecha".
-
-    `papel.acessa_inteligencia_de_mercado` é o ALCANCE: quem pode, quando abrir.
-    `mercado_lancado` é a PORTA: se o módulo está no ar. Checar só o papel faria
-    a rota servir dado com o cartão da capa ainda dizendo "em construção" —
-    e esconder o cartão não fecha a rota, que é a frase escrita na configuração.
+    DUAS CONDIÇÕES, E NÃO UMA. `papel.acessa_inteligencia_de_mercado` é o
+    ALCANCE: quem pode, quando abrir. `configuracao.mercado_lancado` é a PORTA:
+    se o módulo está no ar. Checar só o papel faria a rota servir dado com o
+    cartão da capa ainda dizendo "em construção" — e esconder o cartão não fecha
+    a rota. Por que as duas não moram no mesmo lugar está escrito em
+    `Configuracao.mercado_lancado`, e não se repete aqui.
 
     AS DUAS RECUSAS SÃO DIFERENTES de propósito. "Ainda não foi lançado" é
     estado do produto e não tem o que pedir à coordenação; "seu perfil não tem
@@ -421,33 +412,30 @@ def exigir_portal_de_inteligencia_de_mercado(
             "Peça à coordenação do painel."
         )
     return usuario
+
+
+# NÃO CONFUNDIR O PORTAL COM A LENTE `mercado`, que vive DENTRO do Score e
+# recorta a lista de veículos da aba Classificação. A lente é do Score, está
+# protegida por `exigir_portal_score`, e apontá-la para
+# `acessa_inteligencia_de_mercado` a tiraria de todo mundo que tem Score hoje.
+# É por isso que o nome da bandeira é longo: `acessa_mercado` foi recusado
+# porque deixaria as duas com o mesmo nome.
 #
-# ATÉ A 0095 ESTE PORTAL SE CHAMAVA `sintese`, e este comentário dizia "o rótulo
-# da capa mudou, o nome interno não". Mudou agora, junto com a decisão de
-# construir o painel: escrever tabela, rota e tela com um nome que a tela não usa
-# multiplicaria a divergência.
-#
-# NÃO CONFUNDIR COM A LENTE `mercado`, que existe hoje e vive DENTRO do Score —
-# ela recorta a lista de veículos da aba Classificação. Essa lente é do Score,
-# está protegida por `exigir_portal_score`, e apontá-la para
-# `acessa_inteligencia_de_mercado` tiraria-a de todo mundo que tem Score hoje.
-# É exatamente por isso que o nome novo é longo: `acessa_mercado` foi cogitado e
-# recusado, porque deixaria as duas com o mesmo nome.
-#
-# QUEM FOR CONSTRUIR O PAINEL escreve a dependência aqui, exigindo as DUAS
-# coisas — `papel.acessa_inteligencia_de_mercado` e
-# `configuracao.mercado_lancado` —, e aí ela nasce com rota. Escrevê-la antes
-# seria um controle que parece existir e não roda, que é o que o bloco abaixo
-# explica ser pior do que não ter.
+# O PORTAL SE CHAMOU `sintese` até a `0095` — o nome aparece assim em dado
+# antigo e em migration anterior a ela.
 
 
 # NÃO existe `exigir_exportacao` aqui, e a ausência é deliberada.
 #
-# `papel.pode_exportar` está no banco, mas não há rota para protegê-lo: o CSV é
-# montado no navegador, a partir dos registros que a listagem já entregou.
-# Escrever a dependência sem rota criaria um controle que parece existir e não
-# roda — pior do que controle nenhum, porque quem lesse o código concluiria que
-# a exportação está barrada.
+# `papel.pode_exportar` está no banco, e NÃO HÁ ROTA QUE SIRVA O CSV: o arquivo é
+# montado no navegador, a partir dos registros que a listagem já entregou. As duas
+# rotas de `/api/exportacoes` existem para REGISTRAR que alguém exportou — elas
+# gravam a trilha, não entregam o dado —, então proteger o download ali não
+# protegeria nada: quem já tem a listagem já tem o conteúdo.
+#
+# Escrever a dependência assim criaria um controle que parece existir e não roda —
+# pior do que controle nenhum, porque quem lesse o código concluiria que a
+# exportação está barrada.
 #
 # Enquanto o export for do lado do cliente, quem limita o dano é o escopo (o
 # usuário só baixa o que alcança) e a ocultação de `relato`/`pendencias`.

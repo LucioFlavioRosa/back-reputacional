@@ -71,19 +71,18 @@ class DuplicadoSaida(BaseModel):
 class FusaoEntrada(BaseModel):
     #: QUEM FICA. Quem SAI vem na URL — ver `fundir`.
     #:
-    #: ERA "o perfil vem na URL e é sempre quem sai", e deixou de ser verdade em
-    #: 11/10/2026: a fila passou a perguntar sobre qualquer tipo, então qualquer
-    #: cadastro pode sair. A assimetria que protegia a curadoria continua, mas pela
-    #: ORDEM DA FILA — `_esta_do_lado_que_pergunta` ancora a pergunta em quem deve
-    #: sair — e não por um `if` de tipo no servidor.
+    #: QUALQUER CADASTRO PODE SAIR, porque a fila pergunta sobre qualquer tipo.
+    #: A assimetria que protege a curadoria vem da ORDEM DA FILA —
+    #: `_esta_do_lado_que_pergunta` ancora a pergunta em quem deve sair — e não
+    #: de um `if` de tipo no servidor.
     sobrevivente_id: UUID
     #: "O CADASTRO CERTO É ESTE", dito de propósito contra a proposta da fila.
     #:
-    #: A fila propõe quem sai (o perfil cru antes do curado, depois quem tem menos
-    #: menções) e o servidor recusa o inverso — é o que impede fundir a linha com
-    #: história dentro da linha crua por um clique errado. Mas só quem conhece o
-    #: ator sabe quando o cadastro certo é o outro, e o pedido do dono do produto é
-    #: justamente "dizer qual é o real para ser considerado na unificação".
+    #: A fila propõe quem sai (o perfil cru antes do curado, depois quem tem
+    #: menos menções) e o servidor recusa o inverso — é o que impede fundir a
+    #: linha com história dentro da linha crua por um clique errado. Mas só quem
+    #: conhece o ator sabe quando o cadastro certo é o outro, e é esta bandeira
+    #: que deixa a pessoa dizer qual é o real.
     #:
     #: FALSO POR PADRÃO, e é isso que mantém a proteção: quem não disser nada
     #: continua levando 422 na direção inversa.
@@ -102,10 +101,8 @@ def listar_duplicados(
 ) -> list[atores_duplicados.Duplicado]:
     """Os cadastros que podem ser o mesmo ator.
 
-    ERA "os perfis de rede que se parecem com outro cadastro". A fila passou a
-    olhar qualquer tipo em 11/10/2026, pelo princípio do dono do produto — "o BTG
-    podemos ter acesso em rede social, em reunião de investimento ou imprensa, mas
-    ele continua sendo um só".
+    QUALQUER TIPO, e não só perfil de rede: o mesmo ator chega por rede social,
+    por reunião de investimento e por imprensa, e continua sendo um só.
 
     LEITURA COM A PERMISSÃO DO DIRETÓRIO, como as outras listagens de cadastro:
     a resposta nomeia atores do mapa de relacionamento da Aegea.
