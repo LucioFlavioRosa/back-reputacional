@@ -31,7 +31,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import delete, func, insert, select
+from sqlalchemy import delete, func, insert, select, text
 from sqlalchemy.orm import Session
 
 from app.banco.repositorio_score import so_interacoes_visiveis
@@ -42,6 +42,7 @@ from app.banco.tabelas_stakeholders import (
     Instituicao,
     InstituicaoApelido,
     Interlocutor,
+    PareamentoDaFila,
     ParSemelhante,
 )
 from app.casos_de_uso.veiculos_da_imprensa import LISTAS_DE_VEICULOS, nomes_da_lista
@@ -266,9 +267,22 @@ def recalcular(sessao: Session) -> int:
     falhar depois daqui, o pareamento volta junto com ela, em vez de descrever um
     cadastro que não existe.
 
-    CUSTO MEDIDO: 9,6 s em 3.800 cadastros, 43,7 s em 11.000. É o preço que saiu
-    da requisição e entrou no fim da subida — que hoje leva 62 s medidos.
+    SERIALIZADO POR CADEADO, e sem ele há corrida com resultado silencioso: duas
+    subidas simultâneas leriam cada uma o seu instantâneo de `instituicao`, as
+    duas apagariam a tabela, e a última gravaria um pareamento que não enxergou os
+    cadastros da outra — fila incompleta, sem erro nenhum. `xact` porque morre com
+    a transação e nada fica preso se o processo cair; é o mesmo idioma de
+    `ingerir_mencoes.travar_o_arquivo`.
+
+    CUSTO MEDIDO: 9,6 s em 3.800 cadastros, 43,7 s em 7.300 e 102,7 s em 11.000.
+    É o preço que saiu da requisição e entrou no fim da subida — que leva 62 s
+    medidos, somando ~165 s contra os ~240 s do ingress.
     """
+    #: SEM `try`, ao contrário do cadeado dos administradores: aqui esperar é o
+    #: certo. Quem chega depois quer o pareamento refeito, e refazê-lo duas vezes
+    #: em sequência é só lento — enquanto recusar deixaria a fila velha.
+    sessao.execute(select(func.pg_advisory_xact_lock(ESPACO_DA_TRAVA_DO_PAREAMENTO)))
+
     cadastros = list(
         sessao.scalars(select(Instituicao).where(Instituicao.ativo.is_(True)))
     )
@@ -289,8 +303,72 @@ def recalcular(sessao: Session) -> int:
             insert(ParSemelhante),
             [{"um_id": um, "outro_id": outro} for um, outro in sorted(pares, key=str)],
         )
+    #: O CÁLCULO É REGISTRADO SEMPRE, inclusive com zero par — e é o que separa
+    #: "calculou e não achou nada" de "nunca calculou". Deduzir isso das linhas de
+    #: `par_semelhante` seria repetir, aqui, o furo que a `0115` existe para
+    #: fechar: num cadastro limpo a tabela fica vazia e o `max` não anda.
+    sessao.add(
+        PareamentoDaFila(
+            pares=len(pares), impressao=impressao_do_cadastro(sessao)
+        )
+    )
     sessao.flush()
     return len(pares)
+
+
+#: O ESPAÇO DA TRAVA DO PAREAMENTO. Número próprio para não colidir com a trava
+#: do arquivo da ingestão, que roda na MESMA transação quando a subida recalcula.
+ESPACO_DA_TRAVA_DO_PAREAMENTO = 8118
+
+
+def impressao_do_cadastro(sessao: Session) -> str:
+    """A impressão dos nomes ativos do cadastro, para detectar defasagem.
+
+    POR QUE ELA EXISTE: o pareamento depende dos nomes em `instituicao`, e o
+    cadastro muda por muitos caminhos — a tela de cadastro, a confirmação de
+    agendas, o comando de cadastro externo, e os que ainda não existem. Pendurar
+    recálculo em cada escritor é a lista que o próximo esquece de atualizar;
+    comparar a impressão pega todos, inclusive os futuros.
+
+    NOMES E NÃO SÓ A CONTAGEM: renomear não muda `count(*)` nem
+    `max(criado_em)` — e renomear é exatamente o que faz dois cadastros passarem
+    a se parecer. `instituicao` não tem `atualizado_em`, então não há carimbo a
+    usar.
+
+    NO BANCO E NÃO EM PYTHON: trazer alguns milhares de nomes para calcular um
+    hash desfaria a economia. `md5` basta porque o uso é detectar mudança, não
+    resistir a adversário.
+    """
+    return sessao.scalar(
+        select(
+            func.coalesce(
+                func.md5(
+                    func.string_agg(
+                        func.concat(Instituicao.id, Instituicao.nome_normalizado),
+                        text("','"),
+                    )
+                ),
+                "cadastro-vazio",
+            )
+        )
+        .select_from(Instituicao)
+        .where(Instituicao.ativo.is_(True))
+    )
+
+
+def esta_desatualizado(sessao: Session) -> bool:
+    """O cadastro mudou depois do último pareamento?
+
+    VERDADEIRO TAMBÉM QUANDO NUNCA CALCULOU: fila nunca calculada está, por
+    definição, atrás do cadastro — e a tela precisa dizer isso em vez de mostrar
+    zero.
+    """
+    ultima = sessao.scalar(
+        select(PareamentoDaFila.impressao).order_by(
+            PareamentoDaFila.calculado_em.desc(), PareamentoDaFila.id.desc()
+        )
+    )
+    return ultima is None or ultima != impressao_do_cadastro(sessao)
 
 
 def calculado_em(sessao: Session) -> datetime | None:
@@ -301,11 +379,12 @@ def calculado_em(sessao: Session) -> datetime | None:
     tela diria "Possíveis duplicados (0)" num cadastro cheio de duplicatas — uma
     mentira mais silenciosa que o 504 que ela substituiu.
 
-    DO `max`, e não de uma linha de controle: `recalcular` substitui a tabela
-    inteira de uma vez, então todas as linhas têm o mesmo carimbo. Uma tabela de
-    uma linha só para guardar isto seria um segundo lugar para a verdade morar.
+    DE `pareamento_da_fila` E NÃO DE `par_semelhante`: num cadastro limpo o
+    recálculo acha zero par e não insere linha nenhuma, e aí um
+    `max(par_semelhante.calculado_em)` seria nulo — indistinguível de "nunca".
+    O cálculo é fato próprio, registrado mesmo quando dá zero.
     """
-    return sessao.scalar(select(func.max(ParSemelhante.calculado_em)))
+    return sessao.scalar(select(func.max(PareamentoDaFila.calculado_em)))
 
 
 def _vizinhos_guardados(
@@ -353,9 +432,16 @@ def listar(sessao: Session) -> list[Duplicado]:
 
     O PAREAMENTO VEM GUARDADO (`par_semelhante`, `0118`), e o RESTO é ao vivo.
     A comparação par a par com `difflib` custava 102,7 s medidos em 11.000
-    cadastros, contra os ~240 s em que o ingress corta — era a causa do 504. Ela
-    saiu da requisição e passou a rodar ao fim da subida, que é quando o cadastro
-    de fato cresce. Ver `recalcular`.
+    cadastros, contra os ~240 s em que o ingress corta, e crescia com o quadrado
+    do cadastro — era a causa do 504. Ela saiu da requisição e passou a rodar ao
+    fim da subida, que é quando o cadastro de fato cresce. Ver `recalcular`.
+
+    O QUE SOBRA AQUI NÃO É ZERO, e não foi medido na base real: as duas
+    agregações `distinct` de `_origens_por_instituicao` e a contagem de
+    `_mencoes_por_instituicao` continuam por requisição. O docstring daquela
+    função registra 7,4 s para a fila inteira num cadastro de ~3.962 — do qual o
+    pareamento media 9,6 s em 3.800, ou seja a maior parte. Tirar o pareamento
+    remove o que CRESCIA; se o residual incomodar, é medição separada.
 
     MAS SÓ O PAREAMENTO. As decisões de `ator_distinto`, a contagem de menções, as
     origens e o filtro de quem pergunta continuam lidos aqui: é o que faz a fila

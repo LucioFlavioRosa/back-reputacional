@@ -26,6 +26,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     ForeignKey,
@@ -346,3 +347,31 @@ class ParSemelhante(Tabela):
     calculado_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("clock_timestamp()")
     )
+
+
+class PareamentoDaFila(Tabela):
+    """Quando o pareamento foi refeito, e quantos pares deu. Espelha a `0118`.
+
+    O CÁLCULO É FATO PRÓPRIO, e não se deduz de `par_semelhante`. Deduzi-lo de
+    `max(par_semelhante.calculado_em)` funciona só enquanto houver par: num
+    cadastro limpo o recálculo roda, acha zero e não insere nada — e aí o `max` é
+    nulo, indistinguível de "nunca calculou". É o mesmo furo que a `0115` existe
+    para fechar, do outro lado.
+
+    APPEND-ONLY, e por isso `delete` não é concedido aqui (ao contrário de
+    `par_semelhante`, que é substituída). Vira histórico de graça: "quando foi
+    recalculado e quantos pares deu" é a pergunta seguinte de quem desconfia da
+    fila.
+    """
+
+    __tablename__ = "pareamento_da_fila"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    calculado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("clock_timestamp()")
+    )
+    #: ZERO É RESULTADO VÁLIDO, e é a razão desta tabela existir.
+    pares: Mapped[int] = mapped_column(Integer)
+    #: A impressão do cadastro de que este pareamento saiu. Ver
+    #: `atores_duplicados.impressao_do_cadastro` e o comentário da `0118`.
+    impressao: Mapped[str] = mapped_column(Text)

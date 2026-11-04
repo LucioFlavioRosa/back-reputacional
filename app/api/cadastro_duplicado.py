@@ -123,6 +123,15 @@ class EstadoDaFilaSaida(BaseModel):
 
     #: NULO significa NUNCA CALCULADO, e a tela tem de dizer isso em vez de zero.
     calculado_em: datetime | None
+    #: O CADASTRO MUDOU DEPOIS DO ÚLTIMO PAREAMENTO. Verdadeiro também quando
+    #: nunca calculou.
+    #:
+    #: EXISTE PORQUE O RECÁLCULO NÃO ESTÁ EM TODO ESCRITOR: a subida o dispara,
+    #: mas criar pela tela de cadastro, confirmar agendas ou rodar o comando de
+    #: cadastro externo não. Pendurar um gancho em cada um é a lista que o próximo
+    #: esquece; comparar a impressão do cadastro pega todos — e a tela diz "pode
+    #: haver duplicado novo" em vez de calar.
+    desatualizado: bool
 
 
 @rotas.get("/instituicoes/duplicados/estado", response_model=EstadoDaFilaSaida)
@@ -139,7 +148,10 @@ def estado_da_fila(
     tem parâmetro de rota, então não há captura a disputar — mas manter a mais
     específica em cima é o que evita o problema no dia em que houver.
     """
-    return EstadoDaFilaSaida(calculado_em=atores_duplicados.calculado_em(sessao))
+    return EstadoDaFilaSaida(
+        calculado_em=atores_duplicados.calculado_em(sessao),
+        desatualizado=atores_duplicados.esta_desatualizado(sessao),
+    )
 
 
 @rotas.post("/instituicoes/{que_sai_id}/fundir", status_code=200)

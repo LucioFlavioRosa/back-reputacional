@@ -560,6 +560,29 @@ def test_par_semelhante_e_SUBSTITUIVEL_pela_aplicacao(sessao_restrita, semente):
             == 0
         )
 
+    #: E `UPDATE` NÃO: a tabela é substituída por `delete` + `insert`, e nada nela
+    #: se altera no lugar. O `grant` da `0118` não remove o que o `alter default
+    #: privileges` da `0009` concedeu — foi preciso `revoke` explícito, e conferir
+    #: só as três de cima deixaria passar exatamente este caso.
+    with pytest.raises(ProgrammingError, match="permission denied"), _isolado(sessao_restrita):
+        sessao_restrita.execute(
+            text("update par_semelhante set calculado_em = now()")
+        )
+
+    #: E O HISTÓRICO É O CONTRÁRIO: lê e acrescenta, nunca altera nem apaga. As
+    #: duas tabelas nascem do mesmo `alter default privileges`, e sem os revokes
+    #: esta ganharia `update` em silêncio.
+    with _isolado(sessao_restrita):
+        sessao_restrita.execute(
+            text("insert into pareamento_da_fila (pares, impressao) values (0, 'zz')")
+        )
+
+    with pytest.raises(ProgrammingError, match="permission denied"), _isolado(sessao_restrita):
+        sessao_restrita.execute(text("update pareamento_da_fila set pares = 999"))
+
+    with pytest.raises(ProgrammingError, match="permission denied"), _isolado(sessao_restrita):
+        sessao_restrita.execute(text("delete from pareamento_da_fila"))
+
 
 def test_nao_escala_o_proprio_privilegio(sessao_restrita, semente):
     """A conta da aplicação não se promove dentro do banco.

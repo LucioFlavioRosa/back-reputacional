@@ -53,17 +53,72 @@ comment on table par_semelhante is
 --: índice, montar as duas direções varre a tabela.
 create index if not exists par_semelhante_outro_idx on par_semelhante (outro_id);
 
+
+--: O CÁLCULO É FATO PRÓPRIO, e não se deduz das linhas de `par_semelhante`.
+--:
+--: É O MESMO FURO QUE A `0115` EXISTE PARA FECHAR, e eu quase o repeti aqui:
+--: deduzir "quando foi calculado" de `max(par_semelhante.calculado_em)` funciona
+--: só enquanto houver par. Num cadastro LIMPO o recálculo roda, acha zero e não
+--: insere nada — e aí o `max` é nulo, indistinguível de "nunca calculou". A tela
+--: diria "nunca calculado" tendo calculado, que é a mentira simétrica à que a
+--: trilha da carga conserta.
+--:
+--: APPEND-ONLY, e vira histórico de graça: "quando foi recalculado, e quantos
+--: pares deu" é a pergunta seguinte de quem desconfia da fila. Uma linha por
+--: subida-que-cria mais as execuções manuais — punhado por mês.
+create table if not exists pareamento_da_fila (
+  id           bigserial   primary key,
+  calculado_em timestamptz not null default clock_timestamp(),
+  --: ZERO É RESULTADO VÁLIDO, e é a razão desta tabela existir.
+  pares        integer     not null,
+  --: A IMPRESSÃO DO CADASTRO DE QUE ESTE PAREAMENTO SAIU, e é o que torna a
+  --: defasagem VISÍVEL sem pendurar um gancho em cada escritor.
+  --:
+  --: O PROBLEMA QUE ELA RESOLVE: o pareamento depende dos nomes em
+  --: `instituicao`, e o cadastro muda por muitos caminhos — a tela de cadastro,
+  --: a confirmação de agendas, o comando de cadastro externo, e os que ainda não
+  --: existem. Pendurar recálculo em cada um é a lista que o próximo esquece de
+  --: atualizar; comparar a impressão pega todos, inclusive os futuros.
+  --:
+  --: CONTA E NOMES, não só a contagem: renomear não muda `count(*)` nem
+  --: `max(criado_em)` — e renomear é exatamente o que faz dois cadastros
+  --: passarem a se parecer.
+  impressao    text        not null
+);
+
+comment on table pareamento_da_fila is
+  'Quando o pareamento da fila de duplicados foi refeito, e quantos pares deu. '
+  'ZERO par e resultado valido: e por isso que o fato nao se deduz de '
+  '`par_semelhante`, que fica vazia nesse caso.';
+
+create index if not exists pareamento_da_fila_calculado_idx
+  on pareamento_da_fila (calculado_em desc);
+
+--: `delete` NÃO é concedido aqui, ao contrário de `par_semelhante`: esta é
+--: histórico e não é substituída. `update` sai pelo mesmo motivo — o `alter
+--: default privileges` da `0009` o concederia em silêncio.
+revoke update, delete on pareamento_da_fila from painel_app;
+grant  select, insert  on pareamento_da_fila to painel_app;
+grant usage, select on sequence pareamento_da_fila_id_seq to painel_app;
+
 --: `DELETE` É O PONTO DESTA TABELA, e tabela nova NÃO o ganha: o bloco de
 --: tabelas futuras da `0009` concede `select, insert, update` e mais nada,
 --: porque o papel "apaga apenas linhas filhas de agregado". Esta é substituída
 --: inteira a cada recálculo — sem o `grant` a suíte fica verde (local roda como
 --: superusuário) e só o ambiente implantado quebra, que é o ponto cego que a
 --: `0041`, a `0068` e a `0092` já cobraram.
+--: E `UPDATE` SAI, porque o `alter default privileges` da `0009` já o concedeu e
+--: um `grant` não o remove: a tabela é substituída por `delete` + `insert`, e
+--: nada nela se altera no lugar. Sem este `revoke` a aplicação ganharia um
+--: privilégio que nenhum caminho usa — e permissão sem uso é permissão que
+--: ninguém revisa.
+revoke update on par_semelhante from painel_app;
 grant select, insert, delete on par_semelhante to painel_app;
 
 do $$
 declare
     faltando text;
+    indevidos text;
 begin
     select string_agg(p, ', ' order by p) into faltando
       from unnest(array['SELECT', 'INSERT', 'DELETE']) as p
@@ -75,7 +130,26 @@ begin
             faltando;
     end if;
 
-    raise notice 'par_semelhante criada, substituivel pela aplicacao';
+    --: E `UPDATE` NAO PODE SOBRAR. O `grant` acima nao remove o que o `alter
+    --: default privileges` da 0009 concedeu, e conferir so as tres de cima
+    --: deixaria passar exatamente esse caso.
+    if has_table_privilege('painel_app', 'par_semelhante', 'UPDATE') then
+        raise exception
+            'painel_app ainda pode UPDATE em par_semelhante: o revoke nao pegou';
+    end if;
+
+    --: E O HISTORICO E O CONTRARIO: le e acrescenta, nunca altera nem apaga.
+    select string_agg(p, ', ' order by p) into indevidos
+      from unnest(array['UPDATE', 'DELETE']) as p
+     where has_table_privilege('painel_app', 'pareamento_da_fila', p);
+
+    if indevidos is not null then
+        raise exception
+            'painel_app pode % em pareamento_da_fila: o historico nao e append-only',
+            indevidos;
+    end if;
+
+    raise notice 'par_semelhante substituivel, pareamento_da_fila append-only';
 end $$;
 
 commit;

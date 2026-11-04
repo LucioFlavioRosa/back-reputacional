@@ -49,6 +49,7 @@ from app.banco.tabelas_stakeholders import (
     Instituicao,
     InstituicaoApelido,
     Interlocutor,
+    PareamentoDaFila,
     ParSemelhante,
 )
 from app.casos_de_uso import atores_duplicados
@@ -1212,8 +1213,49 @@ def test_a_resposta_de_gente_tira_o_par_na_HORA_sem_recalcular(sessao):
         sessao, um=um.id, outro=outro.id, motivo="são dois jornais", decidido_por=None
     )
 
-    #: SEM RECALCULAR: a fila já não pergunta.
-    assert not _o_par_esta_na_fila(sessao, um, outro)
+    #: `listar` DIRETO e não `_o_par_esta_na_fila`: o auxiliar recalcula antes de
+    #: ler, e usá-lo aqui provaria apenas que a decisão filtra — não que ela
+    #: filtra SEM recálculo, que é o ponto de guardar só o pareamento.
+    pares_na_fila = {
+        frozenset({d.id, c.id})
+        for d in atores_duplicados.listar(sessao)
+        for c in d.candidatos
+    }
+    assert frozenset({um.id, outro.id}) not in pares_na_fila
+
+
+def test_o_cadastro_LIMPO_calculou_e_a_tela_sabe(sessao):
+    """O furo que eu quase repeti, e que a `0115` existe para fechar do outro lado.
+
+    Um cadastro sem duplicata nenhuma faz `recalcular` achar zero par e não
+    inserir linha em `par_semelhante`. Se `calculado_em` saísse do `max` daquela
+    tabela, seria nulo — e a tela diria "nunca calculado" tendo calculado. O
+    cálculo é fato próprio, registrado mesmo com zero.
+    """
+    sessao.execute(delete(ParSemelhante))
+    sessao.execute(delete(PareamentoDaFila))
+    #: SÓ UM CADASTRO: não há com quem parear.
+    _cadastrar(sessao, "Unico Sem Par zzpg7", "veiculo")
+    sessao.flush()
+
+    pares = atores_duplicados.recalcular(sessao)
+
+    assert pares == 0
+    assert sessao.scalar(select(func.count()).select_from(ParSemelhante)) == 0
+    #: E MESMO ASSIM a tela sabe que calculou.
+    assert atores_duplicados.calculado_em(sessao) is not None
+
+
+def test_o_historico_do_pareamento_acrescenta_em_vez_de_substituir(sessao):
+    """Duas execuções deixam duas linhas: "quando foi recalculado e quantos pares
+    deu" é a pergunta seguinte de quem desconfia da fila."""
+    sessao.execute(delete(PareamentoDaFila))
+    sessao.flush()
+
+    atores_duplicados.recalcular(sessao)
+    atores_duplicados.recalcular(sessao)
+
+    assert sessao.scalar(select(func.count()).select_from(PareamentoDaFila)) == 2
 
 
 def test_calculado_em_distingue_ZERO_de_NUNCA(sessao):
@@ -1224,6 +1266,7 @@ def test_calculado_em_distingue_ZERO_de_NUNCA(sessao):
     tela tem de dizer isso.
     """
     sessao.execute(delete(ParSemelhante))
+    sessao.execute(delete(PareamentoDaFila))
     sessao.flush()
     assert atores_duplicados.calculado_em(sessao) is None
 
@@ -1271,3 +1314,98 @@ def test_fundir_apaga_o_par_por_cascade(sessao):
         .where(ParSemelhante.um_id.in_({um.id, outro.id}))
     )
     assert depois == 0
+
+
+# -- a defasagem é VISÍVEL, sem gancho em cada escritor -------------------------
+
+
+def test_RENOMEAR_deixa_a_fila_desatualizada(sessao):
+    """O caso que nenhum gancho de criação pegaria.
+
+    Renomear não cria nem apaga cadastro: `count(*)` e `max(criado_em)` ficam
+    iguais. Mas renomear é exatamente o que faz dois cadastros passarem a se
+    parecer — e o recálculo só está pendurado na subida que CRIA.
+    """
+    um = _cadastrar(sessao, "Jornal do Norte zzdef", "veiculo")
+    _cadastrar(sessao, "Outra Coisa zzdef", "veiculo")
+    atores_duplicados.recalcular(sessao)
+    assert not atores_duplicados.esta_desatualizado(sessao)
+
+    um.nome = "jornaldonorte zzdef"
+    um.nome_normalizado = normalizar("jornaldonorte zzdef")
+    sessao.flush()
+
+    assert atores_duplicados.esta_desatualizado(sessao)
+
+
+def test_CRIAR_por_qualquer_caminho_deixa_a_fila_desatualizada(sessao):
+    """Criar pela tela de cadastro, por agenda ou por comando não recalcula — e a
+    impressão do cadastro é o que faz a tela saber disso de qualquer forma."""
+    _cadastrar(sessao, "Base Zero zzdef2", "veiculo")
+    atores_duplicados.recalcular(sessao)
+    assert not atores_duplicados.esta_desatualizado(sessao)
+
+    _cadastrar(sessao, "Chegou Depois zzdef2", "veiculo")
+    sessao.flush()
+
+    assert atores_duplicados.esta_desatualizado(sessao)
+
+
+def test_DESATIVAR_tambem_conta_como_defasagem(sessao):
+    """A fila é só de ativos, então desativar muda o conjunto que a impressão
+    cobre — e um par antigo continuaria guardado até o próximo recálculo."""
+    um = _cadastrar(sessao, "Vai Sair zzdef3", "veiculo")
+    _cadastrar(sessao, "Fica zzdef3", "veiculo")
+    atores_duplicados.recalcular(sessao)
+    assert not atores_duplicados.esta_desatualizado(sessao)
+
+    um.ativo = False
+    sessao.flush()
+
+    assert atores_duplicados.esta_desatualizado(sessao)
+
+
+def test_a_fila_NUNCA_calculada_esta_desatualizada(sessao):
+    """Por definição: fila que nunca rodou está atrás do cadastro."""
+    sessao.execute(delete(PareamentoDaFila))
+    sessao.flush()
+
+    assert atores_duplicados.esta_desatualizado(sessao)
+
+
+def test_a_rota_do_estado_diz_a_defasagem(sessao, cliente):
+    _cadastrar(sessao, "Pela Rota zzdef4", "veiculo")
+    atores_duplicados.recalcular(sessao)
+
+    assert cliente.get("/api/instituicoes/duplicados/estado").json()["desatualizado"] is False
+
+    _cadastrar(sessao, "Chegou Depois zzdef4", "veiculo")
+    sessao.flush()
+
+    resposta = cliente.get("/api/instituicoes/duplicados/estado")
+    assert resposta.json()["desatualizado"] is True
+    #: E O CARIMBO CONTINUA LÁ: desatualizada não é o mesmo que nunca calculada.
+    assert resposta.json()["calculado_em"] is not None
+
+
+def test_FUNDIR_de_verdade_apaga_o_par(sessao):
+    """Pelo caminho real, e não por `sessao.delete`: `fundir` move os dependentes
+    antes de apagar a linha, e é esse caminho que a tela exercita."""
+    sobrevivente = _cadastrar(sessao, "Valor Econômico zzfun", "veiculo")
+    que_sai = _cadastrar(sessao, "valoreconomico zzfun", "perfil_rede")
+    atores_duplicados.recalcular(sessao)
+    assert sessao.scalar(select(func.count()).select_from(ParSemelhante)) >= 1
+
+    atores_duplicados.fundir(
+        sessao,
+        que_sai_id=que_sai.id,
+        sobrevivente_id=sobrevivente.id,
+        contra_a_proposta=False,
+    )
+
+    sobrou = sessao.scalar(
+        select(func.count())
+        .select_from(ParSemelhante)
+        .where(ParSemelhante.um_id.in_({que_sai.id, sobrevivente.id}))
+    )
+    assert sobrou == 0, "o par ficou apontando para cadastro que já não existe"
