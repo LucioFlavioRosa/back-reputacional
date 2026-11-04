@@ -39,7 +39,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 
 import pytest
-from sqlalchemy import create_engine, delete, func, select, text
+from sqlalchemy import create_engine, delete, event, func, select, text
 from sqlalchemy.orm import Session
 
 from app.banco.sessao import obter_sessao
@@ -118,7 +118,7 @@ def _o_par_esta_na_fila(sessao, um, outro) -> bool:
 
 
 def _fila(sessao) -> list[atores_duplicados.Duplicado]:
-    """A fila como a produção a produz: recalcula o pareamento, depois lê.
+    """A fila com o pareamento já feito, que é a ordem da produção no TEMPO.
 
     O PAREAMENTO É GUARDADO desde a `0118` — era o que tirava 102,7 s da
     requisição e dava 504. `listar` não recalcula de propósito: fazê-lo
@@ -1575,6 +1575,98 @@ def test_a_impressao_descreve_o_cadastro_DE_QUE_OS_PARES_SAIRAM(sessao, monkeypa
     assert atores_duplicados.esta_desatualizado(sessao)
 
 
+def _instrucoes_de(sessao, fazer) -> list[str]:
+    """O SQL que `fazer` manda ao banco, em ordem."""
+    instrucoes: list[str] = []
+
+    def capturar(conexao, cursor, instrucao, parametros, contexto, varias):
+        instrucoes.append(instrucao)
+
+    event.listen(sessao.bind, "before_cursor_execute", capturar)
+    try:
+        fazer()
+    finally:
+        event.remove(sessao.bind, "before_cursor_execute", capturar)
+    return instrucoes
+
+
+def test_a_impressao_SAI_DA_MESMA_INSTRUCAO_QUE_LE_AS_LINHAS(sessao):
+    """A JANELA RESIDUAL FECHADA, e ela ainda caía do lado perigoso.
+
+    Tirar a impressão logo DEPOIS da leitura encurtou a janela dos 102,7 s para o
+    intervalo entre duas instruções vizinhas, mas não mudou o lado do erro: sob
+    `read committed` cada instrução pega o seu instantâneo, então um escritor que
+    commitasse entre as duas entrava na impressão e não nos pares. A impressão
+    guardada passava a bater com a de agora, `esta_desatualizado` respondia "em
+    dia", e os pares não conheciam aquele nome — o falso "em dia" outra vez, só
+    mais estreito.
+
+    UMA INSTRUÇÃO NÃO TEM "ENTRE": linhas e impressão saem do mesmo instantâneo, e
+    não há intervalo onde caber um commit. Por isso o teste conta INSTRUÇÕES, e não
+    efeito: o efeito dependeria de acertar a janela no relógio.
+    """
+    _cadastrar(sessao, "Mesmo Instantaneo zzimp2", "veiculo")
+    _cadastrar(sessao, "mesmoinstantaneo zzimp2", "perfil_rede")
+
+    instrucoes = _instrucoes_de(sessao, lambda: atores_duplicados.recalcular(sessao))
+
+    leituras = [
+        i for i in instrucoes if "instituicao" in i.lower() and "select" in i.lower()
+    ]
+    assert len(leituras) == 1, (
+        "a impressão voltou a sair numa instrução própria, e com ela a janela:\n"
+        + "\n---\n".join(leituras)
+    )
+    assert "md5" in leituras[0].lower(), (
+        "a única leitura de `instituicao` não traz a impressão: "
+        "ela deve ser coluna da MESMA instrução"
+    )
+
+
+def test_a_impressao_GUARDADA_e_a_QUE_A_FUNCAO_PUBLICA_CALCULA(sessao):
+    """A IMPRESSÃO EMBUTIDA CONTINUA SENDO A MESMA, e o erro aqui seria silencioso.
+
+    Virar coluna de outra consulta é a chance de a impressão passar a descrever
+    outra coisa — a linha da vez em vez do cadastro, se a subconsulta algum dia
+    correlacionar. Não levantaria erro: gravaria hash diferente do que
+    `esta_desatualizado` compara, e a tela acusaria defasagem a cada leitura.
+
+    O QUE ESTE TESTE NÃO FAZ, e eu afirmei que fazia: ele não discrimina o
+    `correlate(None)`. MEDIDO — o SQL sai igual com e sem, porque o SQLAlchemy só
+    correlaciona se sobrar algum `from` na subconsulta. O teste prende a
+    IGUALDADE, que é a invariante que importa, e é ela que pegaria a correlação se
+    uma segunda tabela a destravasse.
+    """
+    _cadastrar(sessao, "Correlacao zzimp3", "veiculo")
+    _cadastrar(sessao, "correlacao zzimp3", "perfil_rede")
+    _cadastrar(sessao, "Terceiro Nome zzimp3", "veiculo")
+
+    atores_duplicados.recalcular(sessao)
+
+    guardada = sessao.scalar(
+        select(PareamentoDaFila.impressao).order_by(PareamentoDaFila.id.desc())
+    )
+    assert guardada == atores_duplicados.impressao_do_cadastro(sessao)
+    assert not atores_duplicados.esta_desatualizado(sessao)
+
+
+def test_o_cadastro_VAZIO_tambem_fica_com_impressao(sessao):
+    """SEM LINHA NENHUMA A INSTRUÇÃO NÃO DEVOLVE LINHA, e a impressão viria vazia.
+
+    O cadastro vazio é o caso em que a impressão não pode sair da leitura das
+    linhas — não há linha de onde tirá-la. Ela é a constante que
+    `_consulta_da_impressao` já usa no `coalesce`, e usar a MESMA constante é o que
+    impede o cadastro vazio de parecer defasado para sempre.
+    """
+    sessao.execute(delete(Mencao))
+    sessao.execute(delete(Interlocutor))
+    sessao.execute(delete(Instituicao))
+    sessao.flush()
+
+    assert atores_duplicados.recalcular(sessao) == 0
+    assert not atores_duplicados.esta_desatualizado(sessao)
+
+
 def test_REVALIDAR_dispensa_o_carimbo_com_RECALCULO_em_voo(sessao):
     """ACHADO DE REVISÃO: contar `par_semelhante` no meio da substituição dela
     gravaria no histórico um número de pares que nunca foi verdade.
@@ -1617,15 +1709,17 @@ def test_REVALIDAR_dispensa_o_carimbo_com_RECALCULO_em_voo(sessao):
 def test_REVALIDAR_carimba_mesmo_com_OUTRA_revalidacao_em_voo(sessao):
     """O CONTRAPESO, e sem ele o conserto viraria o defeito.
 
-    Duas fusões simultâneas não têm conflito nenhum: cada linha descreve o
-    instantâneo DELA (contagem e impressão saem da mesma instrução), e a escolhida
-    é a de maior `calculado_em` — ordem de inserção, não de commit. A inversão é
-    inofensiva: o erro possível é acusar defasagem que a outra transação já tinha
-    revalidado, que é o lado seguro. Com cadeado EXCLUSIVO a segunda não
-    carimbaria — e o aviso falso que `revalidar` existe para apagar voltaria pela
-    porta de trás, agora só para quem clica junto com outra pessoa.
+    Com cadeado EXCLUSIVO a segunda fusão simultânea não carimbaria — e o aviso
+    falso que `revalidar` existe para apagar voltaria pela porta de trás, agora só
+    para quem clica junto com outra pessoa. O CADEADO COMPARTILHADO DE OUTRA
+    CONEXÃO é a outra revalidação em voo.
 
-    O CADEADO COMPARTILHADO DE OUTRA CONEXÃO é a outra revalidação em voo.
+    O QUE ESTE TESTE PROVA, E SÓ ISSO: que o cadeado compartilhado não barra o
+    carimbo. Ele NÃO exercita duas transações escrevendo — a ordem de
+    `calculado_em` contra a ordem de commit, e qual linha vence na inversão,
+    seguem afirmadas no docstring de `revalidar` e não prendidas aqui. Provar
+    aquilo pede duas sessões que COMMITAM, e o resíduo delas cairia nos outros
+    testes desta execução.
     """
     sobrevivente = _cadastrar(sessao, "Junto zzrev6", "veiculo")
     que_sai = _cadastrar(sessao, "junto zzrev6", "perfil_rede")

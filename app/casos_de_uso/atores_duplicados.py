@@ -284,27 +284,38 @@ def recalcular(sessao: Session) -> int:
     #: em sequência é só lento — enquanto recusar deixaria a fila velha.
     sessao.execute(select(func.pg_advisory_xact_lock(ESPACO_DA_TRAVA_DO_PAREAMENTO)))
 
-    cadastros = list(
-        sessao.scalars(select(Instituicao).where(Instituicao.ativo.is_(True)))
-    )
-    #: A IMPRESSÃO É TIRADA AQUI, E NÃO NO FIM — achado de revisão, e era o furo
-    #: grave desta função.
+    #: A IMPRESSÃO SAI NA MESMA INSTRUÇÃO QUE AS LINHAS — achado de revisão, e era
+    #: o furo grave desta função.
     #:
-    #: A impressão descreve o cadastro de que os PARES saíram, e os pares saem da
-    #: leitura logo acima. Tirando-a no fim, ela descrevia o cadastro de 102 s
-    #: DEPOIS: um nome editado durante o cálculo entrava na impressão e não nos
-    #: pares, e `esta_desatualizado` respondia "em dia" sobre um pareamento que
-    #: não conhecia aquele nome. Falso "em dia" é a mentira silenciosa que esta
-    #: tabela existe para impedir — pior que a defasagem falsa, porque não há
-    #: aviso nenhum para desconfiar.
+    #: A impressão descreve o cadastro de que os PARES saíram. Tirá-la no fim fazia
+    #: dela o cadastro de 102 s DEPOIS: um nome editado durante o cálculo entrava na
+    #: impressão e não nos pares, e `esta_desatualizado` respondia "em dia" sobre um
+    #: pareamento que não conhecia aquele nome. Falso "em dia" é a mentira silenciosa
+    #: que esta tabela existe para impedir — pior que a defasagem falsa, porque não
+    #: há aviso nenhum para desconfiar.
     #:
-    #: DUAS INSTRUÇÕES SEGUIDAS, E NÃO UMA: sob `read committed` um escritor ainda
-    #: pode commitar entre a leitura e a impressão, e o que ele mudar seria
-    #: absorvido do mesmo jeito. A janela deixa de ser os 102 s do cálculo e passa
-    #: a ser o intervalo entre duas instruções vizinhas; fechá-la de todo exigiria
-    #: travar `instituicao` para escrita durante o cálculo, o que trancaria a tela
-    #: de cadastro por 102 s. Fica declarado em vez de escondido.
-    impressao = impressao_do_cadastro(sessao)
+    #: DUAS INSTRUÇÕES VIZINHAS NÃO BASTAVAM, e isto é a segunda volta do mesmo
+    #: achado: sob `read committed` cada instrução pega o seu instantâneo, então
+    #: encurtar a janela não trocava o lado do erro — quem commitasse entre as duas
+    #: entrava na impressão e não nos pares, exatamente como antes. Como COLUNA da
+    #: leitura não existe "entre" onde caber um commit.
+    #:
+    #: `correlate(None)` DIZ O QUE SE QUER, e hoje não muda nada: MEDIDO, o SQL sai
+    #: igual com e sem ele, porque o SQLAlchemy só correlaciona quando sobra algum
+    #: `from` na subconsulta — e aqui `instituicao` é o único. Fica porque a
+    #: subconsulta ganhar uma segunda tabela algum dia passaria a correlacionar, e
+    #: aí o `string_agg` agregaria a linha da vez: hash por linha, sem erro nenhum,
+    #: discordando de `esta_desatualizado` para sempre.
+    linhas = sessao.execute(
+        select(
+            Instituicao,
+            _consulta_da_impressao().correlate(None).scalar_subquery(),
+        ).where(Instituicao.ativo.is_(True))
+    ).all()
+    cadastros = [linha[0] for linha in linhas]
+    #: SEM LINHA NÃO HÁ DE ONDE TIRAR A IMPRESSÃO, e a constante é a mesma que o
+    #: `coalesce` usa — duas iguais divergiriam, que é o defeito deste arquivo.
+    impressao = linhas[0][1] if linhas else IMPRESSAO_DO_CADASTRO_VAZIO
     perto = _vizinhos(cadastros)
 
     #: ORDENADO E SEM REPETIÇÃO: `_vizinhos` devolve as duas direções, e a chave
@@ -335,6 +346,11 @@ def recalcular(sessao: Session) -> int:
 #: do arquivo da ingestão, que roda na MESMA transação quando a subida recalcula.
 ESPACO_DA_TRAVA_DO_PAREAMENTO = 8118
 
+#: A IMPRESSÃO DO CADASTRO SEM NENHUM ATIVO. Tem nome porque `recalcular` precisa
+#: dela quando a leitura não devolve linha, e o `coalesce` da consulta precisa dela
+#: dentro do banco: o mesmo valor nos dois lugares, de uma definição só.
+IMPRESSAO_DO_CADASTRO_VAZIO = "cadastro-vazio"
+
 
 def revalidar(sessao: Session) -> None:
     """Carimba o pareamento guardado como atual, sem refazê-lo.
@@ -359,10 +375,10 @@ def revalidar(sessao: Session) -> None:
     que esta tabela existe para não ser.
 
     POR QUE COMPARTILHADO: `recalcular` pega o EXCLUSIVO, então as duas se
-    excluem — que é o que se quer. Mas duas revalidações não têm conflito nenhum,
-    e com cadeado exclusivo a segunda fusão simultânea não carimbaria —
-    reintroduzindo, por outra porta, o aviso falso que esta função existe para
-    apagar.
+    excluem — que é o que se quer. Mas duas revalidações não disputam ESTE cadeado,
+    e com ele exclusivo a segunda fusão simultânea não carimbaria — reintroduzindo,
+    por outra porta, o aviso falso que esta função existe para apagar. O que elas
+    disputam é o que as próprias fusões escrevem, e isso o cadeado não governa.
 
     POR QUE `try`: fazer uma pessoa esperar até 102 s por um clique para carimbar
     uma linha de histórico seria trocar um defeito pequeno por um grande. Com o
@@ -437,8 +453,10 @@ def _consulta_da_impressao():
 
     UMA IMPLEMENTAÇÃO SÓ, e isto não é economia de linha: duas versões da mesma
     impressão divergiriam em silêncio e a tela acusaria defasagem que não existe.
-    É o que a `0097` fez ao reimplementar `normalizar` em SQL — 67 valores
-    diferentes de 87.
+    A `0097` encarou a mesma escolha com o `normalizar` e escreveu por que recusou
+    a cópia: `unaccent()` não é o NFKD + ascii do Python, e o backfill dela — a
+    única vez que a regra aparece em SQL — é guardado por um teste que recalcula
+    toda linha pela função de verdade.
     """
     return (
         select(
@@ -449,7 +467,7 @@ def _consulta_da_impressao():
                         aggregate_order_by(text("','"), Instituicao.id),
                     )
                 ),
-                "cadastro-vazio",
+                IMPRESSAO_DO_CADASTRO_VAZIO,
             )
         )
         .select_from(Instituicao)
@@ -552,7 +570,7 @@ def listar(sessao: Session) -> list[Duplicado]:
     A CHAVE DE SEMELHANÇA É A MESMA FUNÇÃO QUE A INGESTÃO USA, e por isso o
     pareamento é calculado em Python e não em `regexp_replace`: reescrevê-la em
     SQL seria a terceira cópia da mesma regra — o jeito conhecido de divergir em
-    silêncio, e a `0097` já divergiu em 67 de 87 valores exatamente assim.
+    silêncio, e é a cópia que a `0097` recusou pelo mesmo motivo.
     """
     #: O CADASTRO ATIVO INTEIRO. Quem fica de fora da fila fica de fora no
     #: laço abaixo, onde a razão de cada exclusão está escrita.
