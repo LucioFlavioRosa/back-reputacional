@@ -504,6 +504,17 @@ def test_carga_de_base_e_append_only_mas_a_aplicacao_insere(sessao_restrita, sem
             )
         )
 
+    #: BASE DESCONHECIDA É RECUSADA. A aba ramifica nesta coluna; um typo
+    #: gravaria uma carga que a tela nunca mostraria — o oposto do que a trilha
+    #: existe para fazer.
+    with pytest.raises(IntegrityError), _isolado(sessao_restrita):
+        sessao_restrita.execute(
+            text(
+                "insert into carga_de_base (base, origem, lote_id, linhas) "
+                "values ('bonds_typo', 'teste', gen_random_uuid(), 0)"
+            )
+        )
+
     with pytest.raises(ProgrammingError, match="permission denied"), _isolado(sessao_restrita):
         sessao_restrita.execute(text("update carga_de_base set linhas = 999"))
 

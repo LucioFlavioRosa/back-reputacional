@@ -55,8 +55,9 @@ alter table carga_de_base alter column fonte_id drop not null;
 alter table carga_de_base alter column meses set default '{}';
 
 comment on column carga_de_base.base is
-  'Qual base recebeu a carga. Ver `casos_de_uso/trilha_da_carga.BASES`. Sem '
-  '`check` de lista fechada: base nova e chamador novo, nao migration nova.';
+  'Qual base recebeu a carga. Ver `casos_de_uso/trilha_da_carga.BASES`. Lista '
+  'FECHADA por check, ao contrario de `origem`: a aba ramifica nesta coluna, e '
+  'um typo deixaria a carga invisivel para a tela.';
 
 comment on column carga_de_base.fonte_id is
   'So o Score tem fonte. Bonds e subtemas sao base inteira, e o `check` '
@@ -66,15 +67,45 @@ comment on column carga_de_base.linhas is
   'Quantas linhas a carga gravou: mencoes no Score, cotacoes em bonds, temas '
   'em subtemas. ZERO e valido e e o caso que torna esta tabela necessaria.';
 
+--: `conrelid` TAMBÉM, e não só o nome: nome de constraint é único por tabela,
+--: não por schema, então procurar só por `conname` acharia uma homônima de outra
+--: tabela e a migration concluiria que já fez o que não fez.
 do $$
 begin
   if not exists (
-    select 1 from pg_constraint where conname = 'carga_de_base_fonte_coerente'
+    select 1 from pg_constraint
+     where conname = 'carga_de_base_fonte_coerente'
+       and conrelid = 'public.carga_de_base'::regclass
   ) then
     alter table carga_de_base add constraint carga_de_base_fonte_coerente
       check ((base = 'score') = (fonte_id is not null));
   end if;
 end $$;
+
+--: `base` GANHA LISTA FECHADA, e `origem` não — a diferença é quem lê. `origem`
+--: é rótulo que ninguém ramifica: um valor novo aparece na tela e pronto. `base`
+--: é discriminador: o `check` acima ramifica nela, e a aba decide o que mostrar
+--: por ela. Um typo aqui faria a carga ficar invisível para a tela, que é o
+--: oposto do que a trilha existe para fazer. Base nova é migration, e tem de
+--: ser: ela precisa de rótulo e de lugar na aba de qualquer jeito.
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+     where conname = 'carga_de_base_base_conhecida'
+       and conrelid = 'public.carga_de_base'::regclass
+  ) then
+    alter table carga_de_base add constraint carga_de_base_base_conhecida
+      check (base in ('score', 'bonds', 'subtemas'));
+  end if;
+end $$;
+
+--: O comentário da `0115` falava de "(carga, fonte)", que o rename deixou
+--: desatualizado.
+comment on table carga_de_base is
+  'Uma linha por (carga, base) — e por fonte, no Score. Append-only pela '
+  'aplicacao: ver os revokes na 0115. A existencia da linha e o sucesso; carga '
+  'que estourou faz rollback e nao deixa linha.';
 
 --: A aba lista por base antes de por fonte.
 create index if not exists carga_de_base_base_concluida_idx
@@ -92,6 +123,14 @@ begin
         raise exception
             'painel_app pode % em carga_de_base: o rename perdeu o revoke da 0115',
             indevidos;
+    end if;
+
+    --: `SELECT` TAMBÉM: o rename preserva os privilégios, e esta conferência é o
+    --: que prova em vez de supor. Sem a leitura a aba não tem o que mostrar, e o
+    --: sintoma apareceria só no ambiente implantado.
+    if not has_table_privilege('painel_app', 'carga_de_base', 'SELECT') then
+        raise exception
+            'painel_app nao pode ler carga_de_base: o rename perdeu o grant';
     end if;
 
     if not has_table_privilege('painel_app', 'carga_de_base', 'INSERT') then

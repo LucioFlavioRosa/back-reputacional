@@ -32,7 +32,10 @@ from sqlalchemy.orm import Session
 
 from app.banco.tabelas_score import CargaDeBase
 
-#: As bases que sobem por arquivo e registram carga aqui.
+#: As bases que sobem por arquivo e registram carga aqui. LISTA FECHADA TAMBÉM
+#: NO BANCO (`check carga_de_base_base_conhecida`, na `0116`), ao contrário de
+#: `ORIGENS`: base é discriminador — a aba decide o que mostrar por ela, e um
+#: typo deixaria a carga invisível. Base nova é migration, e precisa ser.
 #:
 #: AS AGENDAS DO CRM NÃO ESTÃO AQUI porque `importacao` já sobrevive à
 #: confirmação com `criado_por`, `criado_em` e `confirmado_em`. Copiá-las para

@@ -1280,7 +1280,10 @@ def test_a_confirmacao_que_nao_muda_nada_tambem_deixa_rastro(
 
     assert _confirmar_pela_rota(cliente_admin, planilha).status_code == 200
 
-    cargas = sessao.scalars(
-        select(CargaDeBase).order_by(CargaDeBase.concluida_em)
-    ).all()
-    assert [c.linhas for c in cargas] == [1, 0]
+    #: SEM ORDENAR POR `concluida_em`: `clock_timestamp()` é o relógio real, mas
+    #: duas cargas na mesma transação de teste podem empatar no microssegundo, e
+    #: aí a ordem seria instável. O que importa não é a ordem — é que houve DUAS
+    #: cargas e que uma delas mudou zero.
+    cargas = sessao.scalars(select(CargaDeBase)).all()
+    assert len(cargas) == 2
+    assert {c.linhas for c in cargas} == {1, 0}

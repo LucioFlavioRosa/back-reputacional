@@ -285,9 +285,10 @@ def confirmar(
             "Confira de novo antes de aplicar."
         )
     resumo = importar_subtemas.aplicar(sessao, propostas)
-    #: A TRILHA DA CARGA (`0116`). Aqui e não em `aplicar`: é a rota que conhece
-    #: a pessoa e o nome do arquivo, e `aplicar` é chamada também pela
-    #: conferência — que não grava nada e não é carga.
+    #: A TRILHA DA CARGA (`0116`). Aqui e não em `aplicar`, porque é a rota que
+    #: conhece a pessoa e o nome do arquivo — `aplicar` recebe propostas e mais
+    #: nada. O preço é que um chamador novo de `aplicar` não ganharia trilha; é
+    #: aceitável porque aplicar a taxonomia é ato de tela, não de motor.
     #:
     #: `linhas` SÃO AS QUE MUDARAM O CADASTRO, criadas mais alteradas. As
     #: `iguais` não são carga de nada, e contá-las faria uma reconfirmação do
