@@ -25,14 +25,14 @@ from datetime import date
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import create_engine, delete, func, select, text
 from sqlalchemy.orm import Session
 
 from app.banco.tabelas_acesso import Papel, Usuario
 from app.banco.tabelas_catalogo import CategoriaPublico, SubcategoriaPublico
 from app.banco.tabelas_score import CargaDeBase, Mencao, ScoreFonte, ScoreMesFonte
-from app.banco.tabelas_stakeholders import Instituicao
-from app.casos_de_uso import ingerir_mencoes, trilha_da_carga
+from app.banco.tabelas_stakeholders import Instituicao, ParSemelhante
+from app.casos_de_uso import atores_duplicados, ingerir_mencoes, trilha_da_carga
 from app.dominio.ingestao_score import Leitura, MencaoLida
 from app.dominio.texto import normalizar
 from tests.test_e2e_postgres import URL
@@ -409,3 +409,62 @@ def test_quem_nao_se_identifica_grava_desconhecida(sessao):
     assert cargas[0].origem in trilha_da_carga.ORIGENS
     assert cargas[0].usuario_id is None
     assert isinstance(cargas[0].lote_id, uuid.UUID)
+
+
+# -- a subida refaz o pareamento dos duplicados (0118) --------------------------
+
+
+def test_a_subida_que_CRIA_veiculo_refaz_o_pareamento(sessao):
+    """O gancho que tirou o 504 da tela de duplicados.
+
+    A comparação par a par saiu da requisição e passou a rodar ao fim da subida,
+    que é quando o cadastro de fato cresce — `veiculos_da_imprensa.criar` registra
+    2.631 criações numa tela só.
+    """
+    sessao.execute(delete(ParSemelhante))
+    sessao.flush()
+    fonte = _fonte(sessao, "zz_pareia_1", com_lista=False)
+    #: DOIS NOMES QUE SE PARECEM, e o segundo é o handle do primeiro — o par que a
+    #: fila existe para achar.
+    planilha = _planilha(
+        [
+            [date(2026, 8, 3), "Positiva", "Jornal da Serra zzpar", "Geral"],
+            [date(2026, 8, 4), "Positiva", "jornaldaserra zzpar", "Geral"],
+        ]
+    )
+
+    ingerir_mencoes.ingerir(
+        sessao,
+        fonte,
+        planilha,
+        #: AUTORIZA A CRIAÇÃO: sem isto a subida não cria cadastro, e o
+        #: pareamento não tem por que mudar.
+        ("Jornal da Serra zzpar", "jornaldaserra zzpar"),
+        trilha_da_carga.Procedencia(origem="api:planilha"),
+    )
+
+    assert atores_duplicados.calculado_em(sessao) is not None
+    pares = sessao.scalar(select(func.count()).select_from(ParSemelhante))
+    assert pares >= 1, "a subida criou veículo e não refez o pareamento"
+
+
+def test_a_subida_que_NAO_CRIA_nada_nao_refaz_o_pareamento(sessao):
+    """O pareamento depende dos NOMES do cadastro, não das menções.
+
+    Recalcular à toa somaria 43 s medidos a cada planilha — é a diferença entre
+    pagar quando o mundo muda e pagar sempre.
+    """
+    sessao.execute(delete(ParSemelhante))
+    sessao.flush()
+    fonte = _fonte(sessao, "zz_pareia_2", com_lista=False)
+
+    ingerir_mencoes.ingerir(
+        sessao,
+        fonte,
+        _planilha([[date(2026, 8, 3), "Positiva", "Veiculo Qualquer zzpar2", "Geral"]]),
+        #: NINGUÉM AUTORIZOU CRIAÇÃO: o padrão é vazio.
+        (),
+        trilha_da_carga.Procedencia(origem="api:planilha"),
+    )
+
+    assert atores_duplicados.calculado_em(sessao) is None

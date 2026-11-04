@@ -522,6 +522,68 @@ def test_carga_de_base_e_append_only_mas_a_aplicacao_insere(sessao_restrita, sem
         sessao_restrita.execute(text("delete from carga_de_base"))
 
 
+def test_par_semelhante_e_SUBSTITUIVEL_pela_aplicacao(sessao_restrita, semente):
+    """A `0118` precisa de `delete`, e tabela nova NÃO o ganha.
+
+    O bloco de tabelas futuras da `0009` concede `select, insert, update` e mais
+    nada, porque o papel "apaga apenas linhas filhas de agregado". `par_semelhante`
+    é SUBSTITUÍDA inteira a cada recálculo — sem o `grant` explícito, local roda
+    como superusuário, a suíte fica verde e só o ambiente implantado quebra. É o
+    mesmo ponto cego que a `0041`, a `0068` e a `0092` já cobraram.
+    """
+    with _isolado(sessao_restrita):
+        #: AS DUAS INSTITUIÇÕES SÃO CRIADAS AQUI, e não lidas da semente: ela não
+        #: garante duas, e um `cross join` vazio faria o teste passar por não ter
+        #: inserido nada — falha pelo motivo errado, que é pior que falhar.
+        ids = [
+            sessao_restrita.execute(
+                text(
+                    "insert into instituicao (nome, nome_normalizado, tipo) "
+                    "values (:n, :c, 'veiculo') returning id"
+                ),
+                {"n": f"zz par {sufixo}", "c": f"zz par {sufixo}"},
+            ).scalar()
+            for sufixo in ("um", "outro")
+        ]
+        sessao_restrita.execute(
+            text("insert into par_semelhante (um_id, outro_id) values (:a, :b)"),
+            {"a": min(map(str, ids)), "b": max(map(str, ids))},
+        )
+        assert (
+            sessao_restrita.execute(text("select count(*) from par_semelhante")).scalar()
+            >= 1
+        )
+        #: O `delete` É O PONTO: é assim que `recalcular` substitui a tabela.
+        sessao_restrita.execute(text("delete from par_semelhante"))
+        assert (
+            sessao_restrita.execute(text("select count(*) from par_semelhante")).scalar()
+            == 0
+        )
+
+    #: E `UPDATE` NÃO: a tabela é substituída por `delete` + `insert`, e nada nela
+    #: se altera no lugar. O `grant` da `0118` não remove o que o `alter default
+    #: privileges` da `0009` concedeu — foi preciso `revoke` explícito, e conferir
+    #: só as três de cima deixaria passar exatamente este caso.
+    with pytest.raises(ProgrammingError, match="permission denied"), _isolado(sessao_restrita):
+        sessao_restrita.execute(
+            text("update par_semelhante set calculado_em = now()")
+        )
+
+    #: E O HISTÓRICO É O CONTRÁRIO: lê e acrescenta, nunca altera nem apaga. As
+    #: duas tabelas nascem do mesmo `alter default privileges`, e sem os revokes
+    #: esta ganharia `update` em silêncio.
+    with _isolado(sessao_restrita):
+        sessao_restrita.execute(
+            text("insert into pareamento_da_fila (pares, impressao) values (0, 'zz')")
+        )
+
+    with pytest.raises(ProgrammingError, match="permission denied"), _isolado(sessao_restrita):
+        sessao_restrita.execute(text("update pareamento_da_fila set pares = 999"))
+
+    with pytest.raises(ProgrammingError, match="permission denied"), _isolado(sessao_restrita):
+        sessao_restrita.execute(text("delete from pareamento_da_fila"))
+
+
 def test_nao_escala_o_proprio_privilegio(sessao_restrita, semente):
     """A conta da aplicação não se promove dentro do banco.
 

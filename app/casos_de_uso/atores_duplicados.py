@@ -29,8 +29,10 @@ from __future__ import annotations
 import difflib
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, insert, select, text
+from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.orm import Session
 
 from app.banco.repositorio_score import so_interacoes_visiveis
@@ -41,6 +43,8 @@ from app.banco.tabelas_stakeholders import (
     Instituicao,
     InstituicaoApelido,
     Interlocutor,
+    PareamentoDaFila,
+    ParSemelhante,
 )
 from app.casos_de_uso.veiculos_da_imprensa import LISTAS_DE_VEICULOS, nomes_da_lista
 from app.dominio.erros import NaoEncontrado, RegraViolada
@@ -252,6 +256,165 @@ def _vizinhos(cadastros: list[Instituicao]) -> dict[uuid.UUID, list[Instituicao]
     return perto
 
 
+def recalcular(sessao: Session) -> int:
+    """Refaz o pareamento guardado. Devolve quantos pares ficaram.
+
+    SUBSTITUI INTEIRO, como `ingerir_mencoes.regravar` faz com o mês: um
+    pareamento incremental teria de saber quais pares um cadastro novo desfaz, e
+    um cadastro editado muda a semelhança dele com TODOS — a conta de qual linha
+    sai é a mesma conta de refazer.
+
+    NA TRANSAÇÃO DE QUEM CHAMA. Ao fim da subida isso importa: se a ingestão
+    falhar depois daqui, o pareamento volta junto com ela, em vez de descrever um
+    cadastro que não existe.
+
+    SERIALIZADO POR CADEADO, e sem ele há corrida com resultado silencioso: duas
+    subidas simultâneas leriam cada uma o seu instantâneo de `instituicao`, as
+    duas apagariam a tabela, e a última gravaria um pareamento que não enxergou os
+    cadastros da outra — fila incompleta, sem erro nenhum. `xact` porque morre com
+    a transação e nada fica preso se o processo cair; é o mesmo idioma de
+    `ingerir_mencoes.travar_o_arquivo`.
+
+    CUSTO MEDIDO: 9,6 s em 3.800 cadastros, 43,7 s em 7.300 e 102,7 s em 11.000.
+    É o preço que saiu da requisição e entrou no fim da subida — que leva 62 s
+    medidos, somando ~165 s contra os ~240 s do ingress.
+    """
+    #: SEM `try`, ao contrário do cadeado dos administradores: aqui esperar é o
+    #: certo. Quem chega depois quer o pareamento refeito, e refazê-lo duas vezes
+    #: em sequência é só lento — enquanto recusar deixaria a fila velha.
+    sessao.execute(select(func.pg_advisory_xact_lock(ESPACO_DA_TRAVA_DO_PAREAMENTO)))
+
+    cadastros = list(
+        sessao.scalars(select(Instituicao).where(Instituicao.ativo.is_(True)))
+    )
+    perto = _vizinhos(cadastros)
+
+    #: ORDENADO E SEM REPETIÇÃO: `_vizinhos` devolve as duas direções, e a chave
+    #: primária guarda uma. `ordenar_o_par` é a mesma função que `ator_distinto`
+    #: usa, e manter as duas iguais é o que permite comparar as chaves direto.
+    pares = {
+        ordenar_o_par(um, outro.id)
+        for um, vizinhos in perto.items()
+        for outro in vizinhos
+    }
+
+    sessao.execute(delete(ParSemelhante))
+    if pares:
+        sessao.execute(
+            insert(ParSemelhante),
+            [{"um_id": um, "outro_id": outro} for um, outro in sorted(pares, key=str)],
+        )
+    #: O CÁLCULO É REGISTRADO SEMPRE, inclusive com zero par — e é o que separa
+    #: "calculou e não achou nada" de "nunca calculou". Deduzir isso das linhas de
+    #: `par_semelhante` seria repetir, aqui, o furo que a `0115` existe para
+    #: fechar: num cadastro limpo a tabela fica vazia e o `max` não anda.
+    sessao.add(
+        PareamentoDaFila(
+            pares=len(pares), impressao=impressao_do_cadastro(sessao)
+        )
+    )
+    sessao.flush()
+    return len(pares)
+
+
+#: O ESPAÇO DA TRAVA DO PAREAMENTO. Número próprio para não colidir com a trava
+#: do arquivo da ingestão, que roda na MESMA transação quando a subida recalcula.
+ESPACO_DA_TRAVA_DO_PAREAMENTO = 8118
+
+
+def impressao_do_cadastro(sessao: Session) -> str:
+    """A impressão dos nomes ativos do cadastro, para detectar defasagem.
+
+    POR QUE ELA EXISTE: o pareamento depende dos nomes em `instituicao`, e o
+    cadastro muda por muitos caminhos — a tela de cadastro, a confirmação de
+    agendas, o comando de cadastro externo, e os que ainda não existem. Pendurar
+    recálculo em cada escritor é a lista que o próximo esquece de atualizar;
+    comparar a impressão pega todos, inclusive os futuros.
+
+    NOMES E NÃO SÓ A CONTAGEM: renomear não muda `count(*)` nem
+    `max(criado_em)` — e renomear é exatamente o que faz dois cadastros passarem
+    a se parecer. `instituicao` não tem `atualizado_em`, então não há carimbo a
+    usar.
+
+    NO BANCO E NÃO EM PYTHON: trazer alguns milhares de nomes para calcular um
+    hash desfaria a economia. `md5` basta porque o uso é detectar mudança, não
+    resistir a adversário.
+
+    `ORDER BY id` DENTRO DO `string_agg`, e sem ele a impressão é instável: o
+    Postgres não garante a ordem de agregação, então a mesma base poderia render
+    hashes diferentes só por mudar a ordem de leitura — e a tela acusaria
+    defasagem que não existe, que é pior que não avisar.
+    """
+    return sessao.scalar(
+        select(
+            func.coalesce(
+                func.md5(
+                    func.string_agg(
+                        func.concat(Instituicao.id, Instituicao.nome_normalizado),
+                        aggregate_order_by(text("','"), Instituicao.id),
+                    )
+                ),
+                "cadastro-vazio",
+            )
+        )
+        .select_from(Instituicao)
+        .where(Instituicao.ativo.is_(True))
+    )
+
+
+def esta_desatualizado(sessao: Session) -> bool:
+    """O cadastro mudou depois do último pareamento?
+
+    VERDADEIRO TAMBÉM QUANDO NUNCA CALCULOU: fila nunca calculada está, por
+    definição, atrás do cadastro — e a tela precisa dizer isso em vez de mostrar
+    zero.
+    """
+    ultima = sessao.scalar(
+        select(PareamentoDaFila.impressao).order_by(
+            PareamentoDaFila.calculado_em.desc(), PareamentoDaFila.id.desc()
+        )
+    )
+    return ultima is None or ultima != impressao_do_cadastro(sessao)
+
+
+def calculado_em(sessao: Session) -> datetime | None:
+    """Quando o pareamento foi refeito. NULO significa NUNCA.
+
+    POR QUE A TELA PRECISA DISTO, e é o erro que ele evita: a tabela nasce vazia
+    (`0118`), e fila vazia não se distingue de "nenhum duplicado". Sem este dado a
+    tela diria "Possíveis duplicados (0)" num cadastro cheio de duplicatas — uma
+    mentira mais silenciosa que o 504 que ela substituiu.
+
+    DE `pareamento_da_fila` E NÃO DE `par_semelhante`: num cadastro limpo o
+    recálculo acha zero par e não insere linha nenhuma, e aí um
+    `max(par_semelhante.calculado_em)` seria nulo — indistinguível de "nunca".
+    O cálculo é fato próprio, registrado mesmo quando dá zero.
+    """
+    return sessao.scalar(select(func.max(PareamentoDaFila.calculado_em)))
+
+
+def _vizinhos_guardados(
+    sessao: Session, cadastros: list[Instituicao]
+) -> dict[uuid.UUID, list[Instituicao]]:
+    """O pareamento guardado, montado nas duas direções.
+
+    SÓ OS PARES CUJOS DOIS LADOS ESTÃO ATIVOS. A tabela tem `on delete cascade`,
+    então par apontando para cadastro apagado não existe — mas cadastro
+    DESATIVADO continua lá, e a fila é só de ativos. Filtrar aqui é o que impede
+    a fila oferecer a fusão de uma linha que a tela não mostra.
+    """
+    por_id = {c.id: c for c in cadastros}
+    perto: dict[uuid.UUID, list[Instituicao]] = {c.id: [] for c in cadastros}
+    for um, outro in sessao.execute(
+        select(ParSemelhante.um_id, ParSemelhante.outro_id)
+    ):
+        if um not in por_id or outro not in por_id:
+            continue
+        perto[um].append(por_id[outro])
+        perto[outro].append(por_id[um])
+    return perto
+
+
 def listar(sessao: Session) -> list[Duplicado]:
     """A fila de perguntas: cadastros que podem ser o mesmo ator.
 
@@ -273,17 +436,35 @@ def listar(sessao: Session) -> list[Duplicado]:
       a ligação (CHECK `instituicao_pessoa_so_de_perfil`) e desfazer escolha
       humana não é fusão, é perda.
 
-    EM MEMÓRIA, e não em SQL: a chave de semelhança é a mesma função que a
-    ingestão usa, e reescrevê-la em `regexp_replace` seria a terceira cópia da
-    mesma regra — o jeito conhecido de divergir em silêncio. O cadastro todo são
-    alguns milhares de linhas de duas colunas.
+    O PAREAMENTO VEM GUARDADO (`par_semelhante`, `0118`), e o RESTO é ao vivo.
+    A comparação par a par com `difflib` custava 102,7 s medidos em 11.000
+    cadastros, contra os ~240 s em que o ingress corta, e crescia com o quadrado
+    do cadastro — era a causa do 504. Ela saiu da requisição e passou a rodar ao
+    fim da subida, que é quando o cadastro de fato cresce. Ver `recalcular`.
+
+    O QUE SOBRA AQUI NÃO É ZERO, e não foi medido na base real: as duas
+    agregações `distinct` de `_origens_por_instituicao` e a contagem de
+    `_mencoes_por_instituicao` continuam por requisição. O docstring daquela
+    função registra 7,4 s para a fila inteira num cadastro de ~3.962 — do qual o
+    pareamento media 9,6 s em 3.800, ou seja a maior parte. Tirar o pareamento
+    remove o que CRESCIA; se o residual incomodar, é medição separada.
+
+    MAS SÓ O PAREAMENTO. As decisões de `ator_distinto`, a contagem de menções, as
+    origens e o filtro de quem pergunta continuam lidos aqui: é o que faz a fila
+    andar no instante em que alguém responde. Guardar a fila PRONTA deixaria o par
+    respondido na tela até o próximo recálculo.
+
+    A CHAVE DE SEMELHANÇA É A MESMA FUNÇÃO QUE A INGESTÃO USA, e por isso o
+    pareamento é calculado em Python e não em `regexp_replace`: reescrevê-la em
+    SQL seria a terceira cópia da mesma regra — o jeito conhecido de divergir em
+    silêncio, e a `0097` já divergiu em 67 de 87 valores exatamente assim.
     """
     #: O CADASTRO ATIVO INTEIRO. Quem fica de fora da fila fica de fora no
     #: laço abaixo, onde a razão de cada exclusão está escrita.
     cadastros = list(
         sessao.scalars(select(Instituicao).where(Instituicao.ativo.is_(True)))
     )
-    perto = _vizinhos(cadastros)
+    perto = _vizinhos_guardados(sessao, cadastros)
 
     decididos = {
         (par.esquerda, par.direita) for par in sessao.scalars(select(AtorDistinto))
