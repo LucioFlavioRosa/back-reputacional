@@ -18,7 +18,7 @@ que todos leem.
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -42,8 +42,16 @@ from app.api.dependencias import (
 )
 from app.banco import repositorio_score
 from app.banco.sessao import SessaoDoPedido
+from app.banco.tabelas_acesso import Usuario
 from app.banco.tabelas_catalogo import CategoriaPublico, SubcategoriaPublico
-from app.banco.tabelas_score import Lente, ScoreConfig, ScoreFato, ScoreFonte, ScoreMesFonte
+from app.banco.tabelas_score import (
+    CargaDeBase,
+    Lente,
+    ScoreConfig,
+    ScoreFato,
+    ScoreFonte,
+    ScoreMesFonte,
+)
 from app.banco.tabelas_stakeholders import Instituicao
 from app.casos_de_uso import (
     ingerir_mencoes,
@@ -611,6 +619,17 @@ class FonteSaida(BaseModel):
     #: Quantos meses têm dado desta fonte, e quantas menções no mês pedido.
     meses_com_dado: int
     mencoes_no_mes: int
+    #: A ÚLTIMA CARGA desta fonte, e quem a fez. Nulos antes da primeira carga
+    #: registrada: a trilha começa na `0115` e não se reconstrói para trás — o
+    #: autor histórico foi apagado junto com `planilha_recebida`.
+    #:
+    #: DIZ CARGA E NÃO ATUALIZAÇÃO: a reconciliação da lista de veículos reescreve
+    #: menções sem arquivo nenhum e não aparece aqui. Ver `trilha_da_carga`.
+    #:
+    #: `ultima_carga_por` nulo COM carga preenchida é carga feita fora da tela —
+    #: comando de linha. Não é dado faltando.
+    ultima_carga_em: datetime | None
+    ultima_carga_por: str | None
 
 
 def _arquivo_do_mapeamento(bruto: dict | None) -> str | None:
@@ -645,6 +664,7 @@ def listar_fontes(
     alvo = mes_de(mes)
     calibracao = repositorio_score.calibracao_vigente(sessao)
     lentes = {lente.id: lente.nome for lente in repositorio_score.lentes_cadastradas(sessao)}
+    ultima_carga = _ultima_carga_por_fonte(sessao)
 
     cobertura: dict[int, int] = {}
     volume: dict[int, int] = {}
@@ -675,6 +695,8 @@ def listar_fontes(
             # por sentimento e tier).
             meses_com_dado=_meses_distintos(sessao, fonte.id),
             mencoes_no_mes=volume.get(fonte.id, 0),
+            ultima_carga_em=ultima_carga.get(fonte.id, (None, None))[0],
+            ultima_carga_por=ultima_carga.get(fonte.id, (None, None))[1],
         )
         for fonte in repositorio_score.fontes_cadastradas(sessao)
         #: `ativo=True` é a PERGUNTA, não uma afirmação: o que se filtra na
@@ -683,6 +705,32 @@ def listar_fontes(
         #: se religa.
         if alimenta_os_kpis(interna=fonte.interna, ativo=True)
     ]
+
+
+def _ultima_carga_por_fonte(sessao) -> dict[int, tuple[datetime, str | None]]:
+    """A carga mais recente de cada fonte, com o nome de quem a fez.
+
+    `distinct on` E NÃO UM `max` COM SUBCONSULTA: o que a tela precisa é a linha
+    inteira da última carga — a hora E o autor —, e um `max(concluida_em)`
+    agrupado não traz o autor daquela linha. Casa com o índice
+    `carga_de_base_fonte_concluida_idx`.
+
+    UMA CONSULTA PARA TODAS AS FONTES, e não uma por fonte: são oito fontes
+    hoje, e a listagem já faz uma consulta por fonte em `_meses_distintos` — não
+    vale acrescentar a segunda.
+
+    `outerjoin` EM `usuario` porque carga por comando de linha não tem autor.
+    """
+    return {
+        fonte_id: (quando, quem)
+        for fonte_id, quando, quem in sessao.execute(
+            select(CargaDeBase.fonte_id, CargaDeBase.concluida_em, Usuario.nome)
+            .outerjoin(Usuario, Usuario.id == CargaDeBase.usuario_id)
+            .where(CargaDeBase.base == "score", CargaDeBase.fonte_id.is_not(None))
+            .distinct(CargaDeBase.fonte_id)
+            .order_by(CargaDeBase.fonte_id, CargaDeBase.concluida_em.desc())
+        )
+    }
 
 
 def _meses_distintos(sessao, fonte_id: int) -> int:
