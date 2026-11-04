@@ -53,6 +53,7 @@ from app.casos_de_uso import (
     veiculos_da_imprensa,
 )
 from app.casos_de_uso.ler_sinais_da_lente import regua_dos_sinais
+from app.casos_de_uso.trilha_da_carga import Procedencia
 from app.dominio.erros import Conflito, NaoEncontrado, RegraViolada
 from app.dominio.fontes_do_score import alimenta_os_kpis
 from app.dominio.ingestao_score import rotulo_do_cargo
@@ -1981,7 +1982,7 @@ def importar_planilha(
             #: QUEM CARREGOU E DE QUE ARQUIVO, para a trilha da `0115`. Sem isto
             #: a carga entra como `desconhecida`, que é visível na aba da
             #: plataforma — a trilha denuncia o esquecimento em vez de sumir.
-            ingerir_mencoes.Procedencia(
+            Procedencia(
                 origem="api:planilha",
                 arquivo=nome_do_arquivo,
                 usuario_id=usuario.id,

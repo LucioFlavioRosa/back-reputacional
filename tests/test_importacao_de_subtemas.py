@@ -22,7 +22,9 @@ from sqlalchemy import create_engine, delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app.api import importacao_de_subtemas as rota
+from app.api.dependencias import oid_do_mock
 from app.banco.sessao import obter_sessao
+from app.banco.tabelas_acesso import Usuario
 from app.banco.tabelas_catalogo import (
     AreaPessoa,
     BlocoTema,
@@ -31,6 +33,7 @@ from app.banco.tabelas_catalogo import (
     Tema,
     TemaRisco,
 )
+from app.banco.tabelas_score import CargaDeBase
 from app.casos_de_uso import modelo_de_subtemas
 from app.casos_de_uso.importar_subtemas import (
     TETO_DE_LINHAS,
@@ -1216,3 +1219,68 @@ def test_a_tranca_enxerga_o_valor_do_banco_e_nao_o_da_sessao(sessao, taxonomia):
     with pytest.raises(RegraViolada) as erro:
         aplicar(sessao, propostas)
     assert "Confira de novo" in str(erro.value)
+
+
+# ============================================== a trilha da carga (0116)
+def _confirmar_pela_rota(cliente, conteudo: bytes, nome="subtemas.xlsx"):
+    """Confere e confirma, que é como a tela faz: a impressão vem da primeira."""
+    conferencia = cliente.post(
+        "/api/taxonomia/subtemas/conferencia",
+        files={"arquivo": (nome, conteudo, TIPO_XLSX)},
+    )
+    assert conferencia.status_code == 200, conferencia.text
+    return cliente.post(
+        "/api/taxonomia/subtemas/confirmacao",
+        files={"arquivo": (nome, conteudo, TIPO_XLSX)},
+        data={"impressao": conferencia.json()["impressao"]},
+    )
+
+
+def test_a_confirmacao_deixa_rastro_de_quem_carregou(sessao, cliente_admin, taxonomia):
+    """A taxonomia não guardava autor nem data em lugar nenhum.
+
+    `Tema` tem `criado_em` e mais nada: quem revisou a taxonomia em massa, e
+    quando, era pergunta sem resposta. PELA ROTA, porque é ela que conhece a
+    pessoa — `aplicar` é chamada também pela conferência, que não grava.
+    """
+    resposta = _confirmar_pela_rota(
+        cliente_admin,
+        _planilha([_linha("Assunto Pela Rota 77", taxonomia)]),
+        nome="taxonomia-v5.xlsx",
+    )
+
+    assert resposta.status_code == 200, resposta.text
+    (carga,) = sessao.scalars(select(CargaDeBase)).all()
+    assert carga.base == "subtemas"
+    #: SEM FONTE e SEM MESES: a taxonomia é base inteira e não fala de período.
+    assert carga.fonte_id is None
+    assert carga.meses == []
+    assert carga.linhas == 1
+    assert carga.arquivo == "taxonomia-v5.xlsx"
+    assert carga.origem == "api:subtemas"
+    quem_a_rota_viu = sessao.scalar(
+        select(Usuario.id).where(
+            Usuario.entra_object_id == oid_do_mock("plataforma_edicao")
+        )
+    )
+    assert carga.usuario_id == quem_a_rota_viu
+
+
+def test_a_confirmacao_que_nao_muda_nada_tambem_deixa_rastro(
+    sessao, cliente_admin, taxonomia
+):
+    """"Subiram a planilha e nada mudou" é informação, não ausência dela.
+
+    `linhas` conta criados mais alterados: reconfirmar o mesmo arquivo dá zero,
+    e a linha prova que alguém subiu — é o mesmo princípio do recorte vazio no
+    Score.
+    """
+    planilha = _planilha([_linha("Assunto Repetido 78", taxonomia)])
+    assert _confirmar_pela_rota(cliente_admin, planilha).status_code == 200
+
+    assert _confirmar_pela_rota(cliente_admin, planilha).status_code == 200
+
+    cargas = sessao.scalars(
+        select(CargaDeBase).order_by(CargaDeBase.concluida_em)
+    ).all()
+    assert [c.linhas for c in cargas] == [1, 0]

@@ -24,7 +24,9 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
 from app.banco.tabelas_mercado import Bond, BondCotacao
+from app.banco.tabelas_score import CargaDeBase
 from app.casos_de_uso import ingerir_bonds
+from app.casos_de_uso.trilha_da_carga import Procedencia
 from app.dominio.erros import RegraViolada
 from tests.test_e2e_postgres import URL
 
@@ -523,3 +525,60 @@ def test_ticker_REPETIDO_no_catalogo_conta_o_papel_uma_vez(sessao):
     assert resultado.papeis_completados == 1
     #: E venceu a PRIMEIRA linha.
     assert sessao.get(Bond, DO_CADASTRO[0]).descricao == "AEGEBZ 9 01/20/31"
+
+
+# -- a trilha da carga (0116) -------------------------------------------------
+
+
+def test_a_carga_de_bonds_deixa_rastro(sessao):
+    """`bond_cotacao` não tem carimbo nenhum, e a subida é apagada depois.
+
+    Sem esta linha, "quando os bonds foram atualizados e por quem" não tem
+    resposta: o `upsert` não distingue primeira carga de recarga, e
+    `planilha_de_bonds.descartar` apaga a única linha que sabia o autor.
+    """
+    conteudo = _planilha(
+        DO_CADASTRO,
+        {
+            date(2026, 8, 31): (98.5, 7.1, 99.0, 6.9),
+            #: VIRADA DE MÊS no mesmo arquivo: a carga aparece nos dois meses.
+            date(2026, 9, 1): (98.6, 7.0, 99.1, 6.8),
+        },
+    )
+
+    ingerir_bonds.gravar(
+        sessao,
+        conteudo,
+        Procedencia(origem="api:bonds", arquivo="bdh-setembro.xlsx"),
+    )
+    sessao.flush()
+
+    (carga,) = sessao.scalars(select(CargaDeBase)).all()
+    assert carga.base == "bonds"
+    #: SEM FONTE: bonds é base inteira, e o `check` da `0116` cobra isto.
+    assert carga.fonte_id is None
+    assert carga.linhas == 4
+    assert carga.meses == [date(2026, 8, 1), date(2026, 9, 1)]
+    assert carga.arquivo == "bdh-setembro.xlsx"
+    assert carga.origem == "api:bonds"
+
+
+def test_a_carga_de_bonds_SEM_PAPEL_CONHECIDO_tambem_deixa_rastro(sessao):
+    """Zero é resultado válido, e é o caso que torna a trilha necessária.
+
+    Um export só com papel fora do cadastro grava nenhuma cotação. Sem a linha
+    aqui, a subida de hoje ficaria invisível e a tela diria que a base está
+    velha.
+    """
+    conteudo = _planilha(
+        (FORA_DO_CADASTRO,), {date(2026, 8, 31): (98.5, 7.1)}
+    )
+
+    ingerir_bonds.gravar(sessao, conteudo, Procedencia(origem="api:bonds"))
+    sessao.flush()
+
+    (carga,) = sessao.scalars(select(CargaDeBase)).all()
+    assert carga.linhas == 0
+    #: E NENHUMA COTAÇÃO ENTROU, que é o que faria o caminho antigo ser cego.
+    assert sessao.scalar(select(func.count()).select_from(BondCotacao)) == 0
+    assert carga.meses == []

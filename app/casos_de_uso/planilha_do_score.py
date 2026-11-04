@@ -501,7 +501,7 @@ def nome_de(sessao: Session, *, planilha_id: UUID) -> str | None:
 
     LIDO ANTES DE `descartar`, porque é ele que apaga a linha. É a única janela
     em que o nome existe: depois da confirmação, a `planilha_recebida` some e a
-    `carga_de_fonte` é o que resta sobre aquela carga.
+    `carga_de_base` é o que resta sobre aquela carga.
     """
     recebida = sessao.get(PlanilhaRecebida, planilha_id)
     return None if recebida is None else recebida.nome
