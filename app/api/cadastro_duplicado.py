@@ -11,6 +11,7 @@ fundir junta dois dossiês e apaga uma linha do catálogo — não tem volta.
 
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -108,6 +109,37 @@ def listar_duplicados(
     a resposta nomeia atores do mapa de relacionamento da Aegea.
     """
     return atores_duplicados.listar(sessao)
+
+
+class EstadoDaFilaSaida(BaseModel):
+    """Quando o pareamento foi refeito — e se já foi alguma vez.
+
+    EXISTE PARA A TELA NÃO MENTIR. O pareamento é guardado (`0118`) para a fila
+    não ser recalculada a cada abertura, que era a causa do 504. O preço é que a
+    tabela nasce vazia, e fila vazia não se distingue de "nenhum duplicado": sem
+    este estado, a tela diria "Possíveis duplicados (0)" num cadastro cheio de
+    duplicatas.
+    """
+
+    #: NULO significa NUNCA CALCULADO, e a tela tem de dizer isso em vez de zero.
+    calculado_em: datetime | None
+
+
+@rotas.get("/instituicoes/duplicados/estado", response_model=EstadoDaFilaSaida)
+def estado_da_fila(
+    sessao: SessaoDoPedido, usuario: UsuarioQueVeDiretorio
+) -> EstadoDaFilaSaida:
+    """Se a fila já foi calculada, e quando.
+
+    ROTA PRÓPRIA E NÃO UM CAMPO NA LISTAGEM: a listagem devolve uma lista, e
+    embrulhá-la num objeto para caber mais um campo mudaria o contrato de um
+    consumidor que já existe. Esta é barata — um `max` sobre a chave primária.
+
+    ANTES DE `/duplicados` NO ARQUIVO, e isso não é acidente: `/duplicados` não
+    tem parâmetro de rota, então não há captura a disputar — mas manter a mais
+    específica em cima é o que evita o problema no dia em que houver.
+    """
+    return EstadoDaFilaSaida(calculado_em=atores_duplicados.calculado_em(sessao))
 
 
 @rotas.post("/instituicoes/{que_sai_id}/fundir", status_code=200)

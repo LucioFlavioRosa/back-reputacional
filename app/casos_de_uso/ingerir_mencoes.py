@@ -54,6 +54,7 @@ from sqlalchemy.orm import Session
 from app.banco.tabelas_lentes import MencaoNaoClassificada
 from app.banco.tabelas_score import Mencao, ScoreFonte, ScoreMesFonte
 from app.casos_de_uso import (
+    atores_duplicados,
     temas_da_mencao,
     trilha_da_carga,
     unidade_da_mencao,
@@ -1258,7 +1259,7 @@ def ingerir(
     #: têm de dizer que vieram do mesmo arquivo. Construir uma por irmã daria
     #: dois lotes para uma subida só.
     procedencia = procedencia or Procedencia()
-    return [
+    resumos = [
         _ingerir_uma(
             sessao,
             irma,
@@ -1270,6 +1271,24 @@ def ingerir(
         )
         for irma in fontes_do_mesmo_arquivo(sessao, fonte)
     ]
+
+    #: O PAREAMENTO DOS DUPLICADOS SE REFAZ AQUI, e é o que tirou o 504 da tela:
+    #: comparar o cadastro ativo par a par com `difflib` dentro da requisição da
+    #: FILA custava 102,7 s medidos em 11.000 cadastros, contra os ~240 s em que o
+    #: ingress corta. Ver `atores_duplicados.recalcular` e a `0118`.
+    #:
+    #: SÓ SE A SUBIDA CRIOU CADASTRO. O pareamento depende dos nomes em
+    #: `instituicao`, não das menções: subida que não cria nada não muda par
+    #: nenhum, e recalcular à toa somaria 43 s a cada planilha. É a diferença
+    #: entre pagar quando o mundo muda e pagar sempre.
+    #:
+    #: UMA VEZ PARA TODAS AS IRMÃS, depois do laço: os veículos nascem antes dele
+    #: (`veiculos_da_imprensa.criar`, acima), então aqui o cadastro já está no
+    #: estado final desta subida.
+    if criados:
+        atores_duplicados.recalcular(sessao)
+
+    return resumos
 
 
 #: A coluna do alcance do veiculo, no nome que a Clipei usa.

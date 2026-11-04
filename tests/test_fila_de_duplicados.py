@@ -39,7 +39,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 
 import pytest
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, delete, func, select
 from sqlalchemy.orm import Session
 
 from app.banco.sessao import obter_sessao
@@ -49,6 +49,7 @@ from app.banco.tabelas_stakeholders import (
     Instituicao,
     InstituicaoApelido,
     Interlocutor,
+    ParSemelhante,
 )
 from app.casos_de_uso import atores_duplicados
 from app.dominio.erros import RegraViolada
@@ -108,11 +109,28 @@ def _o_par_esta_na_fila(sessao, um, outro) -> bool:
     o lado neles faria cair por um motivo que não é o deles, quando alguém mexesse
     na ordenação.
     """
-    for pergunta in atores_duplicados.listar(sessao):
+    for pergunta in _fila(sessao):
         ids = {pergunta.id} | {c.id for c in pergunta.candidatos}
         if um.id in ids and outro.id in ids:
             return True
     return False
+
+
+def _fila(sessao) -> list[atores_duplicados.Duplicado]:
+    """A fila como a produção a produz: recalcula o pareamento, depois lê.
+
+    O PAREAMENTO É GUARDADO desde a `0118` — era o que tirava 102,7 s da
+    requisição e dava 504. `listar` não recalcula de propósito: fazê-lo
+    devolveria o problema. Então um teste que cria cadastro e espera encontrá-lo
+    na fila tem de recalcular primeiro, exatamente como a subida faz ao criar
+    veículo (`ingerir_mencoes.ingerir`).
+
+    AQUI E NÃO DENTRO DE `listar`: se `listar` recalculasse quando a tabela está
+    vazia, o primeiro acesso depois do deploy pagaria os 102,7 s e o 504 voltaria
+    — justamente no pior momento.
+    """
+    atores_duplicados.recalcular(sessao)
+    return atores_duplicados.listar(sessao)
 
 
 def _interacao(sessao, dono: Instituicao, **extra) -> None:
@@ -162,7 +180,7 @@ def _apelidos(sessao, chave: str) -> list[InstituicaoApelido]:
 
 
 def _na_fila(sessao, qual) -> atores_duplicados.Duplicado | None:
-    return next((d for d in atores_duplicados.listar(sessao) if d.id == qual), None)
+    return next((d for d in _fila(sessao) if d.id == qual), None)
 
 
 # -- a chave da semelhança -------------------------------------------------------
@@ -355,7 +373,7 @@ def test_a_mesma_pergunta_aparece_UMA_VEZ(sessao, bites):
     _mencao(sessao, gordo, bites)
     _mencao(sessao, magro, bites)
 
-    fila = atores_duplicados.listar(sessao)
+    fila = _fila(sessao)
     deste_par = [
         d for d in fila if d.id in {magro.id, gordo.id}
     ]
@@ -931,6 +949,11 @@ def test_a_rota_lista_a_fila(cliente, sessao, bites):
     veiculo = _cadastrar(sessao, "Valor Zz80", "veiculo")
     _mencao(sessao, veiculo, bites)
 
+    #: O PAREAMENTO PRIMEIRO, porque a ROTA não recalcula — desde a `0118` ela só
+    #: lê o que está guardado, e é isso que tirou o 504 dela. Em produção quem
+    #: recalcula é a subida que cria veículo.
+    atores_duplicados.recalcular(sessao)
+
     resposta = cliente.get("/api/instituicoes/duplicados")
 
     assert resposta.status_code == 200, resposta.text
@@ -1006,6 +1029,11 @@ def test_a_rota_diz_as_ORIGENS_de_cada_lado(cliente, sessao, bites):
     perfil = _cadastrar(sessao, "valorzz85", "perfil_rede")
     veiculo = _cadastrar(sessao, "Valor Zz85", "veiculo")
     _mencao(sessao, veiculo, bites)
+
+    #: O PAREAMENTO PRIMEIRO, porque a ROTA não recalcula — desde a `0118` ela só
+    #: lê o que está guardado, e é isso que tirou o 504 dela. Em produção quem
+    #: recalcula é a subida que cria veículo.
+    atores_duplicados.recalcular(sessao)
 
     resposta = cliente.get("/api/instituicoes/duplicados")
 
@@ -1105,7 +1133,7 @@ def test_a_fila_DIZ_O_TIPO_de_quem_vai_sair(sessao):
     outra = _cadastrar(sessao, "Tipada Zz93 ", "orgao")
 
     perguntas = [
-        d for d in atores_duplicados.listar(sessao) if d.id in {uma.id, outra.id}
+        d for d in _fila(sessao) if d.id in {uma.id, outra.id}
     ]
 
     assert len(perguntas) == 1
@@ -1114,3 +1142,132 @@ def test_a_fila_DIZ_O_TIPO_de_quem_vai_sair(sessao):
     esperado = uma.tipo if pergunta.id == uma.id else outra.tipo
     assert pergunta.tipo == esperado
     assert pergunta.tipo in ("entidade", "orgao")
+
+
+# -- o pareamento guardado (0118) -----------------------------------------------
+
+
+def test_a_fila_LE_o_pareamento_guardado_e_nao_recalcula(sessao):
+    """O que tirou o 504: a comparação saiu da requisição.
+
+    Um cadastro criado DEPOIS do último recálculo não aparece na fila, e isso é a
+    troca declarada — a alternativa era pagar 102,7 s medidos a cada abertura da
+    tela, contra os ~240 s em que o ingress corta. Quem recalcula é a subida que
+    cria veículo, e o comando `recalcular_duplicados`.
+    """
+    um = _cadastrar(sessao, "Valor Economico zzpg", "veiculo")
+    outro = _cadastrar(sessao, "valoreconomico zzpg", "perfil_rede")
+
+    #: `listar` DIRETO e não `_na_fila`: o auxiliar recalcula antes de ler, que é
+    #: o que a produção faz — e usá-lo aqui prepararia justamente o estado que
+    #: este teste precisa NÃO ter.
+    antes = {d.id for d in atores_duplicados.listar(sessao)}
+    assert um.id not in antes
+    assert outro.id not in antes
+
+    atores_duplicados.recalcular(sessao)
+
+    depois = {d.id for d in atores_duplicados.listar(sessao)}
+    assert um.id in depois or outro.id in depois
+
+
+def test_recalcular_SUBSTITUI_em_vez_de_acumular(sessao):
+    """Rodar duas vezes não duplica par, e o cadastro que saiu sai da tabela."""
+    um = _cadastrar(sessao, "Gazeta de Piracicaba zzpg2", "veiculo")
+    outro = _cadastrar(sessao, "gazetadepiracicaba zzpg2", "perfil_rede")
+
+    primeiro = atores_duplicados.recalcular(sessao)
+    segundo = atores_duplicados.recalcular(sessao)
+
+    assert primeiro == segundo
+    pares = list(
+        sessao.scalars(
+            select(ParSemelhante).where(
+                ParSemelhante.um_id.in_({um.id, outro.id}),
+            )
+        )
+    )
+    assert len(pares) == 1, "o par foi guardado duas vezes"
+
+    #: DESATIVADO SAI DO PAREAMENTO no próximo recálculo: a fila é só de ativos.
+    outro.ativo = False
+    sessao.flush()
+    atores_duplicados.recalcular(sessao)
+
+    assert _na_fila(sessao, um.id) is None
+
+
+def test_a_resposta_de_gente_tira_o_par_na_HORA_sem_recalcular(sessao):
+    """É por isso que só o PAREAMENTO é guardado, e não a fila pronta.
+
+    Se a fila fosse materializada inteira, o par respondido ficaria na tela até o
+    próximo recálculo — e quem respondeu veria a mesma pergunta de novo.
+    """
+    um = _cadastrar(sessao, "Diario do Litoral zzpg3", "veiculo")
+    outro = _cadastrar(sessao, "diariodolitoral zzpg3", "perfil_rede")
+    atores_duplicados.recalcular(sessao)
+    assert _o_par_esta_na_fila(sessao, um, outro)
+
+    atores_duplicados.declarar_distintos(
+        sessao, um=um.id, outro=outro.id, motivo="são dois jornais", decidido_por=None
+    )
+
+    #: SEM RECALCULAR: a fila já não pergunta.
+    assert not _o_par_esta_na_fila(sessao, um, outro)
+
+
+def test_calculado_em_distingue_ZERO_de_NUNCA(sessao):
+    """O erro que isto evita é pior que o 504 que a mudança corrige.
+
+    A tabela nasce vazia, então depois do deploy a tela diria "Possíveis
+    duplicados (0)" num cadastro cheio de duplicatas. Nulo significa NUNCA, e a
+    tela tem de dizer isso.
+    """
+    sessao.execute(delete(ParSemelhante))
+    sessao.flush()
+    assert atores_duplicados.calculado_em(sessao) is None
+
+    _cadastrar(sessao, "Agencia Brasil zzpg4", "veiculo")
+    _cadastrar(sessao, "agenciabrasil zzpg4", "perfil_rede")
+    atores_duplicados.recalcular(sessao)
+
+    assert atores_duplicados.calculado_em(sessao) is not None
+
+
+def test_a_rota_do_estado_responde_o_mesmo(sessao, cliente):
+    sessao.execute(delete(ParSemelhante))
+    sessao.flush()
+
+    assert cliente.get("/api/instituicoes/duplicados/estado").json()["calculado_em"] is None
+
+    _cadastrar(sessao, "Portal do Sul zzpg5", "veiculo")
+    _cadastrar(sessao, "portaldosul zzpg5", "perfil_rede")
+    atores_duplicados.recalcular(sessao)
+
+    resposta = cliente.get("/api/instituicoes/duplicados/estado")
+    assert resposta.status_code == 200, resposta.text
+    assert resposta.json()["calculado_em"] is not None
+
+
+def test_fundir_apaga_o_par_por_cascade(sessao):
+    """`on delete cascade`: par apontando para cadastro que já não existe seria
+    linha que a leitura teria de filtrar para sempre."""
+    um = _cadastrar(sessao, "Radio Campinas zzpg6", "veiculo")
+    outro = _cadastrar(sessao, "radiocampinas zzpg6", "perfil_rede")
+    atores_duplicados.recalcular(sessao)
+    antes = sessao.scalar(
+        select(func.count())
+        .select_from(ParSemelhante)
+        .where(ParSemelhante.um_id.in_({um.id, outro.id}))
+    )
+    assert antes == 1
+
+    sessao.delete(outro)
+    sessao.flush()
+
+    depois = sessao.scalar(
+        select(func.count())
+        .select_from(ParSemelhante)
+        .where(ParSemelhante.um_id.in_({um.id, outro.id}))
+    )
+    assert depois == 0

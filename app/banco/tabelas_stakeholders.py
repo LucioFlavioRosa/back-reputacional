@@ -25,7 +25,17 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, SmallInteger, String, Text, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    SmallInteger,
+    String,
+    Text,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -301,4 +311,38 @@ class AtorDistinto(Tabela):
     )
     decidido_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class ParSemelhante(Tabela):
+    """Dois cadastros cujos nomes se parecem. Espelha a `0118`.
+
+    O PAREAMENTO GUARDADO, e não a fila pronta: comparar o cadastro ativo inteiro
+    par a par com `difflib` dentro da requisição dava 504 — 102,7 s medidos em
+    11.000 cadastros, contra os ~240 s em que o ingress corta. A comparação saiu
+    da requisição; o resto da fila continua ao vivo, para uma resposta de gente
+    tirar o par da tela na hora. Ver `atores_duplicados.recalcular` e `listar`.
+
+    SEM LADO, como `AtorDistinto`: o par é guardado sempre na mesma ordem, por
+    `ordenar_o_par`, e a chave primária recusa a repetição. Quem lê monta as duas
+    direções.
+
+    SUBSTITUÍDA INTEIRA a cada recálculo, e por isso ela é a tabela que PRECISA
+    de `delete` — ver o comentário da `0118` sobre o ponto cego do `grant`.
+    """
+
+    __tablename__ = "par_semelhante"
+
+    um_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("instituicao.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    outro_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("instituicao.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    calculado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("clock_timestamp()")
     )
