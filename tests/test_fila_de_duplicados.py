@@ -36,6 +36,7 @@ O QUE ESTES TESTES PROTEGEM:
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import UTC, date, datetime
 
 import pytest
@@ -1782,3 +1783,191 @@ def test_REVALIDAR_nao_esconde_defasagem_de_verdade(sessao):
     sessao.flush()
 
     assert atores_duplicados.esta_desatualizado(sessao)
+
+
+#: A ROTA DO BOTÃO, em constante porque quatro testes a citam: um erro de
+#: digitação em um deles passaria como 404, e o teste falharia dizendo a coisa
+#: errada.
+#:
+#: FORA DE `/api/instituicoes/` de propósito — ver `refazer_o_pareamento`. O
+#: endereço faz parte do contrato aqui: sob aquele prefixo, o front recarregaria
+#: o catálogo inteiro a cada clique.
+ROTA_DO_PAREAMENTO = "/api/pareamento-de-duplicados"
+
+
+@contextmanager
+def _cliente_como(sessao, perfil: str, **ajustes):
+    """Um cliente HTTP com o papel pedido, e a configuração que o teste quiser.
+
+    A fixture `cliente` fixa `plataforma_edicao`, que é quem administra. O teste
+    da recusa precisa de OUTRO papel e o do teto de outro número — parâmetro em
+    vez de uma fixture por combinação.
+    """
+    from fastapi.testclient import TestClient
+
+    from app.configuracao import Configuracao, obter_configuracao
+
+    padrao = obter_configuracao()
+    como = Configuracao(
+        **{
+            **padrao.model_dump(),
+            "auth_mock": True,
+            "auth_mock_perfil": perfil,
+            **ajustes,
+        }
+    )
+    #: DEVOLVE O QUE ENCONTROU, em vez de zerar: limpar tudo apagaria as
+    #: sobrescritas de quem chamou — a fixture `cliente`, por exemplo — e um teste
+    #: que aninhasse os dois sairia daqui com a aplicação ligada no banco de
+    #: verdade. Achado de revisão; nenhum teste aninha hoje.
+    anteriores = dict(app.dependency_overrides)
+    app.dependency_overrides[obter_sessao] = lambda: sessao
+    app.dependency_overrides[obter_configuracao] = lambda: como
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(anteriores)
+
+
+def test_a_rota_do_pareamento_NAO_FICA_sob_instituicoes():
+    """O ENDEREÇO É CONTRATO, e não gosto.
+
+    O front trata toda escrita sob `/api/instituicoes` como mudança de catálogo e
+    recarrega o catálogo INTEIRO — por prefixo com fronteira, em
+    `dominio/sincronizacao.ts`, cuja regra é "a escrita muda o catálogo?". O
+    pareamento escreve `par_semelhante` e `pareamento_da_fila`, e nada que o
+    catálogo sirva: sob aquele prefixo, cada clique custaria uma recarga do
+    painel para não mudar nada nele. É a mesma razão que deixou
+    `/api/atores-distintos` fora de lá.
+
+    MOVER A ROTA PARA LÁ NÃO QUEBRARIA MAIS NADA nesta suíte — o back não conhece
+    a lista do front. Este teste é o único que reclamaria.
+
+    `_rotas_montadas` E NÃO `app.routes`: o primeiro nível traz cinco rotas de
+    serviço e NENHUMA de negócio, então a busca passaria sem achar nada — que é o
+    aviso escrito no próprio helper, e foi o erro que eu cometi aqui antes de
+    procurá-lo.
+    """
+    from fastapi.routing import APIRoute
+
+    from tests.test_portal_no_backend import _rotas_montadas
+
+    caminhos = {
+        rota.path for rota in _rotas_montadas(app) if isinstance(rota, APIRoute)
+    }
+    #: AS DUAS ASSERÇÕES, e a segunda não é zelo: sozinha, a primeira passaria
+    #: com a rota APAGADA.
+    assert ROTA_DO_PAREAMENTO in caminhos
+    assert not ROTA_DO_PAREAMENTO.startswith("/api/instituicoes")
+
+
+def test_a_ROTA_DO_PAREAMENTO_enche_a_fila_que_nasceu_vazia(cliente, sessao):
+    """O botão da tela, e o conserto de um beco sem saída.
+
+    A `0118` cria `par_semelhante` vazia, e a tela avisa "ainda não foi pareada:
+    peça ao administrador para rodar o pareamento". Até esta rota existir o
+    administrador TAMBÉM não tinha caminho — o recado não tinha destino.
+    """
+    sessao.execute(delete(ParSemelhante))
+    sessao.execute(delete(PareamentoDaFila))
+    sessao.flush()
+    _cadastrar(sessao, "Portal do Norte zzbot1", "veiculo")
+    _cadastrar(sessao, "portaldonorte zzbot1", "perfil_rede")
+    sessao.flush()
+
+    assert cliente.get("/api/instituicoes/duplicados/estado").json()["calculado_em"] is None
+
+    resposta = cliente.post(ROTA_DO_PAREAMENTO)
+
+    assert resposta.status_code == 200, resposta.text
+    assert resposta.json()["pares"] >= 1
+    #: E A LEITURA ALCANÇA O QUE A CONTAGEM AFIRMA. A contagem sozinha poderia
+    #: sair de um `insert` que a fila não enxerga — foi o defeito da `0098`, em
+    #: que a barra contava 29.701 e o clique achava 30.932.
+    assert cliente.get("/api/instituicoes/duplicados/estado").json()["calculado_em"] is not None
+    assert cliente.get("/api/instituicoes/duplicados").json() != []
+
+
+def test_o_pareamento_EXIGE_QUEM_ADMINISTRA_cadastros(sessao):
+    """A permissão de `fundir`, e não a de ver a fila.
+
+    Ver a fila é leitura do diretório. Refazer o pareamento é trabalho que todo
+    mundo sente enquanto roda, e substitui a lista que outra pessoa pode estar
+    respondendo.
+
+    A MENSAGEM ENTRA NA ASSERÇÃO porque três dependências deste router recusam
+    com 403: sem ela o teste passaria se `crm_edicao` fosse barrado pelo portal
+    ou pelo diretório, e passaria pelo motivo errado.
+    """
+    with _cliente_como(sessao, "crm_edicao") as cliente:
+        resposta = cliente.post(ROTA_DO_PAREAMENTO)
+
+    assert resposta.status_code == 403, resposta.text
+    assert "administra os cadastros" in resposta.json()["detalhe"]
+
+
+def test_o_pareamento_RECUSA_acima_do_teto_SEM_COMECAR(sessao, monkeypatch):
+    """O teto existe para o 504 não ser o aviso.
+
+    A conta é n²: 9,6 s medidos em 3.800 cadastros, 22,4 s medidos no ambiente
+    em ~5.800, e os 240 s de `proxy_read_timeout` do nginx seriam alcançados
+    perto de 19.000. O cadastro cresce em LOTE — `veiculos_da_imprensa.criar`
+    registra 2.631 criações numa tela só —, então não é questão de se chega lá.
+
+    RECUSAR ANTES DE COMEÇAR é o ponto inteiro: recusa depois da moagem já gastou
+    o que a recusa existe para poupar, e quem apertou esperou do mesmo jeito.
+
+    E "NÃO COMEÇOU" SE PROVA PELA FUNÇÃO, não pela tabela — achado de revisão. A
+    versão anterior deste teste conferia `pareamento_da_fila` vazia, o que
+    passaria também se a moagem tivesse rodado e falhado antes de gravar. Quem
+    responde "foi chamada?" é a própria `recalcular`.
+    """
+    _cadastrar(sessao, "Acima do Teto zzbot2", "veiculo")
+    sessao.flush()
+
+    def nao_deveria_moer(_sessao):
+        raise AssertionError("a rota chamou `recalcular` apesar do teto")
+
+    monkeypatch.setattr(atores_duplicados, "recalcular", nao_deveria_moer)
+
+    with _cliente_como(sessao, "plataforma_edicao", teto_do_pareamento=0) as cliente:
+        resposta = cliente.post(ROTA_DO_PAREAMENTO)
+
+    assert resposta.status_code == 409, resposta.text
+    #: A MENSAGEM ENTRA NA ASSERÇÃO porque a rota tem DOIS 409 — este e o de "já
+    #: está rodando". Sem ela, o teste passaria pela recusa errada.
+    assert "acima do teto" in resposta.json()["detalhe"]
+
+
+def test_o_pareamento_RECUSA_se_JA_ESTA_RODANDO_em_vez_de_esperar(sessao):
+    """Duas moagens ao mesmo tempo não se enfileiram: a segunda é recusada.
+
+    POR QUE IMPORTA. A rota é síncrona, então ela segura uma thread do threadpool
+    e uma conexão do pool enquanto mói — 22,4 s medidos no ambiente.
+    `recalcular` espera no cadeado de propósito, e esperar AQUI multiplicaria
+    thread e conexão presas por chamada. O limite de taxa é middleware de 600 por
+    IP, então ele não é essa guarda.
+
+    O `statement_timeout` NÃO É DECORAÇÃO, é o controle negativo: sem a guarda
+    esta rota BLOQUEIA no cadeado da outra conexão, e a suíte travaria em vez de
+    falhar — já aconteceu neste arquivo, ver `_carimbar_um_pareamento`. Com o
+    tempo limite, a ausência da guarda aparece como erro.
+    """
+    outra = _engine.connect()
+    try:
+        outra.execute(
+            select(func.pg_advisory_lock(atores_duplicados.ESPACO_DA_TRAVA_DO_PAREAMENTO))
+        )
+        sessao.execute(text("set local statement_timeout = '3s'"))
+
+        with _cliente_como(sessao, "plataforma_edicao") as cliente:
+            resposta = cliente.post(ROTA_DO_PAREAMENTO)
+
+        assert resposta.status_code == 409, resposta.text
+        assert "já está sendo refeito" in resposta.json()["detalhe"]
+    finally:
+        outra.execute(
+            select(func.pg_advisory_unlock(atores_duplicados.ESPACO_DA_TRAVA_DO_PAREAMENTO))
+        )
+        outra.close()

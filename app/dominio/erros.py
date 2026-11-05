@@ -72,16 +72,25 @@ class NaoEncontrado(ErroDeDominio):
 
 
 class Conflito(ErroDeDominio):
-    """O mundo mudou por baixo de quem estava decidindo.
+    """O ESTADO recusa o pedido, e não o pedido.
 
     NÃO É `RegraViolada`, e a diferença importa para quem recebe: `RegraViolada`
     diz "o que você mandou está errado, corrija"; `Conflito` diz "o que você
-    mandou estava certo quando você olhou, e o estado mudou desde então —
-    recarregue e decida de novo". Um 422 no lugar de 409 faria a pessoa procurar
-    um erro no próprio preenchimento que não existe.
+    mandou não tem defeito — é o estado de agora que não aceita". Um 422 no lugar
+    de 409 faria a pessoa procurar um erro no próprio preenchimento que não
+    existe.
 
-    O caso que a criou: entre subir a planilha e confirmar, alguém cadastrou pela
-    tela de Administração a mesma instituição que a importação ia criar.
+    O caso que a criou, e que explica o nome: entre subir a planilha e confirmar,
+    alguém cadastrou pela tela de Administração a mesma instituição que a
+    importação ia criar — "o mundo mudou por baixo de quem estava decidindo,
+    recarregue e decida de novo".
+
+    DEPOIS ELE CRESCEU, e a frase acima deixou de cobrir tudo: a rota do
+    pareamento o levanta por "já está rodando agora" — que é estado concorrente,
+    no espírito original — e também por "o cadastro é grande demais para esta
+    rota", que não é mudança de estado nenhuma, e sim o tamanho de agora. As três
+    têm em comum o que o 409 diz: conflito com o estado do recurso, e nada de
+    errado no pedido.
     """
 
 

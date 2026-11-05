@@ -12,6 +12,7 @@ fundir junta dois dossiês e apaga uma linha do catálogo — não tem volta.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -25,6 +26,10 @@ from app.api.dependencias import (
 )
 from app.banco.sessao import SessaoDoPedido
 from app.casos_de_uso import atores_duplicados
+from app.configuracao import Configuracao, obter_configuracao
+from app.dominio.erros import Conflito
+
+Config = Annotated[Configuracao, Depends(obter_configuracao)]
 
 #: PREFIXO `/api`, e os caminhos escritos por extenso: as duas escritas moram
 #: em endereços diferentes de propósito. Ver `declarar_distinto`.
@@ -152,6 +157,84 @@ def estado_da_fila(
         calculado_em=atores_duplicados.calculado_em(sessao),
         desatualizado=atores_duplicados.esta_desatualizado(sessao),
     )
+
+
+class PareamentoSaida(BaseModel):
+    """Quantos pares o recálculo deixou."""
+
+    #: ZERO É RESPOSTA VÁLIDA, e a tela precisa saber distinguir: pareou e não
+    #: achou nada é diferente de nunca ter pareado. Ver `EstadoDaFilaSaida`.
+    pares: int
+
+
+@rotas.post("/pareamento-de-duplicados", status_code=200)
+def refazer_o_pareamento(
+    sessao: SessaoDoPedido,
+    usuario: UsuarioQueAdministraCadastros,
+    configuracao: Config,
+) -> PareamentoSaida:
+    """Refaz o pareamento da fila, na própria requisição.
+
+    FORA DE `/api/instituicoes/`, pelo mesmo motivo de `declarar_distinto`: o
+    front recarrega o catálogo INTEIRO a cada escrita sob aquele prefixo (ver
+    `dominio/sincronizacao.ts`, cuja regra é "a escrita muda o catálogo?"). Esta
+    escreve `par_semelhante` e `pareamento_da_fila`, e não toca `instituicao` —
+    sob o prefixo, cada clique custaria uma recarga do catálogo para não mudar
+    nada nele. As LEITURAS da fila ficam onde estão: o barramento só olha
+    escrita.
+
+    POR QUE EXISTE: a `0118` tirou a conta de dentro da abertura da tela e o
+    preço é que `par_semelhante` nasce vazia. A subida de Menções a preenche,
+    mas SÓ quando cria cadastro (`ingerir_mencoes.ingerir`) — cadastrar pela
+    tela, confirmar agenda ou rodar o comando de cadastro externo não. Sem esta
+    rota, o aviso "peça ao administrador para rodar o pareamento" não tinha
+    destino: nem quem administra tinha caminho.
+
+    A PERMISSÃO DE FUNDIR, e não a de ver a fila: isto substitui a lista inteira
+    que outra pessoa pode estar respondendo, e enquanto roda todo mundo sente.
+
+    SÍNCRONA DE PROPÓSITO, e não é o defeito que a `0118` consertou: lá o custo
+    era pago em toda abertura da tela, por qualquer pessoa, sem escolha. Aqui é
+    um clique deliberado e raro. Uma tarefa de fundo pagaria a MESMA conta de
+    CPU no mesmo processo — o GIL não some —, e cobraria por cima um estado
+    "pareando", uma releitura periódica e uma falha que chega muda à tela. Quem
+    move a moagem para longe do painel é um contêiner próprio, e isso é infra.
+
+    O TETO RECUSA ANTES DE COMEÇAR. Ver `Configuracao.teto_do_pareamento`:
+    acima dele a espera terminaria em 504 do proxy, que é erro genérico depois
+    de quatro minutos. Uma frase na hora é melhor aviso.
+
+    E O TETO É APROXIMADO, DE PROPÓSITO — achado de revisão. Sob `read
+    committed` cada instrução pega o seu instantâneo, então entre o `count` e a
+    moagem um escritor pode acrescentar cadastro, e a moagem roda sobre um `n`
+    maior que o conferido. `veiculos_da_imprensa.criar` registra 2.631 criações
+    numa tela só, então a janela não é teórica.
+    Fechá-la exigiria travar `instituicao` — que é exatamente o que a `0118`
+    recusa, e por bom motivo: travar o catálogo para conferir um teto pararia
+    toda a edição de cadastro durante a moagem. O teto é guarda contra o
+    crescimento, não invariante: ele existe para o 504 não ser o primeiro aviso,
+    e a folga de ~2x do valor padrão absorve a janela.
+
+    E UMA MOAGEM POR VEZ, recusando em vez de esperar. `recalcular` espera no
+    cadeado — certo para a subida, errado aqui: esperar segura uma thread do
+    threadpool e uma conexão do pool por toda a moagem, e o limite de taxa deixa
+    passar 600 por IP antes de frear. Sem esta guarda, um laço de cliques
+    enfileiraria moagens até esgotar as duas coisas e parar o painel inteiro.
+    """
+    quantos = atores_duplicados.quantos_cadastros_ativos(sessao)
+    if quantos > configuracao.teto_do_pareamento:
+        raise Conflito(
+            f"O cadastro tem {quantos} registros ativos, acima do teto de "
+            f"{configuracao.teto_do_pareamento} que esta tela consegue parear "
+            "dentro de uma requisição. Peça para rodar o comando "
+            "`recalcular_duplicados` fora da aplicação."
+        )
+    if not atores_duplicados.tentar_tomar_a_trava(sessao):
+        raise Conflito(
+            "O pareamento já está sendo refeito agora. Espere ele terminar e "
+            "recarregue a fila."
+        )
+    return PareamentoSaida(pares=atores_duplicados.recalcular(sessao))
 
 
 @rotas.post("/instituicoes/{que_sai_id}/fundir", status_code=200)
