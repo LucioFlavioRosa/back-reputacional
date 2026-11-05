@@ -251,6 +251,15 @@ class Configuracao(BaseSettings):
     #: caminho lento e de memória constante; nada é recusado por causa disto.
     leitura_orcamento_de_memoria: int = 0
 
+    #: ATÉ QUANTOS CADASTROS ATIVOS A ROTA DO PAREAMENTO ACEITA REFAZER. Acima
+    #: disto ela recusa com 409 em vez de começar — ver
+    #: `cadastro_duplicado.refazer_o_pareamento`.
+    #:
+    #: O NÚMERO SAI DO TETO DO PROXY. A conta é n²: 9,6 s medidos em 3.800
+    #: cadastros e 22,4 s em ~5.800, então os 240 s de `proxy_read_timeout` do
+    #: nginx chegariam perto de 19.000. 15.000 deixa margem para a medição errar.
+    teto_do_pareamento: int = 15_000
+
     @property
     def blob_ligado(self) -> bool:
         return bool(self.blob_url)

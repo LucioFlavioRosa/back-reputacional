@@ -256,6 +256,18 @@ def _vizinhos(cadastros: list[Instituicao]) -> dict[uuid.UUID, list[Instituicao]
     return perto
 
 
+def quantos_cadastros_ativos(sessao: Session) -> int:
+    """Quantos cadastros o pareamento compararia. É o `n` do n².
+
+    AQUI E NÃO NA ROTA porque "ativo" é a régua de `recalcular`, e quem decide o
+    teto precisa contar exatamente o que a moagem vai percorrer. Duas
+    definições de "ativo" em arquivos diferentes divergiriam sem erro nenhum.
+    """
+    return sessao.scalar(
+        select(func.count()).select_from(Instituicao).where(Instituicao.ativo.is_(True))
+    )
+
+
 def recalcular(sessao: Session) -> int:
     """Refaz o pareamento guardado. Devolve quantos pares ficaram.
 

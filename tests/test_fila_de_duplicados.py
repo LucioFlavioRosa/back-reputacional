@@ -36,6 +36,7 @@ O QUE ESTES TESTES PROTEGEM:
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import UTC, date, datetime
 
 import pytest
@@ -1782,3 +1783,107 @@ def test_REVALIDAR_nao_esconde_defasagem_de_verdade(sessao):
     sessao.flush()
 
     assert atores_duplicados.esta_desatualizado(sessao)
+
+
+#: A ROTA DO BOTÃO, em constante porque três testes a citam: um erro de digitação
+#: em um deles passaria como 404, e o teste falharia dizendo a coisa errada.
+ROTA_DO_PAREAMENTO = "/api/instituicoes/duplicados/pareamento"
+
+
+@contextmanager
+def _cliente_como(sessao, perfil: str, **ajustes):
+    """Um cliente HTTP com o papel pedido, e a configuração que o teste quiser.
+
+    A fixture `cliente` fixa `plataforma_edicao`, que é quem administra. O teste
+    da recusa precisa de OUTRO papel e o do teto de outro número — parâmetro em
+    vez de uma fixture por combinação.
+    """
+    from fastapi.testclient import TestClient
+
+    from app.configuracao import Configuracao, obter_configuracao
+
+    padrao = obter_configuracao()
+    como = Configuracao(
+        **{
+            **padrao.model_dump(),
+            "auth_mock": True,
+            "auth_mock_perfil": perfil,
+            **ajustes,
+        }
+    )
+    app.dependency_overrides[obter_sessao] = lambda: sessao
+    app.dependency_overrides[obter_configuracao] = lambda: como
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_a_ROTA_DO_PAREAMENTO_enche_a_fila_que_nasceu_vazia(cliente, sessao):
+    """O botão da tela, e o conserto de um beco sem saída.
+
+    A `0118` cria `par_semelhante` vazia, e a tela avisa "ainda não foi pareada:
+    peça ao administrador para rodar o pareamento". Até esta rota existir o
+    administrador TAMBÉM não tinha caminho — o recado não tinha destino.
+    """
+    sessao.execute(delete(ParSemelhante))
+    sessao.execute(delete(PareamentoDaFila))
+    sessao.flush()
+    _cadastrar(sessao, "Portal do Norte zzbot1", "veiculo")
+    _cadastrar(sessao, "portaldonorte zzbot1", "perfil_rede")
+    sessao.flush()
+
+    assert cliente.get("/api/instituicoes/duplicados/estado").json()["calculado_em"] is None
+
+    resposta = cliente.post(ROTA_DO_PAREAMENTO)
+
+    assert resposta.status_code == 200, resposta.text
+    assert resposta.json()["pares"] >= 1
+    #: E A LEITURA ALCANÇA O QUE A CONTAGEM AFIRMA. A contagem sozinha poderia
+    #: sair de um `insert` que a fila não enxerga — foi o defeito da `0098`, em
+    #: que a barra contava 29.701 e o clique achava 30.932.
+    assert cliente.get("/api/instituicoes/duplicados/estado").json()["calculado_em"] is not None
+    assert cliente.get("/api/instituicoes/duplicados").json() != []
+
+
+def test_o_pareamento_EXIGE_QUEM_ADMINISTRA_cadastros(sessao):
+    """A permissão de `fundir`, e não a de ver a fila.
+
+    Ver a fila é leitura do diretório. Refazer o pareamento é trabalho que todo
+    mundo sente enquanto roda, e substitui a lista que outra pessoa pode estar
+    respondendo.
+
+    A MENSAGEM ENTRA NA ASSERÇÃO porque três dependências deste router recusam
+    com 403: sem ela o teste passaria se `crm_edicao` fosse barrado pelo portal
+    ou pelo diretório, e passaria pelo motivo errado.
+    """
+    with _cliente_como(sessao, "crm_edicao") as cliente:
+        resposta = cliente.post(ROTA_DO_PAREAMENTO)
+
+    assert resposta.status_code == 403, resposta.text
+    assert "administra os cadastros" in resposta.json()["detalhe"]
+
+
+def test_o_pareamento_RECUSA_acima_do_teto_SEM_COMECAR(sessao):
+    """O teto existe para o 504 não ser o aviso.
+
+    A conta é n²: 9,6 s medidos em 3.800 cadastros, 22,4 s medidos no ambiente
+    em ~5.800, e os 240 s de `proxy_read_timeout` do nginx seriam alcançados
+    perto de 19.000. O cadastro cresce em LOTE — `veiculos_da_imprensa.criar`
+    registra 2.631 criações numa tela só —, então não é questão de se chega lá.
+
+    RECUSAR ANTES DE COMEÇAR é o ponto inteiro, e é o que esta asserção pinga:
+    recusa depois da moagem já gastou o que a recusa existe para poupar, e quem
+    apertou esperou do mesmo jeito.
+    """
+    sessao.execute(delete(ParSemelhante))
+    sessao.execute(delete(PareamentoDaFila))
+    sessao.flush()
+    _cadastrar(sessao, "Acima do Teto zzbot2", "veiculo")
+    sessao.flush()
+
+    with _cliente_como(sessao, "plataforma_edicao", teto_do_pareamento=0) as cliente:
+        resposta = cliente.post(ROTA_DO_PAREAMENTO)
+
+    assert resposta.status_code == 409, resposta.text
+    assert sessao.scalar(select(func.count()).select_from(PareamentoDaFila)) == 0
