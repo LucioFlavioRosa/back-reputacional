@@ -268,6 +268,27 @@ def quantos_cadastros_ativos(sessao: Session) -> int:
     )
 
 
+def tentar_tomar_a_trava(sessao: Session) -> bool:
+    """Toma o cadeado do pareamento SEM ESPERAR. Falso se outro já o tem.
+
+    PARA QUEM NÃO PODE ESPERAR SEGURANDO RECURSO. `recalcular` espera de
+    propósito: ao fim de uma subida, refazer duas vezes em sequência é só lento, e
+    recusar deixaria a fila velha. Numa requisição HTTP é o contrário — esperar
+    prende uma thread do threadpool e uma conexão do pool por toda a moagem, e N
+    chamadas concorrentes prendem N de cada. O limite de taxa é de 600 por IP,
+    então ele não é essa guarda.
+
+    REENTRANTE NA MESMA TRANSAÇÃO: quem toma aqui e chama `recalcular` em seguida
+    não espera no cadeado dele — é o mesmo espaço, e o Postgres o concede de novo
+    a quem já é dono.
+    """
+    return bool(
+        sessao.scalar(
+            select(func.pg_try_advisory_xact_lock(ESPACO_DA_TRAVA_DO_PAREAMENTO))
+        )
+    )
+
+
 def recalcular(sessao: Session) -> int:
     """Refaz o pareamento guardado. Devolve quantos pares ficaram.
 

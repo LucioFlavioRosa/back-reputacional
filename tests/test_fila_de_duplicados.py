@@ -1886,4 +1886,40 @@ def test_o_pareamento_RECUSA_acima_do_teto_SEM_COMECAR(sessao):
         resposta = cliente.post(ROTA_DO_PAREAMENTO)
 
     assert resposta.status_code == 409, resposta.text
+    #: A MENSAGEM ENTRA NA ASSERÇÃO porque a rota tem DOIS 409 — este e o de "já
+    #: está rodando". Sem ela, o teste passaria pela recusa errada.
+    assert "acima do teto" in resposta.json()["detalhe"]
     assert sessao.scalar(select(func.count()).select_from(PareamentoDaFila)) == 0
+
+
+def test_o_pareamento_RECUSA_se_JA_ESTA_RODANDO_em_vez_de_esperar(sessao):
+    """Duas moagens ao mesmo tempo não se enfileiram: a segunda é recusada.
+
+    POR QUE IMPORTA. A rota é síncrona, então ela segura uma thread do threadpool
+    e uma conexão do pool enquanto mói — 22,4 s medidos no ambiente.
+    `recalcular` espera no cadeado de propósito, e esperar AQUI multiplicaria
+    thread e conexão presas por chamada. O limite de taxa é middleware de 600 por
+    IP, então ele não é essa guarda.
+
+    O `statement_timeout` NÃO É DECORAÇÃO, é o controle negativo: sem a guarda
+    esta rota BLOQUEIA no cadeado da outra conexão, e a suíte travaria em vez de
+    falhar — já aconteceu neste arquivo, ver `_carimbar_um_pareamento`. Com o
+    tempo limite, a ausência da guarda aparece como erro.
+    """
+    outra = _engine.connect()
+    try:
+        outra.execute(
+            select(func.pg_advisory_lock(atores_duplicados.ESPACO_DA_TRAVA_DO_PAREAMENTO))
+        )
+        sessao.execute(text("set local statement_timeout = '3s'"))
+
+        with _cliente_como(sessao, "plataforma_edicao") as cliente:
+            resposta = cliente.post(ROTA_DO_PAREAMENTO)
+
+        assert resposta.status_code == 409, resposta.text
+        assert "já está sendo refeito" in resposta.json()["detalhe"]
+    finally:
+        outra.execute(
+            select(func.pg_advisory_unlock(atores_duplicados.ESPACO_DA_TRAVA_DO_PAREAMENTO))
+        )
+        outra.close()

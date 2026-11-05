@@ -195,6 +195,12 @@ def refazer_o_pareamento(
     O TETO RECUSA ANTES DE COMEÇAR. Ver `Configuracao.teto_do_pareamento`:
     acima dele a espera terminaria em 504 do proxy, que é erro genérico depois
     de quatro minutos. Uma frase na hora é melhor aviso.
+
+    E UMA MOAGEM POR VEZ, recusando em vez de esperar. `recalcular` espera no
+    cadeado — certo para a subida, errado aqui: esperar segura uma thread do
+    threadpool e uma conexão do pool por toda a moagem, e o limite de taxa deixa
+    passar 600 por IP antes de frear. Sem esta guarda, um laço de cliques
+    enfileiraria moagens até esgotar as duas coisas e parar o painel inteiro.
     """
     quantos = atores_duplicados.quantos_cadastros_ativos(sessao)
     if quantos > configuracao.teto_do_pareamento:
@@ -203,6 +209,11 @@ def refazer_o_pareamento(
             f"{configuracao.teto_do_pareamento} que esta tela consegue parear "
             "dentro de uma requisição. Peça para rodar o comando "
             "`recalcular_duplicados` fora da aplicação."
+        )
+    if not atores_duplicados.tentar_tomar_a_trava(sessao):
+        raise Conflito(
+            "O pareamento já está sendo refeito agora. Espere ele terminar e "
+            "recarregue a fila."
         )
     return PareamentoSaida(pares=atores_duplicados.recalcular(sessao))
 
