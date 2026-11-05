@@ -196,6 +196,17 @@ def refazer_o_pareamento(
     acima dele a espera terminaria em 504 do proxy, que é erro genérico depois
     de quatro minutos. Uma frase na hora é melhor aviso.
 
+    E O TETO É APROXIMADO, DE PROPÓSITO — achado de revisão. Sob `read
+    committed` cada instrução pega o seu instantâneo, então entre o `count` e a
+    moagem um escritor pode acrescentar cadastro, e a moagem roda sobre um `n`
+    maior que o conferido. `veiculos_da_imprensa.criar` registra 2.631 criações
+    numa tela só, então a janela não é teórica.
+    Fechá-la exigiria travar `instituicao` — que é exatamente o que a `0118`
+    recusa, e por bom motivo: travar o catálogo para conferir um teto pararia
+    toda a edição de cadastro durante a moagem. O teto é guarda contra o
+    crescimento, não invariante: ele existe para o 504 não ser o primeiro aviso,
+    e a folga de ~2x do valor padrão absorve a janela.
+
     E UMA MOAGEM POR VEZ, recusando em vez de esperar. `recalcular` espera no
     cadeado — certo para a subida, errado aqui: esperar segura uma thread do
     threadpool e uma conexão do pool por toda a moagem, e o limite de taxa deixa

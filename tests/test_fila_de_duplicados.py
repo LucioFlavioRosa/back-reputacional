@@ -1811,12 +1811,18 @@ def _cliente_como(sessao, perfil: str, **ajustes):
             **ajustes,
         }
     )
+    #: DEVOLVE O QUE ENCONTROU, em vez de zerar: limpar tudo apagaria as
+    #: sobrescritas de quem chamou — a fixture `cliente`, por exemplo — e um teste
+    #: que aninhasse os dois sairia daqui com a aplicação ligada no banco de
+    #: verdade. Achado de revisão; nenhum teste aninha hoje.
+    anteriores = dict(app.dependency_overrides)
     app.dependency_overrides[obter_sessao] = lambda: sessao
     app.dependency_overrides[obter_configuracao] = lambda: como
     try:
         yield TestClient(app)
     finally:
         app.dependency_overrides.clear()
+        app.dependency_overrides.update(anteriores)
 
 
 def test_a_ROTA_DO_PAREAMENTO_enche_a_fila_que_nasceu_vazia(cliente, sessao):
@@ -1864,7 +1870,7 @@ def test_o_pareamento_EXIGE_QUEM_ADMINISTRA_cadastros(sessao):
     assert "administra os cadastros" in resposta.json()["detalhe"]
 
 
-def test_o_pareamento_RECUSA_acima_do_teto_SEM_COMECAR(sessao):
+def test_o_pareamento_RECUSA_acima_do_teto_SEM_COMECAR(sessao, monkeypatch):
     """O teto existe para o 504 não ser o aviso.
 
     A conta é n²: 9,6 s medidos em 3.800 cadastros, 22,4 s medidos no ambiente
@@ -1872,15 +1878,21 @@ def test_o_pareamento_RECUSA_acima_do_teto_SEM_COMECAR(sessao):
     perto de 19.000. O cadastro cresce em LOTE — `veiculos_da_imprensa.criar`
     registra 2.631 criações numa tela só —, então não é questão de se chega lá.
 
-    RECUSAR ANTES DE COMEÇAR é o ponto inteiro, e é o que esta asserção pinga:
-    recusa depois da moagem já gastou o que a recusa existe para poupar, e quem
-    apertou esperou do mesmo jeito.
+    RECUSAR ANTES DE COMEÇAR é o ponto inteiro: recusa depois da moagem já gastou
+    o que a recusa existe para poupar, e quem apertou esperou do mesmo jeito.
+
+    E "NÃO COMEÇOU" SE PROVA PELA FUNÇÃO, não pela tabela — achado de revisão. A
+    versão anterior deste teste conferia `pareamento_da_fila` vazia, o que
+    passaria também se a moagem tivesse rodado e falhado antes de gravar. Quem
+    responde "foi chamada?" é a própria `recalcular`.
     """
-    sessao.execute(delete(ParSemelhante))
-    sessao.execute(delete(PareamentoDaFila))
-    sessao.flush()
     _cadastrar(sessao, "Acima do Teto zzbot2", "veiculo")
     sessao.flush()
+
+    def nao_deveria_moer(_sessao):
+        raise AssertionError("a rota chamou `recalcular` apesar do teto")
+
+    monkeypatch.setattr(atores_duplicados, "recalcular", nao_deveria_moer)
 
     with _cliente_como(sessao, "plataforma_edicao", teto_do_pareamento=0) as cliente:
         resposta = cliente.post(ROTA_DO_PAREAMENTO)
@@ -1889,7 +1901,6 @@ def test_o_pareamento_RECUSA_acima_do_teto_SEM_COMECAR(sessao):
     #: A MENSAGEM ENTRA NA ASSERÇÃO porque a rota tem DOIS 409 — este e o de "já
     #: está rodando". Sem ela, o teste passaria pela recusa errada.
     assert "acima do teto" in resposta.json()["detalhe"]
-    assert sessao.scalar(select(func.count()).select_from(PareamentoDaFila)) == 0
 
 
 def test_o_pareamento_RECUSA_se_JA_ESTA_RODANDO_em_vez_de_esperar(sessao):
