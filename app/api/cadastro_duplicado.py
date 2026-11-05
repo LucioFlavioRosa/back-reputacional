@@ -167,13 +167,21 @@ class PareamentoSaida(BaseModel):
     pares: int
 
 
-@rotas.post("/instituicoes/duplicados/pareamento", status_code=200)
+@rotas.post("/pareamento-de-duplicados", status_code=200)
 def refazer_o_pareamento(
     sessao: SessaoDoPedido,
     usuario: UsuarioQueAdministraCadastros,
     configuracao: Config,
 ) -> PareamentoSaida:
     """Refaz o pareamento da fila, na própria requisição.
+
+    FORA DE `/api/instituicoes/`, pelo mesmo motivo de `declarar_distinto`: o
+    front recarrega o catálogo INTEIRO a cada escrita sob aquele prefixo (ver
+    `dominio/sincronizacao.ts`, cuja regra é "a escrita muda o catálogo?"). Esta
+    escreve `par_semelhante` e `pareamento_da_fila`, e não toca `instituicao` —
+    sob o prefixo, cada clique custaria uma recarga do catálogo para não mudar
+    nada nele. As LEITURAS da fila ficam onde estão: o barramento só olha
+    escrita.
 
     POR QUE EXISTE: a `0118` tirou a conta de dentro da abertura da tela e o
     preço é que `par_semelhante` nasce vazia. A subida de Menções a preenche,

@@ -1785,9 +1785,14 @@ def test_REVALIDAR_nao_esconde_defasagem_de_verdade(sessao):
     assert atores_duplicados.esta_desatualizado(sessao)
 
 
-#: A ROTA DO BOTÃO, em constante porque três testes a citam: um erro de digitação
-#: em um deles passaria como 404, e o teste falharia dizendo a coisa errada.
-ROTA_DO_PAREAMENTO = "/api/instituicoes/duplicados/pareamento"
+#: A ROTA DO BOTÃO, em constante porque quatro testes a citam: um erro de
+#: digitação em um deles passaria como 404, e o teste falharia dizendo a coisa
+#: errada.
+#:
+#: FORA DE `/api/instituicoes/` de propósito — ver `refazer_o_pareamento`. O
+#: endereço faz parte do contrato aqui: sob aquele prefixo, o front recarregaria
+#: o catálogo inteiro a cada clique.
+ROTA_DO_PAREAMENTO = "/api/pareamento-de-duplicados"
 
 
 @contextmanager
@@ -1823,6 +1828,38 @@ def _cliente_como(sessao, perfil: str, **ajustes):
     finally:
         app.dependency_overrides.clear()
         app.dependency_overrides.update(anteriores)
+
+
+def test_a_rota_do_pareamento_NAO_FICA_sob_instituicoes():
+    """O ENDEREÇO É CONTRATO, e não gosto.
+
+    O front trata toda escrita sob `/api/instituicoes` como mudança de catálogo e
+    recarrega o catálogo INTEIRO — por prefixo com fronteira, em
+    `dominio/sincronizacao.ts`, cuja regra é "a escrita muda o catálogo?". O
+    pareamento escreve `par_semelhante` e `pareamento_da_fila`, e nada que o
+    catálogo sirva: sob aquele prefixo, cada clique custaria uma recarga do
+    painel para não mudar nada nele. É a mesma razão que deixou
+    `/api/atores-distintos` fora de lá.
+
+    MOVER A ROTA PARA LÁ NÃO QUEBRARIA MAIS NADA nesta suíte — o back não conhece
+    a lista do front. Este teste é o único que reclamaria.
+
+    `_rotas_montadas` E NÃO `app.routes`: o primeiro nível traz cinco rotas de
+    serviço e NENHUMA de negócio, então a busca passaria sem achar nada — que é o
+    aviso escrito no próprio helper, e foi o erro que eu cometi aqui antes de
+    procurá-lo.
+    """
+    from fastapi.routing import APIRoute
+
+    from tests.test_portal_no_backend import _rotas_montadas
+
+    caminhos = {
+        rota.path for rota in _rotas_montadas(app) if isinstance(rota, APIRoute)
+    }
+    #: AS DUAS ASSERÇÕES, e a segunda não é zelo: sozinha, a primeira passaria
+    #: com a rota APAGADA.
+    assert ROTA_DO_PAREAMENTO in caminhos
+    assert not ROTA_DO_PAREAMENTO.startswith("/api/instituicoes")
 
 
 def test_a_ROTA_DO_PAREAMENTO_enche_a_fila_que_nasceu_vazia(cliente, sessao):
