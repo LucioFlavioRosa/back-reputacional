@@ -1,4 +1,4 @@
-"""Provisionamento JIT: o usuário nasce no primeiro login.
+"""Provisionamento no login: a identidade nasce ou se liga aqui.
 
 O mesmo caminho serve para o SSO real e para o provedor mock de desenvolvimento
 — muda apenas de onde vêm as claims. Nunca há cadastro manual de senha.
@@ -7,16 +7,21 @@ O provisionamento cria a IDENTIDADE e não decide AUTORIZAÇÃO. `papel_id` e
 `usuario_escopo` são concedidos por alguém com `administra_acessos`, pela tela
 de administração de acessos; o login apenas os lê.
 
-Quem chega pela primeira vez nasce sem papel nenhum — autenticado e autorizado a
-nada. É o comportamento correto para convidado B2B: adivinhar permissão para
-quem acabou de chegar de fora é o erro que se quer evitar.
+SÃO DOIS CAMINHOS DESDE A `0119`, e o docstring dizia só o primeiro:
+
+* QUEM CHEGA SEM PRÉ-CADASTRO nasce aqui, sem papel nenhum — autenticado e
+  autorizado a nada. É o comportamento correto para convidado B2B: adivinhar
+  permissão para quem acabou de chegar de fora é o erro que se quer evitar.
+* QUEM FOI PRÉ-CADASTRADO já existe, com papel, e este login só LIGA o `oid`
+  àquela linha. Era o beco sem saída que a `0119` fecha: antes dela, a pessoa
+  tinha de ser recusada uma vez para passar a existir.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.banco.tabelas_acesso import (
@@ -63,22 +68,15 @@ def provisionar(
     agora = datetime.now(UTC)
 
     if registro is None:
-        # O e-mail também é único, e a busca acima foi por `entra_object_id`: se
-        # já existe alguém com este e-mail e OUTRO identificador, o `flush`
-        # abaixo levantaria `UniqueViolation`, e a pessoa veria um 500 opaco.
-        #
-        # NÃO reatribuímos o `entra_object_id` da linha existente: o `oid` é a
-        # identidade estável, e trocá-lo em silêncio entregaria a conta de uma
-        # pessoa a outra que apenas tenha o mesmo e-mail. Acontece de verdade em
-        # desenvolvimento, alternando entre `AUTH_MOCK` e o SSO real.
-        conflito = sessao.scalar(select(Usuario).where(Usuario.email == email))
-        if conflito is not None:
-            raise NaoAutorizado(
-                "Este e-mail já está provisionado com outro identificador do "
-                "provedor. Fale com quem administra acessos.",
-                sobre_o_pedido=True,
-            )
+        # O e-mail também é único, e a busca acima foi por `entra_object_id`: sem
+        # tratar a colisão, o `flush` abaixo levantaria `UniqueViolation` e a
+        # pessoa veria um 500 opaco. As duas respostas possíveis estão em
+        # `_vincular_pre_cadastro`.
+        registro = _vincular_pre_cadastro(
+            sessao, entra_object_id=entra_object_id, email=email
+        )
 
+    if registro is None:
         registro = Usuario(
             entra_object_id=entra_object_id,
             email=email,
@@ -130,7 +128,14 @@ def carregar(sessao: Session, usuario_id) -> UsuarioAtual | None:
         return None
 
     agora = datetime.now(UTC)
-    if _passou_da_folga(registro.ultimo_acesso_em, agora):
+    #: PRÉ-CADASTRO NÃO CARIMBA ACESSO (`0119`), e o `check` do banco pegou isto:
+    #: quem nunca foi vinculada nunca entrou, e carimbar aqui a mostraria na tela
+    #: de acessos como usuária ativa — apagando o "nunca entrou" que é o único
+    #: sinal de um convite com e-mail errado. Mesma regra da conta desativada em
+    #: `provisionar`: carregar não é entrar.
+    if registro.entra_object_id is not None and _passou_da_folga(
+        registro.ultimo_acesso_em, agora
+    ):
         registro.ultimo_acesso_em = agora
 
     return _montar(sessao, registro)
@@ -195,6 +200,73 @@ def _escopo_de(sessao: Session, registro: Usuario) -> Escopo:
         frentes=frozenset(v for d, v in linhas if d == "frente"),
         unidades=frozenset(v for d, v in linhas if d == "unidade_negocio"),
     )
+
+
+def _vincular_pre_cadastro(
+    sessao: Session, *, entra_object_id: str, email: str
+) -> Usuario | None:
+    """O pré-cadastro deste e-mail, já vinculado a este `oid` — ou nada.
+
+    DUAS RESPOSTAS MUITO DIFERENTES para "o e-mail já existe", e quem decide é o
+    `oid` da linha achada:
+
+    * SEM `oid` é PRÉ-CADASTRO (`0119`): alguém concedeu o papel antes de a
+      pessoa entrar, e este login é o vínculo. Devolve a MESMA linha — linha
+      nova perderia o papel e o rastro de quem o concedeu.
+    * COM `oid` é outra identidade para o mesmo e-mail, e aí recusa. Trocá-lo em
+      silêncio entregaria a conta de uma pessoa a outra que apenas tenha o mesmo
+      e-mail; acontece de verdade em desenvolvimento, alternando entre
+      `AUTH_MOCK` e o SSO real. A resolução é humana.
+
+    QUEM CASA É O E-MAIL QUE O TOKEN AFIRMA, e nunca algo digitado no login. O
+    `oidc.validar` o tira de `preferred_username`, `email` ou `upn` de um
+    `id_token` com assinatura, emissor, audiência, `nonce` e `tid` conferidos —
+    então vale o que o TENANT afirma, e token de outro diretório é recusado
+    antes de chegar aqui.
+
+    NÃO É "E-MAIL VERIFICADO" no sentido do `email_verified` do OIDC, e a
+    diferença importa: `preferred_username` é o nome de entrada que a
+    administração do Entra controla. O risco que sobra é dela — UPN de alguém que
+    saiu, reatribuído a outra pessoa, vincularia um pré-cadastro feito para a
+    primeira. É o mesmo risco que o e-mail já carrega para qualquer usuário desde
+    a `0003`, e não se fecha daqui.
+
+    E DIGITADO ERRADO NO PRÉ-CADASTRO, não casa: a pessoa ganha linha nova sem
+    papel e é recusada como antes, e o pré-cadastro fica na tela como "nunca
+    entrou".
+    """
+    #: PELA FUNÇÃO, E NÃO POR ATRIBUIÇÃO — achado de revisão, e era defeito que
+    #: só apareceria em produção: a `0009` não dá `update` em `entra_object_id` à
+    #: aplicação, então escrevê-lo aqui daria `permission denied for column`
+    #: no primeiro login de todo pré-cadastrado. O banco de teste roda como
+    #: superusuário e não pegaria.
+    #:
+    #: E A FUNÇÃO VINCULA SÓ O QUE AINDA NÃO TEM `oid`, num `update` só: dois
+    #: logins concorrentes contra o mesmo pré-cadastro não se sobrescrevem. Ver a
+    #: `0119`.
+    vinculado = sessao.scalar(
+        text("select vincular_pre_cadastro(cast(:email as citext), :oid)"),
+        {"email": email, "oid": entra_object_id},
+    )
+    if vinculado is not None:
+        registro = sessao.get(Usuario, vinculado)
+        #: A FUNÇÃO ESCREVEU POR SQL, por fora do ORM. Sem expirar, a sessão
+        #: devolveria a linha com `entra_object_id` ainda nulo — e o carimbo de
+        #: último acesso logo adiante bateria no `check` da `0119`.
+        sessao.expire(registro)
+        return registro
+
+    #: NULO NÃO DIZ QUAL DOS DOIS CASOS É: não havia linha com este e-mail, ou
+    #: havia uma JÁ vinculada. A consulta separa, e é aqui que a recusa antiga
+    #: continua intacta.
+    achado = sessao.scalar(select(Usuario).where(Usuario.email == email))
+    if achado is not None:
+        raise NaoAutorizado(
+            "Este e-mail já está provisionado com outro identificador do "
+            "provedor. Fale com quem administra acessos.",
+            sobre_o_pedido=True,
+        )
+    return None
 
 
 def _passou_da_folga(ultimo: datetime | None, agora: datetime) -> bool:
