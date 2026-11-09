@@ -1058,7 +1058,10 @@ def test_o_PRE_CADASTRO_e_VINCULADO_no_primeiro_login(sessao):
 def test_o_pre_cadastro_com_EMAIL_ERRADO_nao_vincula_nada(sessao):
     """O risco que sobra, e ele fica registrado em teste em vez de em promessa.
 
-    Quem casa o pré-cadastro com a pessoa é o e-mail VERIFICADO do token. E-mail
+    Quem casa o pré-cadastro com a pessoa é o e-mail que o token do tenant
+    AFIRMA — `preferred_username`, `email` ou `upn`, de um `id_token` validado;
+    não é `email_verified` do OIDC, e a diferença está em
+    `_vincular_pre_cadastro`. E-mail
     digitado errado no pré-cadastro nunca casa: a pessoa entra, ganha linha nova sem
     papel e é recusada como antes — e o pré-cadastro continua lá, sem uso.
 

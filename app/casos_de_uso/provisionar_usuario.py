@@ -213,10 +213,22 @@ def _vincular_pre_cadastro(
       e-mail; acontece de verdade em desenvolvimento, alternando entre
       `AUTH_MOCK` e o SSO real. A resolução é humana.
 
-    QUEM CASA É O E-MAIL VERIFICADO DO TOKEN, e nunca algo digitado no login: é
-    o que faz o vínculo valer tanto quanto o diretório. Digitado errado no
-    convite, não casa — a pessoa ganha linha nova sem papel e é recusada como
-    antes, e o convite fica na tela como "nunca entrou".
+    QUEM CASA É O E-MAIL QUE O TOKEN AFIRMA, e nunca algo digitado no login. O
+    `oidc.validar` o tira de `preferred_username`, `email` ou `upn` de um
+    `id_token` com assinatura, emissor, audiência, `nonce` e `tid` conferidos —
+    então vale o que o TENANT afirma, e token de outro diretório é recusado
+    antes de chegar aqui.
+
+    NÃO É "E-MAIL VERIFICADO" no sentido do `email_verified` do OIDC, e a
+    diferença importa: `preferred_username` é o nome de entrada que a
+    administração do Entra controla. O risco que sobra é dela — UPN de alguém que
+    saiu, reatribuído a outra pessoa, vincularia um pré-cadastro feito para a
+    primeira. É o mesmo risco que o e-mail já carrega para qualquer usuário desde
+    a `0003`, e não se fecha daqui.
+
+    E DIGITADO ERRADO NO PRÉ-CADASTRO, não casa: a pessoa ganha linha nova sem
+    papel e é recusada como antes, e o pré-cadastro fica na tela como "nunca
+    entrou".
     """
     achado = sessao.scalar(select(Usuario).where(Usuario.email == email))
     if achado is None:

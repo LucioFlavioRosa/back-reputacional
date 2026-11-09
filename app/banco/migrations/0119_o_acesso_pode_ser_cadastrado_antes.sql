@@ -13,8 +13,13 @@
 --:
 --: O QUE MUDA, e é o que faz não ser a mesma coisa: ali não havia caminho de
 --: entrada nenhum, e aqui há — `provisionar` vincula o `oid` no primeiro login
---: cujo e-mail verificado casar. A linha sem `oid` não é um beco, é um
---: pré-cadastro à espera.
+--: cujo e-mail casar. A linha sem `oid` não é um beco, é um pré-cadastro à
+--: espera.
+--:
+--: O E-MAIL É O QUE O TOKEN DO TENANT AFIRMA, e não `email_verified` do OIDC: o
+--: `oidc.validar` o tira de `preferred_username`, `email` ou `upn`, conferindo
+--: assinatura, emissor, audiência, `nonce` e `tid`. Vale o que a administração
+--: do Entra controla — forte dentro do tenant, e não mais que isso.
 --:
 --: O RISCO QUE SOBRA, dito: e-mail digitado errado NUNCA casa, e aí o
 --: pré-cadastro É uma conta fantasma — com papel, na lista, inalcançável. Não
@@ -47,7 +52,8 @@ alter table usuario
 comment on column usuario.entra_object_id is
   'O `oid` do Entra ID, e o unico caminho de entrada (0096). NULO desde a 0119 '
   'significa PRE-CADASTRO: o papel ja foi concedido e o vinculo acontece no '
-  'primeiro login cujo e-mail verificado casar -- ver `provisionar_usuario`.';
+  'primeiro login cujo e-mail o token do tenant afirmar (preferred_username, '
+  'email ou upn) -- ver `provisionar_usuario`.';
 
 do $$
 begin
