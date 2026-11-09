@@ -82,9 +82,14 @@ class Usuario(Tabela):
         PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     #: O `oid` do token do Entra ID — a identidade estável da pessoa no
-    #: diretório, e o ÚNICO caminho de entrada (`0096`). Conta sem
-    #: `entra_object_id` é conta que não existe, não conta que não entra.
-    entra_object_id: Mapped[str] = mapped_column(Text, unique=True)
+    #: diretório, e o ÚNICO caminho de entrada (`0096`).
+    #:
+    #: NULO É PRÉ-CADASTRO (`0119`): o papel já foi concedido e o vínculo
+    #: acontece no primeiro login cujo e-mail verificado casar. Enquanto nulo, a
+    #: pessoa não entra — e `ultimo_acesso_em` é nulo junto, por `check`.
+    entra_object_id: Mapped[str | None] = mapped_column(
+        Text, unique=True, nullable=True
+    )
     #: CITEXT: o Entra ID pode devolver a claim com outra caixa, e sem isso a
     #: mesma pessoa ganharia uma segunda conta no provisionamento JIT.
     email: Mapped[str] = mapped_column(CITEXT, unique=True)

@@ -16,14 +16,14 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.orm import Session
 
 from app.banco.sessao import obter_sessao
 from app.banco.tabelas_acesso import Papel, Usuario
 from app.casos_de_uso import administrar_acessos
 from app.configuracao import obter_configuracao
-from app.dominio.erros import NaoAutorizado, RegraViolada
+from app.dominio.erros import Conflito, NaoAutorizado, RegraViolada
 from app.seguranca import sessao_assinada
 from app.seguranca.cache_de_autorizacao import cache_para, limpar_todos
 from main import app
@@ -419,6 +419,64 @@ def test_rota_exige_a_versao_vista(cliente, sessao):
     )
     assert resposta.status_code == 422, resposta.text
     assert "versao_vista" in resposta.text
+
+
+def test_rota_pre_cadastra_pela_http(cliente, sessao):
+    """`POST /acessos` — a rota que não existia, e por isso não havia pré-cadastro.
+
+    O corpo é o MESMO da edição, mais e-mail e nome. `versao_vista` fica de fora
+    de propósito: a linha nasce nesta requisição, então não há versão a afirmar.
+    """
+    admin = cria_usuario(sessao, "plataforma_edicao", acesso_irrestrito=True)
+    token = entra(cliente, admin)
+    email = f"{uuid4().hex[:8]}@aegea.com.br"
+
+    resposta = cliente.post(
+        "/api/acessos",
+        headers={"X-CSRF-Token": token},
+        json={
+            "email": email,
+            "nome": "Diretora Silva",
+            "papel": "score_leitura",
+            "frentes": ["imprensa"],
+        },
+    )
+
+    assert resposta.status_code == 201, resposta.text
+    registro = sessao.scalar(select(Usuario).where(Usuario.email == email))
+    assert str(registro.id) == resposta.json()["id"]
+    #: PRÉ-CADASTRO, e não conta: sem vínculo e sem acesso, com papel e escopo.
+    assert registro.entra_object_id is None
+    assert registro.ultimo_acesso_em is None
+    assert como(sessao, registro).escopo.frentes == {"imprensa"}
+
+
+def test_rota_de_pre_cadastro_exige_o_papel(cliente, sessao):
+    analista = cria_usuario(sessao, "crm_edicao", acesso_irrestrito=True)
+    token = entra(cliente, analista)
+
+    resposta = cliente.post(
+        "/api/acessos",
+        headers={"X-CSRF-Token": token},
+        json={"email": f"{uuid4().hex[:8]}@aegea.com.br", "nome": "X", "papel": "crm_leitura"},
+    )
+    assert resposta.status_code == 403, resposta.text
+
+
+def test_pre_cadastro_pela_http_exige_token_anti_csrf(cliente, sessao):
+    """Criar pessoa COM acesso é alvo de CSRF tão valioso quanto conceder."""
+    admin = cria_usuario(sessao, "plataforma_edicao", acesso_irrestrito=True)
+    entra(cliente, admin)
+
+    resposta = cliente.post(
+        "/api/acessos",
+        json={
+            "email": f"{uuid4().hex[:8]}@aegea.com.br",
+            "nome": "X",
+            "papel": "plataforma_edicao",
+        },
+    )
+    assert resposta.status_code == 403
 
 
 def test_concessao_pela_http_exige_token_anti_csrf(cliente, sessao):
@@ -939,6 +997,276 @@ def test_email_ja_provisionado_com_outro_oid_recusa_com_mensagem(sessao):
             entra_object_id=f"oid-mock-{sufixo}",
             email=email,
             nome="Pessoa",
+        )
+
+
+# -- pré-cadastro: o papel antes do primeiro login -----------------------------
+
+
+def _pre_cadastrar(sessao, email: str, codigo_do_papel: str = "crm_leitura") -> Usuario:
+    """Uma pessoa com papel e SEM `oid` — o que a rota de pré-cadastro grava."""
+    papel = sessao.scalar(select(Papel).where(Papel.codigo == codigo_do_papel))
+    registro = Usuario(
+        entra_object_id=None, email=email, nome="Diretora", papel_id=papel.id
+    )
+    sessao.add(registro)
+    sessao.flush()
+    return registro
+
+
+def test_o_PRE_CADASTRO_e_VINCULADO_no_primeiro_login(sessao):
+    """O papel pode ser concedido ANTES de a pessoa entrar.
+
+    O DEFEITO QUE ISTO CONSERTA: sem o vínculo, a pessoa pré-cadastrada entrava,
+    não casava com nada, ganhava uma SEGUNDA linha sem papel e era recusada — o
+    pré-cadastro ficava para sempre sem uso, com papel, na lista.
+
+    A MESMA LINHA, e isto é o que o teste prende: o `id` não muda, então o papel
+    concedido e todo o escopo que vier com ele seguem valendo. Linha nova com o
+    mesmo papel não serviria — o rastro de quem concedeu ficaria para trás.
+    """
+    from app.casos_de_uso.provisionar_usuario import provisionar
+
+    sufixo = uuid4().hex[:8]
+    email = f"{sufixo}@aegea.com.br"
+    pre = _pre_cadastrar(sessao, email)
+    id_do_pre_cadastro, papel_do_pre_cadastro = pre.id, pre.papel_id
+
+    atual = provisionar(
+        sessao,
+        entra_object_id=f"oid-sso-{sufixo}",
+        email=email,
+        nome="Diretora Silva",
+    )
+
+    assert atual.id == id_do_pre_cadastro
+    registro = sessao.scalar(select(Usuario).where(Usuario.id == id_do_pre_cadastro))
+    assert registro.entra_object_id == f"oid-sso-{sufixo}"
+    assert registro.papel_id == papel_do_pre_cadastro
+    #: E O ACESSO FOI CARIMBADO: antes do vínculo era nulo, que é o que a tela lê
+    #: para dizer "nunca entrou".
+    assert registro.ultimo_acesso_em is not None
+    #: UMA LINHA SÓ para este e-mail — o defeito era justamente a segunda.
+    assert (
+        sessao.scalar(
+            select(func.count()).select_from(Usuario).where(Usuario.email == email)
+        )
+        == 1
+    )
+
+
+def test_o_pre_cadastro_com_EMAIL_ERRADO_nao_vincula_nada(sessao):
+    """O risco que sobra, e ele fica registrado em teste em vez de em promessa.
+
+    Quem casa o pré-cadastro com a pessoa é o e-mail VERIFICADO do token. E-mail
+    digitado errado no pré-cadastro nunca casa: a pessoa entra, ganha linha nova sem
+    papel e é recusada como antes — e o pré-cadastro continua lá, sem uso.
+
+    NÃO DÁ PARA O BANCO CONFERIR ISSO: quem sabe o e-mail real é o Entra. Quem
+    pega o pré-cadastro órfão é a tela, por `ultimo_acesso_em` nulo. Este teste existe
+    para que ninguém leia o pré-cadastro como garantia de acesso.
+    """
+    from app.casos_de_uso.provisionar_usuario import provisionar
+
+    sufixo = uuid4().hex[:8]
+    pre = _pre_cadastrar(sessao, f"errado-{sufixo}@aegea.com.br")
+
+    provisionar(
+        sessao,
+        entra_object_id=f"oid-sso-{sufixo}",
+        email=f"certo-{sufixo}@aegea.com.br",
+        nome="Pessoa",
+    )
+
+    registro = sessao.scalar(select(Usuario).where(Usuario.id == pre.id))
+    assert registro.entra_object_id is None
+    assert registro.ultimo_acesso_em is None
+
+
+def test_SEM_VINCULO_nao_ha_ultimo_acesso(sessao):
+    """A invariante da `0119`, conferida no banco e não na aplicação.
+
+    "Nunca vinculada e com último acesso carimbado" não quer dizer nada, e é o
+    estado que faria a tela mostrar um pré-cadastro velho como usuário ativo — que é
+    a conta fantasma que a `0096` existe para impedir.
+    """
+    from datetime import UTC, datetime
+
+    from sqlalchemy.exc import IntegrityError
+
+    #: DENTRO DE UM SAVEPOINT: a violação aborta a transação, e sem ele o
+    #: `rollback` da fixture reclama de transação já desassociada — aviso na
+    #: suíte que alguém vai caçar sem motivo.
+    ponto = sessao.begin_nested()
+    sessao.add(
+        Usuario(
+            entra_object_id=None,
+            email=f"{uuid4().hex[:8]}@aegea.com.br",
+            nome="Impossivel",
+            ultimo_acesso_em=datetime.now(UTC),
+        )
+    )
+    with pytest.raises(IntegrityError, match="usuario_sem_vinculo_nao_teve_acesso"):
+        sessao.flush()
+    ponto.rollback()
+
+
+# -- o pré-cadastro: criar a pessoa e o acesso de uma vez ---------------------------
+
+
+def _acesso_do_pre_cadastro(papel: str = "crm_leitura") -> administrar_acessos.Concessao:
+    #: SEM VERSÃO A CONFERIR: a linha nasce na mesma chamada, então não há
+    #: alteração de outra pessoa para sobrescrever.
+    return administrar_acessos.Concessao(papel=papel, versao_vista=None)
+
+
+def test_o_PRE_CADASTRO_cria_pre_cadastro_com_papel_e_rastro(sessao):
+    """O papel concedido antes do primeiro login, pelo mesmo escritor.
+
+    `conceder_acesso` é a única porta para as colunas de autorização, e o pré-cadastro
+    passa por ela — não é um `insert` paralelo com as mesmas colunas. É o que faz
+    o pré-cadastro herdar as conferências e a auditoria da concessão comum.
+    """
+    admin = como(
+        sessao, cria_usuario(sessao, "plataforma_edicao", acesso_irrestrito=True)
+    )
+    email = f"{uuid4().hex[:8]}@aegea.com.br"
+
+    novo = administrar_acessos.pre_cadastrar(
+        sessao,
+        email=email,
+        nome="Diretora",
+        concessao=_acesso_do_pre_cadastro(),
+        solicitante=admin,
+    )
+
+    registro = sessao.scalar(select(Usuario).where(Usuario.id == novo))
+    #: PRÉ-CADASTRO: sem vínculo e sem acesso, com papel.
+    assert registro.entra_object_id is None
+    assert registro.ultimo_acesso_em is None
+    papel = sessao.scalar(select(Papel).where(Papel.id == registro.papel_id))
+    assert papel.codigo == "crm_leitura"
+    assert registro.papel_concedido_por == admin.id
+
+
+def test_o_PRE_CADASTRADO_ENTRA_de_primeira(sessao):
+    """A promessa inteira, ponta a ponta — e é por isto que a mudança existe.
+
+    Antes, o primeiro login de quem foi cadastrado no SSO era sempre uma recusa:
+    a linha nascia sem papel e o callback barrava. Agora o papel já está lá, e o
+    login vincula.
+
+    `sem_autorizacao` É A ASSERÇÃO QUE IMPORTA, e não o nome do papel: é a
+    bandeira que o callback lê para recusar (`_texto_da_recusa`). Afirmar o papel
+    sem ela provaria que a coluna foi escrita, não que a pessoa entra.
+    """
+    from app.casos_de_uso.provisionar_usuario import provisionar
+
+    admin = como(
+        sessao, cria_usuario(sessao, "plataforma_edicao", acesso_irrestrito=True)
+    )
+    sufixo = uuid4().hex[:8]
+    email = f"{sufixo}@aegea.com.br"
+    administrar_acessos.pre_cadastrar(
+        sessao, email=email, nome="Diretora", concessao=_acesso_do_pre_cadastro(), solicitante=admin
+    )
+
+    atual = provisionar(
+        sessao,
+        entra_object_id=f"oid-sso-{sufixo}",
+        email=email,
+        nome="Diretora Silva",
+    )
+
+    assert atual.papel is not None
+    assert not atual.sem_autorizacao
+
+
+def test_o_pre_cadastro_EXIGE_administrar_acessos(sessao):
+    analista = como(sessao, cria_usuario(sessao, "crm_edicao", acesso_irrestrito=True))
+    with pytest.raises(NaoAutorizado):
+        administrar_acessos.pre_cadastrar(
+            sessao,
+            email=f"{uuid4().hex[:8]}@aegea.com.br",
+            nome="Pessoa",
+            concessao=_acesso_do_pre_cadastro(),
+            solicitante=analista,
+        )
+
+
+def test_o_pre_cadastro_RECUSA_quem_JA_TEM_CONTA(sessao):
+    """E a mensagem distingue dos outros dois casos.
+
+    Pré-cadastrar quem já entrou alguma vez não é pedido inocente: ou é engano de
+    e-mail, ou é tentativa de recriar um acesso que a tela já edita. Mandar para
+    a edição é o que resolve.
+    """
+    admin = como(
+        sessao, cria_usuario(sessao, "plataforma_edicao", acesso_irrestrito=True)
+    )
+    existente = cria_usuario(sessao, "crm_leitura")
+
+    with pytest.raises(Conflito, match="já tem conta"):
+        administrar_acessos.pre_cadastrar(
+            sessao,
+            email=existente.email,
+            nome="Outro Nome",
+            concessao=_acesso_do_pre_cadastro(),
+            solicitante=admin,
+        )
+
+
+def test_a_LISTA_distingue_PRE_CADASTRO_de_CONTA(sessao):
+    """Sem esta marca a tela mostra pré-cadastro e pessoa com acesso do mesmo jeito.
+
+    E quem isto denuncia é o pré-cadastro com e-mail ERRADO: ele nunca casa, fica na
+    lista para sempre, e sem a marca ninguém sabe que aquela pessoa não entrou
+    uma única vez. É a mitigação da conta fantasma que a `0096` guardava — a
+    `0119` reabriu o estado, e esta coluna é o que o mantém visível.
+    """
+    admin = como(
+        sessao, cria_usuario(sessao, "plataforma_edicao", acesso_irrestrito=True)
+    )
+    pre_cadastrada = administrar_acessos.pre_cadastrar(
+        sessao,
+        email=f"{uuid4().hex[:8]}@aegea.com.br",
+        nome="Diretora",
+        concessao=_acesso_do_pre_cadastro(),
+        solicitante=admin,
+    )
+    com_conta = cria_usuario(sessao, "crm_leitura")
+
+    por_id = {
+        linha.id: linha
+        for linha in administrar_acessos.listar(sessao, solicitante=admin)
+    }
+
+    assert por_id[pre_cadastrada].aguardando_primeiro_acesso is True
+    assert por_id[com_conta.id].aguardando_primeiro_acesso is False
+
+
+def test_o_pre_cadastro_RECUSA_quem_JA_TEM_PRE_CADASTRO(sessao):
+    """Pré-cadastro em duplicado é engano, e sobrescrever calado perderia o primeiro.
+
+    A mensagem é OUTRA — "já tem pré-cadastro" —, porque a ação que resolve é
+    outra: aqui não há conta para editar, há um pré-cadastro à espera do primeiro
+    login.
+    """
+    admin = como(
+        sessao, cria_usuario(sessao, "plataforma_edicao", acesso_irrestrito=True)
+    )
+    email = f"{uuid4().hex[:8]}@aegea.com.br"
+    administrar_acessos.pre_cadastrar(
+        sessao, email=email, nome="Diretora", concessao=_acesso_do_pre_cadastro(), solicitante=admin
+    )
+
+    with pytest.raises(Conflito, match="já tem pré-cadastro"):
+        administrar_acessos.pre_cadastrar(
+            sessao,
+            email=email,
+            nome="Diretora",
+            concessao=_acesso_do_pre_cadastro(),
+            solicitante=admin,
         )
 
 

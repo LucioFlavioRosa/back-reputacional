@@ -63,22 +63,15 @@ def provisionar(
     agora = datetime.now(UTC)
 
     if registro is None:
-        # O e-mail também é único, e a busca acima foi por `entra_object_id`: se
-        # já existe alguém com este e-mail e OUTRO identificador, o `flush`
-        # abaixo levantaria `UniqueViolation`, e a pessoa veria um 500 opaco.
-        #
-        # NÃO reatribuímos o `entra_object_id` da linha existente: o `oid` é a
-        # identidade estável, e trocá-lo em silêncio entregaria a conta de uma
-        # pessoa a outra que apenas tenha o mesmo e-mail. Acontece de verdade em
-        # desenvolvimento, alternando entre `AUTH_MOCK` e o SSO real.
-        conflito = sessao.scalar(select(Usuario).where(Usuario.email == email))
-        if conflito is not None:
-            raise NaoAutorizado(
-                "Este e-mail já está provisionado com outro identificador do "
-                "provedor. Fale com quem administra acessos.",
-                sobre_o_pedido=True,
-            )
+        # O e-mail também é único, e a busca acima foi por `entra_object_id`: sem
+        # tratar a colisão, o `flush` abaixo levantaria `UniqueViolation` e a
+        # pessoa veria um 500 opaco. As duas respostas possíveis estão em
+        # `_vincular_pre_cadastro`.
+        registro = _vincular_pre_cadastro(
+            sessao, entra_object_id=entra_object_id, email=email
+        )
 
+    if registro is None:
         registro = Usuario(
             entra_object_id=entra_object_id,
             email=email,
@@ -130,7 +123,14 @@ def carregar(sessao: Session, usuario_id) -> UsuarioAtual | None:
         return None
 
     agora = datetime.now(UTC)
-    if _passou_da_folga(registro.ultimo_acesso_em, agora):
+    #: PRÉ-CADASTRO NÃO CARIMBA ACESSO (`0119`), e o `check` do banco pegou isto:
+    #: quem nunca foi vinculada nunca entrou, e carimbar aqui a mostraria na tela
+    #: de acessos como usuária ativa — apagando o "nunca entrou" que é o único
+    #: sinal de um convite com e-mail errado. Mesma regra da conta desativada em
+    #: `provisionar`: carregar não é entrar.
+    if registro.entra_object_id is not None and _passou_da_folga(
+        registro.ultimo_acesso_em, agora
+    ):
         registro.ultimo_acesso_em = agora
 
     return _montar(sessao, registro)
@@ -195,6 +195,40 @@ def _escopo_de(sessao: Session, registro: Usuario) -> Escopo:
         frentes=frozenset(v for d, v in linhas if d == "frente"),
         unidades=frozenset(v for d, v in linhas if d == "unidade_negocio"),
     )
+
+
+def _vincular_pre_cadastro(
+    sessao: Session, *, entra_object_id: str, email: str
+) -> Usuario | None:
+    """O pré-cadastro deste e-mail, já vinculado a este `oid` — ou nada.
+
+    DUAS RESPOSTAS MUITO DIFERENTES para "o e-mail já existe", e quem decide é o
+    `oid` da linha achada:
+
+    * SEM `oid` é PRÉ-CADASTRO (`0119`): alguém concedeu o papel antes de a
+      pessoa entrar, e este login é o vínculo. Devolve a MESMA linha — linha
+      nova perderia o papel e o rastro de quem o concedeu.
+    * COM `oid` é outra identidade para o mesmo e-mail, e aí recusa. Trocá-lo em
+      silêncio entregaria a conta de uma pessoa a outra que apenas tenha o mesmo
+      e-mail; acontece de verdade em desenvolvimento, alternando entre
+      `AUTH_MOCK` e o SSO real. A resolução é humana.
+
+    QUEM CASA É O E-MAIL VERIFICADO DO TOKEN, e nunca algo digitado no login: é
+    o que faz o vínculo valer tanto quanto o diretório. Digitado errado no
+    convite, não casa — a pessoa ganha linha nova sem papel e é recusada como
+    antes, e o convite fica na tela como "nunca entrou".
+    """
+    achado = sessao.scalar(select(Usuario).where(Usuario.email == email))
+    if achado is None:
+        return None
+    if achado.entra_object_id is not None:
+        raise NaoAutorizado(
+            "Este e-mail já está provisionado com outro identificador do "
+            "provedor. Fale com quem administra acessos.",
+            sobre_o_pedido=True,
+        )
+    achado.entra_object_id = entra_object_id
+    return achado
 
 
 def _passou_da_folga(ultimo: datetime | None, agora: datetime) -> bool:

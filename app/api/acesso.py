@@ -626,6 +626,10 @@ class AcessoSaida(BaseModel):
     unidades: list[str]
     concedido_por: str | None
     concedido_em: str | None
+    #: PRÉ-CADASTRADA E AINDA SEM ENTRAR (`0119`): tem papel, não tem vínculo com
+    #: o Entra. A tela precisa dizer isso — é o que denuncia o pré-cadastro com e-mail
+    #: errado, que nunca casa e ficaria na lista parecendo gente com acesso.
+    aguardando_primeiro_acesso: bool
 
 
 class ConcessaoEntrada(BaseModel):
@@ -712,6 +716,7 @@ def listar_acessos(sessao: Sessao, usuario: UsuarioLogado) -> list[AcessoSaida]:
             unidades=list(linha.unidades),
             concedido_por=linha.concedido_por,
             concedido_em=linha.concedido_em,
+            aguardando_primeiro_acesso=linha.aguardando_primeiro_acesso,
         )
         for linha in administrar_acessos.listar(sessao, solicitante=usuario)
     ]
@@ -752,6 +757,70 @@ def listar_papeis(sessao: Sessao, usuario: UsuarioLogado) -> list[PapelDisponive
     ]
 
 
+def _concessao_de(entrada: ConcessaoEntrada) -> administrar_acessos.Concessao:
+    """O corpo HTTP virado concessão. Uma conversão só, para as duas rotas.
+
+    A edição e o pré-cadastro mandam os MESMOS campos — o pré-cadastro só acrescenta quem
+    é a pessoa. Duas cópias desta tradução divergiriam no dia em que a concessão
+    ganhasse um campo, e o que faltasse na cópia esquecida sairia como padrão
+    sem ninguém pedir.
+    """
+    return administrar_acessos.Concessao(
+        papel=entrada.papel,
+        acesso_irrestrito=entrada.acesso_irrestrito,
+        sensivel=entrada.sensivel,
+        externo=entrada.externo,
+        expira_em=entrada.expira_em,
+        frentes=tuple(entrada.frentes),
+        unidades=tuple(entrada.unidades),
+        versao_vista=entrada.versao_vista,
+    )
+
+
+class PreCadastroEntrada(ConcessaoEntrada):
+    """O pré-cadastro: quem é a pessoa, e o que ela vai alcançar.
+
+    HERDA A CONCESSÃO para não haver dois contratos para a mesma decisão.
+
+    `versao_vista` VOLTA A TER PADRÃO, e só aqui: na edição ele é obrigatório
+    porque qualquer valor AFIRMA algo sobre o estado do banco. Num pré-cadastro não
+    há estado anterior — a linha nasce nesta requisição —, então exigir o campo
+    pediria uma afirmação sobre nada.
+    """
+
+    email: str
+    nome: str
+    versao_vista: datetime | None = None
+
+
+class PreCadastroSaida(BaseModel):
+    #: A tela precisa dele para abrir a pessoa recém-criada na lista.
+    id: UUID
+
+
+@rotas.post("/acessos", status_code=status.HTTP_201_CREATED)
+def pre_cadastrar(
+    sessao: Sessao, usuario: UsuarioLogado, entrada: PreCadastroEntrada
+) -> PreCadastroSaida:
+    """Cadastra a pessoa e o acesso dela ANTES do primeiro login.
+
+    O defeito que conserta: a pessoa só passava a existir depois de ser
+    RECUSADA. Ver `administrar_acessos.pre_cadastrar`.
+
+    NÃO SUBSTITUI O SSO. Sem o grupo do Entra não há token e a linha fica
+    parada: o pré-cadastro adianta o papel, nunca a autenticação.
+    """
+    return PreCadastroSaida(
+        id=administrar_acessos.pre_cadastrar(
+            sessao,
+            email=entrada.email,
+            nome=entrada.nome,
+            concessao=_concessao_de(entrada),
+            solicitante=usuario,
+        )
+    )
+
+
 @rotas.put("/acessos/{id}", status_code=status.HTTP_204_NO_CONTENT)
 def conceder(
     sessao: Sessao, usuario: UsuarioLogado, id: UUID, entrada: ConcessaoEntrada
@@ -765,16 +834,7 @@ def conceder(
     administrar_acessos.conceder(
         sessao,
         alvo=id,
-        concessao=administrar_acessos.Concessao(
-            papel=entrada.papel,
-            acesso_irrestrito=entrada.acesso_irrestrito,
-            sensivel=entrada.sensivel,
-            externo=entrada.externo,
-            expira_em=entrada.expira_em,
-            frentes=tuple(entrada.frentes),
-            unidades=tuple(entrada.unidades),
-            versao_vista=entrada.versao_vista,
-        ),
+        concessao=_concessao_de(entrada),
         solicitante=usuario,
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

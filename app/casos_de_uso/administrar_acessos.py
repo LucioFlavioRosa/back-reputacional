@@ -38,7 +38,7 @@ from app.banco.tabelas_acesso import (
     Usuario,
     UsuarioEscopo,
 )
-from app.dominio.erros import NaoAutorizado, RegraViolada
+from app.dominio.erros import Conflito, NaoAutorizado, RegraViolada
 from app.dominio.identidade import UsuarioAtual
 from app.seguranca.cache_de_autorizacao import esquecer_em_todos
 
@@ -95,6 +95,11 @@ class LinhaDeAcesso:
     unidades: tuple[str, ...]
     concedido_por: str | None
     concedido_em: str | None
+    #: PRÉ-CADASTRADA E AINDA SEM ENTRAR (`0119`): tem papel, não tem vínculo com
+    #: o Entra. Precisa aparecer na tela, e não é enfeite — é o que denuncia o
+    #: pré-cadastro com e-mail errado, que nunca vai casar e ficaria para sempre na
+    #: lista parecendo uma pessoa com acesso.
+    aguardando_primeiro_acesso: bool
 
 
 def exigir_administrador(usuario: UsuarioAtual) -> None:
@@ -141,6 +146,7 @@ def listar(sessao: Session, *, solicitante: UsuarioAtual) -> list[LinhaDeAcesso]
                 if pessoa.papel_concedido_em
                 else None
             ),
+            aguardando_primeiro_acesso=pessoa.entra_object_id is None,
         )
         for pessoa in pessoas
     ]
@@ -206,6 +212,61 @@ def conceder(
     # revogação pela TELA valer no ato. Revogação por SQL direto no banco não
     # passa por aqui e segue limitada ao TTL.
     esquecer_em_todos(alvo)
+
+
+def pre_cadastrar(
+    sessao: Session,
+    *,
+    email: str,
+    nome: str,
+    concessao: Concessao,
+    solicitante: UsuarioAtual,
+) -> UUID:
+    """Cria o PRÉ-CADASTRO e concede o acesso, antes do primeiro login.
+
+    POR QUE EXISTE: sem isto a pessoa só passava a existir depois de ser
+    RECUSADA — `provisionar` criava a linha sem papel e o callback barrava. Numa
+    estreia com diretores, isso é um lote de "seu acesso ainda não foi liberado"
+    antes de alguém poder agir.
+
+    A CONCESSÃO É A MESMA, e não é detalhe: delega a `conceder`, única porta para
+    as colunas de autorização (`conceder_acesso`, 0006). O pré-cadastro herda as
+    conferências do banco, a auditoria e a invalidação de cache — um `insert`
+    paralelo com as mesmas colunas seria uma segunda regra livre para divergir.
+
+    NÃO CONCEDE ENTRADA, só papel. Sem o grupo do SSO não há token, e a linha
+    fica parada: a `0096` segue sendo o único caminho de entrada.
+
+    NADA É ENVIADO, e isto está escrito porque o nome "convite" — que esta função
+    teve por um tempo — faz esperar o contrário. Não há e-mail, link nem
+    notificação: grava-se nome, e-mail e papel, e quem avisa a pessoa é quem a
+    cadastra no Entra ID. Se um dia houver aviso automático, ele é mudança nova e
+    tem de aparecer aqui.
+    """
+    exigir_administrador(solicitante)
+
+    #: SÓ O ÓBVIO. Conferir formato não pega o erro que importa — e-mail válido e
+    #: ERRADO —, que é o que deixa o pré-cadastro sem casar para sempre. Ver a `0119`.
+    if "@" not in email:
+        raise RegraViolada("E-mail inválido.")
+
+    achado = sessao.scalar(select(Usuario).where(Usuario.email == email))
+    if achado is not None:
+        #: DUAS MENSAGENS, porque as ações que resolvem são diferentes: conta
+        #: existente se edita na lista; pré-cadastro pendente só espera o primeiro
+        #: login.
+        raise Conflito(
+            "Esta pessoa já tem conta no painel. Edite o acesso dela na lista."
+            if achado.entra_object_id is not None
+            else "Esta pessoa já tem pré-cadastro e ainda não entrou."
+        )
+
+    pessoa = Usuario(entra_object_id=None, email=email, nome=nome)
+    sessao.add(pessoa)
+    sessao.flush()
+
+    conceder(sessao, alvo=pessoa.id, concessao=concessao, solicitante=solicitante)
+    return pessoa.id
 
 
 def definir_situacao(
