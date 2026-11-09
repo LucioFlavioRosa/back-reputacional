@@ -28,7 +28,7 @@ from datetime import date, datetime
 from uuid import UUID
 
 from sqlalchemy import select, text
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
 
 from app.banco.tabelas_acesso import (
@@ -263,7 +263,25 @@ def pre_cadastrar(
 
     pessoa = Usuario(entra_object_id=None, email=email, nome=nome)
     sessao.add(pessoa)
-    sessao.flush()
+    #: A CONFERÊNCIA ACIMA NÃO BASTA, e o `except` não é zelo — achado de
+    #: revisão. Entre o `select` e o `insert` não há trava: dois administradores
+    #: pré-cadastrando o mesmo e-mail passavam os dois pela conferência, e o
+    #: segundo levava `UniqueViolation` crua, que chega à tela como 500.
+    #:
+    #: O `select` FICA, e não é redundante: ele é quem produz a mensagem que
+    #: distingue "já tem conta" de "já tem pré-cadastro", e essa distinção o erro
+    #: do banco não carrega. Aqui só o caso raro é traduzido.
+    #:
+    #: SAVEPOINT porque a violação aborta a transação: sem ele, a requisição
+    #: inteira já estaria perdida quando o `Conflito` chegasse ao tratador.
+    try:
+        with sessao.begin_nested():
+            sessao.flush()
+    except IntegrityError as erro:
+        raise Conflito(
+            "Esta pessoa acabou de ser cadastrada por outra pessoa. "
+            "Recarregue a lista."
+        ) from erro
 
     conceder(sessao, alvo=pessoa.id, concessao=concessao, solicitante=solicitante)
     return pessoa.id

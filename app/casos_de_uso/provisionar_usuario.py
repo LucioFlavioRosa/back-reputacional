@@ -1,4 +1,4 @@
-"""Provisionamento JIT: o usuário nasce no primeiro login.
+"""Provisionamento no login: a identidade nasce ou se liga aqui.
 
 O mesmo caminho serve para o SSO real e para o provedor mock de desenvolvimento
 — muda apenas de onde vêm as claims. Nunca há cadastro manual de senha.
@@ -7,16 +7,21 @@ O provisionamento cria a IDENTIDADE e não decide AUTORIZAÇÃO. `papel_id` e
 `usuario_escopo` são concedidos por alguém com `administra_acessos`, pela tela
 de administração de acessos; o login apenas os lê.
 
-Quem chega pela primeira vez nasce sem papel nenhum — autenticado e autorizado a
-nada. É o comportamento correto para convidado B2B: adivinhar permissão para
-quem acabou de chegar de fora é o erro que se quer evitar.
+SÃO DOIS CAMINHOS DESDE A `0119`, e o docstring dizia só o primeiro:
+
+* QUEM CHEGA SEM PRÉ-CADASTRO nasce aqui, sem papel nenhum — autenticado e
+  autorizado a nada. É o comportamento correto para convidado B2B: adivinhar
+  permissão para quem acabou de chegar de fora é o erro que se quer evitar.
+* QUEM FOI PRÉ-CADASTRADO já existe, com papel, e este login só LIGA o `oid`
+  àquela linha. Era o beco sem saída que a `0119` fecha: antes dela, a pessoa
+  tinha de ser recusada uma vez para passar a existir.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.banco.tabelas_acesso import (
@@ -230,17 +235,38 @@ def _vincular_pre_cadastro(
     papel e é recusada como antes, e o pré-cadastro fica na tela como "nunca
     entrou".
     """
+    #: PELA FUNÇÃO, E NÃO POR ATRIBUIÇÃO — achado de revisão, e era defeito que
+    #: só apareceria em produção: a `0009` não dá `update` em `entra_object_id` à
+    #: aplicação, então escrevê-lo aqui daria `permission denied for column`
+    #: no primeiro login de todo pré-cadastrado. O banco de teste roda como
+    #: superusuário e não pegaria.
+    #:
+    #: E A FUNÇÃO VINCULA SÓ O QUE AINDA NÃO TEM `oid`, num `update` só: dois
+    #: logins concorrentes contra o mesmo pré-cadastro não se sobrescrevem. Ver a
+    #: `0119`.
+    vinculado = sessao.scalar(
+        text("select vincular_pre_cadastro(cast(:email as citext), :oid)"),
+        {"email": email, "oid": entra_object_id},
+    )
+    if vinculado is not None:
+        registro = sessao.get(Usuario, vinculado)
+        #: A FUNÇÃO ESCREVEU POR SQL, por fora do ORM. Sem expirar, a sessão
+        #: devolveria a linha com `entra_object_id` ainda nulo — e o carimbo de
+        #: último acesso logo adiante bateria no `check` da `0119`.
+        sessao.expire(registro)
+        return registro
+
+    #: NULO NÃO DIZ QUAL DOS DOIS CASOS É: não havia linha com este e-mail, ou
+    #: havia uma JÁ vinculada. A consulta separa, e é aqui que a recusa antiga
+    #: continua intacta.
     achado = sessao.scalar(select(Usuario).where(Usuario.email == email))
-    if achado is None:
-        return None
-    if achado.entra_object_id is not None:
+    if achado is not None:
         raise NaoAutorizado(
             "Este e-mail já está provisionado com outro identificador do "
             "provedor. Fale com quem administra acessos.",
             sobre_o_pedido=True,
         )
-    achado.entra_object_id = entra_object_id
-    return achado
+    return None
 
 
 def _passou_da_folga(ultimo: datetime | None, agora: datetime) -> bool:

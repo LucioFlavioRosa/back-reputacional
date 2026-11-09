@@ -600,9 +600,15 @@ def _uuid_falso():
 
 # -- administração de acessos --------------------------------------------------
 #
-# A escrita não acontece na aplicação: acontece na função `conceder_acesso` do
-# banco (migration 0006). `painel_app` não tem `grant` nas colunas de
-# autorização — só para executar a função, que valida e deixa rastro.
+# A ESCRITA DE AUTORIZAÇÃO não acontece na aplicação: acontece na função
+# `conceder_acesso` do banco (migration 0006). `painel_app` não tem `grant` nas
+# colunas de autorização — só para executar a função, que valida e deixa rastro.
+#
+# "DE AUTORIZAÇÃO" ESTREITOU A FRASE, e a correção é da 0119: o pré-cadastro
+# INSERE a linha de `usuario` pela aplicação, com `nome` e `email`, que a 0009
+# libera. O que ele não escreve é papel nem escopo — isso continua indo pela
+# função —, e `entra_object_id` tem função própria (`vincular_pre_cadastro`),
+# pela mesma razão.
 
 
 class AcessoSaida(BaseModel):

@@ -999,6 +999,12 @@ def test_email_ja_provisionado_com_outro_oid_recusa_com_mensagem(sessao):
             nome="Pessoa",
         )
 
+    #: E O `oid` ORIGINAL FICA, que é o ponto da recusa — achado de revisão. Sem
+    #: esta linha o teste passaria mesmo que a identidade tivesse sido trocada
+    #: antes de a exceção subir, que é precisamente o dano que ele impede.
+    intacto = sessao.scalar(select(Usuario).where(Usuario.email == email))
+    assert intacto.entra_object_id == f"oid-sso-{sufixo}"
+
 
 # -- pré-cadastro: o papel antes do primeiro login -----------------------------
 
@@ -1074,12 +1080,25 @@ def test_o_pre_cadastro_com_EMAIL_ERRADO_nao_vincula_nada(sessao):
     sufixo = uuid4().hex[:8]
     pre = _pre_cadastrar(sessao, f"errado-{sufixo}@aegea.com.br")
 
-    provisionar(
+    atual = provisionar(
         sessao,
         entra_object_id=f"oid-sso-{sufixo}",
         email=f"certo-{sufixo}@aegea.com.br",
         nome="Pessoa",
     )
+
+    #: AS DUAS METADES, e a segunda era o que faltava — achado de revisão: antes
+    #: este teste só conferia que o pré-cadastro não mudou, o que é meio
+    #: comportamento. A outra metade é o que acontece com QUEM ENTROU: linha
+    #: nova, sem papel, recusada.
+    #:
+    #: E ELE NÃO DETECTA A REMOÇÃO DO VÍNCULO, nem tenta: com e-mail que não
+    #: casa, o caminho do vínculo não é alcançado. Quem pega isso é
+    #: `test_o_PRE_CADASTRO_e_VINCULADO_no_primeiro_login`. Escrevi o contrário
+    #: aqui numa primeira versão deste comentário.
+    assert atual.id != pre.id
+    assert atual.papel is None
+    assert atual.sem_autorizacao
 
     registro = sessao.scalar(select(Usuario).where(Usuario.id == pre.id))
     assert registro.entra_object_id is None

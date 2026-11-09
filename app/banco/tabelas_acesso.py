@@ -85,8 +85,13 @@ class Usuario(Tabela):
     #: diretório, e o ÚNICO caminho de entrada (`0096`).
     #:
     #: NULO É PRÉ-CADASTRO (`0119`): o papel já foi concedido e o vínculo
-    #: acontece no primeiro login cujo e-mail verificado casar. Enquanto nulo, a
-    #: pessoa não entra — e `ultimo_acesso_em` é nulo junto, por `check`.
+    #: acontece no primeiro login cujo e-mail o token do tenant afirmar.
+    #: Enquanto nulo, a pessoa não entra — e `ultimo_acesso_em` é nulo junto,
+    #: por `check`.
+    #:
+    #: E QUEM ESCREVE ESTA COLUNA É O BANCO, não a aplicação: a `0009` não dá
+    #: `update` nela a `painel_app`, e o vínculo passa pela função
+    #: `vincular_pre_cadastro`.
     entra_object_id: Mapped[str | None] = mapped_column(
         Text, unique=True, nullable=True
     )
