@@ -883,8 +883,9 @@ def test_migration_semeou_os_papeis(sessao):
     """Um par por portal: quem lê e quem edita.
 
     Eram oito até 0088, que acrescentou o Executivo que edita sem administrar
-    acessos. Ver `test_portais.test_os_papeis_de_partida`, que confere a mesma
-    lista na ordem de `id` e explica cada um.
+    acessos, e nove até 0120, que acrescentou o Fornecedor de dados. Ver
+    `test_portais.test_os_papeis_de_partida`, que confere a mesma lista na
+    ordem de `id` e explica cada um.
     """
     codigos = set(sessao.scalars(text("select codigo from papel")).all())
     assert codigos == {
@@ -897,6 +898,7 @@ def test_migration_semeou_os_papeis(sessao):
         "score_leitura",
         "score_edicao",
         "plataforma_edicao_sem_acessos",
+        "fornecedor_de_dados",
     }
 
 

@@ -334,6 +334,24 @@ def exigir_administracao_de_cadastros(usuario: UsuarioLogado) -> UsuarioAtual:
     return usuario
 
 
+def exigir_upload_de_fontes(usuario: UsuarioLogado) -> UsuarioAtual:
+    """Quem SOBE PLANILHA de fonte do Score (Bites, Clipei, Approach...).
+
+    Mais largo que `exigir_administracao_de_cadastros` de propósito: passa
+    tanto quem administra cadastros (continua podendo subir) quanto a conta do
+    FORNECEDOR DE DADOS, que só tem `sobe_planilha_do_score` — ela não abre o
+    Cadastro compartilhado nem a calibração do Score, que seguem exigindo a
+    guarda acima.
+    """
+    papel = usuario.papel
+    if papel is None or not (papel.administra_dicionarios or papel.sobe_planilha_do_score):
+        raise NaoAutorizado(
+            f"Perfil {_nome_do_papel(usuario)} nao sobe planilha de fonte. "
+            "Fale com quem administra a plataforma."
+        )
+    return usuario
+
+
 def exigir_portal_crm(usuario: UsuarioLogado) -> UsuarioAtual:
     """As rotas do CRM dos Stakeholders exigem o portal, e não só o papel.
 
@@ -453,3 +471,4 @@ UsuarioQueVeDiretorio = Annotated[UsuarioAtual, Depends(exigir_diretorio)]
 UsuarioQueAdministraCadastros = Annotated[
     UsuarioAtual, Depends(exigir_administracao_de_cadastros)
 ]
+UsuarioQueSobePlanilhaDeFonte = Annotated[UsuarioAtual, Depends(exigir_upload_de_fontes)]

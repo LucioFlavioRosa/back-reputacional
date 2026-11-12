@@ -110,10 +110,11 @@ def test_os_papeis_de_partida(sessao):
     ele ESCREVIA. Um papel cujo nome não revela o que concede é um papel que
     alguém atribui por engano.
 
-    ERA "OS OITO" até 0088, que acrescentou o nono. A lista é escrita por
-    extenso, e na ordem de `id`, porque é ela que responde "o que existe para
-    conceder?" — e porque um papel que aparece aqui sem ninguém ter decidido
-    acrescentá-lo é um papel que alguém semeou de passagem.
+    ERA "OS OITO" até 0088, que acrescentou o nono, e "OS NOVE" até 0120, que
+    acrescentou o décimo. A lista é escrita por extenso, e na ordem de `id`,
+    porque é ela que responde "o que existe para conceder?" — e porque um
+    papel que aparece aqui sem ninguém ter decidido acrescentá-lo é um papel
+    que alguém semeou de passagem.
     """
     papeis = sessao.scalars(select(PapelRegistro).order_by(PapelRegistro.id)).all()
     assert [p.codigo for p in papeis] == [
@@ -130,6 +131,10 @@ def test_os_papeis_de_partida(sessao):
         #: papel de administrador, e tomar-lhe o nome significaria tirar
         #: `administra_acessos` de quem o tem hoje em produção.
         "plataforma_edicao_sem_acessos",
+        # -- 0120: o Fornecedor de dados só sobe planilha ----------------------
+        #: Sem portal nenhum — `sobe_planilha_do_score` é a única bandeira, e
+        #: ela não concede `crm`/`score`/`inteligencia_de_mercado`.
+        "fornecedor_de_dados",
     ]
 
 

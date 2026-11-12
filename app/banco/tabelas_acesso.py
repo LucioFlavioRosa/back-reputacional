@@ -45,6 +45,10 @@ class Papel(Tabela):
     ve_diretorio: Mapped[bool] = mapped_column(Boolean, default=False)
     pode_exportar: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    #: Sobe planilha de fonte do Score, sem abrir portal nenhum — ver o
+    #: comentário em `Papel`, no domínio.
+    sobe_planilha_do_score: Mapped[bool] = mapped_column(Boolean, default=False)
+
     #: ONDE a pessoa entra. Ver o comentário em `Papel`, no domínio.
     acessa_crm: Mapped[bool] = mapped_column(Boolean, default=False)
     acessa_inteligencia_de_mercado: Mapped[bool] = mapped_column(Boolean, default=False)

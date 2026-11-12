@@ -418,6 +418,9 @@ class PapelSaida(BaseModel):
     ve_campos_sensiveis: bool
     ve_diretorio: bool
     pode_exportar: bool
+    #: Sobe planilha de fonte do Score, sem portal — a conta do Fornecedor de
+    #: dados. Ver migration 0120.
+    sobe_planilha_do_score: bool
 
     #: Quais portais este papel abre. A capa usa para decidir o que oferecer.
     #:
@@ -698,6 +701,9 @@ class PapelDisponivel(BaseModel):
     pode_editar_proprio: bool
     pode_editar_tudo: bool
     pode_exportar: bool
+    #: Sobe planilha de fonte do Score, sem portal — a conta do Fornecedor de
+    #: dados. Ver migration 0120.
+    sobe_planilha_do_score: bool
     #: ONDE ela entra — é daqui que sai o nível.
     acessa_crm: bool
     acessa_inteligencia_de_mercado: bool
@@ -755,6 +761,7 @@ def listar_papeis(sessao: Sessao, usuario: UsuarioLogado) -> list[PapelDisponive
             pode_editar_proprio=p.pode_editar_proprio,
             pode_editar_tudo=p.pode_editar_tudo,
             pode_exportar=p.pode_exportar,
+            sobe_planilha_do_score=p.sobe_planilha_do_score,
             acessa_crm=p.acessa_crm,
             acessa_inteligencia_de_mercado=p.acessa_inteligencia_de_mercado,
             acessa_score=p.acessa_score,
