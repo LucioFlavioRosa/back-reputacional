@@ -165,6 +165,7 @@ def criar_app() -> FastAPI:
     app.include_router(referencias.rotas)
     app.include_router(alegacoes.rotas)
     app.include_router(score.rotas)
+    app.include_router(score.rotas_de_fontes)
     app.include_router(mercado.rotas)
     app.include_router(riscos.rotas)
     app.include_router(lentes.rotas)

@@ -38,6 +38,7 @@ from sqlalchemy import delete, func, select
 from app.api.dependencias import (
     UsuarioLogado,
     UsuarioQueAdministraCadastros,
+    UsuarioQueSobePlanilhaDeFonte,
     exigir_portal_score,
 )
 from app.banco import repositorio_score
@@ -86,6 +87,16 @@ rotas = APIRouter(
     tags=["score"],
     dependencies=[Depends(exigir_portal_score)],
 )
+
+#: AS ROTAS DE FONTE (listar, conferir, subir planilha) moram num router
+#: SEPARADO, sem `exigir_portal_score` na entrada do prefixo — a conta do
+#: FORNECEDOR DE DADOS (`sobe_planilha_do_score`) sobe a planilha da Bites, da
+#: Clipei ou da Approach sem abrir o portal Score inteiro (Lentes, KPIs,
+#: calibração). Cada rota aqui exige a permissão certa por conta própria
+#: (`UsuarioLogado` em `listar_fontes`, `UsuarioQueSobePlanilhaDeFonte` nas de
+#: subida) — ver o comentário de `exigir_upload_de_fontes`, em
+#: `app/api/dependencias.py`.
+rotas_de_fontes = APIRouter(prefix="/api/score", tags=["score"])
 
 Sessao = SessaoDoPedido
 
@@ -644,7 +655,7 @@ def _arquivo_do_mapeamento(bruto: dict | None) -> str | None:
     return valor if isinstance(valor, str) and valor else None
 
 
-@rotas.get("/fontes")
+@rotas_de_fontes.get("/fontes")
 def listar_fontes(
     sessao: Sessao,
     usuario: UsuarioLogado,
@@ -1674,10 +1685,10 @@ def _definir_a_lista(
     )
 
 
-@rotas.post("/fontes/{codigo}/conferencia")
+@rotas_de_fontes.post("/fontes/{codigo}/conferencia")
 def conferir_planilha(
     sessao: Sessao,
-    usuario: UsuarioQueAdministraCadastros,
+    usuario: UsuarioQueSobePlanilhaDeFonte,
     codigo: str,
     arquivo: Annotated[UploadFile, File()],
     tarefas: BackgroundTasks,
@@ -1798,10 +1809,10 @@ class SubidaEmPartesSaida(BaseModel):
     tamanho_da_parte: int
 
 
-@rotas.post("/fontes/{codigo}/planilha/upload")
+@rotas_de_fontes.post("/fontes/{codigo}/planilha/upload")
 def comecar_subida_em_partes(
     sessao: Sessao,
-    usuario: UsuarioQueAdministraCadastros,
+    usuario: UsuarioQueSobePlanilhaDeFonte,
     codigo: str,
     tarefas: BackgroundTasks,
     tamanho: Annotated[int, Form()],
@@ -1861,13 +1872,13 @@ def comecar_subida_em_partes(
     )
 
 
-@rotas.put(
+@rotas_de_fontes.put(
     "/fontes/{codigo}/planilha/{planilha_id}/parte/{indice}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
 def subir_parte_da_planilha(
     sessao: Sessao,
-    usuario: UsuarioQueAdministraCadastros,
+    usuario: UsuarioQueSobePlanilhaDeFonte,
     codigo: str,
     planilha_id: UUID,
     indice: int,
@@ -1901,10 +1912,10 @@ def subir_parte_da_planilha(
     )
 
 
-@rotas.post("/fontes/{codigo}/planilha/{planilha_id}/conferencia")
+@rotas_de_fontes.post("/fontes/{codigo}/planilha/{planilha_id}/conferencia")
 def conferir_planilha_em_partes(
     sessao: Sessao,
-    usuario: UsuarioQueAdministraCadastros,
+    usuario: UsuarioQueSobePlanilhaDeFonte,
     codigo: str,
     planilha_id: UUID,
     tarefas: BackgroundTasks,
@@ -1960,10 +1971,10 @@ def conferir_planilha_em_partes(
     )
 
 
-@rotas.post("/fontes/{codigo}/planilha", status_code=status.HTTP_201_CREATED)
+@rotas_de_fontes.post("/fontes/{codigo}/planilha", status_code=status.HTTP_201_CREATED)
 def importar_planilha(
     sessao: Sessao,
-    usuario: UsuarioQueAdministraCadastros,
+    usuario: UsuarioQueSobePlanilhaDeFonte,
     codigo: str,
     tarefas: BackgroundTasks,
     arquivo: Annotated[UploadFile | None, File()] = None,

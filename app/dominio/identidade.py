@@ -77,6 +77,9 @@ class Perfil(StrEnum):
     INTELIGENCIA_DE_MERCADO_EDICAO = "inteligencia_de_mercado_edicao"
     SCORE_LEITURA = "score_leitura"
     SCORE_EDICAO = "score_edicao"
+    #: Fora dos oito de partida (migration 0120) — acrescentado para o
+    #: provedor mock conseguir testar o papel localmente via `AUTH_MOCK_PERFIL`.
+    FORNECEDOR_DE_DADOS = "fornecedor_de_dados"
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +98,15 @@ class Papel:
     ve_campos_sensiveis: bool = False
     ve_diretorio: bool = False
     pode_exportar: bool = False
+
+    #: SOBE PLANILHA DE FONTE DO SCORE (Bites, Clipei, Approach...), e só isso —
+    #: não abre portal nenhum. Criada para a conta do FORNECEDOR DE DADOS: uma
+    #: empresa externa que só deve alcançar a tela de Importação do Score, nunca
+    #: o portal inteiro (que também mostra Lentes, KPIs e o cadastro de
+    #: stakeholders). Deliberadamente separada de `administra_dicionarios`: essa
+    #: também abre o Cadastro compartilhado e a calibração do Score, permissão
+    #: larga demais para uma conta de fora.
+    sobe_planilha_do_score: bool = False
 
     #: ONDE a pessoa entra — dimensão separada do que ela faz lá dentro.
     #:

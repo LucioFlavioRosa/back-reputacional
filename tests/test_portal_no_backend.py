@@ -434,6 +434,22 @@ def _csrf(cliente) -> str:
 PREFIXOS_DO_SCORE = ("/api/score",)
 
 
+#: AS ROTAS DE FONTE (listar, conferir, subir planilha) moram em
+#: `score.rotas_de_fontes`, não em `score.rotas` — de propósito, desde
+#: 12/11/2026: a conta do FORNECEDOR DE DADOS sobe a planilha da fonte dela
+#: sem abrir o portal Score inteiro (Lentes, KPIs, calibração). A âncora
+#: abaixo as exclui da exigência do portal; a âncora seguinte prova que elas
+#: não ficam sem guarda nenhuma, só trocam qual.
+CAMINHOS_DAS_ROTAS_DE_FONTE = {
+    "/api/score/fontes",
+    "/api/score/fontes/{codigo}/conferencia",
+    "/api/score/fontes/{codigo}/planilha/upload",
+    "/api/score/fontes/{codigo}/planilha/{planilha_id}/parte/{indice}",
+    "/api/score/fontes/{codigo}/planilha/{planilha_id}/conferencia",
+    "/api/score/fontes/{codigo}/planilha",
+}
+
+
 def test_toda_rota_sob_prefixo_do_score_exige_o_portal():
     """A mesma âncora do CRM, para o módulo mais novo — que é onde ela faltava.
 
@@ -442,6 +458,10 @@ def test_toda_rota_sob_prefixo_do_score_exige_o_portal():
     área, o dossiê servindo o diretório a quem não o alcança — o tipo de falha
     que uma dependência esquecida produz e que nenhum teste de contrato pega,
     porque o payload continua perfeito.
+
+    AS ROTAS DE FONTE SÃO A EXCEÇÃO DELIBERADA — ver `CAMINHOS_DAS_ROTAS_DE_FONTE`
+    acima e o teste logo abaixo, que prova que elas exigem outra guarda, não
+    nenhuma.
     """
     from fastapi.routing import APIRoute
 
@@ -453,12 +473,41 @@ def test_toda_rota_sob_prefixo_do_score_exige_o_portal():
             continue
         if not rota.path.startswith(PREFIXOS_DO_SCORE):
             continue
+        if rota.path in CAMINHOS_DAS_ROTAS_DE_FONTE:
+            continue
         chamadas = {d.call for d in rota.dependant.dependencies}
         if exigir_portal_score not in chamadas:
             desprotegidas.append(f"{sorted(rota.methods)} {rota.path}")
 
     assert not desprotegidas, (
         "Rotas sob prefixo do Score que não exigem o portal: " + ", ".join(desprotegidas)
+    )
+
+
+def test_toda_rota_de_subida_de_fonte_exige_a_guarda_de_upload():
+    """O contrapeso da exceção acima: as rotas de fonte não ficam sem guarda
+    nenhuma, só trocam QUAL guarda.
+
+    `listar_fontes` fica de fora de propósito: é metadado (nome e cobertura da
+    fonte), sem conteúdo sensível, e a tela de upload precisa dele antes mesmo
+    de a pessoa escolher a fonte.
+    """
+    from fastapi.routing import APIRoute
+
+    from app.api.dependencias import exigir_upload_de_fontes
+
+    rotas_de_subida = CAMINHOS_DAS_ROTAS_DE_FONTE - {"/api/score/fontes"}
+    desprotegidas = []
+    for rota in _rotas_montadas(app):
+        if not isinstance(rota, APIRoute) or rota.path not in rotas_de_subida:
+            continue
+        chamadas = {d.call for d in rota.dependant.dependencies}
+        if exigir_upload_de_fontes not in chamadas:
+            desprotegidas.append(f"{sorted(rota.methods)} {rota.path}")
+
+    assert not desprotegidas, (
+        "Rotas de subida de planilha sem exigir_upload_de_fontes: "
+        + ", ".join(desprotegidas)
     )
 
 
