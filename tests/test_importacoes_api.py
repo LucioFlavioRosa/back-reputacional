@@ -1,10 +1,11 @@
 """As rotas da importação: baixar o modelo, subir o arquivo, retomar a conferência.
 
 ESCONDER O BOTÃO É CONVENIÊNCIA, NUNCA CONTROLE. A tela só oferece a importação a
-quem administra cadastros, e isso não protege nada: um `curl` basta. A guarda é a
-dependência do router, e a âncora estrutural deste arquivo é o que garante que
-uma rota nova sob este prefixo nasça protegida em vez de depender de alguém
-lembrar.
+quem escreve no CRM, e isso não protege nada: um `curl` basta. A guarda é a
+dependência do router (`exigir_escrita`, desde 12/11/2026 — era
+`exigir_administracao_de_cadastros`), e a âncora estrutural deste arquivo é o
+que garante que uma rota nova sob este prefixo nasça protegida em vez de
+depender de alguém lembrar.
 """
 
 import io
@@ -65,21 +66,23 @@ def _cliente(sessao, perfil: str) -> TestClient:
 
 @pytest.fixture
 def cliente_admin(sessao):
-    """`plataforma_edicao` é o ÚNICO perfil com `administra_dicionarios` — ver
-    `app/api/dependencias.py`, `exigir_administracao_de_cadastros`."""
+    """`crm_edicao` já basta desde 12/11/2026: a guarda é `exigir_escrita`, não
+    mais `administra_dicionarios` — ver `app/api/dependencias.py`. O nome do
+    fixture ficou (é usado por todo o arquivo), mas não precisa mais ser
+    `plataforma_edicao`."""
     try:
-        yield _cliente(sessao, "plataforma_edicao")
+        yield _cliente(sessao, "crm_edicao")
     finally:
         app.dependency_overrides.clear()
 
 
 @pytest.fixture
 def cliente_sem_admin(sessao):
-    """`crm_edicao` abre o portal do CRM e NÃO administra cadastros: é o
-    contrapeso exato da guarda, e não um perfil sem acesso a nada — que passaria
+    """`crm_leitura` abre o portal do CRM e SÓ LÊ: é o contrapeso exato da
+    guarda (`exigir_escrita`), e não um perfil sem acesso a nada — que passaria
     o teste de 403 pelo motivo errado."""
     try:
-        yield _cliente(sessao, "crm_edicao")
+        yield _cliente(sessao, "crm_leitura")
     finally:
         app.dependency_overrides.clear()
 
@@ -191,9 +194,10 @@ def _agenda_ja_no_sistema(cliente, sessao, semente, quando, arquivada: bool = Fa
 # =============================================================================
 
 
-def test_quem_nao_administra_cadastros_nao_importa(cliente_sem_admin):
-    """A decisão de produto: só a coordenação importa. E esconder o botão é
-    conveniência — o servidor recusa por conta própria."""
+def test_quem_so_le_nao_importa(cliente_sem_admin):
+    """A decisão de produto, revista em 12/11/2026: quem edita o CRM importa,
+    quem só lê não. Esconder o botão é conveniência — o servidor recusa por
+    conta própria."""
     resposta = cliente_sem_admin.post(
         "/api/importacoes", files={"arquivo": ("a.xlsx", b"PK\x03\x04", TIPO_XLSX)}
     )
@@ -201,13 +205,14 @@ def test_quem_nao_administra_cadastros_nao_importa(cliente_sem_admin):
     assert resposta.status_code == 403
 
 
-def test_quem_nao_administra_cadastros_nao_baixa_o_modelo(cliente_sem_admin):
+def test_quem_so_le_nao_baixa_o_modelo(cliente_sem_admin):
     """O modelo lista o cadastro inteiro — instituições, interlocutores, pessoas
-    da Aegea. Deixá-lo aberto entregaria o diretório a quem não o vê na tela."""
+    da Aegea. Quem edita o CRM já vê esse diretório (`ve_diretorio`); quem só lê
+    a tela de importação nem chega a essa tela, e não deveria chegar pela rota."""
     assert cliente_sem_admin.get("/api/importacoes/modelo").status_code == 403
 
 
-def test_toda_rota_sob_importacoes_exige_administrar_cadastros():
+def test_toda_rota_sob_importacoes_exige_escrita():
     """A ÂNCORA ESTRUTURAL, no mesmo molde da do portal: uma rota nova sob este
     prefixo nasce protegida, ou este teste quebra.
 
@@ -216,7 +221,7 @@ def test_toda_rota_sob_importacoes_exige_administrar_cadastros():
     """
     from fastapi.routing import APIRoute
 
-    from app.api.dependencias import exigir_administracao_de_cadastros
+    from app.api.dependencias import exigir_escrita
     from tests.test_portal_no_backend import _rotas_montadas
 
     desprotegidas = [
@@ -224,7 +229,7 @@ def test_toda_rota_sob_importacoes_exige_administrar_cadastros():
         for rota in _rotas_montadas(app)
         if isinstance(rota, APIRoute)
         and rota.path.startswith("/api/importacoes")
-        and exigir_administracao_de_cadastros not in {d.call for d in rota.dependant.dependencies}
+        and exigir_escrita not in {d.call for d in rota.dependant.dependencies}
     ]
 
     assert desprotegidas == []

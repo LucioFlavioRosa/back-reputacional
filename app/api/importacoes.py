@@ -1,12 +1,15 @@
 """Importação de agendas por planilha: baixar o modelo, subir, conferir.
 
-QUEM IMPORTA É A COORDENAÇÃO — quem já administra os cadastros. A decisão é de
-produto e tem razão prática: a importação pode CRIAR instituição e interlocutor,
-e quem não pode criar um pela tela de Administração não deveria criar cinquenta
-por planilha.
+QUEM IMPORTA É QUEM EDITA O CRM — decisão de produto revista em 12/11/2026: a
+guarda era `administra_dicionarios` (mesma do Cadastro compartilhado), e isso
+deixava de fora qualquer Editor do CRM que não fosse Administrador da
+plataforma — inclusive quem a Diretoria liberou para editar os três painéis.
+A importação pode CRIAR instituição e interlocutor em volume, mas isso já é o
+que QUALQUER Editor do CRM faz uma agenda de cada vez pela tela; a planilha só
+muda a escala, não o tipo de permissão.
 
 ESCONDER O BOTÃO É CONVENIÊNCIA, NUNCA CONTROLE. A tela só oferece a importação a
-quem administra cadastros, e isso não protege nada — um `curl` basta. A guarda é
+quem escreve no CRM, e isso não protege nada — um `curl` basta. A guarda é
 a dependência do router, e `tests/test_importacoes_api.py` tem a âncora
 estrutural que garante que uma rota nova sob este prefixo nasça protegida em vez
 de depender de alguém lembrar.
@@ -23,7 +26,7 @@ from pydantic import BaseModel
 
 from app.api.dependencias import (
     UsuarioLogado,
-    exigir_administracao_de_cadastros,
+    exigir_escrita,
     exigir_portal_crm,
 )
 from app.armazenamento import blob
@@ -60,13 +63,22 @@ rotas = APIRouter(
     # DUAS dependências, e as duas precisam estar aqui.
     #
     # `exigir_portal_crm` porque estas rotas são do CRM dos Stakeholders, e quem
-    # não abre esse portal não as alcança. `exigir_administracao_de_cadastros`
-    # porque importar pode criar cadastro em massa — e o modelo que se baixa
-    # lista o diretório inteiro, incluindo os interlocutores por nome.
+    # não abre esse portal não as alcança. `exigir_escrita` porque importar é
+    # cadastrar agenda em volume — a mesma permissão que já libera cadastrar uma
+    # de cada vez pela tela, nem mais nem menos. (Até 12/11/2026 era
+    # `exigir_administracao_de_cadastros`, a mesma guarda do Cadastro
+    # compartilhado — revisto porque isso também exigia ser Administrador da
+    # plataforma para importar, e não só para editar instituição/tema/
+    # representante.)
+    #
+    # O MODELO LISTA O DIRETÓRIO INTEIRO (instituições, interlocutores, pessoas
+    # da Aegea) — mas quem chega aqui já tem `exigir_portal_crm`, e todo papel
+    # que abre o portal do CRM já enxerga esse diretório (`ve_diretorio`). Não
+    # há papel que escreva no CRM sem ver o que a planilha lista.
     #
     # Ficam no APIRouter, e não em cada rota: uma rota nova nasce protegida em
     # vez de depender de alguém lembrar.
-    dependencies=[Depends(exigir_portal_crm), Depends(exigir_administracao_de_cadastros)],
+    dependencies=[Depends(exigir_portal_crm), Depends(exigir_escrita)],
 )
 
 #: Vem da plataforma para carregar o `scope="function"` junto — ver
