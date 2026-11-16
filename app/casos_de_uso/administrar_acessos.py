@@ -24,7 +24,7 @@ de arquitetura e está registrada em `seguranca/ARQUITETURA.md`.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import select, text
@@ -38,6 +38,8 @@ from app.banco.tabelas_acesso import (
     Usuario,
     UsuarioEscopo,
 )
+from app.banco.tabelas_exportacoes import ExportacaoRegistro
+from app.banco.tabelas_score import CargaDeBase
 from app.dominio.erros import Conflito, NaoAutorizado, RegraViolada
 from app.dominio.identidade import UsuarioAtual
 from app.seguranca.cache_de_autorizacao import esquecer_em_todos
@@ -150,6 +152,245 @@ def listar(sessao: Session, *, solicitante: UsuarioAtual) -> list[LinhaDeAcesso]
         )
         for pessoa in pessoas
     ]
+
+
+@dataclass(frozen=True, slots=True)
+class LinhaDeIndicador:
+    """Uma pessoa e o quanto ela usou a plataforma num período."""
+
+    id: UUID
+    nome: str
+    email: str
+    logins: int
+    uploads: int
+    interacoes_criadas: int
+    ultimo_acesso_em: str | None
+
+
+def indicadores_de_uso(
+    sessao: Session, *, solicitante: UsuarioAtual, de: date, ate: date
+) -> list[LinhaDeIndicador]:
+    """Login, upload de base e interação criada, por pessoa, entre `de` e `ate`
+    (as duas datas inclusas).
+
+    TRÊS CONTAGENS, TRÊS TABELAS JÁ EXISTENTES — nenhuma rastreia uso por si
+    só pensando nesta tela (`acesso_log` existe para investigar incidente,
+    `carga_de_base` para auditar carga, `interacao.criado_por` é autoria comum
+    do CRM). Juntar as três aqui é a parte nova; os dados em si já eram
+    confiáveis e indexados por `usuario_id`/`criado_por`.
+    """
+    exigir_administrador(solicitante)
+
+    # Limite superior EXCLUSIVO: `ate` é uma data de calendário (o último dia
+    # que deve entrar inteiro), e as colunas são `timestamptz`. `< ate+1dia`
+    # inclui o dia inteiro sem truncar a hora digitada.
+    ate_exclusivo = ate + timedelta(days=1)
+
+    linhas = sessao.execute(
+        text(
+            "select u.id, u.nome, u.email, u.ultimo_acesso_em, "
+            "       coalesce(logins.qtd, 0) as logins, "
+            "       coalesce(uploads.qtd, 0) as uploads, "
+            "       coalesce(interacoes.qtd, 0) as interacoes_criadas "
+            "  from usuario u "
+            "  left join ( "
+            "    select usuario_id, count(*) as qtd "
+            "      from acesso_log "
+            "     where resultado = 'sucesso' "
+            "       and ocorrido_em >= :de and ocorrido_em < :ate "
+            "     group by usuario_id "
+            "  ) logins on logins.usuario_id = u.id "
+            "  left join ( "
+            "    select usuario_id, count(*) as qtd "
+            "      from carga_de_base "
+            "     where concluida_em >= :de and concluida_em < :ate "
+            "     group by usuario_id "
+            "  ) uploads on uploads.usuario_id = u.id "
+            "  left join ( "
+            "    select criado_por as usuario_id, count(*) as qtd "
+            "      from interacao "
+            "     where criado_em >= :de and criado_em < :ate "
+            "     group by criado_por "
+            "  ) interacoes on interacoes.usuario_id = u.id "
+            " order by u.nome"
+        ),
+        {"de": de, "ate": ate_exclusivo},
+    ).all()
+
+    return [
+        LinhaDeIndicador(
+            id=linha.id,
+            nome=linha.nome,
+            email=str(linha.email),
+            logins=linha.logins,
+            uploads=linha.uploads,
+            interacoes_criadas=linha.interacoes_criadas,
+            ultimo_acesso_em=(
+                linha.ultimo_acesso_em.isoformat() if linha.ultimo_acesso_em else None
+            ),
+        )
+        for linha in linhas
+    ]
+
+
+@dataclass(frozen=True, slots=True)
+class PessoaNoDia:
+    """Quantas vezes UMA pessoa logou num dia — a quebra por trás do total."""
+
+    nome: str
+    logins: int
+
+
+@dataclass(frozen=True, slots=True)
+class AcessoNoDia:
+    """Quantos logins bem-sucedidos aconteceram num dia, e de quem."""
+
+    data: str
+    logins: int
+    #: VAZIO no detalhe por pessoa (`detalhe_de_uso`): lá o dia já está
+    #: filtrado a uma pessoa só, então listar "ela mesma" de novo não
+    #: acrescenta nada. Só `acessos_por_dia` (todas as pessoas) preenche isto —
+    #: é o que o tooltip do gráfico geral usa para responder "quem".
+    pessoas: list[PessoaNoDia]
+
+
+def acessos_por_dia(
+    sessao: Session, *, solicitante: UsuarioAtual, de: date, ate: date
+) -> list[AcessoNoDia]:
+    """Total de logins bem-sucedidos (todas as pessoas) e quem logou, por dia,
+    entre `de` e `ate` (as duas inclusas). Só dias com pelo menos um login
+    aparecem — a tela decide como preencher os dias sem nenhum.
+    """
+    exigir_administrador(solicitante)
+
+    ate_exclusivo = ate + timedelta(days=1)
+    linhas = sessao.execute(
+        text(
+            "select date(a.ocorrido_em) as dia, u.nome, count(*) as qtd "
+            "  from acesso_log a "
+            "  join usuario u on u.id = a.usuario_id "
+            " where a.resultado = 'sucesso' "
+            "   and a.ocorrido_em >= :de and a.ocorrido_em < :ate "
+            " group by date(a.ocorrido_em), u.nome "
+            " order by dia, u.nome"
+        ),
+        {"de": de, "ate": ate_exclusivo},
+    ).all()
+
+    por_dia: dict[str, list[PessoaNoDia]] = {}
+    for linha in linhas:
+        dia = linha.dia.isoformat()
+        por_dia.setdefault(dia, []).append(PessoaNoDia(nome=linha.nome, logins=linha.qtd))
+
+    return [
+        AcessoNoDia(data=dia, logins=sum(p.logins for p in pessoas), pessoas=pessoas)
+        for dia, pessoas in por_dia.items()
+    ]
+
+
+@dataclass(frozen=True, slots=True)
+class CargaNoDetalhe:
+    """Uma carga desta pessoa, na tela de indicadores."""
+
+    base: str
+    #: Nulo quando a carga veio sem nome a dar (ex.: ingestão por bytes).
+    arquivo: str | None
+    linhas: int
+    concluida_em: str
+
+
+@dataclass(frozen=True, slots=True)
+class ExportacaoNoDetalhe:
+    """Uma exportação de CSV da Base desta pessoa.
+
+    SEM NOME DE ARQUIVO: a exportação da Base não gera arquivo no servidor —
+    é montada no navegador a partir do que a listagem já devolveu. O que dá
+    para mostrar é o filtro aplicado e quantas linhas ele alcançava.
+    """
+
+    filtros: dict
+    total_de_registros: int
+    criado_em: str
+
+
+@dataclass(frozen=True, slots=True)
+class DetalheDeUso:
+    cargas: list[CargaNoDetalhe]
+    exportacoes: list[ExportacaoNoDetalhe]
+    logins_por_dia: list[AcessoNoDia]
+
+
+#: Teto de linhas por lista — a mesma régua do `/acessos/{id}/historico`: uma
+#: tela de detalhe por pessoa não precisa do histórico inteiro de anos, só do
+#: suficiente para responder "o que essa pessoa andou fazendo".
+TETO_DO_DETALHE = 200
+
+
+def detalhe_de_uso(
+    sessao: Session, *, solicitante: UsuarioAtual, usuario_id: UUID, de: date, ate: date
+) -> DetalheDeUso:
+    """As cargas e exportações de UMA pessoa, entre `de` e `ate` (inclusas).
+
+    O DRILL-DOWN da tela de indicadores: lá aparece "3 uploads" ao lado do
+    nome, e esta função é o que responde "quais, de qual base, quando".
+    """
+    exigir_administrador(solicitante)
+
+    ate_exclusivo = ate + timedelta(days=1)
+
+    cargas = sessao.scalars(
+        select(CargaDeBase)
+        .where(CargaDeBase.usuario_id == usuario_id)
+        .where(CargaDeBase.concluida_em >= de)
+        .where(CargaDeBase.concluida_em < ate_exclusivo)
+        .order_by(CargaDeBase.concluida_em.desc())
+        .limit(TETO_DO_DETALHE)
+    ).all()
+
+    exportacoes = sessao.scalars(
+        select(ExportacaoRegistro)
+        .where(ExportacaoRegistro.criado_por == usuario_id)
+        .where(ExportacaoRegistro.criado_em >= de)
+        .where(ExportacaoRegistro.criado_em < ate_exclusivo)
+        .order_by(ExportacaoRegistro.criado_em.desc())
+        .limit(TETO_DO_DETALHE)
+    ).all()
+
+    logins_por_dia = sessao.execute(
+        text(
+            "select date(ocorrido_em) as dia, count(*) as qtd "
+            "  from acesso_log "
+            " where usuario_id = :usuario_id and resultado = 'sucesso' "
+            "   and ocorrido_em >= :de and ocorrido_em < :ate "
+            " group by date(ocorrido_em) "
+            " order by dia"
+        ),
+        {"usuario_id": usuario_id, "de": de, "ate": ate_exclusivo},
+    ).all()
+
+    return DetalheDeUso(
+        cargas=[
+            CargaNoDetalhe(
+                base=c.base,
+                arquivo=c.arquivo,
+                linhas=c.linhas,
+                concluida_em=c.concluida_em.isoformat(),
+            )
+            for c in cargas
+        ],
+        exportacoes=[
+            ExportacaoNoDetalhe(
+                filtros=e.filtros,
+                total_de_registros=e.total_de_registros,
+                criado_em=e.criado_em.isoformat(),
+            )
+            for e in exportacoes
+        ],
+        logins_por_dia=[
+            AcessoNoDia(data=linha.dia.isoformat(), logins=linha.qtd, pessoas=[])
+            for linha in logins_por_dia
+        ],
+    )
 
 
 def conceder(

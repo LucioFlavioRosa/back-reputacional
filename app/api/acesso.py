@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import secrets
 from dataclasses import asdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Annotated, Literal
 from urllib.parse import quote, urlsplit
 from uuid import UUID
@@ -732,6 +732,147 @@ def listar_acessos(sessao: Sessao, usuario: UsuarioLogado) -> list[AcessoSaida]:
         )
         for linha in administrar_acessos.listar(sessao, solicitante=usuario)
     ]
+
+
+class IndicadorDeUso(BaseModel):
+    id: str
+    nome: str
+    email: str
+    logins: int
+    uploads: int
+    interacoes_criadas: int
+    ultimo_acesso_em: str | None
+
+
+@rotas.get("/acessos/indicadores")
+def listar_indicadores_de_uso(
+    sessao: Sessao,
+    usuario: UsuarioLogado,
+    de: Annotated[date | None, Query()] = None,
+    ate: Annotated[date | None, Query()] = None,
+) -> list[IndicadorDeUso]:
+    """Login, upload de base e interação criada, por pessoa, no período.
+
+    SEM `de`/`ate`, OS ÚLTIMOS 30 DIAS — a pergunta de gestão de costume é
+    "quem está usando ULTIMAMENTE", e um relatório que abre vazio por padrão
+    só ensina a sempre passar os dois parâmetros.
+    """
+    hoje = datetime.now().date()
+    periodo_de = de if de is not None else hoje - timedelta(days=29)
+    periodo_ate = ate if ate is not None else hoje
+
+    return [
+        IndicadorDeUso(
+            id=str(linha.id),
+            nome=linha.nome,
+            email=linha.email,
+            logins=linha.logins,
+            uploads=linha.uploads,
+            interacoes_criadas=linha.interacoes_criadas,
+            ultimo_acesso_em=linha.ultimo_acesso_em,
+        )
+        for linha in administrar_acessos.indicadores_de_uso(
+            sessao, solicitante=usuario, de=periodo_de, ate=periodo_ate
+        )
+    ]
+
+
+class PessoaNoDiaSaida(BaseModel):
+    nome: str
+    logins: int
+
+
+class AcessoNoDiaSaida(BaseModel):
+    data: str
+    logins: int
+    pessoas: list[PessoaNoDiaSaida]
+
+
+def _acesso_no_dia_saida(linha: administrar_acessos.AcessoNoDia) -> AcessoNoDiaSaida:
+    return AcessoNoDiaSaida(
+        data=linha.data,
+        logins=linha.logins,
+        pessoas=[PessoaNoDiaSaida(nome=p.nome, logins=p.logins) for p in linha.pessoas],
+    )
+
+
+@rotas.get("/acessos/indicadores/por-dia")
+def listar_acessos_por_dia(
+    sessao: Sessao,
+    usuario: UsuarioLogado,
+    de: Annotated[date | None, Query()] = None,
+    ate: Annotated[date | None, Query()] = None,
+) -> list[AcessoNoDiaSaida]:
+    """Total de logins e quem logou (todas as pessoas), por dia, no período.
+
+    MESMA REGRA DE PERÍODO PADRÃO de `GET /acessos/indicadores`: sem `de`/`ate`,
+    os últimos 30 dias.
+    """
+    hoje = datetime.now().date()
+    periodo_de = de if de is not None else hoje - timedelta(days=29)
+    periodo_ate = ate if ate is not None else hoje
+
+    return [
+        _acesso_no_dia_saida(linha)
+        for linha in administrar_acessos.acessos_por_dia(
+            sessao, solicitante=usuario, de=periodo_de, ate=periodo_ate
+        )
+    ]
+
+
+class CargaNoDetalheSaida(BaseModel):
+    base: str
+    arquivo: str | None
+    linhas: int
+    concluida_em: str
+
+
+class ExportacaoNoDetalheSaida(BaseModel):
+    filtros: dict
+    total_de_registros: int
+    criado_em: str
+
+
+class DetalheDeUsoSaida(BaseModel):
+    cargas: list[CargaNoDetalheSaida]
+    exportacoes: list[ExportacaoNoDetalheSaida]
+    logins_por_dia: list[AcessoNoDiaSaida]
+
+
+@rotas.get("/acessos/{id}/indicadores")
+def detalhe_de_uso(
+    sessao: Sessao,
+    usuario: UsuarioLogado,
+    id: UUID,
+    de: Annotated[date | None, Query()] = None,
+    ate: Annotated[date | None, Query()] = None,
+) -> DetalheDeUsoSaida:
+    """O detalhe por trás do número da linha da pessoa: quais cargas, quais
+    exportações — o drill-down de `GET /acessos/indicadores`."""
+    hoje = datetime.now().date()
+    periodo_de = de if de is not None else hoje - timedelta(days=29)
+    periodo_ate = ate if ate is not None else hoje
+
+    detalhe = administrar_acessos.detalhe_de_uso(
+        sessao, solicitante=usuario, usuario_id=id, de=periodo_de, ate=periodo_ate
+    )
+    return DetalheDeUsoSaida(
+        cargas=[
+            CargaNoDetalheSaida(
+                base=c.base, arquivo=c.arquivo, linhas=c.linhas, concluida_em=c.concluida_em
+            )
+            for c in detalhe.cargas
+        ],
+        exportacoes=[
+            ExportacaoNoDetalheSaida(
+                filtros=e.filtros,
+                total_de_registros=e.total_de_registros,
+                criado_em=e.criado_em,
+            )
+            for e in detalhe.exportacoes
+        ],
+        logins_por_dia=[_acesso_no_dia_saida(linha) for linha in detalhe.logins_por_dia],
+    )
 
 
 @rotas.get("/acessos/papeis")
