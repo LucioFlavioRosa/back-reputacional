@@ -62,7 +62,14 @@ Resolvidos, Em aberto e Declinados para a taxa de resolutividade.
 _Avoid_: status (só no nome interno)
 
 **Relevância**:
-O tier (1 a 4) da INSTITUIÇÃO, que a interação herda ao ser registrada.
+O tier (1 a 4) da INSTITUIÇÃO. `interacao.tier` é um campo PRÓPRIO, e não
+derivado — ele só vem preenchido se a planilha de importação de agenda
+trouxer a coluna naquela linha; sem isso, a interação nasce sem Relevância
+mesmo quando a instituição já tem a dela há tempos. NÃO HERDA sozinho hoje
+(achado em 18/11/2026, com "Valor Econômico": instituição com Tier 1,
+agendas de imprensa importadas sem nenhuma). `app/banco/
+preencher_relevancia_das_interacoes.py` conserta o que já ficou sem; a
+importação em si continua sem copiar — ajuste deliberadamente adiado.
 _Avoid_: tier (só no nome interno), prioridade (é campo do legislativo)
 
 ⚠ NÃO CONFUNDIR COM **Tier do veículo**, do Score (ver abaixo). São dois
