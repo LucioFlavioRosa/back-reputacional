@@ -372,6 +372,13 @@ LEITURAS_SEM_FILTRO = {
     #: não é por pessoa. Achado de revisão, deixado de fora com o motivo.
     "banco/derivados.py",
     "banco/sugerir_categoria_de_publico.py",
+    #: MESMO PADRÃO do item acima: preenche `interacao.tier` a partir de
+    #: `Instituicao.tier` quando a interação não tem. Relevância não é
+    #: informação protegida por quem pode ver a agenda — é um dado cadastral
+    #: (quão relevante é o veículo/instituição), igual à categoria de público
+    #: sugerida. Excluir a agenda sensível deixaria ela sem a correção que as
+    #: outras recebem, sem ganho de privacidade nenhum.
+    "banco/preencher_relevancia_das_interacoes.py",
     #: FUSÃO DE CADASTROS DUPLICADOS: um `update` que reaponta as agendas do
     #: perfil absorvido para o sobrevivente. Tem de tocar TODAS as linhas —
     #: filtrar deixaria as restritas apontando para um cadastro que deixou de
