@@ -1,6 +1,6 @@
 """Liga as menções já gravadas aos três níveis da taxonomia. Idempotente.
 
-    python -m app.comandos.ligar_mencoes_a_taxonomia [--lote 5000] [--simular]
+    python -m app.comandos.ligar_mencoes_a_taxonomia [--lote 5000] [--simular] [--recalcular]
 
 É O BACKFILL DA `0098`, e ele é um comando em vez de um `update` dentro da
 migration por uma razão medida, não por gosto: fazê-lo em SQL exigiria
@@ -41,6 +41,24 @@ pode sobrar a linha com `tema_id` de tema desativado — ela conserva o `tema_id
 (este comando não o toca, ver o `values()`) e pode ganhar um N1 pelo atributo
 sem ganhar N2. São 0 linhas hoje; se passarem de 0, o conserto é no CADASTRO
 (reativar o tema ou dar-lhe um N2), não aqui.
+
+--recalcular (0121): O MODO PADRÃO (`bloco_tema_id is null`) NUNCA REVISITA
+quem já tem N1 — certo para o backfill original, errado para o dia em que o
+CADASTRO ganha apelido novo (`tema_apelido`): a Clipei já tinha N1 pelo
+`atributo` em quase toda menção seguir sem N2/N3 para sempre, porque a linha
+nunca mais casa o `where`. `--recalcular` troca o filtro para
+`macro_tema_id is null` — revisita quem está sem N2 OU totalmente em branco,
+não só o segundo — e SEMPRE regrava `bloco_tema_id` junto (não só preenche):
+um apelido novo pode mudar o N1 da linha, não só acrescentar N2/N3, porque "o
+derivado ganha" quando diverge do declarado (`temas_da_mencao.Arvore.resolver`,
+passo 2-3).
+
+LIMITE CONHECIDO, e não consertado nesta leva: linha que já tem `macro_tema_id`
+fica FORA do `--recalcular` mesmo que um apelido de N3 MAIS NOVO pudesse
+aprofundar o vínculo dela (de N2-só para N3). Nesta leva (0121) não importa —
+todo apelido cadastrado é de N3 —, mas quem cadastrar um apelido de N3 que
+supere uma resolução de N2 já gravada vai precisar de outro critério aqui (por
+exemplo, `tema_id is null and macro_tema_id is not null`, rodado à parte).
 """
 
 from __future__ import annotations
@@ -87,10 +105,22 @@ def _parsear(argv: list[str] | None) -> argparse.Namespace:
         action="store_true",
         help="conta o que ligaria e NÃO grava nada — para conferir antes.",
     )
+    analisador.add_argument(
+        "--recalcular",
+        action="store_true",
+        help=(
+            "revisita quem já tem N1 mas não tem N2 (não só quem está "
+            "totalmente em branco) — usar depois de cadastrar apelido novo "
+            "em `tema_apelido` (0121); pode MUDAR o N1 de uma linha, não só "
+            "acrescentar N2/N3."
+        ),
+    )
     return analisador.parse_args(argv)
 
 
-def executar(*, lote: int = LOTE_PADRAO, simular: bool = False) -> Counter[str]:
+def executar(
+    *, lote: int = LOTE_PADRAO, simular: bool = False, recalcular: bool = False
+) -> Counter[str]:
     """Liga o que estiver por ligar. Devolve a contagem por nível mais fundo."""
     fabrica = obter_fabrica_de_sessao()
     contagem: Counter[str] = Counter()
@@ -124,7 +154,11 @@ def executar(*, lote: int = LOTE_PADRAO, simular: bool = False) -> Counter[str]:
                     Mencao.subtema,
                     Mencao.atributo,
                 )
-                .where(Mencao.bloco_tema_id.is_(None))
+                .where(
+                    Mencao.macro_tema_id.is_(None)
+                    if recalcular
+                    else Mencao.bloco_tema_id.is_(None)
+                )
                 .order_by(Mencao.id)
                 .limit(lote)
             )
@@ -213,7 +247,9 @@ def executar(*, lote: int = LOTE_PADRAO, simular: bool = False) -> Counter[str]:
 
 def main(argv: list[str] | None = None) -> int:
     opcoes = _parsear(argv)
-    contagem = executar(lote=opcoes.lote, simular=opcoes.simular)
+    contagem = executar(
+        lote=opcoes.lote, simular=opcoes.simular, recalcular=opcoes.recalcular
+    )
     total = sum(contagem.values())
     print(f"menções avaliadas: {total}")
     for nivel in ("n3", "n2", "n1", "sem_nivel"):

@@ -43,7 +43,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.banco.tabelas_catalogo import BlocoTema, MacroTema, Tema
+from app.banco.tabelas_catalogo import BlocoTema, MacroTema, Tema, TemaApelido
 from app.dominio.niveis_de_taxonomia import Niveis, chave_do_nivel
 from app.dominio.texto import normalizar
 
@@ -231,6 +231,44 @@ def arvore(sessao: Session) -> Arvore:
     N2 dão 41 chaves, nenhuma colisão. `tests/test_niveis_da_mencao.py` prende
     isso, porque é o cadastro que pode mudar, não este código.
     """
+    n2_oficial = {
+        normalizar(nome): ident
+        for ident, nome in sessao.execute(
+            select(MacroTema.id, MacroTema.nome).where(MacroTema.ativo.is_(True))
+        )
+    }
+    n3_oficial = {
+        normalizar(nome): ident
+        for ident, nome in sessao.execute(
+            select(Tema.id, Tema.nome).where(Tema.ativo.is_(True))
+        )
+    }
+    #: OS APELIDOS (0121) — como a Clipei (e outros fornecedores) chamam um
+    #: tema que o cadastro já tem. Entram no MESMO mapa que o nome oficial,
+    #: na mesma chave normalizada: `Arvore.resolver` não sabe (nem precisa
+    #: saber) se achou pelo nome do cadastro ou por um apelido. O JOIN contra
+    #: `Tema.ativo`/`MacroTema.ativo` é o mesmo critério "só os ativos" do
+    #: resto desta função — um apelido não ressuscita tema desativado.
+    #: O OFICIAL GANHA EM CASO DE COLISÃO (ordem do `{**apelidos, **oficial}`
+    #: abaixo): não deveria colidir — são vocabulários diferentes —, mas se
+    #: colidir um dia, o cadastro é quem manda, nunca o apelido.
+    apelidos_n3 = {
+        apelido.nome_normalizado: apelido.tema_id
+        for apelido in sessao.execute(
+            select(TemaApelido)
+            .join(Tema, Tema.id == TemaApelido.tema_id)
+            .where(TemaApelido.tema_id.is_not(None), Tema.ativo.is_(True))
+        ).scalars()
+    }
+    apelidos_n2 = {
+        apelido.nome_normalizado: apelido.macro_tema_id
+        for apelido in sessao.execute(
+            select(TemaApelido)
+            .join(MacroTema, MacroTema.id == TemaApelido.macro_tema_id)
+            .where(TemaApelido.macro_tema_id.is_not(None), MacroTema.ativo.is_(True))
+        ).scalars()
+    }
+
     return Arvore(
         n1={
             normalizar(nome): ident
@@ -238,18 +276,8 @@ def arvore(sessao: Session) -> Arvore:
                 select(BlocoTema.id, BlocoTema.nome).where(BlocoTema.ativo.is_(True))
             )
         },
-        n2={
-            normalizar(nome): ident
-            for ident, nome in sessao.execute(
-                select(MacroTema.id, MacroTema.nome).where(MacroTema.ativo.is_(True))
-            )
-        },
-        n3={
-            normalizar(nome): ident
-            for ident, nome in sessao.execute(
-                select(Tema.id, Tema.nome).where(Tema.ativo.is_(True))
-            )
-        },
+        n2={**apelidos_n2, **n2_oficial},
+        n3={**apelidos_n3, **n3_oficial},
         n1_do_n2=dict(
             sessao.execute(
                 select(MacroTema.id, MacroTema.bloco_tema_id).where(

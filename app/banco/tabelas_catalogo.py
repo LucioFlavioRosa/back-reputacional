@@ -10,6 +10,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Integer,
@@ -164,6 +165,45 @@ class UnidadeNegocioApelido(Tabela):
     nome: Mapped[str] = mapped_column(Text)
     unidade_negocio_id: Mapped[int] = mapped_column(
         SmallInteger, ForeignKey("unidade_negocio.id")
+    )
+
+
+class TemaApelido(Tabela):
+    """Como a CLIPEI (e outros fornecedores) chamam um tema que o cadastro já
+    tem. Mesma ideia de `UnidadeNegocioApelido` (0099), aqui para a árvore de
+    temas: `temas_da_mencao.Arvore.resolver` casa `tema_texto`/`subtema` por
+    NOME IDÊNTICO contra o cadastro oficial, e o vocabulário da Clipei
+    (`Subcategoria` do export) quase nunca bate literalmente com os 104
+    subtemas oficiais — por isso cai pro N1 via `atributo`.
+
+    APONTA PRA Tema (N3) OU MacroTema (N2), NUNCA OS DOIS — quando o apelido
+    só permite confirmar o nível do meio, o N3 fica de propósito sem
+    palpite (a mesma regra de "não se desce" do resolvedor: `CheckConstraint`
+    abaixo barra gravar os dois ao mesmo tempo).
+
+    NÃO É UM TEMA NOVO: o cadastro continua a autoridade — aqui só se
+    registra que um texto do fornecedor SIGNIFICA um tema que já existe.
+    """
+
+    __tablename__ = "tema_apelido"
+    __table_args__ = (
+        CheckConstraint(
+            "(tema_id is not null) <> (macro_tema_id is not null)",
+            name="tema_apelido_exatamente_um_nivel",
+        ),
+    )
+
+    #: A chave é `normalizar(nome)` — a mesma com que `Arvore.resolver` procura
+    #: em `arvore()`. Guardá-la pronta é o que torna a busca um `dict.get`.
+    nome_normalizado: Mapped[str] = mapped_column(Text, primary_key=True)
+    #: A grafia como o fornecedor escreve, para a tela mostrar o que foi
+    #: declarado em vez da chave achatada.
+    nome: Mapped[str] = mapped_column(Text)
+    tema_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("tema.id"), nullable=True
+    )
+    macro_tema_id: Mapped[int | None] = mapped_column(
+        SmallInteger, ForeignKey("macro_tema.id"), nullable=True
     )
 
 

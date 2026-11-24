@@ -330,6 +330,25 @@ class SubtemaDaTaxonomia:
 
 
 @dataclass(frozen=True, slots=True)
+class ApelidoDeTema:
+    """Como um fornecedor chama um N3 ou N2 que o cadastro já tem — mesmo
+    papel de `app.banco.tabelas_catalogo.TemaApelido` (0121), só que já
+    resolvido pro par (nome, id) que esta classe entende.
+
+    APONTA PRA `SubtemaDaTaxonomia` (N3, via `subtema_id` = o `id` dele) OU
+    `TemaDaTaxonomia` (N2, via `tema_id` = o `id` dele), nunca os dois — mesma
+    regra de `TemaApelido`. NOMES DIFERENTES DE `TemaApelido` DE PROPÓSITO:
+    lá `tema_id`/`macro_tema_id` são as colunas do banco (`tema`/`macro_tema`);
+    aqui `subtema_id`/`tema_id` seguem o vocabulário DESTE módulo, onde
+    "tema" já é o N2 (`SubtemaDaTaxonomia.tema_id` aponta pra um N2) — reusar
+    "tema_id" pro alvo em N3 colidiria com esse significado."""
+
+    nome: str
+    subtema_id: int | None = None
+    tema_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Vinculo:
     """Onde a menção se pendura. Vazio no nível que não existe abaixo de um
     nó de fechamento (sem-pilar não tem tema; sem-tema não tem subtema)."""
@@ -366,6 +385,7 @@ class Taxonomia:
         pilares: Sequence[PilarDaTaxonomia],
         temas: Sequence[TemaDaTaxonomia],
         subtemas: Sequence[SubtemaDaTaxonomia],
+        apelidos: Sequence[ApelidoDeTema] = (),
     ) -> None:
         self.pilares: tuple[PilarDaTaxonomia, ...] = tuple(pilares)
         pilar_por_id = {p.id: p for p in self.pilares}
@@ -414,6 +434,28 @@ class Taxonomia:
         self._subtema_por_nome: dict[str, SubtemaDaTaxonomia] = {}
         for s in sorted(self.subtemas, key=lambda s: s.id):
             self._subtema_por_nome.setdefault(normalizar(s.nome), s)
+
+        #: OS APELIDOS (0121) — como a Clipei (e outros fornecedores) chamam
+        #: um N3/N2 que o cadastro já tem. Entram nos MESMOS dicionários de
+        #: nome que o cadastro oficial, pela mesma chave normalizada:
+        #: `resolver` não sabe (nem precisa saber) se achou pelo nome oficial
+        #: ou por um apelido — é por isso que `temas_da_mencao.Arvore`, que
+        #: resolve na GRAVAÇÃO, e esta classe, que resolve na LEITURA, não
+        #: podem divergir (`test_a_gravacao_e_a_leitura_concordam`): as duas
+        #: agora leem o mesmo cadastro, apelido incluído.
+        #:
+        #: `setdefault`: o nome OFICIAL, já registrado acima, GANHA em caso de
+        #: colisão — não deveria colidir (são vocabulários diferentes), mas se
+        #: colidir um dia, o cadastro é quem manda, nunca o apelido.
+        for apelido in apelidos:
+            if apelido.subtema_id is not None:
+                alvo_n3 = self._subtema_por_id.get(apelido.subtema_id)
+                if alvo_n3 is not None:
+                    self._subtema_por_nome.setdefault(normalizar(apelido.nome), alvo_n3)
+            elif apelido.tema_id is not None:
+                alvo_n2 = tema_por_id.get(apelido.tema_id)
+                if alvo_n2 is not None:
+                    self._tema_por_nome.setdefault(normalizar(apelido.nome), alvo_n2)
 
     def _pilar_pelo_atributo(self, atributo: str | None) -> str | None:
         if not atributo:

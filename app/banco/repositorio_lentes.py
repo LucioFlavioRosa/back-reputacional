@@ -43,6 +43,7 @@ from app.banco.tabelas_catalogo import (
     Clima,
     MacroTema,
     Tema,
+    TemaApelido,
     UnidadeNegocio,
 )
 from app.banco.tabelas_interacoes import InteracaoRegistro, InteracaoTema
@@ -62,6 +63,7 @@ from app.dominio.causa_da_lente import (
     dimensoes_do_recorte,
 )
 from app.dominio.consulta_profundidade import (
+    ApelidoDeTema,
     PilarDaTaxonomia,
     SubtemaDaTaxonomia,
     Taxonomia,
@@ -360,7 +362,16 @@ def taxonomia_ativa(sessao: Session) -> Taxonomia:
             .order_by(Tema.id)
         )
     ]
-    return Taxonomia(pilares, temas, subtemas)
+    #: OS APELIDOS (0121), pela MESMA razão que `temas_da_mencao.arvore()` os
+    #: lê na gravação: as duas resoluções (gravação e leitura) têm de
+    #: concordar — ver o comentário em `Taxonomia.__init__`.
+    apelidos = [
+        ApelidoDeTema(
+            nome=apelido.nome, subtema_id=apelido.tema_id, tema_id=apelido.macro_tema_id
+        )
+        for apelido in sessao.execute(select(TemaApelido)).scalars()
+    ]
+    return Taxonomia(pilares, temas, subtemas, apelidos)
 
 
 def opcoes_de_filtro(sessao: Session, lente_id: int, mes: date) -> dict[str, list[str]]:
