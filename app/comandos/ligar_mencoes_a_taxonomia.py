@@ -191,14 +191,15 @@ def executar(
                     #: tem. Ficam nulas de propósito.
                     continue
                 ligadas += 1
-                #: SÓ AS DUAS COLUNAS NOVAS. `tema_id` NÃO ENTRA AQUI.
+                #: SÓ AS DUAS COLUNAS NOVAS NO MODO PADRÃO. `tema_id` NÃO ENTRA
+                #: AQUI por padrão.
                 #:
                 #: Era uma terceira chave neste dicionário e seria perda de dado:
-                #: a linha cujo `tema_id` aponta para um tema DESATIVADO (ou
-                #: ativo e órfão de N2) não passa pelo passo 1 do resolver —
-                #: `n2_do_n3` só tem ativo com N2 —, cai para os passos de texto
-                #: e volta com `n3_id=None`. Gravar isso APAGARIA a ligação que
-                #: a linha tinha.
+                #: a linha cujo `tema_id` JÁ GRAVADO aponta para um tema
+                #: DESATIVADO (ou ativo e órfão de N2) não passa pelo passo 1 do
+                #: resolver — `n2_do_n3` só tem ativo com N2 —, cai para os
+                #: passos de texto e volta com `n3_id=None`. Gravar isso por
+                #: cima APAGARIA a ligação que a linha tinha.
                 #:
                 #: Hoje são 0 linhas (medido: nenhuma menção aponta para os 45
                 #: temas que a taxonomia v4 desativou), e é por isso mesmo que
@@ -210,22 +211,32 @@ def executar(
                 #: para ACRESCENTAR as duas chaves que a 0098 criou. Não tocá-lo
                 #: é o que torna "a migration mantém tudo funcionando" uma
                 #: garantia, e não uma medição que vale só para a base de hoje.
-                alteracoes.append(
-                    {
-                        #: A CHAVE PRIMÁRIA VAI NO DICIONÁRIO e não num `where`.
-                        #: É o que o "ORM Bulk UPDATE by Primary Key" do
-                        #: SQLAlchemy espera: `id` vira o `where`, o resto vira
-                        #: o `set`. Tentei primeiro um `where` explícito com
-                        #: `bindparam("ident")` e ele recusou duas vezes, cada
-                        #: uma com uma razão diferente ("bulk synchronize of
-                        #: persistent objects not supported", depois "no primary
-                        #: key value supplied") — eu estava brigando com o
-                        #: caminho em vez de usá-lo.
-                        "id": ident,
-                        "bloco_tema_id": niveis.n1_id,
-                        "macro_tema_id": niveis.n2_id,
-                    }
-                )
+                alteracao: dict[str, object] = {
+                    #: A CHAVE PRIMÁRIA VAI NO DICIONÁRIO e não num `where`.
+                    #: É o que o "ORM Bulk UPDATE by Primary Key" do
+                    #: SQLAlchemy espera: `id` vira o `where`, o resto vira
+                    #: o `set`. Tentei primeiro um `where` explícito com
+                    #: `bindparam("ident")` e ele recusou duas vezes, cada
+                    #: uma com uma razão diferente ("bulk synchronize of
+                    #: persistent objects not supported", depois "no primary
+                    #: key value supplied") — eu estava brigando com o
+                    #: caminho em vez de usá-lo.
+                    "id": ident,
+                    "bloco_tema_id": niveis.n1_id,
+                    "macro_tema_id": niveis.n2_id,
+                }
+                #: `--recalcular` (0121) TAMBÉM GRAVA `tema_id`, mas SÓ quando a
+                #: linha não tinha nenhum (`tema_id is None`, o valor já lido do
+                #: banco, não o `niveis.n3_id` resolvido): é exatamente a
+                #: condição que o comentário acima aponta como perigosa — e aqui
+                #: ela nunca se aplica, porque só ENTRA valor onde não havia
+                #: nenhum, nunca sobrescreve um `tema_id` existente. É o apelido
+                #: novo (`tema_apelido`, 0121) alcançando N3 em cima do que antes
+                #: só alcançava N2 — sem isso, `--recalcular` deixava a tela de
+                #: bonds (que abre em N3) sem essas menções pra sempre.
+                if recalcular and tema_id is None and niveis.n3_id is not None:
+                    alteracao["tema_id"] = niveis.n3_id
+                alteracoes.append(alteracao)
 
             #: UM `executemany` POR LOTE, e não um `update` por linha.
             #:
