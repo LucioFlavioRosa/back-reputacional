@@ -606,18 +606,27 @@ def test_o_backfill_pega_quem_nao_tem_pilar_e_passa_o_tema_id(sessao: Session) -
 
 
 def test_o_backfill_nunca_apaga_o_tema_id_que_a_linha_tem() -> None:
-    """Ele grava as DUAS colunas novas. `tema_id` não entra no `values()`.
+    """Ele grava as duas colunas novas incondicional. `tema_id` só entra
+    quando a linha NÃO TINHA NENHUM (0121) — nunca por cima de um existente.
 
     O DEFEITO QUE ISTO PRENDE, e que estava escrito no comando: a linha cujo
-    `tema_id` aponta para um tema DESATIVADO (ou ativo e órfão de N2) não passa
-    pelo passo 1 do resolver — `n2_do_n3` só carrega ativo COM N2 —, cai para os
-    passos de texto e volta com `n3_id=None`. Gravar isso apagaria a ligação que
-    a linha já tinha.
+    `tema_id` JÁ GRAVADO aponta para um tema DESATIVADO (ou ativo e órfão de
+    N2) não passa pelo passo 1 do resolver — `n2_do_n3` só carrega ativo COM
+    N2 —, cai para os passos de texto e volta com `n3_id=None`. Gravar isso
+    por cima apagaria a ligação que a linha já tinha.
 
-    SÃO 0 LINHAS HOJE (nenhuma menção aponta para os 45 temas que a taxonomia v4
-    desativou), e é por isso que vale um teste em vez de uma medição: a medição
-    vale para a base de hoje, o teste vale para o dia em que alguém desativar um
-    tema com menção pendurada.
+    SÃO 0 LINHAS HOJE (nenhuma menção aponta para os 45 temas que a taxonomia
+    v4 desativou), e é por isso que vale um teste em vez de uma medição: a
+    medição vale para a base de hoje, o teste vale para o dia em que alguém
+    desativar um tema com menção pendurada.
+
+    `--recalcular` (0121) PRECISA gravar `tema_id` às vezes — é o que faz um
+    apelido novo (`tema_apelido`) alcançar N3 em cima de uma menção que antes
+    só alcançava N2 —, então a regra deixou de ser "nunca grava" e passou a
+    ser "só grava onde não havia nada": a condição abaixo tem de existir, e
+    tem de testar o valor JÁ LIDO do banco (`tema_id is None`), nunca o
+    resolvido (`niveis.n3_id`), porque só o primeiro garante que nada existente
+    é sobrescrito.
 
     POR INSPEÇÃO DO FONTE, e não executando o comando, por uma razão explícita:
     `executar()` abre a própria sessão por `obter_fabrica_de_sessao()`, então ela
@@ -630,12 +639,17 @@ def test_o_backfill_nunca_apaga_o_tema_id_que_a_linha_tem() -> None:
     from app.comandos import ligar_mencoes_a_taxonomia as comando
 
     fonte = inspect.getsource(comando.executar)
-    corpo = fonte[fonte.index("alteracoes.append(") :]
+    corpo = fonte[fonte.index("alteracao: dict") :]
     assert '"bloco_tema_id"' in corpo
     assert '"macro_tema_id"' in corpo
-    assert '"tema_id"' not in corpo and "tema_id=niveis.n3_id" not in corpo, (
-        "o backfill voltou a gravar `tema_id`. Para a linha com tema desativado "
-        "o resolver devolve `n3_id=None`, e isso APAGA a ligação que ela tinha."
+    assert 'alteracao["tema_id"] = niveis.n3_id' in corpo, (
+        "o backfill parou de gravar `tema_id` (0121) — um apelido novo nunca "
+        "mais alcançaria N3 em cima de uma menção só com N2."
+    )
+    assert "if recalcular and tema_id is None and niveis.n3_id is not None:" in corpo, (
+        "a guarda do `tema_id` mudou. Ela PRECISA testar o `tema_id` já lido do "
+        "banco (não o resolvido): só assim nunca sobrescreve o que a linha já "
+        "tinha — é a mesma garantia que este teste sempre verificou."
     )
     #: E O `where` TEM DE SER POR `ident`: um parâmetro chamado `id` seria
     #: consumido pelo `set` do `update` em vez do `where`, e o comando tentaria
