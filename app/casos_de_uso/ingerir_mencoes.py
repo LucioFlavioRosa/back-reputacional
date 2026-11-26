@@ -55,6 +55,7 @@ from app.banco.tabelas_lentes import MencaoNaoClassificada
 from app.banco.tabelas_score import Mencao, ScoreFonte, ScoreMesFonte
 from app.casos_de_uso import (
     atores_duplicados,
+    enriquecimento_bites,
     temas_da_mencao,
     trilha_da_carga,
     unidade_da_mencao,
@@ -1232,6 +1233,15 @@ def ingerir(
     """
     recusar_o_que_nao_entra(fonte, conteudo)
 
+    #: A BITES GANHA CARGO/N3 QUE ELA NÃO MANDOU, SÓ ONDE VEIO EM BRANCO —
+    #: ver o cabeçalho de `enriquecimento_bites`. Roda DEPOIS da recusa
+    #: acima (um arquivo genuinamente quebrado continua recusado do jeito
+    #: que veio) e ANTES de `_lido`, que é quem todo o resto da função usa
+    #: — as fontes irmãs e os veículos abaixo já leem a versão enriquecida,
+    #: sem saber que isto aconteceu.
+    if fonte.codigo == "bites":
+        conteudo = enriquecimento_bites.enriquecer_planilha_bites(sessao, conteudo)
+
     # OS VEÍCULOS NASCEM UMA VEZ, antes das fontes irmãs: as duas leem o mesmo
     # arquivo e veriam os mesmos veículos. Criar por fonte faria a segunda achar
     # tudo já cadastrado — inofensivo — e contaria a criação duas vezes no
@@ -1540,6 +1550,11 @@ def conferir(
     #: AS MESMAS RECUSAS DA SUBIDA, e aqui elas chegam antes de o arquivo ser
     #: guardado. Ver `recusar_o_que_nao_entra`.
     recusar_o_que_nao_entra(fonte, conteudo)
+    #: A MESMA ENRIQUECIDA QUE A SUBIDA VAI GRAVAR — ver `ingerir` e o
+    #: cabeçalho de `enriquecimento_bites`. Sem isto, a conferência prometeria
+    #: um Cargo/N3 que a subida de verdade preenche, ou o inverso.
+    if fonte.codigo == "bites":
+        conteudo = enriquecimento_bites.enriquecer_planilha_bites(sessao, conteudo)
     #: ABERTA UMA VEZ, e as quatro etapas abaixo reusam a leitura: duas na
     #: previsão (uma por irmã), uma nos veículos e uma nos assuntos. Ver
     #: `ArquivoLido`.

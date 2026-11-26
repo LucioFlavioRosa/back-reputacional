@@ -377,3 +377,28 @@ class CargaDeBase(Tabela):
     concluida_em: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("clock_timestamp()")
     )
+
+
+class CargoDeConta(Tabela):
+    """O cargo/perfil já julgado de uma conta de rede social — catálogo que
+    cresce por migration, do jeito que `TemaApelido` já cresce. Ver `0122`.
+
+    POR QUE ISTO EXISTE: a Bites manda `Cargo` vazio em ~95-100% das linhas do
+    export mensal, e o sistema já aceita qualquer valor nessa coluna (não há
+    vocabulário fechado — ver `rotulo_do_cargo`). Esta tabela é o que
+    preenche o que falta, SÓ pra contas que alguém já julgou antes — uma
+    conta nova continua em branco até entrar aqui.
+
+    O GRÃO É A CONTA (`Autor`), não Autor+Rede: `migrations/0071` mediu que
+    só 54 de 1.173 autores aparecem em mais de uma rede, e é o Autor sozinho
+    que já identifica o `perfil_rede` no cadastro compartilhado — chavear
+    por rede duplicaria sem necessidade.
+    """
+
+    __tablename__ = "cargo_de_conta"
+
+    #: `normalizar(autor sem @)` — a mesma chave que `TemaApelido` usa.
+    autor_normalizado: Mapped[str] = mapped_column(Text, primary_key=True)
+    #: A grafia como a Bites manda, pra tela mostrar o que foi julgado.
+    autor: Mapped[str] = mapped_column(Text)
+    cargo: Mapped[str] = mapped_column(Text)
