@@ -214,10 +214,8 @@ def test_cria_a_coluna_n3_quando_nao_existe_e_preenche_por_texto(sessao):
 
 def test_nunca_sobrescreve_n3_que_a_bites_ja_mandou(sessao):
     cabecalho = _CABECALHO + ["N3"]
-    conteudo = _planilha(
-        cabecalho,
-        [_linha(atributo="Eficiência Operacional e Qualidade", texto="falta de agua") + ["Potabilidade"]],
-    )
+    linha = _linha(atributo="Eficiência Operacional e Qualidade", texto="falta de agua")
+    conteudo = _planilha(cabecalho, [linha + ["Potabilidade"]])
     saida = enriquecimento_bites.enriquecer_planilha_bites(sessao, conteudo)
 
     cabecalho_saida, linhas = _ler(saida)
@@ -267,10 +265,12 @@ def test_subida_da_bites_grava_cargo_e_tema_resolvidos_sozinhos(sessao, bites):
 
 
 def test_subida_da_bites_sem_match_sobe_em_branco_igual_antes(sessao, bites):
-    conteudo = _planilha(
-        _CABECALHO,
-        [_linha(autor="@ContaNuncaVista", atributo="Eficiência Operacional e Qualidade", texto="bom dia")],
+    linha = _linha(
+        autor="@ContaNuncaVista",
+        atributo="Eficiência Operacional e Qualidade",
+        texto="bom dia",
     )
+    conteudo = _planilha(_CABECALHO, [linha])
     resumos = ingerir_mencoes.ingerir(sessao, bites, conteudo)
 
     assert resumos[0].ingeridas == 1
